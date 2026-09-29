@@ -14,15 +14,21 @@ import (
 //
 // If the section already exists, its content is replaced.
 // If it doesn't exist, the section is inserted before <!-- END GENERATED SECTION -->.
-// Returns an error if neither existing markers nor the end marker are found.
+// Returns an error if neither existing markers nor the end marker are found,
+// or if the open marker has no close marker after it.
 func MarkdownInsertSection(existing []byte, sectionID string, content []byte) ([]byte, error) {
 	openMarker := []byte(fmt.Sprintf("<!-- qsdev:%s -->", sectionID))
 	closeMarker := []byte(fmt.Sprintf("<!-- /qsdev:%s -->", sectionID))
 
-	openIdx := bytes.Index(existing, openMarker)
-	closeIdx := bytes.Index(existing, closeMarker)
+	if openIdx := bytes.Index(existing, openMarker); openIdx >= 0 {
+		// Search for the close marker only after the open marker, so a stray
+		// earlier close marker cannot divert us into inserting a duplicate.
+		rel := bytes.Index(existing[openIdx:], closeMarker)
+		if rel < 0 {
+			return nil, fmt.Errorf("cannot update section %q: open marker has no matching close marker", sectionID)
+		}
+		closeIdx := openIdx + rel
 
-	if openIdx >= 0 && closeIdx > openIdx {
 		// Replace existing section content.
 		var buf bytes.Buffer
 		buf.Write(existing[:openIdx])

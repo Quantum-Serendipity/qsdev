@@ -16,6 +16,17 @@ type McpServerRegistry struct {
 
 	healthMu sync.RWMutex
 	health   map[string]*HealthResult
+
+	// catalogErr records why the catalog-defined servers could not be loaded.
+	catalogErr error
+}
+
+// CatalogErr reports why the catalog-defined servers are missing from the
+// registry, or nil when the catalog loaded. A registry with a non-nil
+// CatalogErr still holds the built-in servers, so callers should warn rather
+// than treat the smaller registry as complete.
+func (r *McpServerRegistry) CatalogErr() error {
+	return r.catalogErr
 }
 
 // NewRegistry creates an empty MCP server registry with initialized maps.

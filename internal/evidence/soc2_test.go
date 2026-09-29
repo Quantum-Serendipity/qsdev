@@ -14,11 +14,11 @@ func TestSOC2Framework_HasCorrectMetadata(t *testing.T) {
 	}
 }
 
-func TestSOC2Framework_Has8Controls(t *testing.T) {
+func TestSOC2Framework_Has6Controls(t *testing.T) {
 	fw := SOC2Framework()
 	controls := fw.Controls()
-	if len(controls) != 8 {
-		t.Fatalf("expected 8 controls, got %d", len(controls))
+	if len(controls) != 6 {
+		t.Fatalf("expected 6 controls, got %d", len(controls))
 	}
 }
 
@@ -28,7 +28,7 @@ func TestSOC2Framework_ControlIDs(t *testing.T) {
 
 	expectedIDs := []string{
 		"CC6.1", "CC6.6", "CC6.8", "CC7.1", "CC7.2",
-		"CC8.1", "CC8.2", "CC8.3",
+		"CC8.1",
 	}
 
 	if len(controls) != len(expectedIDs) {

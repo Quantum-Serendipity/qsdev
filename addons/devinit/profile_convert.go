@@ -1,13 +1,19 @@
 package devinit
 
 import (
+	"fmt"
+	"maps"
+	"strings"
+
+	"github.com/Quantum-Serendipity/qsdev/internal/validation"
 	"github.com/Quantum-Serendipity/qsdev/pkg/types"
 )
 
 // ProfileToAnswers converts a project-type Profile into a fully populated
 // WizardAnswers struct. The projectRoot and projectName are passed through
-// directly since profiles do not encode per-project paths.
-func ProfileToAnswers(p Profile, projectRoot, projectName string) types.WizardAnswers {
+// directly since profiles do not encode per-project paths. It fails when the
+// profile names a hook preset that does not exist.
+func ProfileToAnswers(p Profile, projectRoot, projectName string) (types.WizardAnswers, error) {
 	answers := types.WizardAnswers{
 		ProjectName:     projectName,
 		ProjectRoot:     projectRoot,
@@ -40,37 +46,40 @@ func ProfileToAnswers(p Profile, projectRoot, projectName string) types.WizardAn
 	}
 
 	// Convert hook name strings -> HookChoices booleans.
-	answers.Hooks = hooksFromStrings(p.Hooks)
+	hooks, err := hooksFromStrings(p.Hooks)
+	if err != nil {
+		return types.WizardAnswers{}, fmt.Errorf("profile hooks: %w", err)
+	}
+	answers.Hooks = hooks
+	applyAnswerInvariants(&answers)
 
-	return answers
+	return answers, nil
 }
 
-// hooksFromStrings maps a slice of hook name strings to HookChoices boolean fields.
-func hooksFromStrings(hooks []string) types.HookChoices {
+// hooksFromStrings maps hook preset names to HookChoices. The selectable names
+// are the catalog's hook presets; an unknown or misspelled name is an error
+// rather than a silently disabled hook.
+func hooksFromStrings(hooks []string) (types.HookChoices, error) {
 	var hc types.HookChoices
 	for _, h := range hooks {
-		switch h {
-		case "auto-format":
-			hc.AutoFormat = true
-		case "safety-block":
-			hc.SafetyBlock = true
-		case "pre-commit":
-			hc.PreCommit = true
-		case "audit-log":
-			hc.AuditLog = true
-		case "credential-scan":
-			hc.CredentialScan = true
-		case "destructive-prevention":
-			hc.DestructivePrevention = true
-		case "soc2-audit":
-			hc.SOC2Audit = true
-		case "file-boundary":
-			hc.FileBoundary = true
-		case "tool-gates":
-			hc.ToolGates = true
+		if !validation.IsValidHookPreset(h) {
+			return types.HookChoices{}, fmt.Errorf("unknown hook preset %q; valid presets: %s",
+				h, strings.Join(validation.HookPresets(), ", "))
+		}
+		if err := hc.EnableHook(h); err != nil {
+			return types.HookChoices{}, fmt.Errorf("hook preset %q: %w", h, err)
 		}
 	}
-	return hc
+	return hc, nil
+}
+
+// applyAnswerInvariants enforces settings that hold for every answer source.
+// Self-protection is always on when Claude Code is enabled: without it the
+// agent could edit its own settings and hook scripts.
+func applyAnswerInvariants(a *types.WizardAnswers) {
+	if a.ClaudeCode {
+		a.Hooks.SelfProtection = true
+	}
 }
 
 // MergeProfileWithFlags merges a profile-derived WizardAnswers (base) with
@@ -79,7 +88,9 @@ func hooksFromStrings(hooks []string) types.HookChoices {
 //
 // Language overrides REPLACE the base languages entirely.
 // Service overrides APPEND to the base services (deduplicating by name).
+// Environment variables merge per key, and agent tools per setting.
 // All other fields use simple replacement when the key is present in changed.
+// The result satisfies applyAnswerInvariants.
 func MergeProfileWithFlags(base types.WizardAnswers, overrides types.WizardAnswers, changed map[string]bool) types.WizardAnswers {
 	result := base
 
@@ -130,11 +141,54 @@ func MergeProfileWithFlags(base types.WizardAnswers, overrides types.WizardAnswe
 	if changed["tier"] {
 		result.Tier = overrides.Tier
 	}
+	if changed["env_vars"] {
+		// Flag values win per key; other base variables are kept.
+		result.EnvVars = make(map[string]string, max(len(base.EnvVars), len(overrides.EnvVars)))
+		maps.Copy(result.EnvVars, base.EnvVars)
+		maps.Copy(result.EnvVars, overrides.EnvVars)
+	}
+	if changed["nix_hardening_guide"] {
+		result.NixHardeningGuide = overrides.NixHardeningGuide
+	}
+	if changed["registry_proxy"] {
+		result.Infrastructure.RegistryProxy = overrides.Infrastructure.RegistryProxy
+	}
+	if changed["nix_cache"] {
+		result.Infrastructure.NixCache = overrides.Infrastructure.NixCache
+	}
+	if changed["nix_cache_public_key"] {
+		result.Infrastructure.NixCachePublicKey = overrides.Infrastructure.NixCachePublicKey
+	}
+	if changed["project_type_profile"] {
+		result.ProjectTypeProfile = overrides.ProjectTypeProfile
+	}
 	if changed["agent_tools"] {
 		result.AgentTools = overrides.AgentTools
 	}
+	mergeAgentToolFlags(&result.AgentTools, overrides.AgentTools, changed)
 
+	applyAnswerInvariants(&result)
 	return result
+}
+
+// mergeAgentToolFlags overrides individual agent-tool settings whose flags were
+// set, so one --agent-* flag does not reset the others to their flag defaults.
+func mergeAgentToolFlags(dst *types.AgentToolsAnswers, src types.AgentToolsAnswers, changed map[string]bool) {
+	if changed["agent_postmortem"] {
+		dst.PostmortemEnabled = src.PostmortemEnabled
+	}
+	if changed["agent_version_sentinel"] {
+		dst.VersionSentinel = src.VersionSentinel
+	}
+	if changed["agent_semble"] {
+		dst.SembleEnabled = src.SembleEnabled
+	}
+	if changed["agent_semble_mode"] {
+		dst.SembleMode = src.SembleMode
+	}
+	if changed["agent_semble_text_files"] {
+		dst.SembleTextFiles = src.SembleTextFiles
+	}
 }
 
 // appendServicesUnique appends src services to dst, skipping any that already

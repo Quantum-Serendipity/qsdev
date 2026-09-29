@@ -130,15 +130,31 @@ func ComputeTierRelativeDefenseScore(layers []DefenseLayer, currentTier int) flo
 }
 
 // ComputeAggregateScore combines three layer scores with 40/30/30 weighting.
-func ComputeAggregateScore(defense, config, deps float64) AggregateScore {
-	total := defense*weightDefense + config*weightConfig + deps*weightDepHealth
-	return AggregateScore{
-		Total:     math.Round(total*10) / 10,
-		Grade:     ScoreToGrade(total),
-		Defense:   math.Round(defense*10) / 10,
-		Config:    math.Round(config*10) / 10,
-		DepHealth: math.Round(deps*10) / 10,
+// A nil deps score (unscanned dependencies, health unknown) is left out of the
+// aggregate: defense and config are re-weighted over their own 70% rather than
+// counting unknown dependency health as either clean or failed.
+func ComputeAggregateScore(defense, config float64, deps *float64) AggregateScore {
+	total := defense*weightDefense + config*weightConfig
+	var depHealth *float64
+	if deps != nil {
+		total += *deps * weightDepHealth
+		rounded := round1(*deps)
+		depHealth = &rounded
+	} else {
+		total /= weightDefense + weightConfig
 	}
+	return AggregateScore{
+		Total:     round1(total),
+		Grade:     ScoreToGrade(total),
+		Defense:   round1(defense),
+		Config:    round1(config),
+		DepHealth: depHealth,
+	}
+}
+
+// round1 rounds a score to one decimal place.
+func round1(v float64) float64 {
+	return math.Round(v*10) / 10
 }
 
 // ScoreToGrade converts 0-100 score to letter grade using INTEGER rounding.

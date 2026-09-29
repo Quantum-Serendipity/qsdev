@@ -1,11 +1,15 @@
 package repair
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/Quantum-Serendipity/qsdev/pkg/fileutil"
 )
 
 func TestCreateBackup_CreatesFile(t *testing.T) {
@@ -203,5 +207,30 @@ func TestBackupDir(t *testing.T) {
 	want := filepath.Join("/project", ".qsdev", "backups")
 	if got != want {
 		t.Errorf("backupDir = %q, want %q", got, want)
+	}
+}
+
+// TestCreateBackup_RefusesSymlinkedBackupDir verifies a committed symlink for
+// the project's dot-directory cannot redirect backups outside the project.
+func TestCreateBackup_RefusesSymlinkedBackupDir(t *testing.T) {
+	t.Parallel()
+	if runtime.GOOS == "windows" {
+		t.Skip("symlink creation requires privileges on Windows")
+	}
+	root := t.TempDir()
+	outside := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "config.yaml"), []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(outside, filepath.Dir(backupDir(root))); err != nil {
+		t.Fatal(err)
+	}
+
+	_, err := createBackup(root, "config.yaml")
+	if !errors.Is(err, fileutil.ErrOutsideRoot) {
+		t.Fatalf("err = %v, want ErrOutsideRoot", err)
+	}
+	if entries, _ := os.ReadDir(outside); len(entries) != 0 {
+		t.Errorf("backup created outside the project: %v", entries)
 	}
 }

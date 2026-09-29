@@ -7,6 +7,7 @@ package container
 import (
 	"bytes"
 	"fmt"
+	"slices"
 	"strings"
 
 	"gopkg.in/yaml.v3"
@@ -20,9 +21,9 @@ import (
 var _ ecosystem.EcosystemModule = (*Module)(nil)
 var _ ecosystem.SecretDeclarer = (*Module)(nil)
 var _ ecosystem.PackageProvider = (*Module)(nil)
-var _ ecosystem.DevenvYamlInputProvider = (*Module)(nil)
 var _ ecosystem.WizardFieldProvider = (*Module)(nil)
 var _ ecosystem.DenyRuleProvider = (*Module)(nil)
+var _ ecosystem.ReadDenyRuleProvider = (*Module)(nil)
 var _ ecosystem.SASTModule = (*Module)(nil)
 
 func init() {
@@ -113,44 +114,49 @@ func (m *Module) Detect(projectRoot string) ecosystem.DetectionResult {
 
 // DevenvPackages returns the Nix packages required for the configured
 // container runtime. Docker gets docker/hadolint/dive; Podman gets
-// podman/podman-compose/buildah/skopeo/hadolint/dive.
+// podman/podman-compose/buildah/skopeo/hadolint/dive. Both get syft and
+// grype, which the generated CI's SBOM and image scan steps run.
 func (m *Module) DevenvPackages(config ecosystem.ModuleConfig) []string {
 	rt := config.Extra("container_runtime", "")
 	switch rt {
 	case "podman-rootless", "podman-rootful":
-		return []string{"podman", "podman-compose", "buildah", "skopeo", "hadolint", "dive"}
+		return []string{"podman", "podman-compose", "buildah", "skopeo", "hadolint", "dive", "syft", "grype"}
 	default: // "docker" or empty — backward compatible
-		return []string{"docker", "hadolint", "dive"}
+		return []string{"docker", "hadolint", "dive", "syft", "grype"}
 	}
 }
 
+// podmanRootlessDockerHost points Docker-API clients at the per-user Podman
+// socket. The fragment is Nix, not shell: a bare ${XDG_RUNTIME_DIR} would be a
+// Nix antiquotation of an undefined variable (breaking devenv.nix evaluation),
+// and env.* values are exported literally, never shell-expanded. The runtime
+// directory is therefore read at evaluation time with builtins.getEnv, which
+// devenv itself relies on to place its runtime directory. Without a runtime
+// directory there is no rootless socket to point at, so any DOCKER_HOST the
+// user already had is kept.
+const podmanRootlessDockerHost = `  env.DOCKER_HOST =
+    let xdgRuntimeDir = builtins.getEnv "XDG_RUNTIME_DIR";
+    in if xdgRuntimeDir != "" then "unix://${xdgRuntimeDir}/podman/podman.sock" else builtins.getEnv "DOCKER_HOST";
+`
+
+// podmanRootfulDockerHost points Docker-API clients at the system Podman
+// socket, which lives at a fixed path rather than under XDG_RUNTIME_DIR.
+const podmanRootfulDockerHost = `  env.DOCKER_HOST = "unix:///run/podman/podman.sock";
+`
+
 // DevenvNixFragment returns the Nix code fragment to include in devenv.nix
-// for container tooling. Podman runtimes set env.DOCKER_HOST; Docker runtimes
-// produce an empty fragment (packages are provided via DevenvPackages).
+// for container tooling. Podman runtimes set env.DOCKER_HOST to the matching
+// Podman socket; Docker runtimes produce an empty fragment (packages are
+// provided via DevenvPackages).
 func (m *Module) DevenvNixFragment(config ecosystem.ModuleConfig) (string, error) {
-	rt := config.Extra("container_runtime", "")
-	switch rt {
-	case "podman-rootless", "podman-rootful":
-		return "  env.DOCKER_HOST = \"unix://${XDG_RUNTIME_DIR}/podman/podman.sock\";\n", nil
+	switch config.Extra("container_runtime", "") {
+	case "podman-rootless":
+		return podmanRootlessDockerHost, nil
+	case "podman-rootful":
+		return podmanRootfulDockerHost, nil
 	default:
 		return "", nil
 	}
-}
-
-// DevenvYamlInputs returns additional flake inputs for devenv.yaml.
-// Podman on NixOS adds the quadlet-nix input for systemd integration.
-func (m *Module) DevenvYamlInputs(config ecosystem.ModuleConfig) []ecosystem.DevenvInput {
-	rt := config.Extra("container_runtime", "")
-	osFamily := config.Extra("os_family", "")
-
-	if (rt == "podman-rootless" || rt == "podman-rootful") && osFamily == "nixos" {
-		return []ecosystem.DevenvInput{
-			{
-				URL: "github:SEIAROTg/quadlet-nix",
-			},
-		}
-	}
-	return nil
 }
 
 // hadolintConfig is the structured representation of .hadolint.yaml.
@@ -213,7 +219,7 @@ func (m *Module) SecurityConfigs(config ecosystem.ModuleConfig) []types.Generate
 			Path:     ".hadolint.yaml",
 			Content:  buf.Bytes(),
 			Mode:     fileutil.ModeReadWrite,
-			Strategy: types.Overwrite,
+			Strategy: types.Skip,
 		},
 	}
 }
@@ -232,38 +238,90 @@ func (m *Module) PreCommitHooks(_ ecosystem.ModuleConfig) []ecosystem.HookConfig
 			PassFilenames: true,
 			Files:         `(Dockerfile|Containerfile)`,
 			BuiltIn:       false,
+			// Pins the hook's package: the ID is also a git-hooks.nix
+			// built-in, whose default package would otherwise be evaluated.
+			NixPackage: "hadolint",
 		},
 	}
 }
 
+// containerCLIs are the Docker-compatible CLIs the deny rules cover. Both are
+// always covered, whatever the configured runtime: Docker's daemon socket is
+// root-equivalent, and a host may have either binary installed (Podman ships
+// a `docker` shim), so gating the escape rules on the runtime leaves the
+// other CLI open.
+var containerCLIs = []string{"docker", "podman"}
+
+// containerEscapeArgs are argument fragments that break container isolation:
+// privileged mode, host PID/network namespaces, container-engine socket
+// mounts, and mounting the host root filesystem (via -v/--volume or a
+// --mount bind whose source is /). They are matched anywhere in the command
+// so run, create, exec and `container run` are all covered.
+var containerEscapeArgs = []string{
+	"*--privileged*",
+	"*--pid=host*",
+	"*--pid host*",
+	"*--network=host*",
+	"*--network host*",
+	"*--net=host*",
+	"*--net host*",
+	"*docker.sock*",
+	"*podman.sock*",
+	"* -v /:*",
+	"* -v=/:*",
+	"* -v/:*",
+	"*--volume /:*",
+	"*--volume=/:*",
+	"*source=/,*",
+	"*src=/,*",
+}
+
+// registryAuthFiles are where the Docker and Podman CLIs store registry
+// credentials (base64-encoded passwords or tokens) after `login`.
+var registryAuthFiles = []string{
+	"~/.docker/config.json",
+	"~/.config/containers/auth.json",
+}
+
 // DenyRules returns Claude Code deny-rule patterns for the container ecosystem.
-// Prevents uncontrolled image pulls and, for Podman, blocks privileged
-// containers and Docker socket mounts.
-func (m *Module) DenyRules(config ecosystem.ModuleConfig) []string {
-	rt := config.Extra("container_runtime", "")
-	switch rt {
-	case "podman-rootless", "podman-rootful":
-		return []string{
-			"Bash(docker run -v /var/run/docker.sock*)",
-			"Bash(docker pull *)",
-			"Bash(podman run --privileged *)",
-		}
-	default:
-		return []string{
-			"Bash(docker pull *)",
+// For both Docker-compatible CLIs it prevents uncontrolled image pulls and
+// blocks the container-escape arguments listed in containerEscapeArgs. It
+// also blocks printing the registry credential files with cat.
+func (m *Module) DenyRules(_ ecosystem.ModuleConfig) []string {
+	rules := make([]string, 0, len(containerCLIs)*(1+len(containerEscapeArgs))+len(registryAuthFiles))
+	for _, cli := range containerCLIs {
+		rules = append(rules, "Bash("+cli+" pull *)")
+		for _, arg := range containerEscapeArgs {
+			rules = append(rules, "Bash("+cli+" "+arg+")")
 		}
 	}
+	for _, f := range registryAuthFiles {
+		rules = append(rules, "Bash(cat "+f+"*)")
+	}
+	return rules
 }
+
+// ReadDenyRules returns the registry credential files the agent's Read tool
+// must not open.
+func (m *Module) ReadDenyRules(_ ecosystem.ModuleConfig) []string {
+	return slices.Clone(registryAuthFiles)
+}
+
+// ciImageTag names the image the CI container build produces, so the SBOM
+// and vulnerability scan steps scan exactly that image.
+const ciImageTag = "qsdev-ci-image:latest"
 
 // CICommands returns CI pipeline commands for the container ecosystem.
 // Commands are runtime-aware: Podman runtimes use `podman`, Docker uses `docker`.
 func (m *Module) CICommands(config ecosystem.ModuleConfig) []ecosystem.CICommand {
 	rt := config.Extra("container_runtime", "")
-	imgCmd := "docker"
+	// buildCmd is the runtime CLI; imgSource is the matching Syft source
+	// scheme, which reads the image from that runtime's local store.
 	buildCmd := "docker"
+	imgSource := "docker"
 	if rt == "podman-rootless" || rt == "podman-rootful" {
-		imgCmd = "podman"
 		buildCmd = "podman"
+		imgSource = "podman"
 	}
 
 	return []ecosystem.CICommand{
@@ -275,26 +333,23 @@ func (m *Module) CICommands(config ecosystem.ModuleConfig) []ecosystem.CICommand
 		},
 		{
 			Name:        "container-build",
-			Command:     buildCmd + " build --no-cache .",
+			Command:     buildCmd + " build --no-cache -t " + ciImageTag + " .",
 			Description: "Build container image without layer cache to verify reproducibility",
 			Phase:       ecosystem.CIPhaseScan,
 		},
 		{
+			// Scans the image built above by its tag. The "newest image"
+			// was ambiguous, and cosign verification is left to the
+			// pipeline that signs and pushes: a local build has no signature.
 			Name:        "syft-sbom",
-			Command:     fmt.Sprintf("syft scan $(%s images -q | head -1) -o spdx-json=sbom.spdx.json", imgCmd),
-			Description: "Generate SPDX SBOM from container image with Syft",
+			Command:     fmt.Sprintf("syft scan %s:%s -o spdx-json=sbom.spdx.json", imgSource, ciImageTag),
+			Description: "Generate SPDX SBOM from the built container image with Syft",
 			Phase:       ecosystem.CIPhaseScan,
 		},
 		{
 			Name:        "grype-scan",
 			Command:     "grype sbom:sbom.spdx.json --fail-on high",
 			Description: "Scan SBOM for vulnerabilities with Grype",
-			Phase:       ecosystem.CIPhaseScan,
-		},
-		{
-			Name:        "cosign-verify",
-			Command:     fmt.Sprintf("cosign verify --key cosign.pub $(%s images --format '{{.Repository}}:{{.Tag}}' | head -1)", imgCmd),
-			Description: "Verify container image signature with cosign",
 			Phase:       ecosystem.CIPhaseScan,
 		},
 	}
@@ -311,9 +366,9 @@ func (m *Module) WizardFields() []ecosystem.WizardField {
 		{
 			Key:         "trusted_registries",
 			Label:       "Trusted container registries",
-			Description: "Comma-separated list of container registries to trust in hadolint",
+			Description: "Comma-separated list of container registries to trust in hadolint; leave empty for docker.io, gcr.io and ghcr.io",
 			Type:        ecosystem.FieldTypeInput,
-			Default:     "docker.io,gcr.io,ghcr.io",
+			Placeholder: "docker.io,ghcr.io,registry.example.com",
 		},
 	}
 }

@@ -37,7 +37,7 @@ var knownServers = map[string]McpServerInfo{
 	},
 	"postgres": {
 		Name:           "postgres",
-		Command:        "npx",
+		Command:        "uvx",
 		IsLocalBinary:  false,
 		OfflineCapable: true,
 	},
@@ -64,4 +64,28 @@ var knownServers = map[string]McpServerInfo{
 func KnownServerInfo(name string) (McpServerInfo, bool) {
 	info, ok := knownServers[name]
 	return info, ok
+}
+
+// ResolveServerInfo returns the server description to score for name. The
+// configured definition (the project's .mcp.json entry) is authoritative for
+// what actually runs. The known-server database contributes its trust signals
+// only when the configured command matches the known server's command, so a
+// different server cannot inherit a known server's trust by reusing its name.
+// A server with no configured definition carries no trust signals and scores
+// into the fallback tier.
+func ResolveServerInfo(name string, configured *McpServerInfo) McpServerInfo {
+	if configured == nil {
+		return McpServerInfo{Name: name}
+	}
+
+	info := *configured
+	info.Name = name
+	if known, ok := KnownServerInfo(name); ok && known.Command == configured.Command {
+		known.Name = name
+		known.Args = configured.Args
+		known.Env = configured.Env
+		known.Transport = configured.Transport
+		info = known
+	}
+	return info
 }

@@ -35,7 +35,12 @@ func (d *Dnf) cmd() string {
 	return "yum"
 }
 
+// InstallArgs returns the command Install runs, without sudo.
+func (d *Dnf) InstallArgs(packages ...string) (string, []string) {
+	return d.cmd(), append([]string{"install", "-y"}, packages...)
+}
+
 func (d *Dnf) Install(ctx context.Context, packages ...string) error {
-	args := append([]string{"install", "-y"}, packages...)
-	return d.runner.Run(ctx, d.cmd(), args...)
+	bin, args := d.InstallArgs(packages...)
+	return d.runner.Run(ctx, bin, args...)
 }

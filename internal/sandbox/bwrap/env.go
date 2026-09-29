@@ -17,6 +17,8 @@ var allowedExact = map[string]bool{
 	"NODE_PATH":          true,
 	"PYTHONPATH":         true,
 	"GOPATH":             true,
+	"GOMODCACHE":         true,
+	"GOROOT":             true,
 	"RUSTUP_HOME":        true,
 	"CARGO_HOME":         true,
 	"XDG_CACHE_HOME":     true,
@@ -27,7 +29,14 @@ var allowedExact = map[string]bool{
 }
 
 // allowedPrefixes lists name prefixes that are always permitted.
+// FILE_BOUNDARY_ and TOOL_GATES_ carry the file-boundary and tool-gates
+// hooks' policy (settings.json "env"), which a sandboxed hook must still
+// receive: stripped, the tool gates would allow every tool. With GOMODCACHE
+// and GOROOT above, FILE_BOUNDARY_ tells the hook which dependency sources it
+// may let the agent read.
 var allowedPrefixes = []string{
+	"FILE_BOUNDARY_",
+	"TOOL_GATES_",
 	"LC_",
 	"GIT_DIR",
 	"GIT_WORK_TREE",
@@ -57,9 +66,13 @@ var deniedSuffixes = []string{
 	"_CREDENTIALS",
 }
 
-// FilterEnvironment returns a copy of env containing only the variables
-// permitted for the given hook category. Credential patterns are always
-// stripped, even when a variable matches the allowlist.
+// FilterEnvironment returns a copy of env containing only allowlisted
+// variables. Credential patterns are always stripped, even when a variable
+// matches the allowlist. Every hook category currently gets the same
+// allowlist; the category parameter is reserved for per-category additions.
+// The result is never nil, but callers must still pass it to exec.Cmd.Env
+// through sandbox.EnvList: an empty map rendered as a nil Env would make the
+// hook inherit the full parent environment.
 func FilterEnvironment(env map[string]string, _ sandbox.HookCategory) map[string]string {
 	out := make(map[string]string, len(env))
 	for k, v := range env {

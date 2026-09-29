@@ -1,6 +1,8 @@
 package types_test
 
 import (
+	"fmt"
+	"slices"
 	"sort"
 	"strings"
 	"testing"
@@ -233,18 +235,55 @@ func TestFragmentLedgerEntry_YAMLRoundTrip(t *testing.T) {
 	}
 }
 
-func TestFragmentEntry_SortKey_OverflowPriority(t *testing.T) {
+func TestFragmentEntry_SortKey_ClampsOutOfRangePriority(t *testing.T) {
 	t.Parallel()
 
-	f := types.FragmentEntry{
-		Source:   "test",
-		Target:   "file.txt",
-		Priority: types.PriorityCeiling + 1,
+	tests := []struct {
+		name     string
+		priority int
+		want     string
+	}{
+		{"above ceiling clamps to ceiling", types.PriorityCeiling + 1, "file.txt|00000|test|"},
+		{"negative clamps to zero", -1, "file.txt|99999|test|"},
 	}
-	key := f.SortKey()
-	// Priority > PriorityCeiling produces a negative inverted value in the sort
-	// key, causing such fragments to sort before all valid-priority fragments.
-	if !strings.Contains(key, "-") {
-		t.Fatalf("expected negative value in sort key for overflow priority, got %q", key)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			f := types.FragmentEntry{Source: "test", Target: "file.txt", Priority: tt.priority}
+			if got := f.SortKey(); got != tt.want {
+				t.Errorf("SortKey() = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
+// TestCompareFragments asserts priority, not source name, decides which
+// fragment for a target sorts first, and that negative priorities rank lowest.
+func TestCompareFragments(t *testing.T) {
+	t.Parallel()
+
+	entries := []types.FragmentEntry{
+		{Source: "alpha", Target: "f", Priority: 1},
+		{Source: "mid", Target: "f", Priority: -1},
+		{Source: "mid", Target: "f", Priority: 0},
+		{Source: "zeta", Target: "f", Priority: 5000},
+		{Source: "claudecode", Target: "f", Priority: types.PriorityGeneratorDefault},
+		{Source: "aaa", Target: "e", Priority: 1},
+	}
+	slices.SortStableFunc(entries, types.CompareFragments)
+
+	var got []string
+	for _, e := range entries {
+		got = append(got, fmt.Sprintf("%s:%s:%d", e.Target, e.Source, e.Priority))
+	}
+	want := []string{"e:aaa:1", "f:zeta:5000", "f:claudecode:1000", "f:alpha:1", "f:mid:0", "f:mid:-1"}
+	if !slices.Equal(got, want) {
+		t.Errorf("sorted = %v, want %v", got, want)
+	}
+
+	// SortKey agrees with CompareFragments for in-range priorities.
+	inRange := slices.DeleteFunc(slices.Clone(entries), func(e types.FragmentEntry) bool { return e.Priority < 0 })
+	if !slices.IsSortedFunc(inRange, func(a, b types.FragmentEntry) int { return strings.Compare(a.SortKey(), b.SortKey()) }) {
+		t.Errorf("SortKey order disagrees with CompareFragments for %v", got)
 	}
 }

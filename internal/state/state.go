@@ -37,11 +37,29 @@ func RecordFiles(files []types.GeneratedFile) types.GeneratedState {
 			Owner:    f.Owner,
 		}
 		if f.Strategy == types.ThreeWayMerge {
+			// The merge base is what the generator produced ("ours"), which
+			// differs from Content when a merge preserved user additions.
 			fs.BaseContent = f.Content
+			if f.BaseContent != nil {
+				fs.BaseContent = f.BaseContent
+			}
 		}
 		state.Files[f.Path] = fs
 	}
 	return state
+}
+
+// IsRecordedOutput reports whether content is exactly what one of states
+// recorded for relPath, i.e. a file on disk holding it is unmodified qsdev
+// output that may be regenerated in place rather than a file the user owns.
+func IsRecordedOutput(states []types.GeneratedState, relPath string, content []byte) bool {
+	hash := ComputeHash(content)
+	for _, st := range states {
+		if recorded, ok := st.Files[relPath]; ok && recorded.Hash == hash {
+			return true
+		}
+	}
+	return false
 }
 
 // OrphanedFiles returns paths that exist in oldState but are not present in
@@ -99,7 +117,10 @@ func CheckModified(stored types.GeneratedState, projectRoot string) map[string]F
 		status.CurrentHash = hash
 
 		hashMatch := hash == fs.Hash
-		modeMatch := runtime.GOOS == "windows" || info.Mode().Perm() == fs.Mode.Perm()
+		// A zero stored mode means the mode was never recorded (legacy state or a
+		// generator that relied on the pipeline default), so only the hash can
+		// be compared.
+		modeMatch := runtime.GOOS == "windows" || fs.Mode == 0 || info.Mode().Perm() == fs.Mode.Perm()
 
 		switch {
 		case hashMatch && modeMatch:

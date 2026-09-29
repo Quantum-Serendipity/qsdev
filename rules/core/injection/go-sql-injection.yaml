@@ -12,12 +12,20 @@ rules:
       - pattern: $R.URL.Query().Get(...)
       - pattern: $R.FormValue(...)
       - pattern: $R.PostFormValue(...)
+    # Sinks match any arity (bind arguments may follow the query) and focus on
+    # the query argument itself, so a tainted bind argument is not a finding.
     pattern-sinks:
-      - pattern: $DB.Query($QUERY)
-      - pattern: $DB.QueryRow($QUERY)
-      - pattern: $DB.Exec($QUERY)
-      - pattern: $DB.QueryContext($CTX, $QUERY)
-      - pattern: $DB.ExecContext($CTX, $QUERY)
+      - patterns:
+          - pattern-either:
+              - pattern: $DB.Query($QUERY, ...)
+              - pattern: $DB.QueryRow($QUERY, ...)
+              - pattern: $DB.Exec($QUERY, ...)
+              - pattern: $DB.Prepare($QUERY)
+              - pattern: $DB.QueryContext($CTX, $QUERY, ...)
+              - pattern: $DB.QueryRowContext($CTX, $QUERY, ...)
+              - pattern: $DB.ExecContext($CTX, $QUERY, ...)
+              - pattern: $DB.PrepareContext($CTX, $QUERY)
+          - focus-metavariable: $QUERY
     pattern-sanitizers:
       - pattern: strconv.Atoi(...)
       - pattern: strconv.ParseInt(...)
@@ -46,9 +54,12 @@ rules:
       - pattern: $R.FormValue(...)
       - pattern: $R.PostFormValue(...)
     pattern-sinks:
-      - pattern: $DB.Raw($QUERY)
-      - pattern: $DB.Exec($QUERY)
-      - pattern: $DB.Where($QUERY)
+      - patterns:
+          - pattern-either:
+              - pattern: $DB.Raw($QUERY, ...)
+              - pattern: $DB.Exec($QUERY, ...)
+              - pattern: $DB.Where($QUERY, ...)
+          - focus-metavariable: $QUERY
     pattern-sanitizers:
       - pattern: strconv.Atoi(...)
       - pattern: strconv.ParseInt(...)
@@ -73,15 +84,25 @@ rules:
       with proper binding, or use an ORM with parameterized methods.
     mode: taint
     pattern-sources:
-      - pattern: $C.Query(...)
-      - pattern: $C.Param(...)
-      - pattern: $C.PostForm(...)
-      - pattern: $C.DefaultQuery(...)
+      # Typed so that database handles (db.Query(...)) and net/url values
+      # (r.URL.Query()) are not mistaken for gin request input.
+      - pattern: "($C : *gin.Context).Query(...)"
+      - pattern: "($C : *gin.Context).Param(...)"
+      - pattern: "($C : *gin.Context).PostForm(...)"
+      - pattern: "($C : *gin.Context).DefaultQuery(...)"
     pattern-sinks:
-      - pattern: $DB.Query($QUERY)
-      - pattern: $DB.QueryRow($QUERY)
-      - pattern: $DB.Exec($QUERY)
-      - pattern: $DB.Raw($QUERY)
+      - patterns:
+          - pattern-either:
+              - pattern: $DB.Query($QUERY, ...)
+              - pattern: $DB.QueryRow($QUERY, ...)
+              - pattern: $DB.Exec($QUERY, ...)
+              - pattern: $DB.Raw($QUERY, ...)
+              - pattern: $DB.QueryContext($CTX, $QUERY, ...)
+              - pattern: $DB.QueryRowContext($CTX, $QUERY, ...)
+              - pattern: $DB.ExecContext($CTX, $QUERY, ...)
+          # gin's own c.Query("name") reads input; it is not a SQL sink.
+          - pattern-not: "($GC : *gin.Context).Query(...)"
+          - focus-metavariable: $QUERY
     pattern-sanitizers:
       - pattern: strconv.Atoi(...)
       - pattern: strconv.ParseInt(...)

@@ -2,11 +2,14 @@ package devinit
 
 import (
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"runtime"
 	"strings"
 	"testing"
+
+	"github.com/Quantum-Serendipity/qsdev/addons/devenv"
 )
 
 // --- Helpers ---
@@ -39,6 +42,29 @@ func requireFileContains(t *testing.T, dir, relPath, substr string) {
 	content := readFileContent(t, dir, relPath)
 	if !strings.Contains(content, substr) {
 		t.Errorf("file %s does not contain %q (len=%d)", relPath, substr, len(content))
+	}
+}
+
+// devenvDefines reports whether devenv.nix content defines the attribute
+// path (or an attribute below it), however the definitions are nested.
+func devenvDefines(t *testing.T, content, path string) bool {
+	t.Helper()
+	attrs, err := devenv.NixModuleAttrs(content)
+	if err != nil {
+		t.Fatalf("parsing devenv.nix: %v", err)
+	}
+	for k := range attrs {
+		if k == path || strings.HasPrefix(k, path+".") {
+			return true
+		}
+	}
+	return false
+}
+
+func requireDevenvAttr(t *testing.T, dir, path string) {
+	t.Helper()
+	if !devenvDefines(t, readFileContent(t, dir, "devenv.nix"), path) {
+		t.Errorf("devenv.nix does not define %s", path)
 	}
 }
 
@@ -151,7 +177,6 @@ func TestIntegration_EmptyDir_GoWebProfile(t *testing.T) {
 	requireFileExists(t, dir, ".devinit/.qsdev-init-state.yaml")
 	requireFileExists(t, dir, ".devinit/.qsdev-init-answers.yaml")
 	requireFileExists(t, dir, ".devenv/.qsdev-answers.yaml")
-	requireFileExists(t, dir, ".claude/.qsdev-claude-answers.yaml")
 
 	// Content spot-checks.
 	requireFileContains(t, dir, "devenv.nix", "go")
@@ -496,7 +521,7 @@ func TestIntegration_NodeDetection(t *testing.T) {
 		t.Fatalf("init failed: %v\nOutput: %s", err, output)
 	}
 	requireFileExists(t, dir, "devenv.nix")
-	requireFileContains(t, dir, "devenv.nix", "languages.javascript")
+	requireDevenvAttr(t, dir, "languages.javascript")
 }
 
 func TestIntegration_PythonDetection(t *testing.T) {
@@ -506,7 +531,7 @@ func TestIntegration_PythonDetection(t *testing.T) {
 		t.Fatalf("init failed: %v\nOutput: %s", err, output)
 	}
 	requireFileExists(t, dir, "devenv.nix")
-	requireFileContains(t, dir, "devenv.nix", "languages.python")
+	requireDevenvAttr(t, dir, "languages.python")
 }
 
 func TestIntegration_PolyglotDetection(t *testing.T) {
@@ -516,8 +541,8 @@ func TestIntegration_PolyglotDetection(t *testing.T) {
 		t.Fatalf("init failed: %v\nOutput: %s", err, output)
 	}
 	requireFileExists(t, dir, "devenv.nix")
-	requireFileContains(t, dir, "devenv.nix", "languages.go")
-	requireFileContains(t, dir, "devenv.nix", "languages.javascript")
+	requireDevenvAttr(t, dir, "languages.go")
+	requireDevenvAttr(t, dir, "languages.javascript")
 }
 
 func TestIntegration_PolyglotDetection_NoDuplicatePackages(t *testing.T) {
@@ -539,10 +564,10 @@ func TestIntegration_PolyglotDetection_NoDuplicatePackages(t *testing.T) {
 			t.Errorf("devenv.nix missing container package %q", pkg)
 		}
 	}
-	if !strings.Contains(devenvNix, "languages.go") {
+	if !devenvDefines(t, devenvNix, "languages.go") {
 		t.Error("devenv.nix missing Go language configuration")
 	}
-	if !strings.Contains(devenvNix, "languages.javascript") {
+	if !devenvDefines(t, devenvNix, "languages.javascript") {
 		t.Error("devenv.nix missing JavaScript language configuration")
 	}
 }
@@ -553,7 +578,7 @@ func TestIntegration_CrossFileConsistency_Go(t *testing.T) {
 	if err != nil {
 		t.Fatalf("init failed: %v", err)
 	}
-	requireFileContains(t, dir, "devenv.nix", "languages.go")
+	requireDevenvAttr(t, dir, "languages.go")
 	requireFileExists(t, dir, "CLAUDE.md")
 	assertValidJSON(t, dir, ".claude/settings.json")
 	requireFileExists(t, dir, ".claude/rules/go-conventions.md")
@@ -600,6 +625,33 @@ func TestIntegration_AllProfiles_Smoke(t *testing.T) {
 			requireFileExists(t, dir, "devenv.nix")
 			requireFileExists(t, dir, ".claude/settings.json")
 			assertValidJSON(t, dir, ".claude/settings.json")
+		})
+	}
+}
+
+// TestIntegration_JavaWebProfile_Gradle verifies the shipped java-web profile
+// ("Java 21 (Gradle)", encoded as package_manager: gradle) actually yields a
+// Gradle environment: gradle enabled in devenv.nix, the Gradle hardening file
+// and the Gradle deny rules. The profile used to produce a JDK-only shell.
+func TestIntegration_JavaWebProfile_Gradle(t *testing.T) {
+	for _, withBuildFile := range []bool{true, false} {
+		t.Run(fmt.Sprintf("build.gradle.kts=%v", withBuildFile), func(t *testing.T) {
+			dir := t.TempDir()
+			if withBuildFile {
+				if err := os.WriteFile(filepath.Join(dir, "build.gradle.kts"), []byte("plugins { java }\n"), 0o644); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if _, err := executeInitCmd(t, dir, "--profile", "java-web", "--yes"); err != nil {
+				t.Fatalf("init --profile java-web failed: %v", err)
+			}
+			if nix := readFileContent(t, dir, "devenv.nix"); !strings.Contains(nix, "gradle.enable = true") {
+				t.Errorf("devenv.nix does not enable gradle:\n%s", nix)
+			}
+			requireFileExists(t, dir, "gradle.properties")
+			if settings := readFileContent(t, dir, ".claude/settings.json"); !strings.Contains(settings, "./gradlew dependencies") {
+				t.Error("settings.json lacks the Gradle deny rules")
+			}
 		})
 	}
 }

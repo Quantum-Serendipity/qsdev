@@ -182,3 +182,43 @@ func TestRenderBadge_ColorBoundaryValues(t *testing.T) {
 		}
 	}
 }
+
+// TestRenderBadge_ConformanceVariant pins F328: a baseline that is unknown
+// because the dependencies were not scanned never reads "baseline PASS".
+func TestRenderBadge_ConformanceVariant(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name      string
+		baseline  posture.ConformanceLevel
+		enhanced  posture.ConformanceLevel
+		wantMsg   string
+		wantColor string
+	}{
+		{"enhanced pass", posture.ConformanceLevel{Pass: true, Status: posture.CheckPass},
+			posture.ConformanceLevel{Pass: true, Status: posture.CheckPass}, "enhanced PASS", "brightgreen"},
+		{"baseline pass", posture.ConformanceLevel{Pass: true, Status: posture.CheckPass},
+			posture.ConformanceLevel{Status: posture.CheckFail}, "baseline PASS", "green"},
+		{"baseline unknown", posture.ConformanceLevel{Status: posture.CheckUnknown},
+			posture.ConformanceLevel{Status: posture.CheckUnknown}, "baseline UNKNOWN", "lightgrey"},
+		{"baseline fail", posture.ConformanceLevel{Status: posture.CheckFail},
+			posture.ConformanceLevel{Status: posture.CheckFail}, "baseline FAIL", "red"},
+		{"legacy baseline fail", posture.ConformanceLevel{}, posture.ConformanceLevel{}, "baseline FAIL", "red"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			report := &posture.PostureReport{Conformance: posture.ConformanceResult{Baseline: tt.baseline, Enhanced: tt.enhanced}}
+			data, err := RenderBadge(report, "conformance")
+			if err != nil {
+				t.Fatal(err)
+			}
+			var got BadgeJSON
+			if err := json.Unmarshal(data, &got); err != nil {
+				t.Fatal(err)
+			}
+			if got.Message != tt.wantMsg || got.Color != tt.wantColor {
+				t.Errorf("badge = %q/%q, want %q/%q", got.Message, got.Color, tt.wantMsg, tt.wantColor)
+			}
+		})
+	}
+}

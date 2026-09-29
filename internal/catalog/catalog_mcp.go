@@ -36,3 +36,24 @@ func (c *Catalog) DefaultMCPServers() []string {
 	copy(out, c.derivations.DefaultMCPServers)
 	return out
 }
+
+// --- Bootstrap tool accessors ---
+
+// BootstrapToolClaudeCode is the bootstrap_tools entry that pins the Claude
+// Code release the machine bootstrap and `devenv setup` install.
+const BootstrapToolClaudeCode = "claude-code"
+
+// BootstrapToolDevenv and BootstrapToolDirenv are the bootstrap_tools
+// entries that pin the devenv and direnv the machine bootstrap and `devenv
+// setup` install with `nix profile install`.
+const (
+	BootstrapToolDevenv = "devenv"
+	BootstrapToolDirenv = "direnv"
+)
+
+// BootstrapTool returns the pinned install definition of a tool the qsdev
+// bootstrap installs, such as "claude-code".
+func (c *Catalog) BootstrapTool(name string) (BootstrapToolDef, bool) {
+	d, ok := c.bootstrapTools[name]
+	return d, ok
+}

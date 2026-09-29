@@ -19,8 +19,9 @@ import (
 	"github.com/Quantum-Serendipity/qsdev/pkg/types"
 )
 
-// Compile-time interface compliance check.
+// Compile-time interface compliance checks.
 var _ ecosystem.EcosystemModule = (*Module)(nil)
+var _ ecosystem.DenyRuleProvider = (*Module)(nil)
 
 func init() {
 	ecosystem.MustRegisterModule(&Module{})
@@ -141,17 +142,42 @@ func (m *Module) PreCommitHooks(_ ecosystem.ModuleConfig) []ecosystem.HookConfig
 // These prevent direct LuaRocks package installation outside of controlled workflows.
 func (m *Module) DenyRules(_ ecosystem.ModuleConfig) []string {
 	return []string{
-		"Bash(luarocks install *)",
+		// Glob on both sides of the subcommand so global flags placed before
+		// it (`luarocks --local install foo`) are covered too.
+		"Bash(luarocks *install*)",
+		// luarocks build <rock> fetches and installs like install does.
+		"Bash(luarocks *build*)",
+		// Lux (lux.toml) adds and installs dependencies with lx.
+		"Bash(lx *add *)",
+		"Bash(lx *install*)",
 	}
 }
 
-// CICommands returns CI pipeline commands for the Lua ecosystem.
-func (m *Module) CICommands(_ ecosystem.ModuleConfig) []ecosystem.CICommand {
+// luarocksInstallDeps installs the dependencies of every root rockspec.
+// `luarocks install --only-deps` needs the rockspec as its operand, and takes
+// only one, so the command loops over them. No rockspec (the glob stays
+// unexpanded) fails the step rather than passing it with nothing installed.
+const luarocksInstallDeps = `for rockspec in ./*.rockspec; do
+  if [ ! -f "$rockspec" ]; then
+    echo "no *.rockspec in the project root to install dependencies from" >&2
+    exit 1
+  fi
+  luarocks install --local --only-deps "$rockspec" || exit 1
+done`
+
+// CICommands returns CI pipeline commands for the Lua ecosystem. Only a
+// LuaRocks project (a root *.rockspec, which detection records as the
+// luarocks package manager) gets a dependency install. Lux projects get none,
+// since the module does not provision the lx CLI.
+func (m *Module) CICommands(config ecosystem.ModuleConfig) []ecosystem.CICommand {
+	if config.PM("") != "luarocks" {
+		return nil
+	}
 	return []ecosystem.CICommand{
 		{
 			Name:        "luarocks-install-deps",
-			Command:     "luarocks install --local --only-deps",
-			Description: "Install Lua dependencies locally from rockspec",
+			Command:     luarocksInstallDeps,
+			Description: "Install Lua dependencies locally from the project rockspecs",
 			Phase:       ecosystem.CIPhaseInstall,
 		},
 	}
@@ -163,14 +189,12 @@ func (m *Module) CICommands(_ ecosystem.ModuleConfig) []ecosystem.CICommand {
 func (m *Module) PackageManagers() []ecosystem.PackageManagerInfo {
 	return []ecosystem.PackageManagerInfo{
 		{
-			Name:             "luarocks",
-			LockFile:         "",
-			AgeGatingSupport: false,
+			Name:     "luarocks",
+			LockFile: "",
 		},
 		{
-			Name:             "lux",
-			LockFile:         "lux.lock",
-			AgeGatingSupport: false,
+			Name:     "lux",
+			LockFile: "lux.lock",
 		},
 	}
 }
@@ -179,4 +203,17 @@ func (m *Module) PackageManagers() []ecosystem.PackageManagerInfo {
 // verification commands at the module level.
 func (m *Module) VerificationCommands(_ ecosystem.ModuleConfig) ecosystem.VerificationCommands {
 	return ecosystem.VerificationCommands{}
+}
+
+// Compile-time check that the Lua module declares its manifests.
+var _ ecosystem.ManifestFileProvider = (*Module)(nil)
+
+// ManifestFiles declares the Lua manifests so Version-Sentinel coverage
+// reports list them as uncovered instead of omitting them. Lux pins
+// dependencies in lux.lock; LuaRocks rockspecs have no lock file.
+func (m *Module) ManifestFiles(_ ecosystem.ModuleConfig) []ecosystem.ManifestFileInfo {
+	return []ecosystem.ManifestFileInfo{
+		{Path: "lux.toml", Ecosystem: "lux", LockFile: "lux.lock", LockFilePolicy: ecosystem.LockFilePolicyRecommended},
+		{Path: "*.rockspec", Ecosystem: "luarocks", LockFilePolicy: ecosystem.LockFilePolicyNone},
+	}
 }

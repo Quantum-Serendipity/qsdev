@@ -1,7 +1,8 @@
 package evidence
 
 // SOC2Framework returns the SOC2 Type II compliance framework definition
-// with 8 controls mapped to qsdev's defense-in-depth layers.
+// with 6 controls mapped to qsdev's defense-in-depth layers. Control IDs are
+// the 2017 Trust Services Criteria (revised 2022) common criteria.
 func SOC2Framework() Framework {
 	return Framework{
 		ID:          "soc2",
@@ -97,17 +98,21 @@ func soc2Controls() []ControlDefinition {
 			},
 		},
 		{
-			ID:       "CC7.2",
-			Name:     "Monitoring of System Components",
-			Desc:     "The entity monitors system components and the operation of those components for anomalies that are indicative of malicious acts.",
-			Category: "Monitoring",
-			Layers:   []LayerMapping{},
+			ID:                  "CC7.2",
+			Name:                "Monitoring of System Components",
+			Desc:                "The entity monitors system components and the operation of those components for anomalies that are indicative of malicious acts.",
+			Category:            "Monitoring",
+			Layers:              []LayerMapping{},
 			NotApplicableReason: "",
 		},
+		// CC8.1 is the only Change Management criterion in the 2017 TSC
+		// (revised 2022). Configuration baselines and change testing are
+		// points of focus of CC8.1, not separate criteria, so they are mapped
+		// here as supporting layers.
 		{
 			ID:       "CC8.1",
 			Name:     "Change Management Process",
-			Desc:     "The entity authorizes, designs, develops or acquires, configures, documents, tests, approves, and implements changes to infrastructure and software.",
+			Desc:     "The entity authorizes, designs, develops or acquires, configures, documents, tests, approves, and implements changes to infrastructure, data, software, and procedures to meet its objectives.",
 			Category: "Change Management",
 			Layers: []LayerMapping{
 				{
@@ -120,36 +125,20 @@ func soc2Controls() []ControlDefinition {
 					Relevance:   "supporting",
 					Description: "PreToolUse hooks enforce change authorization policies for AI agent operations, preventing unauthorized modifications.",
 				},
-			},
-		},
-		{
-			ID:       "CC8.2",
-			Name:     "Configuration Management",
-			Desc:     "The entity establishes a process for the identification, documentation, and approval of system configuration changes.",
-			Category: "Change Management",
-			Layers: []LayerMapping{
 				{
 					LayerName:   "nix-hardening",
-					Relevance:   "primary",
-					Description: "Nix-based configuration management provides reproducible, declarative system configuration with full audit trail.",
+					Relevance:   "supporting",
+					Description: "Nix-based configuration management provides a reproducible, declarative baseline configuration whose changes are tracked in version control (point of focus: creates baseline configuration).",
 				},
-			},
-		},
-		{
-			ID:       "CC8.3",
-			Name:     "Testing of Changes",
-			Desc:     "The entity tests changes to meet objectives before moving changes to production.",
-			Category: "Change Management",
-			Layers: []LayerMapping{
 				{
 					LayerName:   "sast",
-					Relevance:   "primary",
-					Description: "SAST provides automated code analysis as part of the change testing process, catching security issues before deployment.",
+					Relevance:   "supporting",
+					Description: "SAST provides automated code analysis as part of the change testing process, catching security issues before deployment (point of focus: tests system changes).",
 				},
 				{
 					LayerName:   "vulnerability-scanning",
 					Relevance:   "supporting",
-					Description: "Vulnerability scanning validates that dependency changes do not introduce known security issues.",
+					Description: "Vulnerability scanning validates that dependency changes do not introduce known security issues (point of focus: tests system changes).",
 				},
 			},
 		},

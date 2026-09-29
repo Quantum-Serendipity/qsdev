@@ -1,6 +1,8 @@
 package fileutil
 
 import (
+	"errors"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -147,5 +149,35 @@ func TestCopyFileEmptyFile(t *testing.T) {
 	}
 	if info.Size() != 0 {
 		t.Errorf("destination size = %d, want 0", info.Size())
+	}
+}
+
+func TestCopyFileExclusive_NeverOverwrites(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	src := filepath.Join(dir, "src.txt")
+	dst := filepath.Join(dir, "dst.txt")
+	if err := os.WriteFile(src, []byte("new"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := CopyFileExclusive(src, dst, 0o644); err != nil {
+		t.Fatalf("first copy: %v", err)
+	}
+	if err := os.WriteFile(src, []byte("newer"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	err := CopyFileExclusive(src, dst, 0o644)
+	if !errors.Is(err, fs.ErrExist) {
+		t.Fatalf("second copy error = %v, want fs.ErrExist", err)
+	}
+	got, err := os.ReadFile(dst)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(got) != "new" {
+		t.Errorf("destination = %q, want the original %q", got, "new")
 	}
 }

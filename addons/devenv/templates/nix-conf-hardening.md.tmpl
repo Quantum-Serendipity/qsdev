@@ -22,7 +22,7 @@
 | `sandbox-fallback` | `false` | Fail loudly if sandbox unavailable |
 | `require-sigs` | `true` | Reject unsigned binary cache paths |
 | `trusted-users` | `root` | No non-root trusted users |
-| `allowed-users` | `@wheel` | Restrict daemon access |
+| `allowed-users` | `root` + your admin group or user | Restrict daemon access |
 | `trusted-substituters` | (see below) | Scoped cache trust |
 | `trusted-public-keys` | (see below) | Cache signing key trust |
 | `accept-flake-config` | `false` | Reject flake nixConfig overrides |
@@ -118,16 +118,18 @@ trusted-public-keys = devenv.cachix.org-1:w1cLUi8dv3hnoSPGAuibQv+f9TZLr6cv/Hm9Xg
 
 This grants scoped cache access without granting any other elevated privileges.
 
-### 4. allowed-users = @wheel
+### 4. allowed-users
 
 `allowed-users` controls which local users can connect to the Nix daemon's Unix domain
 socket. Users not in this list cannot use Nix at all. The default `allowed-users = *`
 lets any local user build arbitrary Nix expressions, consuming shared CPU, disk, and
 network resources.
 
-Set `allowed-users = root @wheel` on shared systems. For a single-user workstation,
-`allowed-users = root <your-username>` is sufficient. Users not in the list get a daemon
-connection error when running any Nix command.
+Set `allowed-users = root <your-username>` on a single-user workstation, or `root` plus
+the group that holds your developers on a shared system. The administrator group differs
+per OS: `@wheel` on NixOS, Fedora and Arch, `@sudo` on Debian and Ubuntu, and `@admin` on
+macOS. Users not in the list get a daemon connection error when running any Nix command,
+so check `id -Gn` before restarting the daemon.
 
 ### 5. trusted-substituters and trusted-public-keys
 
@@ -194,6 +196,13 @@ access during evaluation to URIs matching prefixes in `allowed-uris`.
 Without `restrict-eval`, a malicious `.nix` file can read any file the user can read
 (`builtins.readFile "/etc/shadow"`) and fetch arbitrary URLs to exfiltrate data during
 evaluation.
+
+`restrict-eval` and `allowed-uris` are **evaluator** settings. Evaluation runs in the
+client process (`nix`, `devenv`), not in the daemon, so whoever invokes the evaluator
+decides them: `NIX_CONFIG`, `~/.config/nix/nix.conf` or `--option restrict-eval false`
+turns the restriction off again. Setting them in `/etc/nix/nix.conf` protects a CI
+runner only when the harness fixes the command line and environment, and untrusted code
+cannot run its own `nix` invocation or set `NIX_CONFIG`.
 
 **WARNING: Not recommended for developer workstations.** `restrict-eval` breaks many
 common workflows: fetching new flake inputs, `nix-shell -p`, and devenv.sh's own
@@ -269,7 +278,10 @@ Place in `/etc/nixos/configuration.nix` or a dedicated `nix-hardening.nix` impor
 ## Standalone nix.conf
 
 For non-NixOS Linux and macOS. Place at `/etc/nix/nix.conf` (requires root/admin access).
-After editing, restart the daemon: `systemctl restart nix-daemon`.
+Replace `<your-username>` in `allowed-users` with your login (or your admin group: `@sudo`
+on Debian/Ubuntu, `@wheel` on Fedora/Arch, `@admin` on macOS); a user missing from the
+list cannot use Nix at all. After editing, restart the daemon: `sudo systemctl restart
+nix-daemon` on Linux, `sudo launchctl kickstart -k system/org.nixos.nix-daemon` on macOS.
 
 ```ini
 # /etc/nix/nix.conf -- Hardened configuration for devenv.sh security
@@ -284,7 +296,7 @@ require-sigs = true
 
 # User trust model
 trusted-users = root
-allowed-users = root @nixbld @wheel
+allowed-users = root <your-username>
 
 # Binary cache allowlist
 substituters = https://cache.nixos.org
@@ -313,7 +325,6 @@ daemon-enforced security policies**.
 **Settings that work per-user:**
 - `extra-substituters` -- request additional caches (only honored if URL is in system
   `trusted-substituters`)
-- `extra-trusted-public-keys` -- add verification keys
 - `accept-flake-config` -- client-side flake config acceptance
 - `warn-dirty` -- warn on dirty Git trees
 - `experimental-features` -- enable nix-command, flakes
@@ -324,8 +335,14 @@ daemon-enforced security policies**.
 - `allowed-users` -- daemon policy
 - `require-sigs` -- daemon enforces signature verification
 - `filter-syscalls` -- daemon policy for build processes
-- `restrict-eval`, `allowed-uris` -- daemon-enforced evaluation restrictions
 - `trusted-substituters` -- admin-only cache pre-approval
+- `trusted-public-keys`, `extra-trusted-public-keys` -- the daemon ignores keys sent by
+  untrusted users; add signing keys to the system `trusted-public-keys` instead
+
+**Evaluator settings (client-side, NOT enforced by the daemon):**
+- `restrict-eval`, `allowed-uris`, `pure-eval` -- evaluation happens in the client, so a
+  user's own nix.conf, `NIX_CONFIG` or `--option` can turn these off. They protect only
+  where the invocation and environment are fixed (see restrict-eval above).
 
 **Recommended per-user config:**
 
@@ -335,8 +352,10 @@ accept-flake-config = false
 experimental-features = nix-command flakes
 warn-dirty = true
 extra-substituters = https://devenv.cachix.org https://cachix.cachix.org
-extra-trusted-public-keys = devenv.cachix.org-1:w1cLUi8dv3hnoSPGAuibQv+f9TZLr6cv/Hm9XgU50cw= cachix.cachix.org-1:eWNHQldwUO7G2VkjpnjDbWwy4KQ/HNxht7H4SSoMckM=
 ```
+
+The caches' signing keys belong in the system `trusted-public-keys` (see above): the
+daemon does not accept keys from untrusted users.
 
 ## Trust Model
 
@@ -361,7 +380,12 @@ code execution on your machines.
 - [ ] Set `accept-flake-config = false`
 - [ ] Enable `filter-syscalls = true`
 - [ ] Set `connect-timeout = 10` and `download-attempts = 3`
-- [ ] Enable `restrict-eval = true` on CI/build servers only
-- [ ] Restart the Nix daemon (`systemctl restart nix-daemon`)
+- [ ] Enable `restrict-eval = true` on CI/build servers only, with a fixed invocation and
+      environment (it is a client-side setting)
+- [ ] Check `allowed-users` includes your own user or admin group before restarting
+- [ ] Restart the Nix daemon (`sudo systemctl restart nix-daemon` on Linux,
+      `sudo launchctl kickstart -k system/org.nixos.nix-daemon` on macOS)
 - [ ] Test with `devenv shell` to verify cache access works
-- [ ] Verify sandbox enforcement: `nix build --sandbox false` as your user should be ignored
+- [ ] Verify sandbox enforcement: `nix config show sandbox` prints `true`, and as your
+      (untrusted) user `nix build --option sandbox false <installable>` still builds in
+      the sandbox (the daemon warns that it ignores the setting)

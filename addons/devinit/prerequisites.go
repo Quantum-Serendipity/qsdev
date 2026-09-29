@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 
+	"github.com/Quantum-Serendipity/qsdev/internal/doctor"
 	"github.com/Quantum-Serendipity/qsdev/internal/toolcheck"
 )
 
@@ -23,54 +24,32 @@ type PrerequisiteResult struct {
 	Tools []PrerequisiteStatus
 }
 
-// CheckPrerequisites checks for required development tools on the system.
-// It checks for nix, devenv, direnv, and git.
+// CheckPrerequisites checks for the tools the devenv environment requires
+// (nix, devenv, direnv, git). The set, version flags and install hints come
+// from the doctor registry so init and "qsdev devenv doctor" always agree on
+// what is required.
 func CheckPrerequisites(ctx context.Context) PrerequisiteResult {
-	checks := []struct {
-		name        string
-		versionArg  string
-		required    bool
-		installHint string
-	}{
-		{
-			name:        "nix",
-			versionArg:  "--version",
-			required:    true,
-			installHint: "Install Nix: https://nixos.org/download.html",
-		},
-		{
-			name:        "devenv",
-			versionArg:  "version",
-			required:    true,
-			installHint: "Install devenv: https://devenv.sh/getting-started/",
-		},
-		{
-			name:        "direnv",
-			versionArg:  "version",
-			required:    true,
-			installHint: "Install direnv: https://direnv.net/docs/installation.html",
-		},
-		{
-			name:        "git",
-			versionArg:  "--version",
-			required:    true,
-			installHint: "Install git via your system package manager.",
-		},
-	}
+	checks := doctor.RequiredChecks()
 
 	result := PrerequisiteResult{
 		Tools: make([]PrerequisiteStatus, 0, len(checks)),
 	}
 
 	for _, c := range checks {
-		info := toolcheck.Detect(ctx, c.name, c.versionArg)
+		info := toolcheck.Detect(ctx, c.Binary, c.VersionFlag)
+		version := info.Version
+		if c.ParseVersion != nil && info.Output != "" {
+			if parsed := c.ParseVersion(info.Output); parsed != "" {
+				version = parsed
+			}
+		}
 		result.Tools = append(result.Tools, PrerequisiteStatus{
-			Name:        c.name,
+			Name:        c.Name,
 			Found:       info.Found,
 			Path:        info.Path,
-			Version:     info.Version,
-			Required:    c.required,
-			InstallHint: c.installHint,
+			Version:     version,
+			Required:    c.Required,
+			InstallHint: c.InstallHint,
 		})
 	}
 

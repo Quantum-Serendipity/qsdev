@@ -61,9 +61,10 @@ func runSingleCheck(ctx context.Context, tc ToolCheck, osInfo *sysinfo.OSInfo) T
 	status.Installed = true
 	status.Path = info.Path
 
-	// Parse version from raw output
-	if tc.ParseVersion != nil && info.Version != "" {
-		status.Version = tc.ParseVersion(info.Version)
+	// Parse version from the full output; some tools print it on a later
+	// line or as JSON.
+	if tc.ParseVersion != nil && info.Output != "" {
+		status.Version = tc.ParseVersion(info.Output)
 	}
 
 	// Check minimum version

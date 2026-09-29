@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -49,6 +50,7 @@ func CheckServer(ctx context.Context, cfg ServerConfig) *ServerHealth {
 	}
 
 	start := time.Now()
+	cfg = expandConfig(cfg, os.LookupEnv)
 
 	if cfg.URL != "" {
 		return checkHTTPServer(ctx, cfg, h, start)
@@ -60,10 +62,11 @@ func CheckServer(ctx context.Context, cfg ServerConfig) *ServerHealth {
 		h.Error = fmt.Sprintf("starting server: %s", err)
 		return h
 	}
-	defer proc.Close()
 
 	// The stdio transport's SendRequest cannot observe ctx cancellation, so run
 	// the shared handshake in a goroutine and enforce the deadline via select.
+	// On timeout the process is killed at once: that closes its stdout and
+	// unblocks the handshake's pending read, so neither it nor Close can hang.
 	type probeResult struct {
 		status    string
 		err       string
@@ -79,8 +82,10 @@ func CheckServer(ctx context.Context, cfg ServerConfig) *ServerHealth {
 	var r probeResult
 	select {
 	case r = <-ch:
+		defer func() { _ = proc.Close() }()
 	case <-ctx.Done():
 		r = probeResult{status: StatusUnreachable, err: "health check timed out"}
+		abandonProcess(proc)
 	}
 
 	h.Status = r.status
@@ -89,6 +94,15 @@ func CheckServer(ctx context.Context, cfg ServerConfig) *ServerHealth {
 
 	h.ResponseMs = time.Since(start).Milliseconds()
 	return h
+}
+
+// abandonProcess tears down a server whose probe missed its deadline without
+// making the caller wait. The handshake goroutine may still be blocked reading
+// a reply that never comes, so the server is killed first (its stdout then
+// reaches EOF and the read returns) and reaped in the background.
+func abandonProcess(proc *MCPProcess) {
+	proc.kill()
+	go func() { _ = proc.Close() }()
 }
 
 // CheckAll probes all servers in parallel and returns an aggregated report.
@@ -158,12 +172,32 @@ type toolsListResult struct {
 	Tools []json.RawMessage `json:"tools"`
 }
 
-func countTools(result json.RawMessage) int {
+// countTools returns the number of tools in a tools/list result. A result that
+// is not a {"tools": [...]} object is not a valid MCP reply.
+func countTools(result json.RawMessage) (int, error) {
 	var tlr toolsListResult
 	if err := json.Unmarshal(result, &tlr); err != nil {
-		return 0
+		return 0, fmt.Errorf("result is not a tools list: %w", err)
 	}
-	return len(tlr.Tools)
+	if tlr.Tools == nil {
+		return 0, errors.New("result has no tools array")
+	}
+	return len(tlr.Tools), nil
+}
+
+// checkInitializeResult requires an initialize result to name the protocol
+// version the server speaks, as every MCP InitializeResult must.
+func checkInitializeResult(result json.RawMessage) error {
+	var init struct {
+		ProtocolVersion string `json:"protocolVersion"`
+	}
+	if err := json.Unmarshal(result, &init); err != nil {
+		return fmt.Errorf("result is not an initialize result: %w", err)
+	}
+	if init.ProtocolVersion == "" {
+		return errors.New("result has no protocolVersion")
+	}
+	return nil
 }
 
 // transport is the minimal request/response surface a health probe needs. Both
@@ -173,25 +207,55 @@ type transport interface {
 	SendRequest(id int, method string, params json.RawMessage) (json.RawMessage, error)
 }
 
+// notifier is implemented by transports that can send a JSON-RPC notification
+// (a message without an id, which gets no response).
+type notifier interface {
+	Notify(method string, params json.RawMessage) error
+}
+
+// jsonRPCNotification is a JSON-RPC 2.0 notification: a request without an id.
+type jsonRPCNotification struct {
+	JSONRPC string          `json:"jsonrpc"`
+	Method  string          `json:"method"`
+	Params  json.RawMessage `json:"params,omitempty"`
+}
+
 // handshake runs the shared MCP health probe over a transport: initialize, then
 // tools/list, counting the advertised tools. Sharing it ensures the stdio and
 // HTTP probes agree on what "healthy" means — a server whose initialize succeeds
 // but whose tools/list fails is Unreachable on both transports, not just stdio.
 func handshake(t transport) (status, errMsg string, toolCount int) {
-	if _, err := t.SendRequest(1, "initialize", initializeParams); err != nil {
+	result, err := t.SendRequest(1, "initialize", initializeParams)
+	if err == nil {
+		err = checkInitializeResult(result)
+	}
+	if err != nil {
 		return StatusUnreachable, fmt.Sprintf("initialize: %s", err), 0
 	}
 
-	result, err := t.SendRequest(2, "tools/list", toolsListParams)
+	// The lifecycle requires notifications/initialized before further requests.
+	// A delivery failure is not fatal by itself: a server that needs it fails
+	// tools/list below, which is reported instead.
+	if n, ok := t.(notifier); ok {
+		_ = n.Notify("notifications/initialized", nil)
+	}
+
+	result, err = t.SendRequest(2, "tools/list", toolsListParams)
+	if err != nil {
+		return StatusUnreachable, fmt.Sprintf("tools/list: %s", err), 0
+	}
+	count, err := countTools(result)
 	if err != nil {
 		return StatusUnreachable, fmt.Sprintf("tools/list: %s", err), 0
 	}
 
-	return StatusHealthy, "", countTools(result)
+	return StatusHealthy, "", count
 }
 
 func checkHTTPServer(ctx context.Context, cfg ServerConfig, h *ServerHealth, start time.Time) *ServerHealth {
-	status, errMsg, toolCount := handshake(&httpTransport{ctx: ctx, url: cfg.URL})
+	t := &httpTransport{ctx: ctx, url: cfg.URL, headers: cfg.Headers}
+	status, errMsg, toolCount := handshake(t)
+	t.closeSession()
 
 	h.Status = status
 	h.Error = errMsg
@@ -202,10 +266,87 @@ func checkHTTPServer(ctx context.Context, cfg ServerConfig, h *ServerHealth, sta
 
 // httpTransport probes a Streamable-HTTP MCP server. Each SendRequest POSTs a
 // JSON-RPC request and validates the reply, so the shared handshake behaves the
-// same as it does over stdio.
+// same as it does over stdio. It keeps the session the server assigns on
+// initialize (Mcp-Session-Id) and the negotiated protocol version, and sends
+// both on every later message as the Streamable HTTP transport requires.
 type httpTransport struct {
-	ctx context.Context
-	url string
+	ctx     context.Context
+	url     string
+	headers map[string]string
+	// sessionID and protocolVersion are learned from the initialize reply.
+	sessionID       string
+	protocolVersion string
+}
+
+// initializeResult is the part of an initialize result the transport needs.
+type initializeResult struct {
+	ProtocolVersion string `json:"protocolVersion"`
+}
+
+// newRequest builds a request carrying the session headers.
+func (t *httpTransport) newRequest(method string, body []byte) (*http.Request, error) {
+	var r io.Reader
+	if body != nil {
+		r = bytes.NewReader(body)
+	}
+	req, err := http.NewRequestWithContext(t.ctx, method, t.url, r)
+	if err != nil {
+		return nil, fmt.Errorf("building request: %w", err)
+	}
+	for k, v := range t.headers {
+		req.Header.Set(k, v)
+	}
+	if body != nil {
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("Accept", "application/json, text/event-stream")
+	}
+	if t.sessionID != "" {
+		req.Header.Set("Mcp-Session-Id", t.sessionID)
+	}
+	if t.protocolVersion != "" {
+		req.Header.Set("MCP-Protocol-Version", t.protocolVersion)
+	}
+	return req, nil
+}
+
+// Notify POSTs a JSON-RPC notification; the server acknowledges it with 202
+// Accepted (any 2xx is accepted).
+func (t *httpTransport) Notify(method string, params json.RawMessage) error {
+	body, err := json.Marshal(jsonRPCNotification{JSONRPC: "2.0", Method: method, Params: params})
+	if err != nil {
+		return fmt.Errorf("building notification: %w", err)
+	}
+	req, err := t.newRequest(http.MethodPost, body)
+	if err != nil {
+		return err
+	}
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return fmt.Errorf("connecting: %w", err)
+	}
+	defer resp.Body.Close()
+	_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, maxHealthResponseBytes))
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return fmt.Errorf("returned HTTP %d %s", resp.StatusCode, http.StatusText(resp.StatusCode))
+	}
+	return nil
+}
+
+// closeSession asks the server to end the probe's session (best effort; a
+// server may answer 405 when clients cannot terminate sessions).
+func (t *httpTransport) closeSession() {
+	if t.sessionID == "" {
+		return
+	}
+	req, err := t.newRequest(http.MethodDelete, nil)
+	if err != nil {
+		return
+	}
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return
+	}
+	_ = resp.Body.Close()
 }
 
 // SendRequest POSTs a real MCP JSON-RPC request rather than a bare GET. A bare
@@ -220,12 +361,10 @@ func (t *httpTransport) SendRequest(id int, method string, params json.RawMessag
 	if err != nil {
 		return nil, fmt.Errorf("building request: %w", err)
 	}
-	req, err := http.NewRequestWithContext(t.ctx, http.MethodPost, t.url, bytes.NewReader(reqBody))
+	req, err := t.newRequest(http.MethodPost, reqBody)
 	if err != nil {
-		return nil, fmt.Errorf("building request: %w", err)
+		return nil, err
 	}
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Accept", "application/json, text/event-stream")
 
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
@@ -237,56 +376,94 @@ func (t *httpTransport) SendRequest(id int, method string, params json.RawMessag
 		return nil, fmt.Errorf("returned HTTP %d %s", resp.StatusCode, http.StatusText(resp.StatusCode))
 	}
 
-	rpc, err := decodeJSONRPCResponse(resp)
+	rpc, err := decodeJSONRPCResponse(resp, id)
 	if err != nil {
 		return nil, fmt.Errorf("endpoint did not return a valid MCP response: %w", err)
 	}
-	if rpc.Error != nil {
-		return nil, fmt.Errorf("server error %d: %s", rpc.Error.Code, rpc.Error.Message)
+	if !rpc.answers(id) {
+		return nil, fmt.Errorf("endpoint did not return a valid MCP response: reply does not answer request id %d", id)
 	}
 
-	return rpc.Result, nil
+	result, err := rpc.outcome()
+	if err != nil {
+		return nil, err
+	}
+	if method == "initialize" {
+		t.sessionID = resp.Header.Get("Mcp-Session-Id")
+		var init initializeResult
+		if json.Unmarshal(result, &init) == nil {
+			t.protocolVersion = init.ProtocolVersion
+		}
+	}
+	return result, nil
 }
 
-// decodeJSONRPCResponse extracts the JSON-RPC response from an MCP
-// Streamable-HTTP initialize reply, which may be a direct application/json body
-// or a single SSE `data:` event (text/event-stream). It returns an error when
-// the body is not a JSON-RPC 2.0 message — i.e. the endpoint does not speak MCP.
-func decodeJSONRPCResponse(resp *http.Response) (*jsonRPCResponse, error) {
+// decodeJSONRPCResponse extracts the JSON-RPC message answering request id from
+// an MCP Streamable-HTTP reply, which may be a direct application/json body or
+// an SSE stream (text/event-stream) in which the response can follow server
+// notifications and requests. It returns an error when the body is not JSON-RPC
+// at all; the caller validates it with answers and outcome, exactly as the
+// stdio transport does.
+func decodeJSONRPCResponse(resp *http.Response, id int) (*jsonRPCResponse, error) {
 	body, err := io.ReadAll(io.LimitReader(resp.Body, maxHealthResponseBytes))
 	if err != nil {
 		return nil, fmt.Errorf("reading response: %w", err)
 	}
-	payload := body
 	if strings.Contains(resp.Header.Get("Content-Type"), "text/event-stream") {
-		payload = sseData(body)
-		if payload == nil {
-			return nil, fmt.Errorf("no SSE data event in response")
+		rpc := sseResponse(body, id)
+		if rpc == nil {
+			return nil, fmt.Errorf("no SSE event carries the response to request %d", id)
 		}
+		return rpc, nil
 	}
 	var rpc jsonRPCResponse
-	if err := json.Unmarshal(bytes.TrimSpace(payload), &rpc); err != nil {
+	if err := json.Unmarshal(bytes.TrimSpace(body), &rpc); err != nil {
 		return nil, fmt.Errorf("response is not JSON-RPC: %w", err)
-	}
-	if rpc.JSONRPC != "2.0" || (rpc.Result == nil && rpc.Error == nil) {
-		return nil, fmt.Errorf("response is not a JSON-RPC 2.0 result")
 	}
 	return &rpc, nil
 }
 
-// sseData returns the concatenated payload of the first SSE event's data: lines.
-func sseData(body []byte) []byte {
+// isResponseTo reports whether rpc is a JSON-RPC 2.0 response to request id. An
+// error response may carry a null id when the server could not read the id.
+func isResponseTo(rpc *jsonRPCResponse, id int) bool {
+	if rpc.JSONRPC != "2.0" || (rpc.Result == nil && rpc.Error == nil) {
+		return false
+	}
+	if rpc.ID == nil {
+		return rpc.Error != nil
+	}
+	return *rpc.ID == id
+}
+
+// sseResponse scans the SSE events in body and returns the first whose data is
+// a JSON-RPC response to request id, skipping notifications, server requests
+// and responses to other requests.
+func sseResponse(body []byte, id int) *jsonRPCResponse {
 	scanner := bufio.NewScanner(bytes.NewReader(body))
 	scanner.Buffer(make([]byte, 0, 64*1024), maxHealthResponseBytes)
-	var data []byte
+	var data [][]byte
+	match := func() *jsonRPCResponse {
+		if len(data) == 0 {
+			return nil
+		}
+		var rpc jsonRPCResponse
+		payload := bytes.Join(data, []byte("\n"))
+		data = nil
+		if json.Unmarshal(payload, &rpc) != nil || !isResponseTo(&rpc, id) {
+			return nil
+		}
+		return &rpc
+	}
 	for scanner.Scan() {
 		line := scanner.Text()
 		switch {
 		case strings.HasPrefix(line, "data:"):
-			data = append(data, strings.TrimSpace(strings.TrimPrefix(line, "data:"))...)
-		case line == "" && data != nil:
-			return data // a blank line terminates the event
+			data = append(data, []byte(strings.TrimPrefix(strings.TrimPrefix(line, "data:"), " ")))
+		case line == "": // a blank line terminates the event
+			if rpc := match(); rpc != nil {
+				return rpc
+			}
 		}
 	}
-	return data
+	return match()
 }

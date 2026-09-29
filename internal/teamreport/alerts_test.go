@@ -135,8 +135,9 @@ func TestAlertStale(t *testing.T) {
 			Conformance:  makeConformance(true, true),
 			VulnTotals:   makeVulns(0, 0),
 			Certifiable:  true,
+			Scanned:      true,
 			QsdevVersion: "v1.0.0",
-			LastScan:     staleTime,
+			LastScan:     &staleTime,
 		},
 	}
 

@@ -7,6 +7,7 @@ import (
 	"errors"
 	"io"
 	"log"
+	"log/slog"
 	"net"
 	"net/http"
 	"net/url"
@@ -38,6 +39,21 @@ const httpShutdownTimeout = 5 * time.Second
 // headers, mitigating slowloris-style stalls on the health/MCP mux.
 const httpReadHeaderTimeout = 10 * time.Second
 
+// httpSessionIdleTTL is how long a Streamable HTTP session may go without
+// activity before its server-side state is reclaimed. mcp-go otherwise frees a
+// session only on an explicit DELETE, so every client that reconnects without
+// one would leak a session for the life of a long-running server.
+const httpSessionIdleTTL = 30 * time.Minute
+
+// httpHeartbeatInterval is how often an open GET (SSE) stream is pinged. Each
+// ping counts as session activity, so a client holding a quiet notification
+// stream is not reclaimed as idle; it must stay well below httpSessionIdleTTL.
+const httpHeartbeatInterval = 5 * time.Minute
+
+// maxHTTPRequestBytes caps an HTTP request body. mcp-go reads each POST body
+// fully into memory, so without a cap one request could exhaust the server.
+const maxHTTPRequestBytes = 8 << 20
+
 // ServeStdio runs the server over the process's stdin/stdout until ctx is
 // cancelled or stdin reaches EOF. In stdio mode stdout is reserved exclusively
 // for the JSON-RPC protocol; all diagnostics go to stderr.
@@ -65,12 +81,12 @@ func (s *Server) listenStdio(ctx context.Context, stdin io.Reader, stdout io.Wri
 // TLS (the certificates live in tlsConfig); otherwise it serves plain HTTP,
 // which the serve command only permits on a loopback bind in native/http mode.
 func (s *Server) ServeHTTP(ctx context.Context, addr string, tlsConfig *tls.Config) error {
-	streamable := server.NewStreamableHTTPServer(s.mcp)
+	streamable := newStreamableHTTP(s.mcp, httpSessionIdleTTL)
 
 	mux := http.NewServeMux()
 	mux.Handle(mcpEndpointPath, streamable)
 
-	return s.serveMux(ctx, addr, mux, tlsConfig)
+	return s.serveMux(ctx, addr, mux, streamable, tlsConfig)
 }
 
 // ServeHTTPWithHealth runs the server over Streamable HTTP on addr AND exposes a
@@ -88,13 +104,23 @@ func (s *Server) ServeHTTP(ctx context.Context, addr string, tlsConfig *tls.Conf
 // orchestrator's health probe to present the client certificate (e.g. an
 // exec/curl probe with --cert/--key) rather than a bare HTTP GET.
 func (s *Server) ServeHTTPWithHealth(ctx context.Context, addr string, tlsConfig *tls.Config) error {
-	streamable := server.NewStreamableHTTPServer(s.mcp)
+	streamable := newStreamableHTTP(s.mcp, httpSessionIdleTTL)
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("/health", s.handleHealth)
 	mux.Handle("/", streamable)
 
-	return s.serveMux(ctx, addr, mux, tlsConfig)
+	return s.serveMux(ctx, addr, mux, streamable, tlsConfig)
+}
+
+// newStreamableHTTP builds the Streamable HTTP handler both entrypoints serve,
+// reclaiming sessions idle for longer than idleTTL and pinging open GET streams
+// so an attached client is never reclaimed as idle.
+func newStreamableHTTP(mcpSrv *server.MCPServer, idleTTL time.Duration) *server.StreamableHTTPServer {
+	return server.NewStreamableHTTPServer(mcpSrv,
+		server.WithSessionIdleTTL(idleTTL),
+		server.WithHeartbeatInterval(httpHeartbeatInterval),
+	)
 }
 
 // serveMux builds the transport's *http.Server around mux — applying the shared
@@ -104,22 +130,50 @@ func (s *Server) ServeHTTPWithHealth(ctx context.Context, addr string, tlsConfig
 // it so the server's timeouts, middleware, and TLS wiring stay identical; they
 // differ only in how they populate mux. When tlsConfig is nil the listener serves
 // plain HTTP, which the serve command permits only on a loopback bind.
-func (s *Server) serveMux(ctx context.Context, addr string, mux *http.ServeMux, tlsConfig *tls.Config) error {
+func (s *Server) serveMux(ctx context.Context, addr string, mux *http.ServeMux, streamable *server.StreamableHTTPServer, tlsConfig *tls.Config) error {
+	// Streams are ended as soon as shutdown begins: http.Server.Shutdown waits
+	// for active handlers but never cancels their contexts, so an open GET
+	// (SSE) stream would otherwise hold shutdown until its timeout.
+	shuttingDown, beginShutdown := context.WithCancel(context.Background())
+	defer beginShutdown()
 	httpSrv := &http.Server{
 		Addr:              addr,
-		Handler:           httpHandler(mux, tlsConfig),
+		Handler:           httpHandler(endStreamsOnShutdown(shuttingDown, mux), tlsConfig),
 		ReadHeaderTimeout: httpReadHeaderTimeout,
 		TLSConfig:         tlsConfig,
 	}
+	httpSrv.RegisterOnShutdown(beginShutdown)
+	// streamable is mounted as a handler, so its Shutdown only stops the idle
+	// session sweeper; it cannot fail in that case.
+	defer func() { _ = streamable.Shutdown(context.Background()) }()
 	return serveHTTPWithShutdown(ctx, httpSrv, tlsConfig != nil)
+}
+
+// endStreamsOnShutdown cancels the context of every in-flight GET request — the
+// long-lived Streamable HTTP notification streams — once shuttingDown is done,
+// so they unwind and let a graceful shutdown finish promptly. Other requests
+// (tool calls over POST) keep their context and are allowed to complete.
+func endStreamsOnShutdown(shuttingDown context.Context, next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodGet {
+			ctx, cancel := context.WithCancel(r.Context())
+			defer cancel()
+			stop := context.AfterFunc(shuttingDown, cancel)
+			defer stop()
+			r = r.WithContext(ctx)
+		}
+		next.ServeHTTP(w, r)
+	})
 }
 
 // serveHTTPWithShutdown starts httpSrv (TLS when useTLS) in a goroutine and
 // blocks until ctx is cancelled — at which point it shuts the server down within
 // httpShutdownTimeout — or the listener fails. A clean close
-// (http.ErrServerClosed) is reported as success. When useTLS is true the
-// certificates come from httpSrv.TLSConfig, so ListenAndServeTLS is called with
-// empty cert/key paths.
+// (http.ErrServerClosed) is reported as success. A requested shutdown returns
+// ctx's error even when the grace period runs out: the remaining connections
+// are then force-closed, since the server is stopping either way. When useTLS
+// is true the certificates come from httpSrv.TLSConfig, so ListenAndServeTLS is
+// called with empty cert/key paths.
 func serveHTTPWithShutdown(ctx context.Context, httpSrv *http.Server, useTLS bool) error {
 	errCh := make(chan error, 1)
 	go func() {
@@ -135,7 +189,9 @@ func serveHTTPWithShutdown(ctx context.Context, httpSrv *http.Server, useTLS boo
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), httpShutdownTimeout)
 		defer cancel()
 		if err := httpSrv.Shutdown(shutdownCtx); err != nil {
-			return err
+			slog.Warn("graceful HTTP shutdown did not finish; closing remaining connections",
+				"timeout", httpShutdownTimeout, "error", err)
+			_ = httpSrv.Close()
 		}
 		return ctx.Err()
 	case err := <-errCh:
@@ -155,19 +211,29 @@ func serveHTTPWithShutdown(ctx context.Context, httpSrv *http.Server, useTLS boo
 // authoritative cc.AgentID. A request without a verified chain (plain HTTP, or a
 // TLS config that does not require client certs) passes through unchanged and
 // falls back to the self-asserted identity.
+//
+// A request that DOES carry a verified chain whose leaf yields no usable name
+// (no CN, DNS SAN, or URI SAN) is rejected with 403 before any handler runs:
+// letting it through would silently downgrade a cert-authenticated caller to the
+// self-asserted _meta/clientInfo identity, which any CA-signed holder could set
+// to an allow-listed agent id (fail closed).
 func certIdentityMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.TLS != nil && len(r.TLS.VerifiedChains) > 0 {
-			if id, ok := trustedAgentFromCert(r.TLS); ok {
-				r = r.WithContext(withTrustedAgent(r.Context(), id))
+			id, ok := trustedAgentFromCert(r.TLS)
+			if !ok {
+				http.Error(w, "forbidden: verified client certificate carries no usable identity", http.StatusForbidden)
+				return
 			}
+			r = r.WithContext(withTrustedAgent(r.Context(), id))
 		}
 		next.ServeHTTP(w, r)
 	})
 }
 
-// httpHandler composes the transport's handler stack. certIdentityMiddleware
-// always runs (it is a no-op on plain HTTP). On the plain-HTTP path
+// httpHandler composes the transport's handler stack. Every request body is
+// capped at maxHTTPRequestBytes. certIdentityMiddleware always runs (it is a
+// no-op on plain HTTP). On the plain-HTTP path
 // (tlsConfig == nil) the stack is additionally wrapped in loopbackGuard: plain
 // HTTP is only ever served on a loopback bind (validateServeSecurity enforces
 // this), so requiring a loopback Host/Origin there costs nothing and blocks
@@ -179,7 +245,7 @@ func httpHandler(mux http.Handler, tlsConfig *tls.Config) http.Handler {
 	if tlsConfig == nil {
 		h = loopbackGuard(h)
 	}
-	return h
+	return http.MaxBytesHandler(h, maxHTTPRequestBytes)
 }
 
 // loopbackGuard rejects (403, before any tool handler runs) every request whose

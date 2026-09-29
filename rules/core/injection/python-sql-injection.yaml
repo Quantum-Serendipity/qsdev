@@ -88,6 +88,9 @@ rules:
       - pattern: int(...)
       - pattern: float(...)
       - pattern: $CURSOR.execute("...", $PARAMS)
+      # A literal SQLAlchemy text() with bound parameters is parameterized.
+      - pattern: text("...").bindparams(...)
+      - pattern: sqlalchemy.text("...").bindparams(...)
     metadata:
       category: security
       subcategory: sqli

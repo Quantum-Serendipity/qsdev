@@ -1,36 +1,13 @@
 package devinit
 
-import "github.com/Quantum-Serendipity/qsdev/internal/catalog"
+import (
+	"errors"
+	"fmt"
+	"log/slog"
+	"slices"
 
-// GoWeb is a project-type profile for Go web services.
-var GoWeb = catalogProfile("go-web")
-
-// TSFullstack is a project-type profile for TypeScript full-stack applications.
-var TSFullstack = catalogProfile("ts-fullstack")
-
-// PythonData is a project-type profile for Python data science projects.
-var PythonData = catalogProfile("python-data")
-
-// RustCLI is a project-type profile for Rust command-line tools.
-var RustCLI = catalogProfile("rust-cli")
-
-// JavaWeb is a project-type profile for Java web services.
-var JavaWeb = catalogProfile("java-web")
-
-// PythonWeb is a project-type profile for Python web services.
-var PythonWeb = catalogProfile("python-web")
-
-// TSBackend is a project-type profile for TypeScript backend services.
-var TSBackend = catalogProfile("ts-backend")
-
-// ElixirWeb is a project-type profile for Elixir web services.
-var ElixirWeb = catalogProfile("elixir-web")
-
-// RustWeb is a project-type profile for Rust web services.
-var RustWeb = catalogProfile("rust-web")
-
-// DotnetWeb is a project-type profile for .NET web services.
-var DotnetWeb = catalogProfile("dotnet-web")
+	"github.com/Quantum-Serendipity/qsdev/internal/catalog"
+)
 
 // projectProfileOrder defines the canonical registration order for project profiles.
 var projectProfileOrder = []string{
@@ -39,23 +16,45 @@ var projectProfileOrder = []string{
 }
 
 // DefaultProjectProfileRegistry returns a ProjectProfileRegistry pre-loaded
-// with the built-in project-type profiles.
+// with the built-in project-type profiles. A profile that cannot be loaded
+// from the catalog is logged and left unregistered, so selecting it fails with
+// "unknown profile" instead of silently producing an empty configuration.
 func DefaultProjectProfileRegistry() *ProjectProfileRegistry {
-	r := NewProjectProfileRegistry()
-	for _, name := range projectProfileOrder {
-		_ = r.Register(name, catalogProfile(name))
+	r, err := loadDefaultProjectProfiles()
+	if err != nil {
+		slog.Error("loading built-in project profiles", "error", err)
 	}
 	return r
 }
 
-func catalogProfile(name string) Profile {
+// loadDefaultProjectProfiles registers every built-in profile that loads and
+// returns the joined errors for those that do not.
+func loadDefaultProjectProfiles() (*ProjectProfileRegistry, error) {
+	r := NewProjectProfileRegistry()
 	cat, err := catalog.Default()
 	if err != nil {
-		return Profile{}
+		return r, fmt.Errorf("loading catalog: %w", err)
 	}
+	var errs []error
+	for _, name := range projectProfileOrder {
+		p, err := catalogProfile(cat, name)
+		if err != nil {
+			errs = append(errs, err)
+			continue
+		}
+		if err := r.Register(name, p); err != nil {
+			errs = append(errs, fmt.Errorf("registering profile %q: %w", name, err))
+		}
+	}
+	return r, errors.Join(errs...)
+}
+
+// catalogProfile converts the catalog definition of a project profile into a
+// Profile. Slices are copied so callers cannot mutate the shared catalog.
+func catalogProfile(cat *catalog.Catalog, name string) (Profile, error) {
 	def, ok := cat.ProjectProfile(name)
 	if !ok {
-		return Profile{}
+		return Profile{}, fmt.Errorf("project profile %q not found in catalog", name)
 	}
 
 	langs := make([]LanguageSpec, len(def.Languages))
@@ -70,12 +69,12 @@ func catalogProfile(name string) Profile {
 	return Profile{
 		Description:     def.Description,
 		Languages:       langs,
-		Services:        def.Services,
+		Services:        slices.Clone(def.Services),
 		Direnv:          def.Direnv,
 		ClaudeCode:      def.ClaudeCode,
 		PermissionLevel: def.PermissionLevel,
 		Tier:            def.Tier,
-		Skills:          def.Skills,
-		Hooks:           def.Hooks,
-	}
+		Skills:          slices.Clone(def.Skills),
+		Hooks:           slices.Clone(def.Hooks),
+	}, nil
 }

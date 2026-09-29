@@ -23,7 +23,12 @@ func (b *Brew) Available() bool {
 
 func (b *Brew) NeedsElevation() bool { return false }
 
+// InstallArgs returns the command Install runs, without sudo.
+func (b *Brew) InstallArgs(packages ...string) (string, []string) {
+	return "brew", append([]string{"install"}, packages...)
+}
+
 func (b *Brew) Install(ctx context.Context, packages ...string) error {
-	args := append([]string{"install"}, packages...)
-	return b.runner.Run(ctx, "brew", args...)
+	bin, args := b.InstallArgs(packages...)
+	return b.runner.Run(ctx, bin, args...)
 }

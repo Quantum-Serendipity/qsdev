@@ -2,7 +2,7 @@
 name: migration-plan
 description: Generate a phased migration plan for framework, library, or architecture changes.
 disable-model-invocation: true
-allowed-tools: Read Grep Glob Bash(git *) Bash(find *) Bash(wc *)
+allowed-tools: Read Grep Glob Bash(git log *) Bash(git diff *) Bash(git show *) Bash(git ls-files *) Bash(find *) Bash(wc *)
 arguments: [migration-description]
 argument-hint: "migrate from Express to Fastify"
 ---

@@ -1,6 +1,7 @@
 // Package cigeneration provides the canonical catalog of SHA-pinned GitHub
-// Action references (ActionRef) shared by the workflow emitters in
-// internal/gitworkflow, internal/teamreport and internal/profile.
+// Action references (ActionRef) and digest-pinned container images (ImageRef)
+// shared by the workflow emitters in internal/gitworkflow, internal/teamreport
+// and internal/profile.
 //
 // It no longer generates CI workflows itself: the former CIFragmentProducer /
 // GenerateWorkflow machinery was unreachable dead code (wired to no producer in
@@ -85,13 +86,13 @@ var (
 		SHA:   "1638637db639e0ade3258b51db49a9a137574c3e",
 		Tag:   "v6",
 	}
-	// snyk/actions publishes no release tags; master is the documented
-	// reference, so the SHA is the only thing actually pinning it.
-	ActionSnyk = ActionRef{
-		Owner: "snyk",
-		Repo:  "actions",
-		SHA:   "9cf6ca713d71123d2d229cc3d7f145b96ea3c518",
-		Tag:   "master",
+	// Installs Nix for the generated ecosystem-ci job, which runs each
+	// ecosystem's CI commands inside the project's devenv shell.
+	ActionInstallNix = ActionRef{
+		Owner: "cachix",
+		Repo:  "install-nix-action",
+		SHA:   "13d8dd58da0234aa297dedd986986ccb8e7f3e24",
+		Tag:   "v31.11.1",
 	}
 	ActionLabeler = ActionRef{
 		Owner: "actions",

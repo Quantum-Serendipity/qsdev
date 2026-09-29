@@ -1,6 +1,10 @@
 package profile
 
-import "strings"
+import (
+	"strings"
+
+	"github.com/Quantum-Serendipity/qsdev/pkg/ecosystem"
+)
 
 // RegistryType identifies a package registry / proxy technology.
 type RegistryType string
@@ -44,10 +48,10 @@ const (
 type VulnScannerType string
 
 const (
-	VulnScannerOSV  VulnScannerType = "osv"
-	VulnScannerSnyk VulnScannerType = "snyk"
+	VulnScannerOSV   VulnScannerType = "osv"
+	VulnScannerSnyk  VulnScannerType = "snyk"
 	VulnScannerGrype VulnScannerType = "grype"
-	VulnScannerNone VulnScannerType = "none"
+	VulnScannerNone  VulnScannerType = "none"
 )
 
 // BehavioralType identifies a behavioral analysis tool.
@@ -104,87 +108,114 @@ type InfraProfile struct {
 	SBOM        SBOMConfig       `yaml:"sbom"                  json:"sbom"`
 }
 
-// RegistryConfig holds package-registry proxy settings.
+// RegistryConfig holds package-registry proxy settings. URL, Overrides and
+// Paths are the project's real endpoints (.qsdev.yaml infrastructure:),
+// applied by InfraProfile.Resolve; the built-in profiles carry none.
 type RegistryConfig struct {
-	Type       RegistryType `yaml:"type"                  json:"type"`
-	URL        string       `yaml:"url,omitempty"         json:"url,omitempty"`
-	Ecosystems []string     `yaml:"ecosystems,omitempty"  json:"ecosystems,omitempty"`
+	Type       RegistryType `yaml:"type"                   json:"type"`
+	URL        string       `yaml:"url,omitempty"          json:"url,omitempty"`
+	Ecosystems []string     `yaml:"ecosystems,omitempty"   json:"ecosystems,omitempty"`
 	AuthEnvVar string       `yaml:"auth_env_var,omitempty" json:"auth_env_var,omitempty"`
+	// Overrides are per-ecosystem full URLs (infrastructure.registry_proxy_overrides).
+	Overrides map[string]string `yaml:"overrides,omitempty" json:"overrides,omitempty"`
+	// Paths are per-ecosystem path suffixes that replace the registry type's
+	// layout (infrastructure.registry_proxy_paths).
+	Paths map[string]string `yaml:"paths,omitempty" json:"paths,omitempty"`
 }
 
-// EcosystemURL returns the registry URL for a given ecosystem based on the
-// registry type and base URL. Unsupported combinations return "".
-func (r RegistryConfig) EcosystemURL(ecosystem string) string {
-	eco := strings.ToLower(ecosystem)
-	url := strings.TrimRight(r.URL, "/")
+// registryLayouts maps a pull-through proxy technology to the path, below
+// its base URL, of the group/virtual repository serving each ecosystem.
+// Ecosystems a layout omits fall back to ecosystem.DefaultProxyPaths.
+var registryLayouts = map[RegistryType]map[string]string{
+	RegistryArtifactory: {
+		"npm":   "/api/npm/npm-virtual/",
+		"pypi":  "/api/pypi/pypi-virtual/simple",
+		"go":    "/api/go/go-virtual",
+		"cargo": "/api/cargo/cargo-virtual/index/",
+		"maven": "/maven-virtual",
+		"nuget": "/api/nuget/v3/nuget-virtual/index.json",
+	},
+	RegistryNexus: {
+		"npm":   "/repository/npm-group/",
+		"pypi":  "/repository/pypi-group/simple",
+		"go":    "/repository/go-group/",
+		"maven": "/repository/maven-group/",
+		"nuget": "/repository/nuget-group/index.json",
+	},
+}
 
-	switch r.Type {
-	case RegistryArtifactory:
-		if url == "" {
-			return ""
-		}
-		switch eco {
-		case "npm":
-			return url + "/api/npm/npm-virtual/"
-		case "pypi":
-			return url + "/api/pypi/pypi-virtual/simple"
-		case "go":
-			return url + "/api/go/go-virtual"
-		case "cargo":
-			return "sparse+" + url + "/api/cargo/cargo-virtual/index/"
-		case "maven":
-			return url + "/maven-virtual"
-		case "nuget":
-			return url + "/api/nuget/nuget-virtual"
-		}
+// IsProxy reports whether the registry is a pull-through proxy that package
+// installs are routed through. GitHub Packages is not: it hosts an
+// organization's own packages, needs a token even to read, and does not serve
+// the public registries, so qsdev routes nothing through it automatically.
+func (r RegistryConfig) IsProxy() bool {
+	return r.Type != "" && r.Type != RegistryNone && r.Type != RegistryGitHub
+}
 
-	case RegistryNexus:
-		if url == "" {
-			return ""
+// Layout returns the path suffix per ecosystem key (as used by
+// ecosystem.ProxyKeyForLanguage) for the ecosystems this registry serves:
+// the registry type's layout, with gradle sharing maven's repository.
+func (r RegistryConfig) Layout() map[string]string {
+	layout := registryLayouts[r.Type]
+	out := make(map[string]string, len(r.Ecosystems)+1)
+	for _, eco := range r.Ecosystems {
+		key := strings.ToLower(eco)
+		if p, ok := layout[key]; ok {
+			out[key] = p
+			if key == "maven" {
+				out["gradle"] = p
+			}
 		}
-		switch eco {
-		case "npm":
-			return url + "/repository/npm-group/"
-		case "pypi":
-			return url + "/repository/pypi-group/simple"
-		case "go":
-			return url + "/repository/go-group/"
-		case "maven":
-			return url + "/repository/maven-group/"
-		case "nuget":
-			return url + "/repository/nuget-group/"
-		}
+	}
+	return out
+}
 
-	case RegistryGitHub:
-		switch eco {
-		case "npm":
-			return "https://npm.pkg.github.com/"
-		case "maven":
-			return "https://maven.pkg.github.com/"
+// serves reports whether the registry routes the given ecosystem key.
+func (r RegistryConfig) serves(eco string) bool {
+	for _, e := range r.Ecosystems {
+		e = strings.ToLower(e)
+		if e == eco || (e == "maven" && eco == "gradle") {
+			return true
 		}
+	}
+	return false
+}
 
-	case RegistryNone:
+// EcosystemURL returns the URL package installs for the ecosystem are routed
+// to: a per-ecosystem override, else the base URL plus the configured or
+// layout path (ecosystem.DefaultProxyPaths for ecosystems the layout lacks).
+// It returns "" for a registry that is not a proxy, an ecosystem it does not
+// serve, or when no endpoint is configured. This is the same resolution
+// ecosystem.ToModuleConfigWithInfra applies to the effective Infrastructure.
+func (r RegistryConfig) EcosystemURL(eco string) string {
+	key := strings.ToLower(eco)
+	if !r.IsProxy() || !r.serves(key) {
 		return ""
 	}
-
-	return ""
+	return ecosystem.ResolveProxyURL(r.URL, r.Overrides, key, r.Paths, r.Layout())
 }
 
-// NixCacheConfig holds Nix binary cache settings.
+// NixCacheConfig holds Nix binary cache settings. URL, CacheName and
+// PublicKey are the project's real cache (infrastructure.nix_cache and
+// nix_cache_public_key), applied by InfraProfile.Resolve.
 type NixCacheConfig struct {
-	Type          NixCacheType `yaml:"type"                       json:"type"`
-	URL           string       `yaml:"url,omitempty"              json:"url,omitempty"`
-	PublicKey     string       `yaml:"public_key,omitempty"       json:"public_key,omitempty"`
-	SigningKeyRef string       `yaml:"signing_key_ref,omitempty"  json:"signing_key_ref,omitempty"`
-	CacheName     string       `yaml:"cache_name,omitempty"       json:"cache_name,omitempty"`
+	Type      NixCacheType `yaml:"type"                 json:"type"`
+	URL       string       `yaml:"url,omitempty"        json:"url,omitempty"`
+	PublicKey string       `yaml:"public_key,omitempty" json:"public_key,omitempty"`
+	CacheName string       `yaml:"cache_name,omitempty" json:"cache_name,omitempty"`
+	// PushTokenEnvVar names the credential CI uses to push to the cache. It
+	// is documented, never written into the developer environment.
+	PushTokenEnvVar string `yaml:"push_token_env_var,omitempty" json:"push_token_env_var,omitempty"`
 }
 
 // BuildCacheConfig holds build cache settings.
 type BuildCacheConfig struct {
-	Type        BuildCacheType    `yaml:"type"                    json:"type"`
-	Backend     string            `yaml:"backend,omitempty"       json:"backend,omitempty"`
-	URL         string            `yaml:"url,omitempty"           json:"url,omitempty"`
-	AuthEnvVars map[string]string `yaml:"auth_env_vars,omitempty" json:"auth_env_vars,omitempty"`
+	Type    BuildCacheType `yaml:"type"              json:"type"`
+	Backend string         `yaml:"backend,omitempty" json:"backend,omitempty"`
+	URL     string         `yaml:"url,omitempty"     json:"url,omitempty"`
+	// AuthEnvVars name the credentials the cache backend reads from the
+	// developer's environment; qsdev documents them and never sets them.
+	AuthEnvVars []string `yaml:"auth_env_vars,omitempty" json:"auth_env_vars,omitempty"`
 }
 
 // ScanningConfig holds vulnerability and behavioral scanning settings.

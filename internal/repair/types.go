@@ -1,13 +1,13 @@
 package repair
 
+import "github.com/Quantum-Serendipity/qsdev/internal/posture/drift"
+
 // RepairActionType indicates what kind of repair action should be taken.
 type RepairActionType int
 
 const (
 	// ActionRegenerate means the file should be regenerated from fresh content.
 	ActionRegenerate RepairActionType = iota
-	// ActionReinstall means the component (e.g. hook) should be reinstalled.
-	ActionReinstall
 	// ActionSkip means the finding requires manual intervention or a different command.
 	ActionSkip
 )
@@ -40,7 +40,13 @@ type RepairAction struct {
 	BackupPath  string
 	ActionType  RepairActionType
 	AutoFixable bool
-	Error       error
+	// Severity is the severity of the drift finding this action came from
+	// (empty for actions synthesized by --reset).
+	Severity drift.Severity
+	// ResolvedBy names a file whose successful regeneration in the same run
+	// also resolves this finding (e.g. CLAUDE.md for section-marker drift).
+	ResolvedBy string
+	Error      error
 }
 
 // RepairResult holds the outcome of a repair run, partitioned into fixed,
@@ -51,14 +57,18 @@ type RepairResult struct {
 	Failed  []RepairAction
 }
 
-// ExitCode returns 0 if everything was fixed, 1 if some actions were skipped,
-// or 2 if any action failed.
+// ExitCode returns 2 if any action failed, 1 if an actionable finding was
+// skipped (it still needs manual attention), or 0 otherwise. Skipped
+// informational findings — expected edits to user-owned files, version or
+// environment notes — do not affect the exit code.
 func (r *RepairResult) ExitCode() int {
 	if len(r.Failed) > 0 {
 		return 2
 	}
-	if len(r.Skipped) > 0 {
-		return 1
+	for _, a := range r.Skipped {
+		if a.Severity != drift.Info {
+			return 1
+		}
 	}
 	return 0
 }

@@ -1,7 +1,6 @@
 package generic
 
 import (
-	"bufio"
 	"io"
 	"os"
 	"regexp"
@@ -9,6 +8,7 @@ import (
 	"time"
 
 	"github.com/Quantum-Serendipity/qsdev/internal/extlog"
+	"github.com/Quantum-Serendipity/qsdev/internal/logging"
 )
 
 var _ extlog.LogProvider = (*Provider)(nil)
@@ -53,7 +53,7 @@ var (
 
 func (p *Provider) Parse(r io.Reader, sourceFile string) ([]extlog.LogEntry, error) {
 	fileMtime := extlog.FileModTime(sourceFile)
-	scanner := bufio.NewScanner(r)
+	scanner := logging.NewLineScanner(r)
 	var entries []extlog.LogEntry
 	lineNo := 0
 	var lastTS time.Time

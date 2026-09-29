@@ -23,11 +23,12 @@ func TestEvaluateConformance_BaselinePass(t *testing.T) {
 		Score: 100.0,
 	}
 	deps := DependencyHealth{
+		Scanned: true,
 		Ecosystems: []EcosystemStatus{
 			{Name: "go", Detected: true, LockFile: "valid"},
 		},
 		Totals: VulnSeverityCounts{},
-		Score:  100.0,
+		Score:  new(100.0),
 	}
 	enabledTools := map[string]bool{
 		"attach-guard":       true,
@@ -71,6 +72,7 @@ func TestEvaluateConformance_BaselineFail_NoCLAUDEMD(t *testing.T) {
 		},
 	}
 	deps := DependencyHealth{
+		Scanned:    true,
 		Ecosystems: []EcosystemStatus{{Name: "go", Detected: true, LockFile: "valid"}},
 	}
 	enabledTools := map[string]bool{}
@@ -118,6 +120,7 @@ func TestEvaluateConformance_BaselineFail_CriticalVulns(t *testing.T) {
 		},
 	}
 	deps := DependencyHealth{
+		Scanned:    true,
 		Ecosystems: []EcosystemStatus{{Name: "go", Detected: true, LockFile: "valid"}},
 		Totals:     VulnSeverityCounts{Critical: 2},
 	}
@@ -153,6 +156,7 @@ func TestEvaluateConformance_BaselineFail_MissingLockFile(t *testing.T) {
 		},
 	}
 	deps := DependencyHealth{
+		Scanned: true,
 		Ecosystems: []EcosystemStatus{
 			{Name: "go", Detected: true, LockFile: "missing"},
 		},
@@ -189,6 +193,7 @@ func TestEvaluateConformance_BaselineFail_HighLayerDisabled(t *testing.T) {
 		},
 	}
 	deps := DependencyHealth{
+		Scanned:    true,
 		Ecosystems: []EcosystemStatus{{Name: "go", Detected: true, LockFile: "valid"}},
 	}
 	enabledTools := map[string]bool{}
@@ -223,6 +228,7 @@ func TestEvaluateConformance_EnhancedPass(t *testing.T) {
 		},
 	}
 	deps := DependencyHealth{
+		Scanned:    true,
 		Ecosystems: []EcosystemStatus{{Name: "go", Detected: true, LockFile: "valid"}},
 		Totals:     VulnSeverityCounts{},
 	}
@@ -276,6 +282,7 @@ func TestEvaluateConformance_EnhancedFail_HighVulns(t *testing.T) {
 		},
 	}
 	deps := DependencyHealth{
+		Scanned:    true,
 		Ecosystems: []EcosystemStatus{{Name: "go", Detected: true, LockFile: "valid"}},
 		Totals:     VulnSeverityCounts{High: 3},
 	}
@@ -318,6 +325,7 @@ func TestEvaluateConformance_EnhancedFail_NoSemgrep(t *testing.T) {
 		},
 	}
 	deps := DependencyHealth{
+		Scanned:    true,
 		Ecosystems: []EcosystemStatus{{Name: "go", Detected: true, LockFile: "valid"}},
 	}
 	enabledTools := map[string]bool{
@@ -357,6 +365,7 @@ func TestEvaluateConformance_EnhancedRequiresBaseline(t *testing.T) {
 		},
 	}
 	deps := DependencyHealth{
+		Scanned:    true,
 		Ecosystems: []EcosystemStatus{{Name: "go", Detected: true, LockFile: "valid"}},
 	}
 	enabledTools := map[string]bool{
@@ -419,6 +428,7 @@ func TestEvaluateConformance_BaselineFail_NoPreCommit(t *testing.T) {
 		},
 	}
 	deps := DependencyHealth{
+		Scanned:    true,
 		Ecosystems: []EcosystemStatus{{Name: "go", Detected: true, LockFile: "valid"}},
 	}
 	genState := types.GeneratedState{
@@ -447,6 +457,7 @@ func TestEvaluateConformance_BaselineFail_NoSettingsJSON(t *testing.T) {
 		},
 	}
 	deps := DependencyHealth{
+		Scanned:    true,
 		Ecosystems: []EcosystemStatus{{Name: "go", Detected: true, LockFile: "valid"}},
 	}
 	genState := types.GeneratedState{
@@ -480,6 +491,7 @@ func TestEvaluateConformance_EnhancedPass_CIWorkflows(t *testing.T) {
 		},
 	}
 	deps := DependencyHealth{
+		Scanned:    true,
 		Ecosystems: []EcosystemStatus{{Name: "go", Detected: true, LockFile: "valid"}},
 	}
 	enabledTools := map[string]bool{
@@ -528,6 +540,7 @@ func TestEvaluateConformance_EnhancedFail_NoCIWorkflows(t *testing.T) {
 		},
 	}
 	deps := DependencyHealth{
+		Scanned:    true,
 		Ecosystems: []EcosystemStatus{{Name: "go", Detected: true, LockFile: "valid"}},
 	}
 	enabledTools := map[string]bool{
@@ -625,6 +638,7 @@ func TestEvaluateConformance_BaselinePass_NALockFile(t *testing.T) {
 		},
 	}
 	deps := DependencyHealth{
+		Scanned: true,
 		Ecosystems: []EcosystemStatus{
 			{Name: "go", Detected: true, LockFile: "go.sum"},
 			{Name: "shell", Detected: true, LockFile: "n/a"},
@@ -649,4 +663,93 @@ func TestEvaluateConformance_BaselinePass_NALockFile(t *testing.T) {
 		}
 	}
 	t.Error("lock-files-present check not found")
+}
+
+// TestEvaluateConformance_VulnChecksUnknownWithoutScan pins F328: without a
+// dependency scan the vulnerability checks, and the levels that contain them,
+// report unknown rather than pass; a genuine failure still outranks unknown.
+func TestEvaluateConformance_VulnChecksUnknownWithoutScan(t *testing.T) {
+	t.Parallel()
+	defense := DefenseCoverage{Layers: []DefenseLayer{
+		{Name: "pretooluse-hooks", Weight: WeightCritical, Status: LayerEnabled},
+		{Name: "age-gating", Weight: WeightHigh, Status: LayerEnabled},
+	}}
+	allTools := map[string]bool{"semgrep": true, "gitleaks": true, "license-compliance": true}
+	complete := types.GeneratedState{Files: map[string]types.FileState{
+		"CLAUDE.md":                   {},
+		".claude/settings.json":       {},
+		".pre-commit-config.yaml":     {},
+		".github/workflows/qsdev.yml": {},
+	}}
+	noClaudeMD := types.GeneratedState{Files: map[string]types.FileState{
+		".claude/settings.json":   {},
+		".pre-commit-config.yaml": {},
+	}}
+	goEco := []EcosystemStatus{{Name: "go", Detected: true, LockFile: "go.sum"}}
+	scannedEco := []EcosystemStatus{{Name: "go", Detected: true, LockFile: "go.sum", Scanned: true}}
+
+	tests := []struct {
+		name         string
+		deps         DependencyHealth
+		genState     types.GeneratedState
+		wantVuln     CheckStatus
+		wantBaseline CheckStatus
+		wantEnhanced CheckStatus
+	}{
+		{"unscanned", ComputeDepScore(goEco), complete, CheckUnknown, CheckUnknown, CheckUnknown},
+		{"unscanned legacy report", DependencyHealth{Ecosystems: goEco}, complete, CheckUnknown, CheckUnknown, CheckUnknown},
+		{"unscanned with a failing check", ComputeDepScore(goEco), noClaudeMD, CheckUnknown, CheckFail, CheckFail},
+		{"scanned clean", ComputeDepScore(scannedEco), complete, CheckPass, CheckPass, CheckPass},
+		{"scan failed", ComputeDepScore([]EcosystemStatus{{Name: "go", Detected: true, LockFile: "go.sum", ScanError: true}}),
+			complete, CheckFail, CheckFail, CheckFail},
+		{"no ecosystems", ComputeDepScore(nil), complete, CheckPass, CheckPass, CheckPass},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			got := EvaluateConformance(defense, tt.deps, allTools, tt.genState)
+			for _, c := range []ConformanceCheck{
+				checkFor(t, got.Baseline.Checks, CheckNoCriticalVulns),
+				checkFor(t, got.Enhanced.Checks, CheckNoHighVulns),
+			} {
+				if c.Status != tt.wantVuln || c.Pass != (tt.wantVuln == CheckPass) {
+					t.Errorf("%s = status %q pass %v, want %q", c.Name, c.Status, c.Pass, tt.wantVuln)
+				}
+			}
+			for _, lvl := range []struct {
+				name string
+				got  ConformanceLevel
+				want CheckStatus
+			}{{"baseline", got.Baseline, tt.wantBaseline}, {"enhanced", got.Enhanced, tt.wantEnhanced}} {
+				if lvl.got.Status != lvl.want || lvl.got.Pass != (lvl.want == CheckPass) {
+					t.Errorf("%s = status %q pass %v, want %q", lvl.name, lvl.got.Status, lvl.got.Pass, lvl.want)
+				}
+			}
+		})
+	}
+}
+
+func TestConformanceVerdict(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name  string
+		level ConformanceLevel
+		want  CheckStatus
+	}{
+		{"explicit unknown", ConformanceLevel{Status: CheckUnknown}, CheckUnknown},
+		{"legacy pass", ConformanceLevel{Pass: true}, CheckPass},
+		{"legacy fail", ConformanceLevel{}, CheckFail},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			if got := tt.level.Verdict(); got != tt.want {
+				t.Errorf("level Verdict() = %q, want %q", got, tt.want)
+			}
+			check := ConformanceCheck{Pass: tt.level.Pass, Status: tt.level.Status}
+			if got := check.Verdict(); got != tt.want {
+				t.Errorf("check Verdict() = %q, want %q", got, tt.want)
+			}
+		})
+	}
 }

@@ -51,7 +51,10 @@
     statix.enable = true;
     # Enhanced hooks (language-aware, from ecosystem modules)
     gofmt.enable = true;
-    govet.enable = true;
+    govet = {
+      enable = true;
+      excludes = [ "(^|/)(testdata|vendor)/" "(^|/)[._][^/]*/" ];
+    };
     # Specialized hooks (custom definitions)
     staticcheck = {
       enable = true;

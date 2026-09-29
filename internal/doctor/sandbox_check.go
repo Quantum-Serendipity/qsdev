@@ -43,6 +43,7 @@ func RunSandboxCheck(ctx context.Context, prober sandbox.SandboxProber) *Sandbox
 	if msg := sandbox.TierMessage(tier); msg != "" {
 		section.Warnings = append(section.Warnings, msg)
 	}
+	section.Warnings = append(section.Warnings, sandbox.FilteredNetworkNotice)
 
 	switch tier {
 	case sandbox.TierUnsandboxed:
@@ -54,11 +55,12 @@ func RunSandboxCheck(ctx context.Context, prober sandbox.SandboxProber) *Sandbox
 		section.Recommendations = append(section.Recommendations,
 			"Install bubblewrap for full namespace isolation (currently using systemd-run only)")
 	case sandbox.TierBwrapWithoutLandlock:
-		section.Recommendations = append(section.Recommendations,
-			"Upgrade kernel to >= 5.13 for Landlock filesystem restriction")
+		section.Recommendations = append(section.Recommendations, sandbox.LandlockRemediation)
 	case sandbox.TierBwrapWithoutSeccomp:
+		section.Recommendations = append(section.Recommendations, sandbox.SeccompRemediation)
+	case sandbox.TierBwrapOnly:
 		section.Recommendations = append(section.Recommendations,
-			"Enable seccomp support for syscall filtering")
+			"Use a qsdev build that ships the ll-restrict helper and seccomp filter (the Nix build) for Landlock and seccomp layers")
 	case sandbox.TierFull:
 		// no recommendations needed
 	}
@@ -93,17 +95,33 @@ func boolItem(label string, ok bool, okSummary, failSummary string) ContainerChe
 	return ContainerCheckItem{Label: label, Status: "warn", Summary: failSummary}
 }
 
+// landlockScopingABI is the first Landlock ABI that scopes IPC (abstract UNIX
+// sockets and signals) to the sandbox; ll-restrict enables it from there.
+const landlockScopingABI = 6
+
 func landlockItem(abi int) ContainerCheckItem {
-	if abi > 0 {
+	if abi >= landlockScopingABI {
 		return ContainerCheckItem{
 			Label:   "Landlock",
 			Status:  "ok",
 			Summary: fmt.Sprintf("ABI v%d", abi),
 		}
 	}
+	if abi > 0 {
+		// Abstract UNIX sockets are per network namespace: a hook in a
+		// category that keeps the host network can reach host endpoints such
+		// as X11 or D-Bus unless Landlock scopes them.
+		return ContainerCheckItem{
+			Label:  "Landlock",
+			Status: "warn",
+			Summary: fmt.Sprintf("ABI v%d: filesystem only; abstract UNIX sockets and signals are not scoped "+
+				"(needs ABI v%d, Linux 6.12+), so network-allowed hooks can reach host sockets such as X11",
+				abi, landlockScopingABI),
+		}
+	}
 	return ContainerCheckItem{
 		Label:   "Landlock",
 		Status:  "warn",
-		Summary: "not enforceable (needs ll-restrict helper and kernel >= 5.13)",
+		Summary: "not enforceable (needs the ll-restrict helper and Landlock enabled in the kernel's boot lsm= list)",
 	}
 }

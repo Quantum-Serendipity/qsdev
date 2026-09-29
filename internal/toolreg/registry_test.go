@@ -1,12 +1,10 @@
 package toolreg
 
 import (
-	"strings"
 	"sync"
 	"testing"
 
 	"github.com/Quantum-Serendipity/qsdev/internal/catalog"
-	"github.com/Quantum-Serendipity/qsdev/pkg/branding"
 )
 
 func TestRegister_Success(t *testing.T) {
@@ -189,11 +187,8 @@ func TestYAMLRegistryCorrespondence(t *testing.T) {
 		}
 	}
 
-	opsPrefix := branding.Get().AppName + "-"
+	// Without the addons linked in, the registry holds exactly the catalog.
 	for _, tool := range reg.All() {
-		if strings.HasPrefix(tool.Name, opsPrefix) {
-			continue
-		}
 		if _, ok := yamlTools[tool.Name]; !ok {
 			t.Errorf("registry tool %q not found in YAML catalog", tool.Name)
 		}
@@ -205,7 +200,6 @@ func TestBridgeMetadataFidelity(t *testing.T) {
 	cat := catalog.MustDefault()
 	reg := DefaultRegistry()
 
-	opsPrefix := branding.Get().AppName + "-"
 	for name, def := range cat.Tools() {
 		tool, ok := reg.ByName(name)
 		if !ok {
@@ -221,14 +215,16 @@ func TestBridgeMetadataFidelity(t *testing.T) {
 		if tool.Description != def.Description {
 			t.Errorf("%s: Description mismatch", name)
 		}
-		wantPolicy := parseDefaultPolicy(def.DefaultPolicy)
+		wantPolicy, err := parseDefaultPolicy(def.DefaultPolicy)
+		if err != nil {
+			t.Errorf("%s: %v", name, err)
+		}
 		if tool.Default != wantPolicy {
 			t.Errorf("%s: Default = %v, want %v", name, tool.Default, wantPolicy)
 		}
 		if len(def.OwnedFiles) != len(tool.OwnedFiles) {
 			t.Errorf("%s: OwnedFiles count = %d, want %d", name, len(tool.OwnedFiles), len(def.OwnedFiles))
 		}
-		_ = opsPrefix
 	}
 }
 

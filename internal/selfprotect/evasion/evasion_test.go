@@ -396,3 +396,20 @@ func TestCheck_NonBashToolSkipsCommandChecks(t *testing.T) {
 		})
 	}
 }
+
+// TestCheck_ShellTools verifies evasion checks apply to every shell-running
+// tool, not only Bash (W033).
+func TestCheck_ShellTools(t *testing.T) {
+	t.Parallel()
+	for _, tool := range []string{"Bash", "PowerShell", "Monitor"} {
+		t.Run(tool, func(t *testing.T) {
+			t.Parallel()
+			if blocked, _, _ := Check(tool, "ln .claude/settings.json /tmp/x", ""); !blocked {
+				t.Errorf("%s hardlink to protected config was not blocked", tool)
+			}
+		})
+	}
+	if blocked, _, _ := Check("WebFetch", "ln .claude/settings.json /tmp/x", ""); blocked {
+		t.Error("non-shell tool with a command field was blocked")
+	}
+}

@@ -17,10 +17,9 @@ type SkillManifest struct {
 
 // SkillEntry describes a single skill in the manifest.
 type SkillEntry struct {
-	Name                string   `yaml:"name"`
-	Description         string   `yaml:"description"`
-	Tags                []string `yaml:"tags"`
-	ApplicableLanguages []string `yaml:"applicable_languages"`
+	Name        string   `yaml:"name"`
+	Description string   `yaml:"description"`
+	Tags        []string `yaml:"tags"`
 }
 
 // loadManifest reads and parses the skill manifest from the embedded filesystem.

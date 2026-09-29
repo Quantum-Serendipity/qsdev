@@ -1,6 +1,9 @@
 package pkgmanager
 
-import "fmt"
+import (
+	"fmt"
+	"strings"
+)
 
 // PackageNames holds platform-specific package names for a tool.
 type PackageNames struct {
@@ -89,14 +92,12 @@ var toolRegistry = map[string]ToolEntry{
 	},
 	// Keyed "node" (not "nodejs") to match the tool name that flows through
 	// doctor checks and the setup toolLevels; the installable package name is
-	// still "nodejs" on most Linux managers.
+	// still "nodejs" on most Linux managers. Arch uses the generic name too:
+	// its version-pinned nodejs-lts-<codename> packages go end of life.
 	"node": {
 		Name: "node", Binary: "node", VersionFlag: "--version",
 		Packages: PackageNames{
 			Generic: "nodejs",
-			ByFamily: map[string]string{
-				"arch": "nodejs-lts-iron",
-			},
 			ByManager: map[string]string{
 				"winget": "OpenJS.NodeJS.LTS",
 				"scoop":  "nodejs-lts",
@@ -110,6 +111,9 @@ var toolRegistry = map[string]ToolEntry{
 		Name: "npm", Binary: "npm", VersionFlag: "--version",
 		Packages: PackageNames{
 			Generic: "npm",
+			ByManager: map[string]string{
+				"nix": "nodejs", // nixpkgs has no top-level npm; it ships with nodejs
+			},
 			Unavailable: map[string]string{
 				"winget": "it is bundled with Node.js — install the 'node' tool (winget package OpenJS.NodeJS.LTS)",
 			},
@@ -161,6 +165,7 @@ var toolRegistry = map[string]ToolEntry{
 			ByManager: map[string]string{
 				"apt":    "build-essential",
 				"emerge": "sys-devel/make",
+				"nix":    "gnumake",
 			},
 		},
 	},
@@ -192,7 +197,8 @@ var toolRegistry = map[string]ToolEntry{
 		Packages: PackageNames{
 			Generic: "rustup",
 			ByManager: map[string]string{
-				"emerge": "dev-lang/rust",
+				// dev-lang/rust ships rustc/cargo but not the rustup binary.
+				"emerge": "dev-util/rustup",
 			},
 		},
 	},
@@ -253,11 +259,18 @@ var toolRegistry = map[string]ToolEntry{
 }
 
 // ResolvePackageName returns the best package name for the given tool,
-// considering OS family and package manager overrides.
+// considering OS family and package manager overrides. Manager aliases such as
+// "yum" or "apt-get" are resolved to their canonical names first.
 // Lookup order: ByManager → ByFamily → Generic.
 // Returns ("", false) if the tool is not in the registry, or if the tool has
 // no installable package for the given manager (see PackageUnavailable).
+//
+// Pass family only when manager is that family's native manager: family names
+// (e.g. debian's "golang") are meaningless to a cross-platform manager such as
+// Nix. Callers holding a detected PackageManager should use PackageFor, which
+// applies that rule.
 func ResolvePackageName(toolName, family, manager string) (string, bool) {
+	manager = canonicalManager(manager)
 	entry, ok := toolRegistry[toolName]
 	if !ok {
 		return "", false
@@ -287,18 +300,13 @@ func ResolvePackageName(toolName, family, manager string) (string, bool) {
 	return "", false
 }
 
-// LookupTool returns the ToolEntry for the given tool name, if it exists.
-func LookupTool(name string) (ToolEntry, bool) {
-	e, ok := toolRegistry[name]
-	return e, ok
-}
-
 // PackageUnavailable reports whether toolName has no installable package for the
 // given package manager. When unavailable is true, remedy contains actionable
 // guidance for installing the tool by other means (e.g. via pip, or bundled
 // with another tool). It returns ("", false) for tools that are not in the
 // registry or that do have a package for the manager.
 func PackageUnavailable(toolName, manager string) (remedy string, unavailable bool) {
+	manager = canonicalManager(manager)
 	entry, ok := toolRegistry[toolName]
 	if !ok || manager == "" || entry.Packages.Unavailable == nil {
 		return "", false
@@ -307,47 +315,45 @@ func PackageUnavailable(toolName, manager string) (remedy string, unavailable bo
 	return remedy, unavailable
 }
 
-// InstallCommand returns a human-readable install command string for the
-// given tool, e.g. "brew install git" or "sudo apt-get install -y golang".
-func InstallCommand(toolName, family, manager string) string {
+// PackageFor returns the package that pm installs for toolName. The family
+// hint is applied only when pm is the family's native manager, so a
+// cross-platform manager (Nix, or Homebrew on Linux) never receives
+// distribution-specific names such as debian's "golang".
+func PackageFor(pm PackageManager, family, toolName string) (string, bool) {
+	return ResolvePackageName(toolName, nativeFamily(pm, family), pm.Name())
+}
+
+// nativeFamily returns family when pm is that family's native manager, and ""
+// otherwise.
+func nativeFamily(pm PackageManager, family string) string {
+	if familyManagers[family] == pm.Name() {
+		return family
+	}
+	return ""
+}
+
+// InstallCommand returns a human-readable command that installs toolName with
+// pm, e.g. "brew install git" or "sudo apt-get install -y golang". It is built
+// from pm.InstallArgs, so it matches what Install actually runs, with a sudo
+// prefix when pm needs elevation. Tools that pm has no package for get
+// actionable guidance; unknown tools yield "".
+func InstallCommand(pm PackageManager, family, toolName string) string {
+	manager := pm.Name()
 	// Tools with no package for this manager get actionable guidance instead of
 	// a broken command line (e.g. "winget install --id pre-commit -e").
 	if remedy, unavailable := PackageUnavailable(toolName, manager); unavailable {
 		return fmt.Sprintf("no %s package for %s; %s", manager, toolName, remedy)
 	}
 
-	pkgName, ok := ResolvePackageName(toolName, family, manager)
+	pkgName, ok := PackageFor(pm, family, toolName)
 	if !ok {
 		return ""
 	}
 
-	switch manager {
-	case "apt":
-		return fmt.Sprintf("sudo apt-get install -y %s", pkgName)
-	case "dnf":
-		return fmt.Sprintf("sudo dnf install -y %s", pkgName)
-	case "pacman":
-		return fmt.Sprintf("sudo pacman -S --noconfirm %s", pkgName)
-	case "zypper":
-		return fmt.Sprintf("sudo zypper install -y %s", pkgName)
-	case "apk":
-		return fmt.Sprintf("sudo apk add %s", pkgName)
-	case "xbps":
-		return fmt.Sprintf("sudo xbps-install -y %s", pkgName)
-	case "emerge":
-		return fmt.Sprintf("sudo emerge %s", pkgName)
-	case "brew":
-		return fmt.Sprintf("brew install %s", pkgName)
-	case "nix":
-		return fmt.Sprintf("nix profile install nixpkgs#%s", pkgName)
-	case "winget":
-		return fmt.Sprintf("winget install --id %s -e", pkgName)
-	case "scoop":
-		return fmt.Sprintf("scoop install %s", pkgName)
-	case "choco":
-		return fmt.Sprintf("choco install -y %s", pkgName)
-	default:
-		// Generic fallback.
-		return fmt.Sprintf("%s install %s", manager, pkgName)
+	bin, args := pm.InstallArgs(pkgName)
+	cmd := strings.Join(append([]string{bin}, args...), " ")
+	if pm.NeedsElevation() {
+		return "sudo " + cmd
 	}
+	return cmd
 }

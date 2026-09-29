@@ -2,33 +2,32 @@ package devinit
 
 import (
 	"fmt"
+	"slices"
 	"strings"
 
+	"github.com/Quantum-Serendipity/qsdev/internal/exitcode"
 	"github.com/Quantum-Serendipity/qsdev/internal/tier"
 	"github.com/Quantum-Serendipity/qsdev/pkg/branding"
 	"github.com/Quantum-Serendipity/qsdev/pkg/types"
 )
 
-// ExitError is a sentinel error that carries a process exit code. Command
-// handlers return this instead of calling os.Exit directly so that deferred
+// ExitError is the shared exit-code error (internal/exitcode.Error). Command
+// handlers return it instead of calling os.Exit directly so that deferred
 // cleanup runs and tests can inspect the code without terminating the process.
-type ExitError struct {
-	Code int
-}
+// Handlers that have already printed their report leave Message empty and only
+// set Code.
+type ExitError = exitcode.Error
 
-func (e *ExitError) Error() string {
-	return ""
-}
-
-func (e *ExitError) ExitCode() int {
-	return e.Code
-}
+// claudeMDPath is the project-relative path of the generated CLAUDE.md.
+const claudeMDPath = "CLAUDE.md"
 
 // postGenerationMessage returns a human-readable summary of next steps after
-// qsdev init has generated files. It adapts the message based on what was
-// generated (devenv, Claude Code, or both).
-func postGenerationMessage(answers types.WizardAnswers, devenvGenerated, claudeGenerated bool) string {
+// qsdev init has generated files. It adapts the message to what acc actually
+// generated: devenv, Claude Code, or both, and CLAUDE.md only when it is
+// among the files (supply-chain-only produces settings and hooks only).
+func postGenerationMessage(answers types.WizardAnswers, acc accumulatorResult) string {
 	var steps []string
+	devenvGenerated, claudeGenerated := acc.devenvGenerated, acc.claudeGenerated
 
 	if devenvGenerated {
 		if answers.Direnv {
@@ -39,7 +38,9 @@ func postGenerationMessage(answers types.WizardAnswers, devenvGenerated, claudeG
 	}
 
 	if claudeGenerated {
-		steps = append(steps, "Review CLAUDE.md to customize project documentation.")
+		if slices.ContainsFunc(acc.allFiles, func(f types.GeneratedFile) bool { return f.Path == claudeMDPath }) {
+			steps = append(steps, "Review "+claudeMDPath+" to customize project documentation.")
+		}
 		steps = append(steps, fmt.Sprintf("Run '%s list' to see available tools and '%s enable <tool>' to add more.", branding.Get().AppName, branding.Get().AppName))
 	}
 
@@ -62,20 +63,33 @@ func postGenerationMessage(answers types.WizardAnswers, devenvGenerated, claudeG
 		next, ok := tier.NextTier(answers.Tier)
 		if ok && pos > 0 {
 			fmt.Fprintf(&b, "\nSecurity tier: %s (%d/%d)\n", answers.Tier, pos, tier.Total())
-			fmt.Fprintf(&b, "  Tip: Run '%s init --tier %s --dry-run' to preview the next tier.\n", branding.Get().AppName, next)
+			fmt.Fprintf(&b, "  Tip: Run '%s' to preview the next tier.\n", tier.PreviewCommand(branding.Get().AppName, next))
 		}
 	}
 
 	return b.String()
 }
 
+// missingAnswerFields lists the required answer fields that are unset, using
+// the same rule as types.WizardAnswers.IsComplete (minus its Confirmed gate):
+// at least one language, and a permission level or tier when Claude Code is
+// enabled (a tier implies its permission preset). Both the --yes and the
+// --answers-file completeness checks report through it so they cannot drift.
+func missingAnswerFields(answers types.WizardAnswers) []string {
+	var missing []string
+	if len(answers.Languages) == 0 {
+		missing = append(missing, "languages (at least one language is required)")
+	}
+	if answers.ClaudeCode && answers.PermissionLevel == "" && answers.Tier == "" {
+		missing = append(missing, "permission_level or tier (required when claude_code is true)")
+	}
+	return missing
+}
+
 func incompleteAnswersMessage(answers types.WizardAnswers) string {
 	var b strings.Builder
-	if len(answers.Languages) == 0 {
-		fmt.Fprintln(&b, "  - languages")
-	}
-	if answers.ClaudeCode && answers.PermissionLevel == "" {
-		fmt.Fprintln(&b, "  - permission level")
+	for _, field := range missingAnswerFields(answers) {
+		fmt.Fprintf(&b, "  - %s\n", field)
 	}
 	return b.String()
 }

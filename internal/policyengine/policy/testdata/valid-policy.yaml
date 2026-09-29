@@ -22,7 +22,6 @@ rules:
     action:
       type: block
       message: "Cannot edit {file_path}: protected configuration file"
-      exit_code: 2
 
   - id: CG-001
     category: config-guard

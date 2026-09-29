@@ -38,7 +38,7 @@ func NewGlobResolver() *GlobResolver { return &GlobResolver{} }
 // An include entry beginning with "!" is reinterpreted as an exclude (defensive
 // handling of pnpm/npm negation even when a parser has not already split it).
 func (r *GlobResolver) ResolvePatterns(root string, includes, excludes []string) ([]string, error) {
-	includePats, negatedExcludes := splitNegations(includes)
+	includePats, negatedExcludes := partitionNegations(includes)
 	allExcludes := append(negatedExcludes, normalizePatterns(excludes)...)
 
 	fsys := os.DirFS(root)
@@ -66,24 +66,6 @@ func (r *GlobResolver) ResolvePatterns(root string, includes, excludes []string)
 	}
 	sort.Strings(out)
 	return out, nil
-}
-
-// splitNegations partitions include entries into true includes and the excludes
-// implied by a leading "!" (pnpm/npm negation). The "!" prefix is stripped from
-// negated entries.
-func splitNegations(includes []string) (pos, neg []string) {
-	for _, p := range includes {
-		t := strings.TrimSpace(p)
-		if t == "" {
-			continue
-		}
-		if strings.HasPrefix(t, "!") {
-			neg = append(neg, strings.TrimSpace(t[1:]))
-			continue
-		}
-		pos = append(pos, t)
-	}
-	return pos, neg
 }
 
 // normalizePatterns trims, drops empties, and strips leading "./" from patterns

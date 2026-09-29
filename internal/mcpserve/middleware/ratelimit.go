@@ -17,14 +17,29 @@ import (
 // memory without perturbing rate-limit behavior.
 const defaultBucketTTL = 10 * time.Minute
 
-// bucket is a single token bucket keyed by (agent_id, category). It is guarded
+// maxBuckets caps the number of per-(principal,category) token buckets held in
+// memory. When a new caller would exceed it, buckets that have refilled to
+// capacity (indistinguishable from fresh ones) are dropped first; if the map is
+// still full, the newcomer is charged against a single shared overflow bucket
+// for its category rather than receiving a fresh, full bucket of its own.
+const maxBuckets = 4096
+
+// overflowPrincipal keys the shared per-category overflow bucket. It begins with
+// a NUL, which no transport-derived principal does (they begin with "cert:",
+// "session:", or "client:").
+const overflowPrincipal = "\x00overflow"
+
+// bucket is a single token bucket keyed by (principal, category). It is guarded
 // by the owning limiter's mutex; it carries no lock of its own.
 type bucket struct {
 	tokens     float64
 	lastRefill time.Time
+	// category is the bucket's category, recorded so eviction can evaluate the
+	// bucket against its own limit.
+	category string
 }
 
-// limiter holds the per-(agent,category) token buckets and the per-category
+// limiter holds the per-(principal,category) token buckets and the per-category
 // concurrency semaphores. Buckets are created lazily on first use. Token refill
 // is time-based via an injectable clock so tests need not sleep.
 type limiter struct {
@@ -56,15 +71,27 @@ func newLimiter(limits CategoryLimits, clock func() time.Time) *limiter {
 	}
 }
 
-// bucketKey composes the (agent_id, category) bucket key. A NUL separator keeps
-// it unambiguous regardless of the values.
-func bucketKey(agentID, category string) string {
-	return agentID + "\x00" + category
+// bucketKey composes the (principal, category) bucket key. A NUL separator
+// keeps it unambiguous regardless of the values.
+func bucketKey(principal, category string) string {
+	return principal + "\x00" + category
 }
 
-// allow attempts to consume one token from the (agent,category) bucket, refilling
-// it first based on elapsed time. It reports whether a token was available.
-func (l *limiter) allow(agentID, category string) bool {
+// rateKey returns the identity rate limiting is keyed on: the transport-stable
+// Principal, never the self-asserted AgentID (which a client can rotate per call
+// via the _meta override to receive a fresh bucket every time). A context with
+// no Principal (built directly, outside the server bridge) falls back to AgentID.
+func rateKey(cc *spi.ToolCallContext) string {
+	if cc != nil && cc.Principal != "" {
+		return cc.Principal
+	}
+	return agentID(cc)
+}
+
+// allow attempts to consume one token from the (principal,category) bucket,
+// refilling it first based on elapsed time. It reports whether a token was
+// available.
+func (l *limiter) allow(principal, category string) bool {
 	lim := l.limits.limitFor(category)
 	now := l.clock()
 
@@ -73,22 +100,24 @@ func (l *limiter) allow(agentID, category string) bool {
 
 	l.evictIdleLocked(now)
 
-	key := bucketKey(agentID, category)
+	key := bucketKey(principal, category)
 	b, ok := l.buckets[key]
 	if !ok {
+		if len(l.buckets) >= maxBuckets {
+			l.evictFullLocked(now)
+		}
+		if len(l.buckets) >= maxBuckets {
+			key = bucketKey(overflowPrincipal, category)
+			b, ok = l.buckets[key]
+		}
+	}
+	if !ok {
 		// A fresh bucket starts full so the first burst is honored.
-		b = &bucket{tokens: float64(lim.Burst), lastRefill: now}
+		b = &bucket{tokens: float64(lim.Burst), lastRefill: now, category: category}
 		l.buckets[key] = b
 	}
 
-	elapsed := now.Sub(b.lastRefill).Seconds()
-	if elapsed > 0 {
-		b.tokens += elapsed * lim.Rate
-		if capacity := float64(lim.Burst); b.tokens > capacity {
-			b.tokens = capacity
-		}
-		b.lastRefill = now
-	}
+	l.refillLocked(b, now)
 
 	if b.tokens >= 1 {
 		b.tokens--
@@ -97,7 +126,34 @@ func (l *limiter) allow(agentID, category string) bool {
 	return false
 }
 
-// evictIdleLocked reclaims (agent,category) buckets that have gone untouched for
+// refillLocked tops b up for the time elapsed since its last refill, capped at
+// the category's burst. The caller must hold l.mu.
+func (l *limiter) refillLocked(b *bucket, now time.Time) {
+	lim := l.limits.limitFor(b.category)
+	elapsed := now.Sub(b.lastRefill).Seconds()
+	if elapsed > 0 {
+		b.tokens += elapsed * lim.Rate
+		if capacity := float64(lim.Burst); b.tokens > capacity {
+			b.tokens = capacity
+		}
+		b.lastRefill = now
+	}
+}
+
+// evictFullLocked drops every bucket that would be at full capacity at now. Such
+// a bucket is indistinguishable from the fresh one allow() would create, so
+// dropping it frees memory without changing any caller's rate limit. The caller
+// must hold l.mu.
+func (l *limiter) evictFullLocked(now time.Time) {
+	for key, b := range l.buckets {
+		lim := l.limits.limitFor(b.category)
+		if b.tokens+now.Sub(b.lastRefill).Seconds()*lim.Rate >= float64(lim.Burst) {
+			delete(l.buckets, key)
+		}
+	}
+}
+
+// evictIdleLocked reclaims (principal,category) buckets that have gone untouched for
 // longer than bucketTTL, bounding the map's memory under churning agent or
 // category keys (R15). It runs at most once per TTL window — gated on the
 // injected clock via lastSweep — so the steady-state allow() hot path stays
@@ -142,7 +198,8 @@ func (l *limiter) acquire(category string) (release func(), ok bool) {
 }
 
 // RateLimit is the rate-limiting layer (Order 30). It applies a token bucket per
-// (agent_id, category) and a per-category concurrency semaphore. On bucket
+// (principal, category) — keyed on the transport-stable caller identity, see
+// rateKey — and a per-category concurrency semaphore. On bucket
 // exhaustion or concurrency saturation it SHORT-CIRCUITS with a tool-level error
 // result (not a Go error, which would become a protocol error) and marks the
 // audit outcome as rate-limited. The semaphore slot is always released via defer.
@@ -161,6 +218,7 @@ func (RateLimit) Order() int { return orderRateLimit }
 func (rl RateLimit) Handle(ctx context.Context, cc *spi.ToolCallContext, req *spi.ToolRequest, next spi.ToolHandler) (*spi.ToolResult, error) {
 	cat := category(cc)
 	agent := agentID(cc)
+	principal := rateKey(cc)
 
 	release, ok := rl.limiter.acquire(cat)
 	if !ok {
@@ -172,7 +230,7 @@ func (rl RateLimit) Handle(ctx context.Context, cc *spi.ToolCallContext, req *sp
 	}
 	defer release()
 
-	if !rl.limiter.allow(agent, cat) {
+	if !rl.limiter.allow(principal, cat) {
 		markDecision(ctx, DecisionRateLimited)
 		return &spi.ToolResult{
 			IsError: true,

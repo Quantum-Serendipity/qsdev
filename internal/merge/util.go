@@ -21,11 +21,12 @@ func DeepMergeJSON(dst, src map[string]any) map[string]any {
 	return out
 }
 
-// unionStrings returns the union of two string slices, preserving order.
+// unionStrings returns the union of two string slices, preserving order. The
+// result is never nil, so an empty union marshals as [] rather than null.
 // Elements from a appear first, followed by elements from b not already in a.
 func unionStrings(a, b []string) []string {
-	seen := make(map[string]bool)
-	var result []string
+	seen := make(map[string]bool, max(len(a), len(b)))
+	result := make([]string, 0, max(len(a), len(b)))
 	for _, s := range a {
 		if !seen[s] {
 			seen[s] = true
@@ -41,13 +42,13 @@ func unionStrings(a, b []string) []string {
 	return result
 }
 
-// diffStrings returns elements in a that are not in b.
+// diffStrings returns elements in a that are not in b (never nil).
 func diffStrings(a, b []string) []string {
 	bSet := make(map[string]bool, len(b))
 	for _, s := range b {
 		bSet[s] = true
 	}
-	var result []string
+	result := make([]string, 0, len(a))
 	for _, s := range a {
 		if !bSet[s] {
 			result = append(result, s)

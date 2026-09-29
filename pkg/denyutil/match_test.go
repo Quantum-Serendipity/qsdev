@@ -77,6 +77,15 @@ func TestGlobMatchArgs(t *testing.T) {
 		{"middle segments in order", "a * b * c", "a x b y c", true},
 		{"middle segments wrong order", "a * c * b", "a x b y c", false},
 
+		// Suffix-anchored patterns whose anchor text also appears earlier: the
+		// final segment must line up with the end, not with its first match.
+		{"repeated suffix anchor", "* --force", "git push --force origin --force", true},
+		{"repeated extension anchor", "*.env", "cat a.env b.env", true},
+		{"repeated middle and suffix", "git * main", "git push origin main main", true},
+		{"repeated pipe anchor", "curl * | sh", "curl -s x | sh | sh", true},
+		{"suffix must not overlap prefix", "ab*ba", "aba", false},
+		{"suffix anchor absent at end", "* --force", "git push --force origin", false},
+
 		// Env/read patterns.
 		{"env exact", "./.env", "./.env", true},
 		{"env wildcard", "./.env.*", "./.env.local", true},
@@ -124,6 +133,7 @@ func TestMatchesDenyRule(t *testing.T) {
 		// semantics — only the terminal whitespace-'*' case changed.
 		{"mid glob force matches", "Bash(git * --force)", "Bash(git push --force)", true},
 		{"mid glob force rejects", "Bash(git * --force)", "Bash(git push origin)", false},
+		{"repeated anchor conflict", "Bash(curl * | sh)", "Bash(curl -s x | sh | sh)", true},
 	}
 
 	for _, tt := range tests {

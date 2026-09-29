@@ -1,13 +1,14 @@
 package branding
 
 import (
-	"regexp"
 	"sync/atomic"
+
+	gdevinstance "fastcat.org/go/gdev/instance"
 )
 
-// githubActionsOIDCIssuer is the OIDC token issuer for keyless (Sigstore /
-// cosign) signatures produced by GitHub Actions workflows.
-const githubActionsOIDCIssuer = "https://token.actions.githubusercontent.com"
+// GitHubActionsOIDCIssuer is the OIDC token issuer for keyless (Sigstore /
+// cosign) signatures produced by GitHub Actions workflows on github.com.
+const GitHubActionsOIDCIssuer = "https://token.actions.githubusercontent.com"
 
 // ReleaseWorkflow is the file name of the GitHub Actions workflow that builds,
 // signs, and publishes release artifacts (GoReleaser keyless cosign on a tag
@@ -46,55 +47,54 @@ func Default() Config {
 	}
 }
 
-var active atomic.Pointer[Config]
+// active holds the current branding. It is initialized with the defaults at
+// package initialization, so Get never observes a nil configuration.
+var active = newActive()
 
-func init() {
+func newActive() *atomic.Pointer[Config] {
+	var p atomic.Pointer[Config]
 	d := Default()
-	active.Store(&d)
+	p.Store(&d)
+	return &p
 }
 
 // Set merges non-empty fields from cfg into the active branding configuration.
-// Must be called early in main(), before cmd.Main(). The gdev lockdown lifecycle
-// prevents Set from being called after initialization.
+// Must be called early in main(), before instance.Main(): it panics once the gdev
+// lifecycle has locked customizations down, so addons can never observe the
+// branding change after they captured it. Concurrent calls are safe; each
+// merge is applied atomically and none is lost.
 func Set(cfg Config) {
-	current := *active.Load()
-	if cfg.AppName != "" {
-		current.AppName = cfg.AppName
+	gdevinstance.CheckCanCustomize()
+	for {
+		old := active.Load()
+		next := merged(*old, cfg)
+		if active.CompareAndSwap(old, &next) {
+			return
+		}
 	}
-	if cfg.ConfigFile != "" {
-		current.ConfigFile = cfg.ConfigFile
+}
+
+// merged returns current with every non-empty field of cfg applied.
+func merged(current, cfg Config) Config {
+	setIfNonEmpty(&current.AppName, cfg.AppName)
+	setIfNonEmpty(&current.ConfigFile, cfg.ConfigFile)
+	setIfNonEmpty(&current.LocalConfig, cfg.LocalConfig)
+	setIfNonEmpty(&current.StateDir, cfg.StateDir)
+	setIfNonEmpty(&current.EnvLogVar, cfg.EnvLogVar)
+	setIfNonEmpty(&current.EnvLogDirVar, cfg.EnvLogDirVar)
+	setIfNonEmpty(&current.EnvNoUpdate, cfg.EnvNoUpdate)
+	setIfNonEmpty(&current.EnvPrefix, cfg.EnvPrefix)
+	setIfNonEmpty(&current.LogFilePrefix, cfg.LogFilePrefix)
+	setIfNonEmpty(&current.TempPrefix, cfg.TempPrefix)
+	setIfNonEmpty(&current.GitHubOwner, cfg.GitHubOwner)
+	setIfNonEmpty(&current.GitHubRepo, cfg.GitHubRepo)
+	return current
+}
+
+func setIfNonEmpty(dst *string, v string) {
+	if v != "" {
+		*dst = v
 	}
-	if cfg.LocalConfig != "" {
-		current.LocalConfig = cfg.LocalConfig
-	}
-	if cfg.StateDir != "" {
-		current.StateDir = cfg.StateDir
-	}
-	if cfg.EnvLogVar != "" {
-		current.EnvLogVar = cfg.EnvLogVar
-	}
-	if cfg.EnvLogDirVar != "" {
-		current.EnvLogDirVar = cfg.EnvLogDirVar
-	}
-	if cfg.EnvNoUpdate != "" {
-		current.EnvNoUpdate = cfg.EnvNoUpdate
-	}
-	if cfg.EnvPrefix != "" {
-		current.EnvPrefix = cfg.EnvPrefix
-	}
-	if cfg.LogFilePrefix != "" {
-		current.LogFilePrefix = cfg.LogFilePrefix
-	}
-	if cfg.TempPrefix != "" {
-		current.TempPrefix = cfg.TempPrefix
-	}
-	if cfg.GitHubOwner != "" {
-		current.GitHubOwner = cfg.GitHubOwner
-	}
-	if cfg.GitHubRepo != "" {
-		current.GitHubRepo = cfg.GitHubRepo
-	}
-	active.Store(&current)
 }
 
 // Get returns the current branding configuration.
@@ -120,47 +120,23 @@ func InstallScriptURL() string {
 	return "https://raw.githubusercontent.com/" + cfg.GitHubOwner + "/" + cfg.GitHubRepo + "/main/install.sh"
 }
 
-// WorkflowIdentity returns the Sigstore certificate-identity parameters used to
-// verify release artifacts signed by this project's GitHub Actions workflow.
-//
-// issuer is the GitHub Actions OIDC token issuer. subjectRegExp is an anchored
-// regular expression matching the signing subject — any workflow under the
-// project's own repository (derived from branding so that forks and rebrands
-// verify against their own repository rather than a hardcoded owner/repo). It
-// is suitable for cosign's --certificate-identity-regexp flag and can be reused
-// by any cosign-based verification policy in this project.
-func WorkflowIdentity() (issuer, subjectRegExp string) {
-	subjectRegExp = "^" + regexp.QuoteMeta(workflowSubjectPrefix()) + ".+$"
-	return githubActionsOIDCIssuer, subjectRegExp
-}
-
-// workflowSubjectPrefix returns the Sigstore signing-subject prefix shared by
-// every workflow in this project's repository:
-//
-//	https://github.com/<owner>/<repo>/.github/workflows/
-//
-// Both WorkflowIdentity (regexp) and ReleaseWorkflowIdentity (exact) derive
-// from it, so the two identity forms cannot silently diverge.
-func workflowSubjectPrefix() string {
-	return RepoURL() + "/.github/workflows/"
-}
-
 // ReleaseWorkflowIdentity returns the Sigstore certificate-identity parameters
 // used to verify a specific release's artifacts against the EXACT signing
-// subject of this project's release workflow.
-//
-// Unlike WorkflowIdentity (which returns a regexp suitable for cosign policy
-// files that must accept any of the project's workflows), this returns the exact
-// Subject Alternative Name (SAN) pinning BOTH the workflow file and the git ref:
+// subject of this project's release workflow. It returns the exact Subject
+// Alternative Name (SAN) pinning BOTH the workflow file and the git ref:
 //
 //	https://github.com/<owner>/<repo>/.github/workflows/release.yml@refs/tags/<tag>
 //
-// It is intended for cosign's --certificate-identity flag (exact match), which
+// Self-update matches it exactly as the SAN of the signing certificate (the
+// in-process sigstore-go equivalent of cosign's --certificate-identity), which
 // rejects any signature produced by a different workflow file or on a different
 // ref — closing the impersonation gap left by a permissive regexp. issuer is the
 // GitHub Actions OIDC token issuer. Owner/repo derive from branding so
 // forks/rebrands verify against their own release workflow.
+//
+// This is qsdev's own identity; it must never be used to verify images or
+// artifacts of a project that qsdev initializes.
 func ReleaseWorkflowIdentity(tag string) (issuer, identity string) {
-	identity = workflowSubjectPrefix() + ReleaseWorkflow + "@refs/tags/" + tag
-	return githubActionsOIDCIssuer, identity
+	identity = RepoURL() + "/.github/workflows/" + ReleaseWorkflow + "@refs/tags/" + tag
+	return GitHubActionsOIDCIssuer, identity
 }

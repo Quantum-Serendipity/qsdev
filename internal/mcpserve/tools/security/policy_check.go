@@ -5,9 +5,11 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"sync"
 	"time"
 
+	"github.com/Quantum-Serendipity/qsdev/internal/catalog"
 	"github.com/Quantum-Serendipity/qsdev/internal/config"
 	"github.com/Quantum-Serendipity/qsdev/internal/mcpserve/middleware"
 	"github.com/Quantum-Serendipity/qsdev/internal/mcpserve/spi"
@@ -21,8 +23,18 @@ import (
 // fast-path tool: parsed configuration is cached and reused while the policy
 // files are unchanged (compared by modification time), so repeated calls return
 // in well under the ≤5ms target without re-parsing YAML.
+//
+// Verdicts are computed from the canonical resolved configuration
+// (config.ResolveConfig), so the overlay semantics — union of the tools lists,
+// the security-level floor — are exactly those every other qsdev surface applies.
 type policyChecker struct {
 	projectRoot string
+	defaultPath string
+	// enforced is the Guardrail policy the running server installed at startup
+	// (nil when nothing is narrowed). mcp_enforced_deny is read from it, not
+	// re-derived from the file on disk, so an edit made after startup is never
+	// reported as enforced before a restart actually enforces it.
+	enforced *middleware.Policy
 
 	mu            sync.Mutex
 	projectPath   string
@@ -33,9 +45,11 @@ type policyChecker struct {
 	cachedLocal   *config.LocalConfig
 }
 
-func newPolicyChecker(projectRoot string) *policyChecker {
+func newPolicyChecker(projectRoot string, enforced *middleware.Policy) *policyChecker {
 	return &policyChecker{
 		projectRoot: projectRoot,
+		defaultPath: filepath.Join(projectRoot, branding.Get().ConfigFile),
+		enforced:    enforced,
 		localPath:   filepath.Join(projectRoot, branding.Get().LocalConfig),
 	}
 }
@@ -54,7 +68,17 @@ type policyDecision struct {
 	Tool     string `json:"tool"`
 	Decision string `json:"decision"` // allowed | denied | ask
 	Source   string `json:"source"`   // project | local | default
-	Rule     string `json:"rule"`     // tools.disabled | tools.enabled | default
+	Rule     string `json:"rule"`     // mcp.disabled_tools | tools.disabled | tools.enabled | default
+}
+
+// floorViolation is the JSON-facing form of a config.FloorViolation: an overlay
+// setting the canonical resolver refused because it would weaken the project's
+// security floor.
+type floorViolation struct {
+	Field     string `json:"field"`
+	Attempted any    `json:"attempted"`
+	Enforced  any    `json:"enforced"`
+	Reason    string `json:"reason"`
 }
 
 const (
@@ -65,13 +89,15 @@ const (
 	sourceProject = "project"
 	sourceLocal   = "local"
 	sourceDefault = "default"
+
+	// ruleMCPDisabled is the rule behind a deny the MCP Guardrail enforces.
+	ruleMCPDisabled = "mcp.disabled_tools"
 )
 
 // handle evaluates the in-memory policy. With tool_name set it returns the
 // single decision for that tool; without it, it returns the full rule inventory.
 func (pc *policyChecker) handle(_ context.Context, _ *spi.ToolCallContext, req *spi.ToolRequest) (*spi.ToolResult, error) {
-	requestedPath := toolutil.StringArgOr(req.Arguments, "policy_path",
-		filepath.Join(pc.projectRoot, branding.Get().ConfigFile))
+	requestedPath := toolutil.StringArgOr(req.Arguments, "policy_path", pc.defaultPath)
 
 	// Containment: a caller-supplied policy_path must resolve to a location
 	// within the project root. Without this an attacker could point the tool at
@@ -93,41 +119,75 @@ func (pc *policyChecker) handle(_ context.Context, _ *spi.ToolCallContext, req *
 			map[string]any{"path": policyPath, "error": err.Error()}), nil
 	}
 
-	defaultDecision := defaultDecisionFor(project, local)
+	// The effective config comes from the canonical resolver (as
+	// qsdev_config_show uses), so the local overlay cannot lower the security
+	// floor here any more than it can anywhere else.
+	resolved, err := config.ResolveConfig(&types.QsdevConfig{}, project, local)
+	if err != nil {
+		return toolutil.NotConfigured("could not resolve effective policy",
+			map[string]any{"path": policyPath, "error": err.Error()}), nil
+	}
+	defaultDecision := defaultDecisionFor(resolved.Config)
 
 	// mcpEnforcedDeny is the exact tool-name deny set the MCP Guardrail enforces on
-	// tool calls, derived from the SAME middleware.PolicyFromConfig used at server
-	// construction. Surfacing it here keeps "reported denied" and "actually
-	// enforced" from diverging: what this tool reports as MCP-enforced is read from
-	// the identical Policy object the running server installs. It reflects the
-	// project config's tools.disabled only (the Guardrail is fed the project config
-	// at construction; the local overlay drives advisory Claude Code semantics).
-	mcpEnforcedDeny := middleware.PolicyFromConfig(project).DenyToolSet()
+	// tool calls, read from the Policy object the running server installed at
+	// startup — never re-derived from the file (which may have changed since) or
+	// from a caller-chosen policy_path. It reflects the project config's
+	// mcp.disabled_tools only; the catalog tools lists and the local overlay
+	// drive advisory Claude Code semantics.
+	mcpEnforcedDeny := pc.enforced.DenyToolSet()
+
+	structured := map[string]any{
+		"policy_path":       policyPath,
+		"default_decision":  defaultDecision,
+		"mcp_enforced_deny": mcpEnforcedDeny,
+	}
+	if len(resolved.Violations) > 0 {
+		structured["floor_violations"] = toFloorViolations(resolved.Violations)
+	}
+	addWarning(structured, localWarn)
+	addWarning(structured, pc.enforcementDrift(policyPath, project, mcpEnforcedDeny))
 
 	if toolName, ok := toolutil.StringArg(req.Arguments, "tool_name"); ok && toolName != "" {
 		dec := evaluateTool(toolName, project, local, defaultDecision)
+		structured["evaluation"] = dec
 		text := fmt.Sprintf("policy: tool %q is %s (source=%s, rule=%s)", dec.Tool, dec.Decision, dec.Source, dec.Rule)
-		structured := map[string]any{
-			"policy_path":       policyPath,
-			"default_decision":  defaultDecision,
-			"evaluation":        dec,
-			"mcp_enforced_deny": mcpEnforcedDeny,
-		}
-		addWarning(structured, localWarn)
 		return toolutil.Result(text, structured), nil
 	}
 
 	rules := inventoryRules(project, local)
-	structured := map[string]any{
-		"policy_path":       policyPath,
-		"default_decision":  defaultDecision,
-		"rules":             rules,
-		"rule_count":        len(rules),
-		"mcp_enforced_deny": mcpEnforcedDeny,
-	}
-	addWarning(structured, localWarn)
+	structured["rules"] = rules
+	structured["rule_count"] = len(rules)
 	text := fmt.Sprintf("policy: %d explicit rules; default decision is %q", len(rules), defaultDecision)
 	return toolutil.Result(text, structured), nil
+}
+
+// enforcementDrift explains any gap between the evaluated policy file and the
+// deny set the running server actually enforces, or returns "" when there is
+// none. A non-default policy_path is never what the Guardrail enforces, and the
+// default project config may have been edited since startup, in which case its
+// mcp.disabled_tools is not enforced until the server restarts.
+func (pc *policyChecker) enforcementDrift(policyPath string, project *types.QsdevConfig, enforced []string) string {
+	if policyPath != pc.defaultPath {
+		return fmt.Sprintf("policy_path %s is not the project config the MCP server enforces; "+
+			"its verdicts are hypothetical and mcp_enforced_deny reflects the running server's policy", policyPath)
+	}
+	if onDisk := middleware.PolicyFromConfig(project).DenyToolSet(); !slices.Equal(onDisk, enforced) {
+		return fmt.Sprintf("%s mcp.disabled_tools %v differs from the deny set the running MCP server enforces %v "+
+			"(loaded at startup); restart the server to enforce the current file",
+			branding.Get().ConfigFile, onDisk, enforced)
+	}
+	return ""
+}
+
+// toFloorViolations converts the resolver's floor violations to their
+// JSON-facing form.
+func toFloorViolations(vs []config.FloorViolation) []floorViolation {
+	out := make([]floorViolation, len(vs))
+	for i, v := range vs {
+		out[i] = floorViolation{Field: v.Field, Attempted: v.Attempted, Enforced: v.Enforced, Reason: v.Reason}
+	}
+	return out
 }
 
 // addWarning records a non-empty warning on a structured tool result under the
@@ -199,23 +259,27 @@ func (pc *policyChecker) refreshLocalLocked() string {
 	return ""
 }
 
-// evaluateTool resolves the verdict for tool through the cascade
-// local > project > default; within a level a deny (tools.disabled) takes
-// precedence over an allow (tools.enabled), so an explicit deny is never
-// silently overridden at the same level.
+// evaluateTool resolves the verdict for tool. An MCP tool named in the
+// project's mcp.disabled_tools is reported first because that is the deny the
+// MCP Guardrail enforces. For the catalog tools lists the canonical resolver
+// unions the project and local lists, so a deny (tools.disabled) at ANY level
+// wins over an allow at any level: a local tools.enabled never re-enables a tool
+// the project disables.
 func evaluateTool(tool string, project *types.QsdevConfig, local *config.LocalConfig, defaultDecision string) policyDecision {
+	var localTools types.ToolsConfig
 	if local != nil {
-		if containsStr(local.Tools.Disabled, tool) {
-			return policyDecision{Tool: tool, Decision: decisionDenied, Source: sourceLocal, Rule: "tools.disabled"}
-		}
-		if containsStr(local.Tools.Enabled, tool) {
-			return policyDecision{Tool: tool, Decision: decisionAllowed, Source: sourceLocal, Rule: "tools.enabled"}
-		}
+		localTools = local.Tools
 	}
-	if containsStr(project.Tools.Disabled, tool) {
+	switch {
+	case slices.Contains(project.MCP.DisabledTools, tool):
+		return policyDecision{Tool: tool, Decision: decisionDenied, Source: sourceProject, Rule: ruleMCPDisabled}
+	case slices.Contains(project.Tools.Disabled, tool):
 		return policyDecision{Tool: tool, Decision: decisionDenied, Source: sourceProject, Rule: "tools.disabled"}
-	}
-	if containsStr(project.Tools.Enabled, tool) {
+	case slices.Contains(localTools.Disabled, tool):
+		return policyDecision{Tool: tool, Decision: decisionDenied, Source: sourceLocal, Rule: "tools.disabled"}
+	case slices.Contains(localTools.Enabled, tool):
+		return policyDecision{Tool: tool, Decision: decisionAllowed, Source: sourceLocal, Rule: "tools.enabled"}
+	case slices.Contains(project.Tools.Enabled, tool):
 		return policyDecision{Tool: tool, Decision: decisionAllowed, Source: sourceProject, Rule: "tools.enabled"}
 	}
 	return policyDecision{Tool: tool, Decision: defaultDecision, Source: sourceDefault, Rule: "default"}
@@ -226,6 +290,9 @@ func evaluateTool(tool string, project *types.QsdevConfig, local *config.LocalCo
 // effective policy without naming a specific tool.
 func inventoryRules(project *types.QsdevConfig, local *config.LocalConfig) []policyDecision {
 	var rules []policyDecision
+	for _, t := range project.MCP.DisabledTools {
+		rules = append(rules, policyDecision{Tool: t, Decision: decisionDenied, Source: sourceProject, Rule: ruleMCPDisabled})
+	}
 	for _, t := range project.Tools.Disabled {
 		rules = append(rules, policyDecision{Tool: t, Decision: decisionDenied, Source: sourceProject, Rule: "tools.disabled"})
 	}
@@ -244,36 +311,35 @@ func inventoryRules(project *types.QsdevConfig, local *config.LocalConfig) []pol
 }
 
 // defaultDecisionFor derives the fallback verdict applied to a tool that no
-// explicit rule mentions. A restrictive Claude Code permission level or a high
-// security level escalates the default from "allowed" to "ask"; the local
-// overlay (when present) takes precedence over the project value.
-func defaultDecisionFor(project *types.QsdevConfig, local *config.LocalConfig) string {
-	level := project.ClaudeCode.PermissionLevel
-	secLevel := project.Security.Level
-	if local != nil {
-		if local.ClaudeCode.PermissionLevel != "" {
-			level = local.ClaudeCode.PermissionLevel
-		}
-		if local.Security.Level != "" {
-			secLevel = local.Security.Level
-		}
-	}
-	switch level {
-	case "strict", "ask", "plan":
+// explicit rule mentions, from the effective (resolved, floor-enforced) config.
+// It escalates from "allowed" to "ask" when either:
+//   - the Claude Code permission preset starts sessions in plan mode per its
+//     catalog definition (e.g. "minimal"), so nothing runs without approval; or
+//   - the effective security level is the strictest compliance level.
+func defaultDecisionFor(effective *types.QsdevConfig) string {
+	if presetRequiresApproval(effective.ClaudeCode.PermissionLevel) {
 		return decisionAsk
 	}
-	switch secLevel {
-	case "high", "strict", "maximum":
+	if lvl, err := config.ParseComplianceLevel(effective.Security.Level); err == nil && lvl >= config.ComplianceLevelStrict {
 		return decisionAsk
 	}
 	return decisionAllowed
 }
 
-func containsStr(list []string, v string) bool {
-	for _, e := range list {
-		if e == v {
-			return true
-		}
+// planDefaultMode is the Claude Code defaultMode under which no tool runs
+// without the user first approving a plan.
+const planDefaultMode = "plan"
+
+// presetRequiresApproval reports whether the named permission preset, as defined
+// in the catalog, starts Claude Code in plan mode.
+func presetRequiresApproval(preset string) bool {
+	if preset == "" {
+		return false
 	}
-	return false
+	cat, err := catalog.Default()
+	if err != nil {
+		return false
+	}
+	def, ok := cat.PermissionPreset(preset)
+	return ok && def.DefaultMode == planDefaultMode
 }

@@ -16,6 +16,7 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"os"
 	"path/filepath"
 	"testing"
@@ -268,6 +269,11 @@ func TestTrustedAgentFromCert(t *testing.T) {
 			"dns-san", true,
 		},
 		{
+			"uri san fallback",
+			chain(&x509.Certificate{URIs: []*url.URL{{Scheme: "spiffe", Host: "example.org", Path: "/ci-bot"}}}),
+			"spiffe://example.org/ci-bot", true,
+		},
+		{
 			"no usable name",
 			chain(&x509.Certificate{}),
 			"", false,
@@ -279,6 +285,51 @@ func TestTrustedAgentFromCert(t *testing.T) {
 			got, ok := trustedAgentFromCert(c.cs)
 			if got != c.want || ok != c.wOK {
 				t.Errorf("trustedAgentFromCert = (%q,%v), want (%q,%v)", got, ok, c.want, c.wOK)
+			}
+		})
+	}
+}
+
+// TestCertIdentityMiddlewareUnnamedVerifiedCertRejected is the regression test
+// for a verified mTLS chain whose leaf has no CN/DNS/URI SAN: it must be
+// rejected (fail closed) rather than falling through to the self-asserted _meta
+// agentId, which would let any CA-signed holder claim an allow-listed identity.
+func TestCertIdentityMiddlewareUnnamedVerifiedCertRejected(t *testing.T) {
+	t.Parallel()
+
+	cases := []struct {
+		name     string
+		leaf     *x509.Certificate
+		wantCode int
+		wantID   string
+	}{
+		{"unnamed leaf rejected", &x509.Certificate{EmailAddresses: []string{"a@example.org"}}, http.StatusForbidden, ""},
+		{"uri san leaf accepted", &x509.Certificate{URIs: []*url.URL{{Scheme: "spiffe", Host: "example.org", Path: "/w"}}}, http.StatusOK, "spiffe://example.org/w"},
+		{"cn leaf accepted", &x509.Certificate{Subject: pkix.Name{CommonName: "ci-bot"}}, http.StatusOK, "ci-bot"},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			t.Parallel()
+			var gotID string
+			var reached bool
+			h := certIdentityMiddleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				reached = true
+				gotID, _ = trustedAgentFromContext(r.Context())
+				w.WriteHeader(http.StatusOK)
+			}))
+			req := httptest.NewRequest(http.MethodPost, "/mcp", nil)
+			req.TLS = &tls.ConnectionState{VerifiedChains: [][]*x509.Certificate{{c.leaf}}}
+			rec := httptest.NewRecorder()
+			h.ServeHTTP(rec, req)
+
+			if rec.Code != c.wantCode {
+				t.Fatalf("status = %d, want %d", rec.Code, c.wantCode)
+			}
+			if c.wantCode == http.StatusForbidden && reached {
+				t.Fatal("inner handler reached for an unnamed verified cert")
+			}
+			if gotID != c.wantID {
+				t.Errorf("trusted id = %q, want %q", gotID, c.wantID)
 			}
 		})
 	}

@@ -158,6 +158,8 @@ rules:
               - pattern: $DB.ExecContext($CTX2, $QUERY, ...)
               - pattern: $DB.Prepare($QUERY)
               - pattern: $DB.PrepareContext($CTX2, $QUERY)
+          # gin's own c.Query("name") reads input; it is not a SQL sink.
+          - pattern-not: "($GC : *gin.Context).$METHOD(...)"
           - focus-metavariable: $QUERY
     pattern-sanitizers:
       - pattern-either:

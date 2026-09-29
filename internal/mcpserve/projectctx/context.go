@@ -12,12 +12,13 @@
 // cannot create an import cycle.
 //
 // Graceful degradation: handlers that depend on configuration a project may not
-// have yet (a missing .qsdev.yaml, an absent state file, the not-yet-built
-// Unit 32.7 workspace graph) return a structured not_configured result with
-// IsError set rather than failing. They never crash.
+// have yet (a missing .qsdev.yaml, an absent state file, no monorepo workspace
+// graph) return a structured not_configured result with IsError set rather than
+// failing. They never crash.
 package projectctx
 
 import (
+	"context"
 	"fmt"
 	"log/slog"
 	"os"
@@ -43,9 +44,10 @@ type ProjectContext struct {
 	// need a fresh view (qsdev_detect) re-run detection rather than reading this.
 	detection types.DetectedProject
 
-	// state is the primary generated-file state ledger, or an empty ledger when
-	// the project has not been initialized yet.
-	state     types.GeneratedState
+	// ledger serves the primary generated-file state ledger (an empty ledger when
+	// the project has not been initialized yet), reloaded whenever the state file
+	// changes so `qsdev enable`/`disable` during a session are reflected.
+	ledger    *ledgerCache
 	statePath string // absolute path to the primary state file (may not exist)
 
 	toolReg *toolreg.Registry
@@ -56,8 +58,6 @@ type ProjectContext struct {
 	// one member package; otherwise it is nil and the per-package context resource
 	// degrades to a structured not_configured result.
 	workspace *workspace.WorkspaceGraph
-
-	pruner *ToolPruner
 }
 
 // NewProjectContext builds the engine for projectRoot. Detection always runs;
@@ -70,16 +70,16 @@ func NewProjectContext(projectRoot string) (*ProjectContext, error) {
 		return nil, fmt.Errorf("project context: project root is required")
 	}
 
-	detection := detect.Detect(projectRoot)
+	// Construction has no request context; Detect bounds its own subprocess
+	// probes, so server startup cannot hang on a wedged container runtime.
+	detection := detect.Detect(context.Background(), projectRoot)
 
 	statePath := filepath.Join(projectRoot, state.StateFilePaths()[0])
-	st, err := state.LoadStateFromFile(statePath)
-	if err != nil {
+	ledger := newLedgerCache(statePath)
+	if _, warn := ledger.current(); warn != "" {
 		// A malformed or unreadable state file must not crash the engine: degrade
 		// to an empty ledger so introspection still works.
-		slog.Warn("project context: state file unreadable; using empty state",
-			"path", statePath, "error", err)
-		st = types.GeneratedState{Files: map[string]types.FileState{}}
+		slog.Warn("project context: "+warn, "path", statePath)
 	}
 
 	reg, err := toolreg.Default()
@@ -90,12 +90,11 @@ func NewProjectContext(projectRoot string) (*ProjectContext, error) {
 	return &ProjectContext{
 		projectRoot: projectRoot,
 		detection:   detection,
-		state:       st,
+		ledger:      ledger,
 		statePath:   statePath,
 		toolReg:     reg,
 		mcpReg:      mcpregistry.DefaultRegistry(),
 		workspace:   detectWorkspaceGraph(projectRoot),
-		pruner:      NewToolPruner(),
 	}, nil
 }
 
@@ -123,12 +122,7 @@ func detectWorkspaceGraph(projectRoot string) *workspace.WorkspaceGraph {
 		return nil
 	}
 
-	graph, err := workspace.DetectWorkspaces(projectRoot)
-	if err != nil {
-		slog.Warn("project context: workspace detection failed; per-package context disabled",
-			"root", projectRoot, "error", err)
-		return nil
-	}
+	graph := workspace.DetectWorkspaces(projectRoot)
 	if graph.Len() == 0 {
 		// A configuration file exists but declares no members (e.g. a single
 		// package.json without a "workspaces" field): not a monorepo.
@@ -142,9 +136,6 @@ func (pc *ProjectContext) ProjectRoot() string { return pc.projectRoot }
 
 // Detection returns the detection result captured at construction.
 func (pc *ProjectContext) Detection() types.DetectedProject { return pc.detection }
-
-// Pruner returns the engine's tool pruner (the tier-based ceiling mechanism).
-func (pc *ProjectContext) Pruner() *ToolPruner { return pc.pruner }
 
 // configFile returns the absolute path to the project's .qsdev.yaml.
 func (pc *ProjectContext) configFile() string {

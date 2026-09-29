@@ -1,6 +1,11 @@
 package catalog
 
-import "github.com/Quantum-Serendipity/qsdev/internal/sliceutil"
+import (
+	"maps"
+	"slices"
+
+	"github.com/Quantum-Serendipity/qsdev/internal/sliceutil"
+)
 
 // --- Validation accessors ---
 
@@ -51,6 +56,12 @@ func (c *Catalog) DataClassifications() []string {
 	out := make([]string, len(c.validation.DataClassifications))
 	copy(out, c.validation.DataClassifications)
 	return out
+}
+
+// PackageManagerEcosystems returns the ecosystems that declare package
+// managers, sorted.
+func (c *Catalog) PackageManagerEcosystems() []string {
+	return slices.Sorted(maps.Keys(c.validation.PackageManagers))
 }
 
 // PackageManagers returns the package manager names for an ecosystem.
@@ -138,4 +149,15 @@ func (c *Catalog) AllPackageInstallAskRules() []string {
 func (c *Catalog) PermissionPreset(name string) (PermissionPresetDef, bool) {
 	d, ok := c.permissionRules.PresetDefs[name]
 	return d, ok
+}
+
+// PermissionPresetStrictness returns a preset's strictness rank (higher is
+// stricter) and whether it has one. A preset without a rank, or an unknown
+// one, is not comparable to any other.
+func (c *Catalog) PermissionPresetStrictness(name string) (int, bool) {
+	d, ok := c.permissionRules.PresetDefs[name]
+	if !ok || d.Strictness <= 0 {
+		return 0, false
+	}
+	return d.Strictness, true
 }

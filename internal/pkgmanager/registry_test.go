@@ -150,6 +150,20 @@ func TestResolvePackageName(t *testing.T) {
 			want: "app-misc/jq", wantOK: true,
 		},
 		{
+			// The package must provide the "rustup" binary the entry checks;
+			// dev-lang/rust ships only rustc/cargo.
+			name: "rustup on emerge",
+			tool: "rustup", family: "gentoo", manager: "emerge",
+			want: "dev-util/rustup", wantOK: true,
+		},
+		{
+			// Arch's plain nodejs package tracks a supported release, unlike
+			// the pinned nodejs-lts-iron (Node 20, end of life).
+			name: "node on arch",
+			tool: "node", family: "arch", manager: "pacman",
+			want: "nodejs", wantOK: true,
+		},
+		{
 			name: "unknown tool",
 			tool: "nonexistent-tool", family: "debian", manager: "apt",
 			want: "", wantOK: false,
@@ -181,7 +195,26 @@ func TestResolvePackageNameManagerOverridesFamily(t *testing.T) {
 	}
 }
 
+// managerWith returns the named manager backed by a mock runner on which only
+// the manager's own binary is installed, so InstallArgs is deterministic.
+func managerWith(t *testing.T, name string) PackageManager {
+	t.Helper()
+	mock := NewMockRunner()
+	bin := map[string]string{"apt": "apt-get", "xbps": "xbps-install"}[name]
+	if bin == "" {
+		bin = name
+	}
+	mock.LookPathResults[bin] = lookPathResult{path: "/usr/bin/" + bin}
+	pm := managerByName(name, mock)
+	if pm.Name() != name {
+		t.Fatalf("managerByName(%q) = %q", name, pm.Name())
+	}
+	return pm
+}
+
 func TestInstallCommand(t *testing.T) {
+	t.Parallel()
+
 	tests := []struct {
 		name    string
 		tool    string
@@ -215,19 +248,39 @@ func TestInstallCommand(t *testing.T) {
 			want: "nix profile install nixpkgs#git",
 		},
 		{
+			name: "nix ignores debian family names",
+			tool: "go", family: "debian", manager: "nix",
+			want: "nix profile install nixpkgs#go",
+		},
+		{
+			name: "nix ignores dnf manager names",
+			tool: "shellcheck", family: "rhel", manager: "nix",
+			want: "nix profile install nixpkgs#shellcheck",
+		},
+		{
+			name: "nix make is gnumake",
+			tool: "make", family: "debian", manager: "nix",
+			want: "nix profile install nixpkgs#gnumake",
+		},
+		{
+			name: "nix npm ships with nodejs",
+			tool: "npm", family: "", manager: "nix",
+			want: "nix profile install nixpkgs#nodejs",
+		},
+		{
 			name: "winget install",
 			tool: "node", family: "windows", manager: "winget",
-			want: "winget install --id OpenJS.NodeJS.LTS -e",
+			want: "winget install --id OpenJS.NodeJS.LTS -e --accept-source-agreements --accept-package-agreements",
 		},
 		{
 			name: "winget install git",
 			tool: "git", family: "windows", manager: "winget",
-			want: "winget install --id Git.Git -e",
+			want: "winget install --id Git.Git -e --accept-source-agreements --accept-package-agreements",
 		},
 		{
 			name: "emerge with category",
 			tool: "go", family: "gentoo", manager: "emerge",
-			want: "sudo emerge dev-lang/go",
+			want: "sudo emerge --ask=n dev-lang/go",
 		},
 		{
 			name: "unknown tool returns empty",
@@ -263,9 +316,53 @@ func TestInstallCommand(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := InstallCommand(tt.tool, tt.family, tt.manager)
+			t.Parallel()
+			got := InstallCommand(managerWith(t, tt.manager), tt.family, tt.tool)
 			if got != tt.want {
-				t.Errorf("InstallCommand(%q, %q, %q) = %q, want %q", tt.tool, tt.family, tt.manager, got, tt.want)
+				t.Errorf("InstallCommand(%s, %q, %q) = %q, want %q", tt.manager, tt.family, tt.tool, got, tt.want)
+			}
+		})
+	}
+}
+
+// TestInstallCommandYumOnlyHost pins F474: on a host with yum but no dnf the
+// displayed command must be the yum command Install runs, with sudo and -y and
+// the dnf-family package names.
+func TestInstallCommandYumOnlyHost(t *testing.T) {
+	t.Parallel()
+	mock := NewMockRunner()
+	mock.LookPathResults["yum"] = lookPathResult{path: "/usr/bin/yum"}
+	pm := managerByName("yum", mock)
+
+	tests := []struct{ tool, want string }{
+		{"shellcheck", "sudo yum install -y ShellCheck"},
+		{"go", "sudo yum install -y golang"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.tool, func(t *testing.T) {
+			t.Parallel()
+			if got := InstallCommand(pm, "rhel", tt.tool); got != tt.want {
+				t.Errorf("InstallCommand(yum-only, %q) = %q, want %q", tt.tool, got, tt.want)
+			}
+		})
+	}
+}
+
+// TestResolvePackageNameManagerAliases verifies manager aliases resolve to
+// the canonical manager's overrides (yum -> dnf, apt-get -> apt).
+func TestResolvePackageNameManagerAliases(t *testing.T) {
+	t.Parallel()
+	tests := []struct{ tool, manager, want string }{
+		{"shellcheck", "yum", "ShellCheck"},
+		{"go", "apt-get", "golang"},
+		{"go", "portage", "dev-lang/go"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.manager, func(t *testing.T) {
+			t.Parallel()
+			got, ok := ResolvePackageName(tt.tool, "", tt.manager)
+			if !ok || got != tt.want {
+				t.Errorf("ResolvePackageName(%q, \"\", %q) = %q, %v; want %q", tt.tool, tt.manager, got, ok, tt.want)
 			}
 		})
 	}
@@ -318,7 +415,7 @@ func TestInstallCommandNoWingetPackage(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := InstallCommand(tt.tool, "", "winget")
+			got := InstallCommand(NewWinget(nil), "", tt.tool)
 			if strings.HasPrefix(got, "winget install --id") {
 				t.Fatalf("InstallCommand(%q, winget) = %q, must not emit a bare winget install", tt.tool, got)
 			}
@@ -331,24 +428,6 @@ func TestInstallCommandNoWingetPackage(t *testing.T) {
 	}
 }
 
-func TestLookupTool(t *testing.T) {
-	entry, ok := LookupTool("git")
-	if !ok {
-		t.Fatal("expected git to be in registry")
-	}
-	if entry.Binary != "git" {
-		t.Errorf("expected binary 'git', got %q", entry.Binary)
-	}
-	if entry.VersionFlag != "--version" {
-		t.Errorf("expected version flag '--version', got %q", entry.VersionFlag)
-	}
-
-	_, ok = LookupTool("nonexistent")
-	if ok {
-		t.Error("expected nonexistent tool to not be in registry")
-	}
-}
-
 func TestRegistryCompleteness(t *testing.T) {
 	// Verify all core tools are present.
 	expectedTools := []string{
@@ -357,7 +436,7 @@ func TestRegistryCompleteness(t *testing.T) {
 		"rustup", "unzip", "tree",
 	}
 	for _, name := range expectedTools {
-		if _, ok := LookupTool(name); !ok {
+		if _, ok := toolRegistry[name]; !ok {
 			t.Errorf("expected tool %q in registry", name)
 		}
 	}
@@ -367,7 +446,7 @@ func TestInstallCommandSudoPresence(t *testing.T) {
 	// Elevated managers should include "sudo" in the human-readable command.
 	elevatedManagers := []string{"apt", "dnf", "pacman", "zypper", "apk", "xbps", "emerge"}
 	for _, mgr := range elevatedManagers {
-		cmd := InstallCommand("git", "", mgr)
+		cmd := InstallCommand(managerWith(t, mgr), "", "git")
 		if !strings.HasPrefix(cmd, "sudo ") {
 			t.Errorf("InstallCommand for %s should start with 'sudo', got: %s", mgr, cmd)
 		}
@@ -376,7 +455,7 @@ func TestInstallCommandSudoPresence(t *testing.T) {
 	// Non-elevated managers should not include "sudo".
 	nonElevatedManagers := []string{"brew", "nix", "winget", "scoop", "choco"}
 	for _, mgr := range nonElevatedManagers {
-		cmd := InstallCommand("git", "", mgr)
+		cmd := InstallCommand(managerWith(t, mgr), "", "git")
 		if strings.HasPrefix(cmd, "sudo ") {
 			t.Errorf("InstallCommand for %s should not start with 'sudo', got: %s", mgr, cmd)
 		}

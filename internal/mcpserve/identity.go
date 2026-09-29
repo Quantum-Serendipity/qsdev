@@ -4,6 +4,7 @@ import (
 	"context"
 
 	"github.com/mark3labs/mcp-go/mcp"
+	"github.com/mark3labs/mcp-go/server"
 
 	"github.com/Quantum-Serendipity/qsdev/internal/mcpserve/spi"
 )
@@ -18,8 +19,10 @@ import (
 // once a cryptographically-verified transport identity exists (an mTLS
 // client-certificate CN/SAN; see authoritativeAgentID). A client can set this
 // key to any value, so it must never be allowed to override a verified cert. It
-// is honored only on the local trusted (stdio) path, where there is no transport
-// identity to verify against.
+// is honored only when the transport carries no verified identity (stdio, or
+// loopback plain HTTP). A verified mTLS chain whose leaf yields no usable name is
+// rejected at the transport (certIdentityMiddleware) rather than being allowed
+// to fall back to this self-asserted value.
 const MetaAgentIDKey = "com.quantumserendipity.qsdev/agentId"
 
 // unknownAgentID is used when neither the _meta extension nor clientInfo yields
@@ -92,6 +95,30 @@ func authoritativeAgentID(ctx context.Context, client spi.ClientInfo, meta map[s
 		return trusted
 	}
 	return resolveAgentID(client, meta)
+}
+
+// transportPrincipal returns the transport-stable identity for a request (see
+// spi.ToolCallContext.Principal): the verified mTLS identity when present,
+// otherwise the MCP session id plus the client's handshake name, otherwise the
+// client name alone. It deliberately ignores the per-request _meta override,
+// which a client can rotate on every call.
+//
+// A session is only used when it carries a handshake name. Streamable HTTP
+// validates just the FORMAT of a client-sent Mcp-Session-Id, so a caller can
+// present a fresh, never-initialized id on every request; such an ephemeral
+// session has no client info and must not mint a new principal. It collapses
+// into the shared "client:unknown" principal instead.
+func transportPrincipal(ctx context.Context, client spi.ClientInfo) string {
+	if trusted, ok := trustedAgentFromContext(ctx); ok {
+		return "cert:" + trusted
+	}
+	if client.Name == "" {
+		return "client:" + unknownAgentID
+	}
+	if session := server.ClientSessionFromContext(ctx); session != nil {
+		return "session:" + session.SessionID() + "\x00" + client.Name
+	}
+	return "client:" + client.Name
 }
 
 // metaFromMCP flattens an mcp.Meta into the neutral map[string]any carried on a

@@ -50,6 +50,13 @@ jobs:
       - name: Test
         run: gotestsum --format testname --junitfile test-results.xml -- ${{ matrix.os == 'ubuntu-latest' && '-race' || '' }} ./...
 
+      # The integration-tagged MCP health suite builds the real qsdev binary and
+      # drives it over stdio; a build failure or startup crash fails it. One leg
+      # is enough to catch a binary that cannot start.
+      - name: Integration tests
+        if: matrix.os == 'ubuntu-latest'
+        run: go test -tags integration -run TestHealthCheckIntegration ./internal/mcpserve/
+
       - name: Upload test results
         if: always()
         continue-on-error: true
@@ -122,14 +129,81 @@ jobs:
           go-version-file: go.mod
 
       # Verifies every SHA in the action catalog resolves upstream and matches
-      # the tag it claims. Offline tests cannot catch a well-formed but wrong
-      # SHA, and such a pin fails only when a generated workflow runs — in
-      # somebody else's repository.
-      - name: Verify action pins against upstream
-        run: go test ./internal/cigeneration/ -run TestActionPinsResolveUpstream -v
+      # the tag it claims, and every digest in the image catalog resolves in
+      # its registry and has not fallen too far behind its tag. Offline tests
+      # cannot catch a well-formed but wrong pin, and such a pin fails only
+      # when a generated workflow runs — in somebody else's repository.
+      - name: Verify action and image pins against upstream
+        run: go test ./internal/cigeneration/ -run 'Test(Action|Image)PinsResolveUpstream$' -v
         env:
           VERIFY_ACTION_PINS: "1"
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  # Runs the OpenGrep rule library through the engine: every shipped rule must
+  # parse (an unparsable rule is dropped with only a warning) and the
+  # annotated fixtures under rules/core/testdata must match, with zero
+  # findings on the safe fixtures. The unit-test job skips these checks
+  # because it has no scanner installed.
+  rules:
+    runs-on: ubuntu-latest
+    env:
+      OPENGREP_VERSION: "1.21.0"
+      # Release asset digest of opengrep_manylinux_x86 for OPENGREP_VERSION
+      # (also pinned in nix/opengrep/default.nix).
+      OPENGREP_SHA256: 9ed0ceee4a3a406d27d40894bcce85ea151be21e6d4b180689689224faff2a3e
+    steps:
+      - name: Harden Runner
+        uses: step-security/harden-runner@9af89fc71515a100421586dfdb3dc9c984fbf411 # v2.19.4
+        with:
+          egress-policy: audit
+
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+
+      - name: Set up Go
+        uses: actions/setup-go@4a3601121dd01d1626a1e23e37211e3254c1c06c # v6.4.0
+        with:
+          go-version-file: go.mod
+
+      - name: Install OpenGrep (pinned, checksum-verified)
+        run: |
+          mkdir -p "$RUNNER_TEMP/opengrep"
+          curl -fsSL -o "$RUNNER_TEMP/opengrep/opengrep" \
+            "https://github.com/opengrep/opengrep/releases/download/v${OPENGREP_VERSION}/opengrep_manylinux_x86"
+          echo "${OPENGREP_SHA256}  $RUNNER_TEMP/opengrep/opengrep" | sha256sum --check --strict
+          chmod 0755 "$RUNNER_TEMP/opengrep/opengrep"
+          echo "$RUNNER_TEMP/opengrep" >> "$GITHUB_PATH"
+
+      - name: Validate rules and fixtures
+        run: go test -count=1 -run 'TestCoreRules_' -v ./rules/
+        env:
+          QSDEV_REQUIRE_RULE_SCANNER: "1"
+
+  # Builds the MCP gateway image from build/docker/Dockerfile and runs the
+  # container suite against it (size, version stamping, startup, auth). A stale
+  # base-image pin (e.g. a Go older than go.mod requires) fails here.
+  docker-image:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Harden Runner
+        uses: step-security/harden-runner@9af89fc71515a100421586dfdb3dc9c984fbf411 # v2.19.4
+        with:
+          egress-policy: audit
+
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+
+      - name: Set up Go
+        uses: actions/setup-go@4a3601121dd01d1626a1e23e37211e3254c1c06c # v6.4.0
+        with:
+          go-version-file: go.mod
+
+      - name: Build and test the gateway image
+        run: go test -tags integration -count=1 -v ./internal/mcpserve/container/
 
   install-scripts:
     strategy:
@@ -158,7 +232,7 @@ jobs:
       - name: Validate install script (dry-run)
         run: ${{ matrix.script }}
         env:
-          QSDEV_VERSION: ${{ steps.version.outputs.value }}
+          QSDEV_INSTALL_VERSION: ${{ steps.version.outputs.value }}
 
   snapshot:
     runs-on: ubuntu-latest
@@ -185,14 +259,22 @@ jobs:
         uses: goreleaser/goreleaser-action@1a80836c5c9d9e5755a25cb59ec6f45a3b5f41a8 # v7.2.1
         with:
           distribution: goreleaser
-          version: "~> v2"
+          # Exact pin: this binary runs with the release signing identity
+          # and tap tokens. Keep ci.yml and release.yml on the same version;
+          # Renovate's custom manager (renovate.json) bumps both.
+          # renovate: datasource=github-releases depName=goreleaser/goreleaser
+          version: v2.18.2
           args: check
 
       - name: Run GoReleaser (snapshot)
         uses: goreleaser/goreleaser-action@1a80836c5c9d9e5755a25cb59ec6f45a3b5f41a8 # v7.2.1
         with:
           distribution: goreleaser
-          version: "~> v2"
+          # Exact pin: this binary runs with the release signing identity
+          # and tap tokens. Keep ci.yml and release.yml on the same version;
+          # Renovate's custom manager (renovate.json) bumps both.
+          # renovate: datasource=github-releases depName=goreleaser/goreleaser
+          version: v2.18.2
           args: release --snapshot --clean --skip=publish,sign
 
       - name: Upload snapshot artifacts

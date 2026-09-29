@@ -6,7 +6,8 @@
 # precise, token-efficient navigation. Plain-text / literal / config-file
 # searches pass straight through to Grep.
 #
-# Enforcement tiers (QSDEV_LSP_ENFORCEMENT):
+# Enforcement tiers (first argument, else QSDEV_LSP_ENFORCEMENT; qsdev passes
+# the configured tier as the argument in settings.json):
 #   block (default) — deny the Grep and tell the model to use the LSP tool.
 #   warn            — allow the Grep but inject guidance (additionalContext).
 #   off             — disabled; pass everything through.
@@ -29,19 +30,23 @@ parsed="$(printf '%s' "$input" | jq -r '
 	[ (.tool_name // ""),
 	  (.tool_input.pattern // ""),
 	  (.tool_input.path // ""),
-	  (.tool_input.glob // "") ]
-	| @tsv
+	  (.tool_input.glob // ""),
+	  (.tool_input.type // "") ]
+	| map(tostring | gsub("[\n\u001f]"; " "))
+	| join("\u001f")
 ' 2>/dev/null)" || exit 0
 
 if [ -z "$parsed" ]; then
 	exit 0
 fi
 
-# Split the tab-separated record into fields.
-IFS=$'\t' read -r tool_name pattern path glob <<<"$parsed"
+# Split the record into fields. The separator is the ASCII unit separator,
+# not a tab: IFS whitespace collapses, so an empty path would shift the glob
+# and type into the wrong fields.
+IFS=$'\x1f' read -r tool_name pattern path glob type <<<"$parsed"
 
 # --- b. Honor the enforcement tier. -----------------------------------------
-tier="${QSDEV_LSP_ENFORCEMENT:-block}"
+tier="${1:-${QSDEV_LSP_ENFORCEMENT:-block}}"
 if [ "$tier" = "off" ]; then
 	exit 0
 fi
@@ -67,12 +72,61 @@ case "$scope" in
 	;;
 esac
 
-# Non-code extensions on the path or glob (documentation, config, data, etc.).
-for ext in .md .markdown .json .yaml .yml .toml .env .csv .tsv .xml .sql \
-	.sh .bash .css .scss .less .html .txt .lock .ini .cfg; do
-	case "$path" in *"$ext") exit 0 ;; esac
-	case "$glob" in *"$ext") exit 0 ;; esac
+# Non-code file types (documentation, config, data, etc.), as extensions and
+# as Grep's own `type` filter (ripgrep type names).
+non_code_exts=".md .mdx .markdown .rst .adoc .json .jsonc .yaml .yml .toml .env
+	.csv .tsv .xml .sql .sh .bash .css .scss .less .html .txt .lock .ini .cfg
+	.conf .properties .nix .mod .sum"
+for t in md markdown rst json yaml toml csv xml sql sh css html txt lock \
+	config ini license make docker nix cmake; do
+	if [ "$type" = "$t" ]; then
+		exit 0
+	fi
 done
+
+# is_non_code NAME: NAME ends with a non-code extension or is a well-known
+# extension-less build/config file.
+is_non_code() {
+	local name="$1" base="${1##*/}" ext
+	case "$base" in
+	Makefile | GNUmakefile | makefile | Dockerfile | Dockerfile.* | Containerfile | \
+		Justfile | justfile | CMakeLists.txt | Gemfile | Rakefile | Procfile | \
+		LICENSE* | .gitignore | .gitattributes | .editorconfig | *.dockerfile)
+		return 0
+		;;
+	esac
+	for ext in $non_code_exts; do
+		case "$name" in *"$ext") return 0 ;; esac
+	done
+	return 1
+}
+
+# CI workflow and configuration directories.
+case "$scope" in
+*.github/* | *.github | *.gitlab/* | *.circleci/*)
+	exit 0
+	;;
+esac
+
+if [ -n "$path" ] && is_non_code "$path"; then
+	exit 0
+fi
+if [ -n "$glob" ]; then
+	# A brace glob (**/*.{md,mdx}) is non-code when any alternative is.
+	if [[ "$glob" == *"{"*"}"* ]]; then
+		prefix="${glob%%\{*}"
+		rest="${glob#*\{}"
+		suffix="${rest#*\}}"
+		IFS=',' read -r -a alternatives <<<"${rest%%\}*}"
+		for alt in "${alternatives[@]}"; do
+			if is_non_code "${prefix}${alt}${suffix}"; then
+				exit 0
+			fi
+		done
+	elif is_non_code "$glob"; then
+		exit 0
+	fi
+fi
 
 # --- f. Allowlist: patterns that are clearly NOT a single code symbol. ------
 # Dotted access (identifier.identifier, e.g. router.refresh) is a code symbol,
@@ -125,8 +179,10 @@ if [ "${#pattern}" -ge 4 ] && [[ "$pattern" =~ ^[a-z][a-zA-Z0-9]*[A-Z][a-zA-Z0-9
 	is_symbol=true
 fi
 
-# PascalCase: upper-led, lower/digit second char, length >= 4.
-if [ "${#pattern}" -ge 4 ] && [[ "$pattern" =~ ^[A-Z][a-z0-9][a-zA-Z0-9]*$ ]]; then
+# PascalCase: upper-led, lower/digit second char, length >= 4, and at least
+# one more capital (UserService). A single capital is an ordinary word
+# (Copyright, Error, Installation), not a symbol.
+if [ "${#pattern}" -ge 4 ] && [[ "$pattern" =~ ^[A-Z][a-z0-9][a-zA-Z0-9]*[A-Z][a-zA-Z0-9]*$ ]]; then
 	is_symbol=true
 fi
 

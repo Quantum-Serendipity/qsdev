@@ -1,7 +1,9 @@
 package devinit
 
 import (
+	"errors"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -75,6 +77,12 @@ func runTrial(cmd *cobra.Command, opts TrialOptions) error {
 		return fmt.Errorf("not a git repository; %s trial requires git", branding.Get().AppName)
 	}
 
+	// Validate before the dry-run so a preview never reports success for a
+	// branch name the real run would reject.
+	if err := validateBranchName(opts.Branch); err != nil {
+		return fmt.Errorf("validating branch name: %w", err)
+	}
+
 	repoName := filepath.Base(projectRoot)
 	worktreePath := opts.Path
 	if worktreePath == "" {
@@ -84,53 +92,98 @@ func runTrial(cmd *cobra.Command, opts TrialOptions) error {
 		worktreePath = filepath.Join(projectRoot, worktreePath)
 	}
 
-	if opts.DryRun {
-		fmt.Fprintf(cmd.OutOrStdout(), "Would create:\n")
-		fmt.Fprintf(cmd.OutOrStdout(), "  Worktree: %s\n", worktreePath)
-		fmt.Fprintf(cmd.OutOrStdout(), "  Branch:   %s\n", opts.Branch)
-		fmt.Fprintf(cmd.OutOrStdout(), "  Action:   %s init --yes --force\n", branding.Get().AppName)
-		return nil
-	}
+	out, errOut := cmd.OutOrStdout(), cmd.ErrOrStderr()
 
-	if err := validateBranchName(opts.Branch); err != nil {
-		return fmt.Errorf("validating branch name: %w", err)
+	if opts.DryRun {
+		fmt.Fprintf(out, "Would create:\n")
+		fmt.Fprintf(out, "  Worktree: %s\n", worktreePath)
+		fmt.Fprintf(out, "  Branch:   %s\n", opts.Branch)
+		fmt.Fprintf(out, "  Action:   %s init --yes --force\n", branding.Get().AppName)
+		return nil
 	}
 
 	if _, err := os.Stat(worktreePath); err == nil {
 		return fmt.Errorf("path already exists: %s\nRemove it or use --path to specify a different location", worktreePath)
 	}
 
-	fmt.Fprintf(cmd.OutOrStdout(), "Creating worktree at %s (branch: %s)...\n", worktreePath, opts.Branch)
-	if err := runGit(projectRoot, "worktree", "add", "-b", opts.Branch, worktreePath); err != nil {
+	// The branch the trial forks from is where "keep it" merges back into.
+	baseBranch := currentBranch(projectRoot)
+
+	fmt.Fprintf(out, "Creating worktree at %s (branch: %s)...\n", worktreePath, opts.Branch)
+	if err := runGit(projectRoot, out, errOut, "worktree", "add", "-b", opts.Branch, worktreePath); err != nil {
 		return fmt.Errorf("creating worktree: %w", err)
 	}
 
+	if err := populateTrialWorktree(out, errOut, worktreePath, opts); err != nil {
+		// Leave nothing behind: a stale worktree and branch would make every
+		// retry fail with "path already exists".
+		if cleanupErr := removeTrialWorktree(projectRoot, worktreePath, opts.Branch); cleanupErr != nil {
+			return fmt.Errorf("%w (cleanup also failed: %w; remove %s and branch %s manually)",
+				err, cleanupErr, worktreePath, opts.Branch)
+		}
+		return err
+	}
+
+	appName := branding.Get().AppName
+	fmt.Fprintf(out, "\nTrial environment created successfully.\n\n")
+	fmt.Fprintf(out, "  cd %s\n\n", worktreePath)
+	fmt.Fprintf(out, "Evaluate the configuration, then:\n")
+	if baseBranch != "" {
+		fmt.Fprintf(out, "  Keep it:    git checkout %s && git merge %s\n", baseBranch, opts.Branch)
+	} else {
+		fmt.Fprintf(out, "  Keep it:    git merge %s  (from the branch that should receive it)\n", opts.Branch)
+	}
+	fmt.Fprintf(out, "  Discard it: git worktree remove %s && git branch -D %s\n\n", worktreePath, opts.Branch)
+	fmt.Fprintf(out, "Run '%s status' in the worktree to see your security posture.\n", appName)
+	return nil
+}
+
+// populateTrialWorktree runs init inside the freshly created worktree and
+// commits the generated configuration.
+func populateTrialWorktree(out, errOut io.Writer, worktreePath string, opts TrialOptions) error {
 	initArgs := []string{"init", "--yes", "--force"}
 	if opts.Profile != "" {
 		initArgs = append(initArgs, "--profile", opts.Profile)
 	}
-	fmt.Fprintf(cmd.OutOrStdout(), "Running %s init in worktree...\n", branding.Get().AppName)
-	if err := runSelfInDir(worktreePath, initArgs...); err != nil {
+	fmt.Fprintf(out, "Running %s init in worktree...\n", branding.Get().AppName)
+	if err := trialInitRunner(worktreePath, out, errOut, initArgs...); err != nil {
 		return fmt.Errorf("init in worktree failed: %w", err)
 	}
 
 	// Commit generated files so Nix flakes can evaluate them (flakes only see git-tracked files).
-	fmt.Fprintf(cmd.OutOrStdout(), "Committing generated configuration...\n")
-	if err := runGit(worktreePath, "add", "."); err != nil {
+	fmt.Fprintf(out, "Committing generated configuration...\n")
+	if err := runGit(worktreePath, out, errOut, "add", "."); err != nil {
 		return fmt.Errorf("staging generated files: %w", err)
 	}
-	if err := runGit(worktreePath, "commit", "-m", branding.Get().AppName+" trial: generated configuration"); err != nil {
+	if err := runGit(worktreePath, out, errOut, "commit", "-m", branding.Get().AppName+" trial: generated configuration"); err != nil {
 		return fmt.Errorf("committing generated files: %w", err)
 	}
-
-	appName := branding.Get().AppName
-	fmt.Fprintf(cmd.OutOrStdout(), "\nTrial environment created successfully.\n\n")
-	fmt.Fprintf(cmd.OutOrStdout(), "  cd %s\n\n", worktreePath)
-	fmt.Fprintf(cmd.OutOrStdout(), "Evaluate the configuration, then:\n")
-	fmt.Fprintf(cmd.OutOrStdout(), "  Keep it:    git checkout main && git merge %s\n", opts.Branch)
-	fmt.Fprintf(cmd.OutOrStdout(), "  Discard it: git worktree remove %s && git branch -D %s\n\n", worktreePath, opts.Branch)
-	fmt.Fprintf(cmd.OutOrStdout(), "Run '%s status' in the worktree to see your security posture.\n", appName)
 	return nil
+}
+
+// removeTrialWorktree best-effort removes a trial worktree and its branch
+// after a failed trial, returning the combined cleanup errors.
+func removeTrialWorktree(projectRoot, worktreePath, branch string) error {
+	var errs []error
+	if err := runGit(projectRoot, io.Discard, io.Discard, "worktree", "remove", "--force", worktreePath); err != nil {
+		errs = append(errs, fmt.Errorf("removing worktree: %w", err))
+	}
+	if err := runGit(projectRoot, io.Discard, io.Discard, "branch", "-D", branch); err != nil {
+		errs = append(errs, fmt.Errorf("deleting branch: %w", err))
+	}
+	return errors.Join(errs...)
+}
+
+// currentBranch returns the checked-out branch of the repository at dir, or
+// "" when HEAD is detached or the branch cannot be determined.
+func currentBranch(dir string) string {
+	c := exec.Command("git", "symbolic-ref", "--quiet", "--short", "HEAD")
+	c.Dir = dir
+	out, err := c.Output()
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(string(out))
 }
 
 func isGitRepo(dir string) bool {
@@ -143,22 +196,27 @@ func isGitRepo(dir string) bool {
 	return info.IsDir() || info.Mode().IsRegular()
 }
 
-func runGit(dir string, args ...string) error {
+func runGit(dir string, stdout, stderr io.Writer, args ...string) error {
 	c := exec.Command("git", args...)
 	c.Dir = dir
-	c.Stdout = os.Stdout
-	c.Stderr = os.Stderr
+	c.Stdout = stdout
+	c.Stderr = stderr
 	return c.Run()
 }
 
-func runSelfInDir(dir string, args ...string) error {
+// trialInitRunner runs the init step inside the trial worktree. It is a
+// variable so tests can substitute it: re-executing the test binary with
+// init arguments would run the whole test suite instead.
+var trialInitRunner = runSelfInDir
+
+func runSelfInDir(dir string, stdout, stderr io.Writer, args ...string) error {
 	exe, err := os.Executable()
 	if err != nil {
 		return fmt.Errorf("resolving executable path: %w", err)
 	}
 	c := exec.Command(exe, args...)
 	c.Dir = dir
-	c.Stdout = os.Stdout
-	c.Stderr = os.Stderr
+	c.Stdout = stdout
+	c.Stderr = stderr
 	return c.Run()
 }

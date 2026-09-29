@@ -143,7 +143,7 @@ func TestRenderMarkdown_NotesRendered(t *testing.T) {
 		ControlDesc: "Not applicable",
 		Category:    "Test",
 		Status:      StatusNotApplicable,
-		GdevLayers:  []LayerEvidence{},
+		Layers:      []LayerEvidence{},
 		Artifacts:   []EvidenceArtifact{},
 		Notes:       "This is a test note for auditors",
 	})
@@ -162,13 +162,13 @@ func TestRenderMarkdown_StatusLabels(t *testing.T) {
 	report := testEvidenceReport()
 	report.Controls = []ControlMapping{
 		{ControlID: "A", ControlName: "Addressed", ControlDesc: "d", Category: "c",
-			Status: StatusAddressed, GdevLayers: []LayerEvidence{}, Artifacts: []EvidenceArtifact{}},
+			Status: StatusAddressed, Layers: []LayerEvidence{}, Artifacts: []EvidenceArtifact{}},
 		{ControlID: "P", ControlName: "Partial", ControlDesc: "d", Category: "c",
-			Status: StatusPartial, GdevLayers: []LayerEvidence{}, Artifacts: []EvidenceArtifact{}},
+			Status: StatusPartial, Layers: []LayerEvidence{}, Artifacts: []EvidenceArtifact{}},
 		{ControlID: "N", ControlName: "Not Addressed", ControlDesc: "d", Category: "c",
-			Status: StatusNotAddressed, GdevLayers: []LayerEvidence{}, Artifacts: []EvidenceArtifact{}},
+			Status: StatusNotAddressed, Layers: []LayerEvidence{}, Artifacts: []EvidenceArtifact{}},
 		{ControlID: "NA", ControlName: "N/A", ControlDesc: "d", Category: "c",
-			Status: StatusNotApplicable, GdevLayers: []LayerEvidence{}, Artifacts: []EvidenceArtifact{}},
+			Status: StatusNotApplicable, Layers: []LayerEvidence{}, Artifacts: []EvidenceArtifact{}},
 	}
 
 	var buf bytes.Buffer
@@ -194,7 +194,7 @@ func testEvidenceReport() *EvidenceReport {
 	return &EvidenceReport{
 		SchemaVersion: "1.0.0",
 		GeneratedAt:   time.Date(2026, 1, 15, 10, 0, 0, 0, time.UTC),
-		QsdevVersion:   "0.1.0",
+		QsdevVersion:  "0.1.0",
 		ProjectName:   "test-project",
 		Framework:     "Test Framework",
 		FrameworkVer:  "1.0",
@@ -214,7 +214,7 @@ func testEvidenceReport() *EvidenceReport {
 				ControlDesc: "First test control",
 				Category:    "Test Category",
 				Status:      StatusAddressed,
-				GdevLayers: []LayerEvidence{
+				Layers: []LayerEvidence{
 					{
 						LayerName:   "sast",
 						Status:      "enabled",
@@ -230,14 +230,14 @@ func testEvidenceReport() *EvidenceReport {
 				ControlDesc: "Second test control",
 				Category:    "Test Category",
 				Status:      StatusNotAddressed,
-				GdevLayers:  []LayerEvidence{},
+				Layers:      []LayerEvidence{},
 				Artifacts:   []EvidenceArtifact{},
 			},
 		},
 		Posture: &posture.PostureReport{
 			SchemaVersion: "1.0.0",
 			GeneratedAt:   time.Date(2026, 1, 15, 10, 0, 0, 0, time.UTC),
-			QsdevVersion:   "0.1.0",
+			QsdevVersion:  "0.1.0",
 			ProjectName:   "test-project",
 		},
 	}

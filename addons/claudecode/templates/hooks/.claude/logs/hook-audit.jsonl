@@ -1,0 +1,18 @@
+{"event": "deny", "hook": "destructive-prevention", "category": "Filesystem Destruction", "command": "rm /tmp/foo.txt", "reason": "Recursive deletion of root/home directory detected.", "timestamp": "2026-09-23T15:42:49.345453+00:00"}
+{"event": "deny", "hook": "destructive-prevention", "category": "Filesystem Destruction", "command": "rm -rf /tmp/build", "reason": "Recursive deletion of root/home directory detected.", "timestamp": "2026-09-23T15:42:49.385553+00:00"}
+{"event": "allow", "hook": "destructive-prevention", "command": "rm -rf \"$HOME\"", "timestamp": "2026-09-23T15:42:49.421949+00:00"}
+{"event": "allow", "hook": "destructive-prevention", "command": "rm -rf \"/\"", "timestamp": "2026-09-23T15:42:49.457629+00:00"}
+{"event": "allow", "hook": "destructive-prevention", "command": "rm -rf '/'", "timestamp": "2026-09-23T15:42:49.495582+00:00"}
+{"event": "allow", "hook": "destructive-prevention", "command": "rm -rf ~", "timestamp": "2026-09-23T15:42:49.532008+00:00"}
+{"event": "deny", "hook": "destructive-prevention", "category": "Filesystem Destruction", "command": "rm -rf /", "reason": "Recursive deletion of root/home directory detected.", "timestamp": "2026-09-23T15:42:49.564922+00:00"}
+{"event": "deny", "hook": "destructive-prevention", "category": "Filesystem Destruction", "command": "rm -rf ~/", "reason": "Recursive deletion of root/home directory detected.", "timestamp": "2026-09-23T15:42:49.598514+00:00"}
+{"event": "deny", "hook": "destructive-prevention", "category": "Filesystem Destruction", "command": "rm -rf $HOME", "reason": "Recursive deletion of root/home directory detected.", "timestamp": "2026-09-23T15:42:49.637568+00:00"}
+{"event": "allow", "hook": "destructive-prevention", "command": "git push origin +main", "timestamp": "2026-09-23T15:42:49.673109+00:00"}
+{"event": "deny", "hook": "destructive-prevention", "category": "Git Force Operation", "command": "git push --force origin main", "reason": "Force push to protected branch detected.", "timestamp": "2026-09-23T15:42:49.708188+00:00"}
+{"event": "deny", "hook": "destructive-prevention", "category": "Filesystem Destruction", "command": "rm -f /tmp/x", "reason": "Recursive deletion of root/home directory detected.", "timestamp": "2026-09-23T15:42:49.742113+00:00"}
+{"event": "allow", "hook": "destructive-prevention", "command": "rm ./foo", "timestamp": "2026-09-23T15:42:49.782315+00:00"}
+{"event": "allow", "hook": "destructive-prevention", "command": "rm -fr \"$HOME\"", "timestamp": "2026-09-23T15:43:08.664815+00:00"}
+{"event": "allow", "hook": "destructive-prevention", "command": "rm -r -f \"/\"", "timestamp": "2026-09-23T15:43:08.696285+00:00"}
+{"event": "allow", "hook": "destructive-prevention", "command": "rm --recursive --force \"$HOME\"", "timestamp": "2026-09-23T15:43:08.726893+00:00"}
+{"event": "deny", "hook": "destructive-prevention", "category": "Filesystem Destruction", "command": "rm -rf -- /", "reason": "Recursive forced deletion of root/home directory detected.", "timestamp": "2026-09-23T15:43:08.755988+00:00"}
+{"event": "deny", "hook": "destructive-prevention", "category": "Filesystem Destruction", "command": "rm -Rf /", "reason": "Recursive deletion of root/home directory detected.", "timestamp": "2026-09-23T15:43:08.791850+00:00"}

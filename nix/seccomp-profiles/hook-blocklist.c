@@ -5,8 +5,17 @@
  *
  * Blocklist approach: allow everything except 43 dangerous syscalls.
  * All blocked syscalls return EPERM (not KILL) for debuggability.
+ *
+ * Namespace creation is also blocked through clone(2): unshare and setns
+ * alone leave clone(CLONE_NEWUSER|...) open. clone3(2) passes its flags in a
+ * struct that seccomp cannot inspect, so it returns ENOSYS and libc falls back
+ * to clone(2), where the flag filter applies. (bwrap --disable-userns closes
+ * nested user namespaces at the kernel level as well.)
  */
 
+#define _GNU_SOURCE
+#include <errno.h>
+#include <sched.h>
 #include <seccomp.h>
 #include <stdio.h>
 #include <unistd.h>
@@ -49,6 +58,21 @@ static const int blocked_arch[] = {
 static const int blocked_arch[] = {};
 #endif
 
+/* clone(2) flags that create a new namespace. Each gets its own rule because a
+ * masked-equality compare matches one bit; rules for the same syscall and
+ * action are OR'ed, so any namespace bit denies the call. */
+static const unsigned long clone_ns_flags[] = {
+    CLONE_NEWNS, CLONE_NEWCGROUP, CLONE_NEWUTS, CLONE_NEWIPC,
+    CLONE_NEWUSER, CLONE_NEWPID, CLONE_NEWNET,
+};
+
+/* On s390/s390x the clone flags are the SECOND argument. */
+#if defined(__s390__) || defined(__s390x__)
+#define CLONE_FLAGS_ARG(op, mask, datum) SCMP_A1(op, mask, datum)
+#else
+#define CLONE_FLAGS_ARG(op, mask, datum) SCMP_A0(op, mask, datum)
+#endif
+
 int main(void) {
     scmp_filter_ctx ctx = seccomp_init(SCMP_ACT_ALLOW);
     if (!ctx) return 1;
@@ -61,6 +85,14 @@ int main(void) {
         if (seccomp_rule_add(ctx, SCMP_ACT_ERRNO(1), blocked_arch[i], 0) < 0)
             return 1;
     }
+    for (size_t i = 0; i < sizeof(clone_ns_flags)/sizeof(clone_ns_flags[0]); i++) {
+        if (seccomp_rule_add(ctx, SCMP_ACT_ERRNO(EPERM), SCMP_SYS(clone), 1,
+                             CLONE_FLAGS_ARG(SCMP_CMP_MASKED_EQ,
+                                             clone_ns_flags[i], clone_ns_flags[i])) < 0)
+            return 1;
+    }
+    if (seccomp_rule_add(ctx, SCMP_ACT_ERRNO(ENOSYS), SCMP_SYS(clone3), 0) < 0)
+        return 1;
 
     if (seccomp_export_bpf(ctx, STDOUT_FILENO) < 0)
         return 1;

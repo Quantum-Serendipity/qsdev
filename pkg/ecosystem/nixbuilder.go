@@ -46,6 +46,19 @@ func NixString(s string) string {
 	return `"` + NixEscapeString(s) + `"`
 }
 
+// NixPkgsAttrOr returns a Nix expression selecting `pkgs.<attr>`, or
+// `fallback` (a Nix expression) with an evaluation warning when nixpkgs does
+// not provide attr. A plain `pkgs.<attr> or <fallback>` is not enough: nixpkgs
+// keeps removed versions (bazel_6, zig_0_12, ...) as throw aliases, which `or`
+// does not catch, so the whole shell would fail to evaluate. warning is the
+// body of a Nix string literal, emitted verbatim so it may interpolate
+// (`${pkgs.zig.version}`); callers must only put validated text in it.
+func NixPkgsAttrOr(attr, fallback, warning string) string {
+	return fmt.Sprintf(
+		`(let r = builtins.tryEval (pkgs.%s or null); in if r.success && r.value != null then r.value else lib.warn "%s" %s)`,
+		attr, warning, fallback)
+}
+
 // BuildLanguageFragment renders a NixLangConfig into a devenv.nix fragment.
 // The output uses two-space indentation and matches the hand-written style
 // used across ecosystem modules.

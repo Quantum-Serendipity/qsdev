@@ -1,6 +1,7 @@
 package posture
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/Quantum-Serendipity/qsdev/pkg/types"
@@ -19,18 +20,16 @@ func TestAssessDefenseLayers_AllEnabled(t *testing.T) {
 	detected := types.DetectedProject{
 		HasDockerfile: true,
 	}
-	genState := types.GeneratedState{
-		Files: map[string]types.FileState{
-			".claude/hooks/package-guard.py": {},
-			"age-gate-npm.yaml":              {},
-			".pre-commit-config.yaml":        {},
-			".grype.yaml":                    {},
-			"devenv.nix":                     {},
-			".semgrep.yml":                   {},
-		},
-	}
+	dir, genState := writeProjectFiles(t, map[string]string{
+		".claude/hooks/package-guard.py": "",
+		".claude/settings.json":          settingsWithPackageGuard,
+		".pre-commit-config.yaml":        preCommitWithLockAudit,
+		".grype.yaml":                    "",
+		"devenv.nix":                     hardenedDevenvNix,
+		".semgrepignore":                 "",
+	})
 
-	result := AssessDefenseLayers(enabledTools, detected, genState, 3)
+	result := AssessDefenseLayers(dir, enabledTools, detected, genState, 3)
 
 	if result.Score != 100.0 {
 		t.Errorf("all enabled: score = %f, want 100.0", result.Score)
@@ -51,7 +50,7 @@ func TestAssessDefenseLayers_ContainerSecurityNA(t *testing.T) {
 		Files: map[string]types.FileState{},
 	}
 
-	result := AssessDefenseLayers(enabledTools, detected, genState, 3)
+	result := AssessDefenseLayers("", enabledTools, detected, genState, 3)
 
 	found := false
 	for _, l := range result.Layers {
@@ -76,7 +75,7 @@ func TestAssessDefenseLayers_ContainerSecurityDisabledWithDockerfile(t *testing.
 		Files: map[string]types.FileState{},
 	}
 
-	result := AssessDefenseLayers(enabledTools, detected, genState, 3)
+	result := AssessDefenseLayers("", enabledTools, detected, genState, 3)
 
 	for _, l := range result.Layers {
 		if l.Name == "container-security" {
@@ -99,7 +98,7 @@ func TestAssessDefenseLayers_SecretsPartial(t *testing.T) {
 		Files: map[string]types.FileState{},
 	}
 
-	result := AssessDefenseLayers(enabledTools, detected, genState, 3)
+	result := AssessDefenseLayers("", enabledTools, detected, genState, 3)
 
 	for _, l := range result.Layers {
 		if l.Name == "secrets-scanning" {
@@ -125,7 +124,7 @@ func TestAssessDefenseLayers_SecretsFull(t *testing.T) {
 		Files: map[string]types.FileState{},
 	}
 
-	result := AssessDefenseLayers(enabledTools, detected, genState, 3)
+	result := AssessDefenseLayers("", enabledTools, detected, genState, 3)
 
 	for _, l := range result.Layers {
 		if l.Name == "secrets-scanning" {
@@ -151,7 +150,7 @@ func TestAssessDefenseLayers_PreToolUsePartial(t *testing.T) {
 		Files: map[string]types.FileState{},
 	}
 
-	result := AssessDefenseLayers(enabledTools, detected, genState, 3)
+	result := AssessDefenseLayers("", enabledTools, detected, genState, 3)
 
 	for _, l := range result.Layers {
 		if l.Name == "pretooluse-hooks" {
@@ -167,41 +166,44 @@ func TestAssessDefenseLayers_PreToolUsePartial(t *testing.T) {
 	t.Error("pretooluse-hooks layer not found")
 }
 
+// TestAssessDefenseLayers_PreToolUseFull checks the layer is judged from the
+// hook registered in settings.json, not from package-guard.py existing: with
+// the registration removed the script guards nothing.
 func TestAssessDefenseLayers_PreToolUseFull(t *testing.T) {
-	enabledTools := map[string]bool{
-		"attach-guard": true,
+	t.Parallel()
+	tests := []struct {
+		name     string
+		settings string
+		want     LayerStatus
+	}{
+		{"registered", settingsWithPackageGuard, LayerEnabled},
+		{"hooks stripped", `{"permissions": {"defaultMode": "bypassPermissions"}}`, LayerPartial},
+		{"guard registered under another event", strings.Replace(settingsWithPackageGuard, "PreToolUse", "PostToolUse", 1), LayerPartial},
+		{"all hooks disabled", strings.Replace(settingsWithPackageGuard, "{", `{"disableAllHooks": true, `, 1), LayerPartial},
+		{"guard only under a decoy-cased key", strings.Replace(settingsWithPackageGuard, `"hooks"`, `"Hooks"`, 1), LayerPartial},
 	}
-	detected := types.DetectedProject{}
-	genState := types.GeneratedState{
-		Files: map[string]types.FileState{
-			".claude/hooks/package-guard.py": {},
-		},
-	}
-
-	result := AssessDefenseLayers(enabledTools, detected, genState, 3)
-
-	for _, l := range result.Layers {
-		if l.Name == "pretooluse-hooks" {
-			if l.Status != LayerEnabled {
-				t.Errorf("pretooluse-hooks full: status = %q, want %q", l.Status, LayerEnabled)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			dir, genState := writeProjectFiles(t, map[string]string{
+				".claude/hooks/package-guard.py": "",
+				".claude/settings.json":          tt.settings,
+			})
+			result := AssessDefenseLayers(dir, map[string]bool{"attach-guard": true}, types.DetectedProject{}, genState, 3)
+			if got := layerByName(t, result, "pretooluse-hooks"); got.Status != tt.want {
+				t.Errorf("pretooluse-hooks: status = %q (%s), want %q", got.Status, got.Reason, tt.want)
 			}
-			return
-		}
+		})
 	}
-	t.Error("pretooluse-hooks layer not found")
 }
 
 func TestAssessDefenseLayers_NixHardening(t *testing.T) {
 	enabledTools := map[string]bool{}
 	detected := types.DetectedProject{}
 
-	t.Run("enabled when devenv.nix present", func(t *testing.T) {
-		genState := types.GeneratedState{
-			Files: map[string]types.FileState{
-				"devenv.nix": {},
-			},
-		}
-		result := AssessDefenseLayers(enabledTools, detected, genState, 3)
+	t.Run("enabled when devenv.nix carries hardening", func(t *testing.T) {
+		dir, genState := writeProjectFiles(t, map[string]string{"devenv.nix": hardenedDevenvNix})
+		result := AssessDefenseLayers(dir, enabledTools, detected, genState, 3)
 		for _, l := range result.Layers {
 			if l.Name == "nix-hardening" {
 				if l.Status != LayerEnabled {
@@ -217,7 +219,7 @@ func TestAssessDefenseLayers_NixHardening(t *testing.T) {
 		genState := types.GeneratedState{
 			Files: map[string]types.FileState{},
 		}
-		result := AssessDefenseLayers(enabledTools, detected, genState, 3)
+		result := AssessDefenseLayers("", enabledTools, detected, genState, 3)
 		for _, l := range result.Layers {
 			if l.Name == "nix-hardening" {
 				if l.Status != LayerDisabled {
@@ -230,79 +232,181 @@ func TestAssessDefenseLayers_NixHardening(t *testing.T) {
 	})
 }
 
+// TestAssessDefenseLayers_SAST is the F202 regression: SAST is credited only
+// when the security-scan task script in devenv.nix actually runs semgrep, not
+// for a config file's presence (the old .semgrep.yml was invalid and unused).
 func TestAssessDefenseLayers_SAST(t *testing.T) {
-	detected := types.DetectedProject{}
+	t.Parallel()
 
-	t.Run("fully enabled", func(t *testing.T) {
-		enabledTools := map[string]bool{"semgrep": true}
-		genState := types.GeneratedState{
-			Files: map[string]types.FileState{".semgrep.yml": {}},
-		}
-		result := AssessDefenseLayers(enabledTools, detected, genState, 3)
-		for _, l := range result.Layers {
-			if l.Name == "sast" {
-				if l.Status != LayerEnabled {
-					t.Errorf("sast: status = %q, want %q", l.Status, LayerEnabled)
-				}
-				return
-			}
-		}
-		t.Error("sast layer not found")
-	})
+	scanScript := func(exec string) string {
+		return "{ pkgs, ... }:\n{\n  scripts.\"qsdev-security-scan\" = {\n    description = \"Run security scanners\";\n    exec = ''\n" +
+			exec + "\n    '';\n  };\n}\n"
+	}
+	const semgrepLine = "      semgrep --config p/golang --metrics=off --error ."
 
-	t.Run("partial - tool only", func(t *testing.T) {
-		enabledTools := map[string]bool{"semgrep": true}
-		genState := types.GeneratedState{
-			Files: map[string]types.FileState{},
-		}
-		result := AssessDefenseLayers(enabledTools, detected, genState, 3)
-		for _, l := range result.Layers {
-			if l.Name == "sast" {
-				if l.Status != LayerPartial {
-					t.Errorf("sast partial: status = %q, want %q", l.Status, LayerPartial)
-				}
-				return
+	tests := []struct {
+		name  string
+		tools map[string]bool
+		files map[string]string
+		want  LayerStatus
+	}{
+		{
+			name:  "enabled and wired",
+			tools: map[string]bool{"semgrep": true},
+			files: map[string]string{"devenv.nix": scanScript("      set -euo pipefail\n" + semgrepLine)},
+			want:  LayerEnabled,
+		},
+		{
+			name:  "grouped scripts attrset",
+			tools: map[string]bool{"semgrep": true},
+			files: map[string]string{"devenv.nix": "{\n  scripts = {\n    \"qsdev-build\" = {\n      exec = ''\n        go build\n      '';\n    };\n" +
+				"    \"qsdev-security-scan\" = {\n      description = \"Run security scanners\";\n      exec = ''\n  " + semgrepLine + "\n      '';\n    };\n  };\n}\n"},
+			want: LayerEnabled,
+		},
+		{
+			name:  "similarly named script",
+			tools: map[string]bool{"semgrep": true},
+			files: map[string]string{"devenv.nix": "{\n  scripts.\"my-qsdev-security-scan\".exec = ''\n" + semgrepLine + "\n  '';\n}\n"},
+			want:  LayerPartial,
+		},
+		{
+			name:  "dotted exec form",
+			tools: map[string]bool{"semgrep": true},
+			files: map[string]string{"devenv.nix": "{\n  scripts.qsdev-security-scan.exec = ''\n" + semgrepLine + "\n  '';\n}\n"},
+			want:  LayerEnabled,
+		},
+		{
+			name:  "escaped quotes before semgrep line",
+			tools: map[string]bool{"semgrep": true},
+			files: map[string]string{"devenv.nix": scanScript("      echo '''quoted''' ''${HOME}\n" + semgrepLine)},
+			want:  LayerEnabled,
+		},
+		{
+			name:  "stale ignore file alone is not SAST",
+			tools: map[string]bool{"semgrep": true},
+			files: map[string]string{".semgrepignore": "vendor/\n", ".semgrep.yml": "rules:\n  - p/golang\n"},
+			want:  LayerPartial,
+		},
+		{
+			name:  "task without semgrep",
+			tools: map[string]bool{"semgrep": true},
+			files: map[string]string{"devenv.nix": scanScript("      gitleaks detect --no-banner")},
+			want:  LayerPartial,
+		},
+		{
+			name:  "semgrep commented out",
+			tools: map[string]bool{"semgrep": true},
+			files: map[string]string{"devenv.nix": scanScript("      # " + semgrepLine[6:])},
+			want:  LayerPartial,
+		},
+		{
+			name:  "semgrep in another script",
+			tools: map[string]bool{"semgrep": true},
+			files: map[string]string{"devenv.nix": "{\n  scripts.\"qsdev-lint\" = {\n    exec = ''\n" + semgrepLine +
+				"\n    '';\n  };\n  scripts.\"qsdev-security-scan\" = {\n    exec = ''\n      gitleaks detect\n    '';\n  };\n}\n"},
+			want: LayerPartial,
+		},
+		{
+			name:  "unterminated script",
+			tools: map[string]bool{"semgrep": true},
+			files: map[string]string{"devenv.nix": "{\n  scripts.\"qsdev-security-scan\" = {\n    exec = ''\n" + semgrepLine + "\n"},
+			want:  LayerPartial,
+		},
+		{
+			name:  "wired but tool not enabled",
+			tools: map[string]bool{},
+			files: map[string]string{"devenv.nix": scanScript(semgrepLine)},
+			want:  LayerPartial,
+		},
+		{
+			name:  "not enabled",
+			tools: map[string]bool{},
+			files: map[string]string{},
+			want:  LayerDisabled,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			dir, genState := writeProjectFiles(t, tt.files)
+			l := layerByName(t, AssessDefenseLayers(dir, tt.tools, types.DetectedProject{}, genState, 3), "sast")
+			if l.Status != tt.want {
+				t.Errorf("sast: status = %q (%s), want %q", l.Status, l.Reason, tt.want)
 			}
-		}
-		t.Error("sast layer not found")
-	})
+		})
+	}
 }
 
+// TestAssessDefenseLayers_LicenseCompliance is the F218 regression: the layer
+// is credited only when the security-scan task script in devenv.nix runs
+// ScanCode with the license policy, not merely because the tool is enabled
+// (the policy file on its own enforces nothing).
 func TestAssessDefenseLayers_LicenseCompliance(t *testing.T) {
-	detected := types.DetectedProject{}
-	genState := types.GeneratedState{Files: map[string]types.FileState{}}
+	t.Parallel()
 
-	t.Run("enabled", func(t *testing.T) {
-		enabledTools := map[string]bool{"license-compliance": true}
-		result := AssessDefenseLayers(enabledTools, detected, genState, 3)
-		for _, l := range result.Layers {
-			if l.Name == "license-compliance" {
-				if l.Status != LayerEnabled {
-					t.Errorf("license-compliance: status = %q, want %q", l.Status, LayerEnabled)
-				}
-				return
-			}
-		}
-		t.Error("license-compliance layer not found")
-	})
+	scanScript := func(exec string) string {
+		return "{ pkgs, ... }:\n{\n  scripts.\"qsdev-security-scan\" = {\n    description = \"Run security scanners\";\n    exec = ''\n" +
+			exec + "\n    '';\n  };\n}\n"
+	}
+	const scanLine = "      scancode --quiet --license --license-policy .scancode.yml --ignore '.git' --json - . | jq -r '.files'"
 
-	t.Run("disabled", func(t *testing.T) {
-		enabledTools := map[string]bool{}
-		result := AssessDefenseLayers(enabledTools, detected, genState, 3)
-		for _, l := range result.Layers {
-			if l.Name == "license-compliance" {
-				if l.Status != LayerDisabled {
-					t.Errorf("license-compliance: status = %q, want %q", l.Status, LayerDisabled)
-				}
-				return
+	tests := []struct {
+		name  string
+		tools map[string]bool
+		files map[string]string
+		want  LayerStatus
+	}{
+		{
+			name:  "enabled and run by the task",
+			tools: map[string]bool{"license-compliance": true},
+			files: map[string]string{"devenv.nix": scanScript("      set -euo pipefail\n" + scanLine)},
+			want:  LayerEnabled,
+		},
+		{
+			name:  "enabled with only the policy file",
+			tools: map[string]bool{"license-compliance": true},
+			files: map[string]string{".scancode.yml": "license_policies: []\n"},
+			want:  LayerPartial,
+		},
+		{
+			name:  "task scans licenses without a policy",
+			tools: map[string]bool{"license-compliance": true},
+			files: map[string]string{"devenv.nix": scanScript("      scancode --license --json - .")},
+			want:  LayerPartial,
+		},
+		{
+			name:  "scan commented out",
+			tools: map[string]bool{"license-compliance": true},
+			files: map[string]string{"devenv.nix": scanScript("      # " + scanLine[6:])},
+			want:  LayerPartial,
+		},
+		{
+			name:  "run by the task but not enabled",
+			tools: map[string]bool{},
+			files: map[string]string{"devenv.nix": scanScript(scanLine)},
+			want:  LayerPartial,
+		},
+		{
+			name:  "disabled",
+			tools: map[string]bool{},
+			want:  LayerDisabled,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			dir, genState := writeProjectFiles(t, tt.files)
+			l := layerByName(t, AssessDefenseLayers(dir, tt.tools, types.DetectedProject{}, genState, 3), "license-compliance")
+			if l.Status != tt.want {
+				t.Errorf("license-compliance: status = %q (%s), want %q", l.Status, l.Reason, tt.want)
 			}
-		}
-		t.Error("license-compliance layer not found")
-	})
+		})
+	}
 }
 
 func TestAssessDefenseLayers_LayerCount(t *testing.T) {
 	result := AssessDefenseLayers(
+		"",
 		map[string]bool{},
 		types.DetectedProject{},
 		types.GeneratedState{Files: map[string]types.FileState{}},
@@ -323,7 +427,7 @@ func TestAssessDefenseLayers_AgeGating(t *testing.T) {
 				".claude/hooks/package-guard.py": {},
 			},
 		}
-		result := AssessDefenseLayers(enabledTools, detected, genState, 3)
+		result := AssessDefenseLayers("", enabledTools, detected, genState, 3)
 		for _, l := range result.Layers {
 			if l.Name == "age-gating" {
 				if l.Status != LayerEnabled {
@@ -335,6 +439,44 @@ func TestAssessDefenseLayers_AgeGating(t *testing.T) {
 		t.Error("age-gating layer not found")
 	})
 
+	// W027: the guard has no age check for Java (or .NET, ...), so a project
+	// using one is only partly age-gated, and the report says which.
+	t.Run("partial for ecosystems the guard does not age-check", func(t *testing.T) {
+		enabledTools := map[string]bool{"attach-guard": true}
+		genState := types.GeneratedState{
+			Files: map[string]types.FileState{
+				".claude/hooks/package-guard.py": {},
+			},
+		}
+		tests := []struct {
+			name       string
+			detected   types.DetectedProject
+			wantStatus LayerStatus
+			wantInText string
+		}{
+			{"go", types.DetectedProject{HasGoMod: true}, LayerEnabled, ""},
+			{"java and javascript", types.DetectedProject{HasPomXML: true, HasPackageJSON: true}, LayerPartial, "not for: java"},
+			{"java", types.DetectedProject{HasPomXML: true}, LayerPartial, "java"},
+			{"javascript only", types.DetectedProject{HasPackageJSON: true}, LayerEnabled, ""},
+			{"python and rust", types.DetectedProject{HasPyProject: true, HasCargoToml: true}, LayerEnabled, ""},
+		}
+		for _, tt := range tests {
+			t.Run(tt.name, func(t *testing.T) {
+				result := AssessDefenseLayers("", enabledTools, tt.detected, genState, 3)
+				for _, l := range result.Layers {
+					if l.Name != "age-gating" {
+						continue
+					}
+					if l.Status != tt.wantStatus || !strings.Contains(l.Reason, tt.wantInText) {
+						t.Errorf("age-gating = %q (%q), want %q containing %q", l.Status, l.Reason, tt.wantStatus, tt.wantInText)
+					}
+					return
+				}
+				t.Error("age-gating layer not found")
+			})
+		}
+	})
+
 	t.Run("disabled without attach-guard", func(t *testing.T) {
 		enabledTools := map[string]bool{}
 		genState := types.GeneratedState{
@@ -342,7 +484,7 @@ func TestAssessDefenseLayers_AgeGating(t *testing.T) {
 				".claude/hooks/package-guard.py": {},
 			},
 		}
-		result := AssessDefenseLayers(enabledTools, detected, genState, 3)
+		result := AssessDefenseLayers("", enabledTools, detected, genState, 3)
 		for _, l := range result.Layers {
 			if l.Name == "age-gating" {
 				if l.Status != LayerDisabled {
@@ -358,6 +500,7 @@ func TestAssessDefenseLayers_AgeGating(t *testing.T) {
 func TestAssessDefenseLayers_MinTierValues(t *testing.T) {
 	t.Parallel()
 	result := AssessDefenseLayers(
+		"",
 		map[string]bool{},
 		types.DetectedProject{},
 		types.GeneratedState{Files: map[string]types.FileState{}},
@@ -415,7 +558,7 @@ func TestAssessDefenseLayers_T1ScoreIgnoresHigherTierLayers(t *testing.T) {
 	// At tier 1, only T1 layers are considered.
 	// pretooluse-hooks (T1, critical) should be enabled.
 	// Higher-tier layers like secrets-scanning (T2), sast (T3) should be excluded.
-	result := AssessDefenseLayers(enabledTools, detected, genState, 1)
+	result := AssessDefenseLayers("", enabledTools, detected, genState, 1)
 
 	if result.Score == 0 {
 		t.Error("T1 score should not be 0 when T1 layers are enabled")
@@ -423,7 +566,7 @@ func TestAssessDefenseLayers_T1ScoreIgnoresHigherTierLayers(t *testing.T) {
 
 	// Now test at tier 3 with same tools — score should be lower because
 	// higher-tier layers are included but disabled.
-	resultT3 := AssessDefenseLayers(enabledTools, detected, genState, 3)
+	resultT3 := AssessDefenseLayers("", enabledTools, detected, genState, 3)
 
 	if resultT3.Score >= result.Score {
 		t.Errorf("T3 score (%f) should be lower than T1 score (%f) with same tools, because more layers are in scope but disabled",

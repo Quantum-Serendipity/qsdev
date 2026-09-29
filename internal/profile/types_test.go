@@ -77,137 +77,52 @@ func TestInfraProfile_JSONRoundTrip(t *testing.T) {
 	}
 }
 
-func TestEcosystemURL_Artifactory(t *testing.T) {
-	r := RegistryConfig{
-		Type: RegistryArtifactory,
-		URL:  "https://artifactory.example.com",
+func TestEcosystemURL(t *testing.T) {
+	t.Parallel()
+	artifactory := RegistryConfig{
+		Type:       RegistryArtifactory,
+		URL:        "https://repo.corp.internal/artifactory/",
+		Ecosystems: []string{"npm", "pypi", "go", "cargo", "maven", "nuget"},
 	}
-
+	nexus := RegistryConfig{
+		Type:       RegistryNexus,
+		URL:        "https://nexus.corp.internal",
+		Ecosystems: []string{"npm", "pypi", "go", "maven", "nuget", "cargo"},
+	}
 	tests := []struct {
-		ecosystem string
-		want      string
+		name string
+		reg  RegistryConfig
+		eco  string
+		want string
 	}{
-		{"npm", "https://artifactory.example.com/api/npm/npm-virtual/"},
-		{"pypi", "https://artifactory.example.com/api/pypi/pypi-virtual/simple"},
-		{"go", "https://artifactory.example.com/api/go/go-virtual"},
-		{"cargo", "sparse+https://artifactory.example.com/api/cargo/cargo-virtual/index/"},
-		{"maven", "https://artifactory.example.com/maven-virtual"},
-		{"nuget", "https://artifactory.example.com/api/nuget/nuget-virtual"},
+		{"artifactory npm", artifactory, "npm", "https://repo.corp.internal/artifactory/api/npm/npm-virtual/"},
+		{"artifactory pypi", artifactory, "pypi", "https://repo.corp.internal/artifactory/api/pypi/pypi-virtual/simple"},
+		{"artifactory go", artifactory, "go", "https://repo.corp.internal/artifactory/api/go/go-virtual"},
+		{"artifactory cargo", artifactory, "cargo", "https://repo.corp.internal/artifactory/api/cargo/cargo-virtual/index/"},
+		{"artifactory maven", artifactory, "maven", "https://repo.corp.internal/artifactory/maven-virtual"},
+		{"artifactory gradle shares maven", artifactory, "gradle", "https://repo.corp.internal/artifactory/maven-virtual"},
+		{"artifactory nuget v3", artifactory, "nuget", "https://repo.corp.internal/artifactory/api/nuget/v3/nuget-virtual/index.json"},
+		{"nexus npm", nexus, "npm", "https://nexus.corp.internal/repository/npm-group/"},
+		{"nexus pypi", nexus, "pypi", "https://nexus.corp.internal/repository/pypi-group/simple"},
+		{"nexus go", nexus, "go", "https://nexus.corp.internal/repository/go-group/"},
+		{"nexus maven", nexus, "maven", "https://nexus.corp.internal/repository/maven-group/"},
+		{"nexus nuget v3", nexus, "nuget", "https://nexus.corp.internal/repository/nuget-group/index.json"},
+		{"nexus layout gap falls back to the default path", nexus, "cargo", "https://nexus.corp.internal/repository/cargo-proxy/"},
+		{"ecosystem not served", RegistryConfig{Type: RegistryNexus, URL: "https://nexus.corp.internal", Ecosystems: []string{"npm"}}, "pypi", ""},
+		{"no endpoint", RegistryConfig{Type: RegistryNexus, Ecosystems: []string{"npm"}}, "npm", ""},
+		{"override wins", RegistryConfig{Type: RegistryNexus, URL: "https://nexus.corp.internal", Ecosystems: []string{"npm"},
+			Overrides: map[string]string{"npm": "https://npm.corp.internal/"}}, "npm", "https://npm.corp.internal/"},
+		{"custom path wins over layout", RegistryConfig{Type: RegistryNexus, URL: "https://nexus.corp.internal", Ecosystems: []string{"npm"},
+			Paths: map[string]string{"npm": "/repository/npm-all/"}}, "npm", "https://nexus.corp.internal/repository/npm-all/"},
+		{"github packages is not a proxy", RegistryConfig{Type: RegistryGitHub, URL: "https://npm.pkg.github.com", Ecosystems: []string{"npm"}}, "npm", ""},
+		{"none", RegistryConfig{Type: RegistryNone, URL: "https://nexus.corp.internal", Ecosystems: []string{"npm"}}, "npm", ""},
 	}
-
-	for _, tt := range tests {
-		t.Run(tt.ecosystem, func(t *testing.T) {
-			got := r.EcosystemURL(tt.ecosystem)
-			if got != tt.want {
-				t.Errorf("EcosystemURL(%q) = %q, want %q", tt.ecosystem, got, tt.want)
-			}
-		})
-	}
-}
-
-func TestEcosystemURL_Nexus(t *testing.T) {
-	r := RegistryConfig{
-		Type: RegistryNexus,
-		URL:  "https://nexus.example.com",
-	}
-
-	tests := []struct {
-		ecosystem string
-		want      string
-	}{
-		{"npm", "https://nexus.example.com/repository/npm-group/"},
-		{"pypi", "https://nexus.example.com/repository/pypi-group/simple"},
-		{"go", "https://nexus.example.com/repository/go-group/"},
-		{"maven", "https://nexus.example.com/repository/maven-group/"},
-		{"nuget", "https://nexus.example.com/repository/nuget-group/"},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.ecosystem, func(t *testing.T) {
-			got := r.EcosystemURL(tt.ecosystem)
-			if got != tt.want {
-				t.Errorf("EcosystemURL(%q) = %q, want %q", tt.ecosystem, got, tt.want)
-			}
-		})
-	}
-}
-
-func TestEcosystemURL_GitHub(t *testing.T) {
-	r := RegistryConfig{
-		Type: RegistryGitHub,
-	}
-
-	tests := []struct {
-		ecosystem string
-		want      string
-	}{
-		{"npm", "https://npm.pkg.github.com/"},
-		{"maven", "https://maven.pkg.github.com/"},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.ecosystem, func(t *testing.T) {
-			got := r.EcosystemURL(tt.ecosystem)
-			if got != tt.want {
-				t.Errorf("EcosystemURL(%q) = %q, want %q", tt.ecosystem, got, tt.want)
-			}
-		})
-	}
-}
-
-func TestEcosystemURL_None(t *testing.T) {
-	r := RegistryConfig{
-		Type: RegistryNone,
-	}
-
-	if got := r.EcosystemURL("npm"); got != "" {
-		t.Errorf("EcosystemURL(npm) with none = %q, want empty", got)
-	}
-}
-
-func TestEcosystemURL_UnsupportedCombination(t *testing.T) {
-	tests := []struct {
-		name      string
-		regType   RegistryType
-		ecosystem string
-	}{
-		{"nexus-cargo", RegistryNexus, "cargo"},
-		{"github-pypi", RegistryGitHub, "pypi"},
-		{"github-go", RegistryGitHub, "go"},
-		{"github-cargo", RegistryGitHub, "cargo"},
-		{"artifactory-unknown", RegistryArtifactory, "haskell"},
-		{"nexus-unknown", RegistryNexus, "haskell"},
-	}
-
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			r := RegistryConfig{Type: tt.regType, URL: "https://example.com"}
-			if got := r.EcosystemURL(tt.ecosystem); got != "" {
-				t.Errorf("EcosystemURL(%q) for %q = %q, want empty", tt.ecosystem, tt.regType, got)
+			t.Parallel()
+			if got := tt.reg.EcosystemURL(tt.eco); got != tt.want {
+				t.Errorf("EcosystemURL(%q) = %q, want %q", tt.eco, got, tt.want)
 			}
 		})
-	}
-}
-
-func TestEcosystemURL_EmptyURL(t *testing.T) {
-	// Artifactory and Nexus require a URL; should return "" when URL is empty.
-	for _, regType := range []RegistryType{RegistryArtifactory, RegistryNexus} {
-		r := RegistryConfig{Type: regType, URL: ""}
-		if got := r.EcosystemURL("npm"); got != "" {
-			t.Errorf("EcosystemURL(npm) for %q with empty URL = %q, want empty", regType, got)
-		}
-	}
-}
-
-func TestEcosystemURL_TrailingSlash(t *testing.T) {
-	// URLs with trailing slashes should not produce double slashes.
-	r := RegistryConfig{
-		Type: RegistryArtifactory,
-		URL:  "https://artifactory.example.com/",
-	}
-	got := r.EcosystemURL("npm")
-	want := "https://artifactory.example.com/api/npm/npm-virtual/"
-	if got != want {
-		t.Errorf("EcosystemURL(npm) with trailing slash = %q, want %q", got, want)
 	}
 }

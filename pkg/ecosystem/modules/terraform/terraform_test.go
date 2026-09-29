@@ -3,10 +3,14 @@ package terraform_test
 import (
 	"os"
 	"path/filepath"
+	"regexp"
+	"slices"
 	"strings"
 	"testing"
 
+	"github.com/Quantum-Serendipity/qsdev/pkg/denyutil"
 	"github.com/Quantum-Serendipity/qsdev/pkg/ecosystem"
+	"github.com/Quantum-Serendipity/qsdev/pkg/ecosystem/modules/cloudcommon"
 	"github.com/Quantum-Serendipity/qsdev/pkg/ecosystem/modules/terraform"
 )
 
@@ -62,25 +66,131 @@ func TestDetect_TfJsonFiles(t *testing.T) {
 	}
 }
 
+// TestDetect_OpenTofu covers W128: OpenTofu is recognised by its .tofu file
+// extension (it has no marker directory), and a .tofu-only project is
+// detected at all.
 func TestDetect_OpenTofu(t *testing.T) {
-	dir := t.TempDir()
-	// Create .opentofu/ directory.
-	if err := os.MkdirAll(filepath.Join(dir, ".opentofu"), 0o755); err != nil {
+	t.Parallel()
+	tests := []struct {
+		name        string
+		files       []string
+		mkdirs      []string
+		wantVariant string
+		wantFound   bool
+	}{
+		{name: "tofu files only", files: []string{"main.tofu"}, wantVariant: "opentofu", wantFound: true},
+		{name: "tofu json", files: []string{"main.tofu.json"}, wantVariant: "opentofu", wantFound: true},
+		{name: "tofu files beside tf files", files: []string{"main.tf", "override.tofu"}, wantVariant: "opentofu", wantFound: true},
+		{name: "tofu files in subdirectory", files: []string{"infra/main.tofu"}, wantVariant: "opentofu", wantFound: true},
+		{name: "tf files only", files: []string{"main.tf"}, wantVariant: "terraform", wantFound: true},
+		{
+			name:        ".opentofu directory is not a marker",
+			files:       []string{"main.tf"},
+			mkdirs:      []string{".opentofu"},
+			wantVariant: "terraform",
+			wantFound:   true,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			dir := t.TempDir()
+			for _, d := range tt.mkdirs {
+				if err := os.MkdirAll(filepath.Join(dir, d), 0o755); err != nil {
+					t.Fatal(err)
+				}
+			}
+			for _, f := range tt.files {
+				writeFile(t, dir, f, `resource "null_resource" "x" {}`)
+			}
+			result := newModule().Detect(dir)
+			if result.Detected != tt.wantFound {
+				t.Fatalf("Detected = %v, want %v (evidence %v)", result.Detected, tt.wantFound, result.Evidence)
+			}
+			if got := result.SuggestedConfig.Extras["variant"]; got != tt.wantVariant {
+				t.Errorf("variant = %q, want %q", got, tt.wantVariant)
+			}
+		})
+	}
+}
+
+// TestDetect_Subdirectories covers W129/W146: configuration below the root
+// (infra/, terraform/) is detected with the same bounded walk cloudcommon
+// uses for provider detection, and the directories are recorded.
+func TestDetect_Subdirectories(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name      string
+		files     []string
+		wantFound bool
+		wantDirs  string
+	}{
+		{name: "infra subdirectory", files: []string{"infra/main.tf"}, wantFound: true, wantDirs: "infra"},
+		{name: "root plus modules validates the root only", files: []string{"main.tf", "modules/aws/aws.tf"}, wantFound: true},
+		{
+			name:      "root plus environment",
+			files:     []string{"main.tf", "envs/prod/main.tf"},
+			wantFound: true,
+			wantDirs:  ".,envs/prod",
+		},
+		{
+			name:      "environments plus shared modules",
+			files:     []string{"envs/prod/main.tf", "envs/dev/main.tf", "modules/vpc/main.tf", "infra/modules/db/main.tf"},
+			wantFound: true,
+			wantDirs:  "envs/dev,envs/prod",
+		},
+		{name: "modules-only repository", files: []string{"modules/vpc/main.tf"}, wantFound: true, wantDirs: "modules/vpc"},
+		{name: "root only records nothing", files: []string{"main.tf"}, wantFound: true},
+		{name: "lock file in subdirectory", files: []string{"infra/.terraform.lock.hcl"}, wantFound: true},
+		{name: "provider cache ignored", files: []string{".terraform/modules/x/main.tf"}},
+		{name: "too deep ignored", files: []string{"a/b/c/d/main.tf"}},
+		{name: "unsafe directory name not recorded", files: []string{"in fra/main.tf"}, wantFound: true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			dir := t.TempDir()
+			for _, f := range tt.files {
+				writeFile(t, dir, f, `provider "aws" {}`)
+			}
+			result := newModule().Detect(dir)
+			if result.Detected != tt.wantFound {
+				t.Fatalf("Detected = %v, want %v (evidence %v)", result.Detected, tt.wantFound, result.Evidence)
+			}
+			if got := result.SuggestedConfig.Extras[terraform.ExtraConfigDirs]; got != tt.wantDirs {
+				t.Errorf("%s = %q, want %q", terraform.ExtraConfigDirs, got, tt.wantDirs)
+			}
+		})
+	}
+}
+
+// TestDetect_ImpliedByCloudProvider covers W146: whenever cloudcommon sees a
+// provider in .tf files, the terraform module is detected too.
+func TestDetect_ImpliedByCloudProvider(t *testing.T) {
+	t.Parallel()
+	for _, rel := range []string{"main.tf", "infra/main.tf", "infra/modules/aws/main.tf", "terraform/main.tofu"} {
+		t.Run(rel, func(t *testing.T) {
+			t.Parallel()
+			dir := t.TempDir()
+			writeFile(t, dir, rel, `provider "aws" {}`)
+			if len(cloudcommon.DetectTerraformProviders(dir)) == 0 {
+				t.Fatal("precondition: cloudcommon found no provider")
+			}
+			if !newModule().Detect(dir).Detected {
+				t.Error("cloud provider detected from Terraform files but terraform module not detected")
+			}
+		})
+	}
+}
+
+func writeFile(t *testing.T, root, rel, content string) {
+	t.Helper()
+	full := filepath.Join(root, filepath.FromSlash(rel))
+	if err := os.MkdirAll(filepath.Dir(full), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	// Create a .tf file to trigger detection.
-	if err := os.WriteFile(filepath.Join(dir, "main.tf"), []byte(`resource "null_resource" "x" {}`), 0o644); err != nil {
+	if err := os.WriteFile(full, []byte(content), 0o644); err != nil {
 		t.Fatal(err)
-	}
-
-	m := newModule()
-	result := m.Detect(dir)
-
-	if !result.Detected {
-		t.Fatal("expected Detected=true for OpenTofu project")
-	}
-	if result.SuggestedConfig.Extras["variant"] != "opentofu" {
-		t.Errorf("expected variant=opentofu, got %q", result.SuggestedConfig.Extras["variant"])
 	}
 }
 
@@ -284,6 +394,8 @@ func TestPreCommitHooks(t *testing.T) {
 	// All four are custom hooks (BuiltIn:false): the built-in terraform-format
 	// would discard the tofu/terraform binary selection and -check flags, so the
 	// hooks are rendered with a NixPackage that puts the binary on PATH.
+	// terraform-validate chains init and validate through `sh -c`, so its
+	// NixPackage provides `sh` rather than the Terraform binary.
 	for i, h := range hooks {
 		if h.BuiltIn {
 			t.Errorf("%s should not be BuiltIn (custom hook preserving entry)", h.ID)
@@ -328,76 +440,123 @@ func TestPreCommitHooks_OpenTofu(t *testing.T) {
 
 // --- DenyRules tests ---
 
-func TestDenyRules_Terraform(t *testing.T) {
-	m := newModule()
-	config := ecosystem.ModuleConfig{
-		Extras: map[string]string{"variant": "terraform"},
+// TestDenyRules covers W125 with Claude Code's own matching semantics:
+// destructive, lock-bypassing and secret-printing subcommands are denied for
+// both binaries, including after global options such as -chdir, while
+// read-only plan/validate runs stay allowed.
+func TestDenyRules(t *testing.T) {
+	t.Parallel()
+	denied := []string{
+		"terraform init",
+		"terraform init -upgrade",
+		"terraform -chdir=infra init -upgrade",
+		"terraform apply -auto-approve",
+		"terraform -chdir=infra apply -auto-approve",
+		"terraform -chdir=infra -input=false apply -destroy",
+		"terraform destroy -auto-approve",
+		"terraform -chdir=infra destroy",
+		"terraform get -update",
+		"terraform import aws_s3_bucket.b bucket",
+		"terraform force-unlock 1234",
+		"terraform providers lock",
+		"terraform state pull",
+		"terraform -chdir=infra state pull",
+		"terraform state rm aws_s3_bucket.b",
+		"terraform output -json",
+		"terraform -chdir=infra output -raw db_password",
+		"terraform show -json",
+		"terraform show -no-color -json plan.out",
+		"tofu apply -auto-approve",
+		"tofu -chdir=infra destroy",
+		"tofu state pull",
 	}
-	rules := m.DenyRules(config)
-
-	if len(rules) != 3 {
-		t.Fatalf("expected 3 deny rules for terraform, got %d", len(rules))
+	allowed := []string{
+		"terraform plan",
+		"terraform -chdir=infra plan -out=tfplan",
+		"terraform plan -var initial_count=1",
+		"terraform plan -target=module.getter",
+		"terraform validate",
+		"terraform fmt -check -recursive",
+		"terraform state list",
+		"terraform show",
+		"tofu -chdir=infra validate",
 	}
-
-	for _, rule := range rules {
-		if !strings.Contains(rule, "terraform") {
-			t.Errorf("expected terraform in deny rule, got %q", rule)
+	for _, variant := range []string{"terraform", "opentofu"} {
+		rules := newModule().DenyRules(ecosystem.ModuleConfig{Extras: map[string]string{"variant": variant}})
+		matches := func(cmd string) bool {
+			return slices.ContainsFunc(rules, func(r string) bool { return denyutil.MatchesBashRule(r, cmd) })
+		}
+		for _, cmd := range denied {
+			if !matches(cmd) {
+				t.Errorf("variant %s: no deny rule blocks %q", variant, cmd)
+			}
+		}
+		for _, cmd := range allowed {
+			if matches(cmd) {
+				t.Errorf("variant %s: deny rules over-block %q", variant, cmd)
+			}
 		}
 	}
 }
 
-func TestDenyRules_OpenTofu(t *testing.T) {
-	m := newModule()
-	config := ecosystem.ModuleConfig{
-		Extras: map[string]string{"variant": "opentofu"},
-	}
-	rules := m.DenyRules(config)
-
-	if len(rules) != 6 {
-		t.Fatalf("expected 6 deny rules for opentofu, got %d", len(rules))
-	}
-
-	hasTerraformInit := false
-	hasTerraformApply := false
-	hasTerraformProviders := false
-	hasTofuInit := false
-	hasTofuApply := false
-	hasTofuProviders := false
-
-	for _, rule := range rules {
-		switch {
-		case strings.Contains(rule, "terraform init"):
-			hasTerraformInit = true
-		case strings.Contains(rule, "terraform apply"):
-			hasTerraformApply = true
-		case strings.Contains(rule, "terraform providers"):
-			hasTerraformProviders = true
-		case strings.Contains(rule, "tofu init"):
-			hasTofuInit = true
-		case strings.Contains(rule, "tofu apply"):
-			hasTofuApply = true
-		case strings.Contains(rule, "tofu providers"):
-			hasTofuProviders = true
+// TestReadDenyRules covers W132: state, variable files and the registry
+// token are read-denied.
+func TestReadDenyRules(t *testing.T) {
+	t.Parallel()
+	rules := newModule().ReadDenyRules(ecosystem.ModuleConfig{})
+	for _, want := range []string{"**/*.tfstate*", "**/*.tfvars", "**/*.tfvars.json", "~/.terraform.d/credentials.tfrc.json"} {
+		if !slices.Contains(rules, want) {
+			t.Errorf("ReadDenyRules missing %q: %v", want, rules)
 		}
 	}
+}
 
-	if !hasTerraformInit {
-		t.Error("expected deny rule for terraform init")
+// TestSemgrepRuleSets covers W137: only rulesets the Semgrep registry
+// serves are returned (p/terraform-aws is a 404).
+func TestSemgrepRuleSets(t *testing.T) {
+	t.Parallel()
+	if got := newModule().SemgrepRuleSets(); !slices.Equal(got, []string{"p/terraform"}) {
+		t.Errorf("SemgrepRuleSets = %v, want [p/terraform]", got)
 	}
-	if !hasTerraformApply {
-		t.Error("expected deny rule for terraform apply")
+}
+
+// TestPreCommitHooks_FilesAndDirs covers W128/W129: hooks trigger on .tofu
+// and JSON configuration, and validate/tflint reach configuration below the
+// root.
+func TestPreCommitHooks_FilesAndDirs(t *testing.T) {
+	t.Parallel()
+	hooks := newModule().PreCommitHooks(ecosystem.ModuleConfig{Extras: map[string]string{
+		"variant": "opentofu", terraform.ExtraConfigDirs: "infra,modules/aws",
+	}})
+	pattern := hooks[0].Files
+	for _, h := range hooks {
+		if len(h.Types) != 0 || h.Files != pattern {
+			t.Errorf("%s: Types=%v Files=%q, want no types and the shared files pattern %q", h.ID, h.Types, h.Files, pattern)
+		}
 	}
-	if !hasTerraformProviders {
-		t.Error("expected deny rule for terraform providers")
+	re := regexp.MustCompile(pattern)
+	for _, f := range []string{"main.tf", "main.tofu", "main.tf.json", "main.tofu.json", "prod.tfvars", "infra/x.tfvars.json"} {
+		if !re.MatchString(f) {
+			t.Errorf("files pattern %q does not match %q", pattern, f)
+		}
 	}
-	if !hasTofuInit {
-		t.Error("expected deny rule for tofu init")
+	for _, f := range []string{"main.go", "tf.md", "README.tofu.md"} {
+		if re.MatchString(f) {
+			t.Errorf("files pattern %q matches %q", pattern, f)
+		}
 	}
-	if !hasTofuApply {
-		t.Error("expected deny rule for tofu apply")
+	validate := hooks[1].Entry
+	for _, want := range []string{"for d in infra modules/aws;", "tofu -chdir=$d init -backend=false", "tofu -chdir=$d validate || exit 1"} {
+		if !strings.Contains(validate, want) {
+			t.Errorf("validate entry %q missing %q", validate, want)
+		}
 	}
-	if !hasTofuProviders {
-		t.Error("expected deny rule for tofu providers")
+	// The entry is embedded verbatim in a Nix double-quoted string.
+	if strings.ContainsAny(validate, `"\`) || strings.Contains(validate, "${") {
+		t.Errorf("validate entry %q is not safe inside a Nix string", validate)
+	}
+	if hooks[2].Entry != "tflint --recursive" {
+		t.Errorf("tflint entry = %q, want tflint --recursive", hooks[2].Entry)
 	}
 }
 
@@ -410,12 +569,12 @@ func TestCICommands_Terraform(t *testing.T) {
 	}
 	cmds := m.CICommands(config)
 
-	if len(cmds) != 5 {
-		t.Fatalf("expected 5 CI commands, got %d", len(cmds))
+	if len(cmds) != 4 {
+		t.Fatalf("expected 4 CI commands, got %d", len(cmds))
 	}
 
-	// First three commands should use the terraform binary.
-	for i := 0; i < 3; i++ {
+	// First two commands should use the terraform binary.
+	for i := 0; i < 2; i++ {
 		if !strings.Contains(cmds[i].Command, "terraform") {
 			t.Errorf("cmd[%d]: expected terraform in command, got %q", i, cmds[i].Command)
 		}
@@ -428,19 +587,25 @@ func TestCICommands_Terraform(t *testing.T) {
 	if cmds[1].Phase != ecosystem.CIPhaseTest {
 		t.Errorf("validate command should be Test phase, got %v", cmds[1].Phase)
 	}
-	if cmds[2].Phase != ecosystem.CIPhaseTest {
-		t.Errorf("plan command should be Test phase, got %v", cmds[2].Phase)
+	if cmds[2].Phase != ecosystem.CIPhaseScan {
+		t.Errorf("tflint command should be Scan phase, got %v", cmds[2].Phase)
 	}
 	if cmds[3].Phase != ecosystem.CIPhaseScan {
-		t.Errorf("tflint command should be Scan phase, got %v", cmds[3].Phase)
-	}
-	if cmds[4].Phase != ecosystem.CIPhaseScan {
-		t.Errorf("tfsec command should be Scan phase, got %v", cmds[4].Phase)
+		t.Errorf("tfsec command should be Scan phase, got %v", cmds[3].Phase)
 	}
 
-	// init should use -backend=false.
-	if !strings.Contains(cmds[0].Command, "-backend=false") {
-		t.Errorf("init command should contain -backend=false, got %q", cmds[0].Command)
+	// init skips the backend and must enforce, not rewrite, the lock file.
+	for _, flag := range []string{"-backend=false", "-lockfile=readonly"} {
+		if !strings.Contains(cmds[0].Command, flag) {
+			t.Errorf("init command should contain %s, got %q", flag, cmds[0].Command)
+		}
+	}
+
+	// A plan needs the backend init skipped, so CI must not run one.
+	for _, c := range cmds {
+		if strings.Contains(c.Command, " plan") {
+			t.Errorf("CI command %q runs a plan without a backend", c.Command)
+		}
 	}
 }
 
@@ -451,12 +616,12 @@ func TestCICommands_OpenTofu(t *testing.T) {
 	}
 	cmds := m.CICommands(config)
 
-	if len(cmds) != 5 {
-		t.Fatalf("expected 5 CI commands, got %d", len(cmds))
+	if len(cmds) != 4 {
+		t.Fatalf("expected 4 CI commands, got %d", len(cmds))
 	}
 
-	// First three commands should use the tofu binary.
-	for i := 0; i < 3; i++ {
+	// First two commands should use the tofu binary.
+	for i := 0; i < 2; i++ {
 		if !strings.Contains(cmds[i].Command, "tofu") {
 			t.Errorf("cmd[%d]: expected tofu in command for opentofu variant, got %q", i, cmds[i].Command)
 		}
@@ -479,12 +644,6 @@ func TestPackageManagers(t *testing.T) {
 	}
 	if pm.LockFile != ".terraform.lock.hcl" {
 		t.Errorf("expected lockfile .terraform.lock.hcl, got %q", pm.LockFile)
-	}
-	if pm.FrozenInstallCommand != "terraform init -lockfile=readonly" {
-		t.Errorf("expected frozen install command terraform init -lockfile=readonly, got %q", pm.FrozenInstallCommand)
-	}
-	if pm.AgeGatingSupport {
-		t.Error("expected AgeGatingSupport=false")
 	}
 }
 

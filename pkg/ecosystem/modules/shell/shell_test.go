@@ -6,6 +6,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/Quantum-Serendipity/qsdev/internal/shelltest"
 	"github.com/Quantum-Serendipity/qsdev/pkg/ecosystem"
 	"github.com/Quantum-Serendipity/qsdev/pkg/ecosystem/modules/shell"
 )
@@ -60,30 +61,53 @@ func TestDetect_ShFile(t *testing.T) {
 	}
 }
 
+// TestDetect_ScriptsDir verifies scripts/ only indicates shell when it holds
+// shell scripts: the directory commonly contains Python or JS helpers.
 func TestDetect_ScriptsDir(t *testing.T) {
-	dir := t.TempDir()
-	if err := os.MkdirAll(filepath.Join(dir, "scripts"), 0o755); err != nil {
-		t.Fatal(err)
+	t.Parallel()
+	tests := []struct {
+		name         string
+		files        []string
+		wantDetected bool
+	}{
+		{"empty scripts dir", nil, false},
+		{"python helper only", []string{"x.py"}, false},
+		{"sh script", []string{"build.sh"}, true},
+		{"bash script", []string{"setup.bash"}, true},
 	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			dir := t.TempDir()
+			if err := os.MkdirAll(filepath.Join(dir, "scripts"), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			for _, f := range tt.files {
+				if err := os.WriteFile(filepath.Join(dir, "scripts", f), []byte("#!/bin/sh\n"), 0o644); err != nil {
+					t.Fatal(err)
+				}
+			}
 
-	m := newModule()
-	r := m.Detect(dir)
-
-	if !r.Detected {
-		t.Fatal("expected Detected = true for scripts/ directory")
-	}
-	if r.Confidence < ecosystem.ConfidenceProbable {
-		t.Errorf("Confidence = %v, want >= Probable", r.Confidence)
-	}
-
-	foundScripts := false
-	for _, e := range r.Evidence {
-		if strings.Contains(e, "scripts") {
-			foundScripts = true
-		}
-	}
-	if !foundScripts {
-		t.Error("Evidence should mention scripts/ directory")
+			r := newModule().Detect(dir)
+			if r.Detected != tt.wantDetected {
+				t.Fatalf("Detected = %v, want %v (evidence %v)", r.Detected, tt.wantDetected, r.Evidence)
+			}
+			if !tt.wantDetected {
+				return
+			}
+			if r.Confidence != ecosystem.ConfidenceProbable {
+				t.Errorf("Confidence = %v, want Probable", r.Confidence)
+			}
+			found := false
+			for _, e := range r.Evidence {
+				if strings.Contains(e, "scripts/") {
+					found = true
+				}
+			}
+			if !found {
+				t.Errorf("Evidence %v should mention scripts/", r.Evidence)
+			}
+		})
 	}
 }
 
@@ -202,6 +226,44 @@ func TestCICommands(t *testing.T) {
 
 	if len(cmds) != 2 {
 		t.Fatalf("CICommands() returned %d commands, want 2", len(cmds))
+	}
+}
+
+// TestCICommands_BashSyntaxCheckFailsOnAnyFile runs the bash-syntax-check
+// command: it must fail when any script, not only the first one find lists,
+// has a syntax error (F436: `bash -n a.sh b.sh` checks only a.sh).
+func TestCICommands_BashSyntaxCheckFailsOnAnyFile(t *testing.T) {
+	t.Parallel()
+
+	var command string
+	for _, c := range newModule().CICommands(ecosystem.ModuleConfig{}) {
+		if c.Name == "bash-syntax-check" {
+			command = c.Command
+		}
+	}
+	if command == "" {
+		t.Fatal("no bash-syntax-check CI command")
+	}
+
+	tests := []struct {
+		name     string
+		files    map[string]string
+		wantExit bool
+	}{
+		{name: "all valid", files: map[string]string{"a.sh": "echo a\n", "sub/b.sh": "echo b\n"}},
+		{name: "no scripts", files: map[string]string{"README": "x\n"}},
+		{name: "broken first", files: map[string]string{"a.sh": "if then\n", "b.sh": "echo b\n", "c.sh": "echo c\n"}, wantExit: true},
+		{name: "broken last", files: map[string]string{"a.sh": "echo a\n", "b.sh": "echo b\n", "z/zz.sh": "if then\n"}, wantExit: true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			dir := shelltest.WriteTree(t, t.TempDir(), tt.files)
+			res := shelltest.Run(t, dir, command, nil)
+			if (res.Exit != 0) != tt.wantExit {
+				t.Errorf("exit = %d, want failure %v; output:\n%s", res.Exit, tt.wantExit, res.Output)
+			}
+		})
 	}
 }
 

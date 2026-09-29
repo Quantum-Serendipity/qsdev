@@ -18,8 +18,17 @@ func TestHookDeployer(t *testing.T, deployer aiframework.HookDeployer, fixtures 
 		}
 	})
 
-	t.Run("ProtocolNonZero", func(t *testing.T) {
-		_ = deployer.Protocol()
+	t.Run("ProtocolValid", func(t *testing.T) {
+		p := deployer.Protocol()
+		if _, err := p.InputFormat.MarshalText(); err != nil {
+			t.Errorf("Protocol().InputFormat invalid: %v", err)
+		}
+		if _, err := p.ResponseFormat.MarshalText(); err != nil {
+			t.Errorf("Protocol().ResponseFormat invalid: %v", err)
+		}
+		if _, err := p.EnforcementMode.MarshalText(); err != nil {
+			t.Errorf("Protocol().EnforcementMode invalid: %v", err)
+		}
 	})
 
 	t.Run("DeployProducesFiles", func(t *testing.T) {

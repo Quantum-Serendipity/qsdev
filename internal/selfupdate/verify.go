@@ -1,12 +1,19 @@
 package selfupdate
 
+//go:generate go run ./internal/gentrustedroot -o trusted_root.json
+
 import (
-	"bytes"
 	"context"
+	_ "embed"
+	"errors"
 	"fmt"
 	"os"
-	"os/exec"
-	"strings"
+	"path/filepath"
+	"sync"
+
+	"github.com/sigstore/sigstore-go/pkg/bundle"
+	"github.com/sigstore/sigstore-go/pkg/root"
+	"github.com/sigstore/sigstore-go/pkg/verify"
 
 	"github.com/Quantum-Serendipity/qsdev/pkg/branding"
 )
@@ -17,6 +24,22 @@ const (
 	sigstoreBundleName = "checksums.txt.sigstore.json"
 )
 
+// sigstoreTrustedRootJSON is the Sigstore public-good trusted root (Fulcio CA
+// chain, Rekor and CT log keys, timestamp authority chain) pinned into the
+// binary. It is the ONLY trust anchor for self-update signature verification:
+// nothing is resolved from PATH, the network or the user's ~/.sigstore cache,
+// so a shim, a tampered TUF cache or a compromised mirror cannot vouch for a
+// release. Refresh it with `go generate ./internal/selfupdate`, which fetches
+// it through an authenticated TUF update (see internal/gentrustedroot).
+//
+//go:embed trusted_root.json
+var sigstoreTrustedRootJSON []byte
+
+// loadTrustedRoot parses the embedded trusted root once per process.
+var loadTrustedRoot = sync.OnceValues(func() (*root.TrustedRoot, error) {
+	return root.NewTrustedRootFromJSON(sigstoreTrustedRootJSON)
+})
+
 // VerificationResult describes the outcome of Sigstore verification.
 type VerificationResult struct {
 	Verified bool
@@ -25,13 +48,15 @@ type VerificationResult struct {
 }
 
 // verifySigstoreBundle downloads (if the asset exists) and verifies the
-// .sigstore.json bundle for checksums.txt using cosign.
+// .sigstore.json bundle for checksums.txt in-process with sigstore-go.
 //
 // Behavior:
-//   - If the bundle asset is not present in the release, returns Skipped (old release).
-//   - If cosign is not on PATH, returns Skipped with advisory message.
-//   - If cosign verifies successfully, returns Verified.
-//   - If cosign is present AND bundle exists BUT verification fails, returns error (FAIL CLOSED).
+//   - If the bundle asset is not present in the release, returns Skipped (an
+//     unsigned release); strict mode turns that into a refusal.
+//   - If the bundle verifies against the embedded trusted root AND the exact
+//     release-workflow identity for this tag, returns Verified.
+//   - Any other outcome (download failure, malformed bundle, bad signature,
+//     wrong identity, missing transparency-log proof) is an error: FAIL CLOSED.
 var verifySigstoreBundle = verifySigstoreBundleImpl
 
 func verifySigstoreBundleImpl(ctx context.Context, release *Release, checksumsPath, tmpDir string) (*VerificationResult, error) {
@@ -46,39 +71,17 @@ func verifySigstoreBundleImpl(ctx context.Context, release *Release, checksumsPa
 	if bundleURL == "" {
 		return &VerificationResult{
 			Skipped: true,
-			Message: "sigstore bundle not found in release; skipping signature verification",
+			Message: fmt.Sprintf("release %s publishes no %s signature bundle; its checksums cannot be authenticated", release.TagName, sigstoreBundleName),
 		}, nil
 	}
 
-	// Check if cosign is available on PATH.
-	cosignPath, err := exec.LookPath("cosign")
-	if err != nil {
-		return &VerificationResult{
-			Skipped: true,
-			Message: "cosign not found on PATH; skipping signature verification (install cosign for enhanced security)",
-		}, nil
-	}
-
-	// Download the bundle.
-	bundlePath := tmpDir + "/" + sigstoreBundleName
+	bundlePath := filepath.Join(tmpDir, sigstoreBundleName)
 	if err := downloadFile(ctx, bundleURL, bundlePath, maxBundleSize); err != nil {
 		return nil, fmt.Errorf("downloading sigstore bundle: %w", err)
 	}
 
-	// Run cosign verify-blob with an EXACT certificate-identity pinned to this
-	// release's tag, so a signature from any other workflow or ref is rejected.
-	var stdout, stderr bytes.Buffer
-	args := cosignVerifyArgs(release.TagName, bundlePath, checksumsPath)
-	cmd := exec.CommandContext(ctx, cosignPath, args...)
-	cmd.Stdout = &stdout
-	cmd.Stderr = &stderr
-
-	if err := cmd.Run(); err != nil {
-		detail := strings.TrimSpace(stderr.String())
-		if detail == "" {
-			detail = err.Error()
-		}
-		return nil, fmt.Errorf("sigstore verification failed for %s: %s", release.TagName, detail)
+	if err := verifyChecksumsBundle(release.TagName, bundlePath, checksumsPath); err != nil {
+		return nil, fmt.Errorf("sigstore verification failed for %s: %w", release.TagName, err)
 	}
 
 	return &VerificationResult{
@@ -87,29 +90,73 @@ func verifySigstoreBundleImpl(ctx context.Context, release *Release, checksumsPa
 	}, nil
 }
 
-// cosignVerifyArgs builds the argument slice for `cosign verify-blob` that pins
-// verification to this release's EXACT signing identity.
-//
-// The certificate identity comes from branding.ReleaseWorkflowIdentity(tag),
-// which encodes both the release workflow file and the git ref (refs/tags/<tag>).
-// It is passed via --certificate-identity (exact match), NOT
-// --certificate-identity-regexp, so a signature produced by a different workflow
-// or on a different ref is rejected (fail closed). Factored out for unit testing.
-func cosignVerifyArgs(tag, bundlePath, checksumsPath string) []string {
-	issuer, identity := branding.ReleaseWorkflowIdentity(tag)
-	return []string{
-		"verify-blob",
-		"--bundle", bundlePath,
-		"--certificate-identity", identity,
-		"--certificate-oidc-issuer", issuer,
-		checksumsPath,
+// verifyChecksumsBundle verifies that bundlePath is a valid Sigstore bundle
+// over the exact bytes of checksumsPath, issued by the pinned public-good
+// Fulcio CA to this release's EXACT signing identity, with a Rekor inclusion
+// proof, an embedded SCT and a trusted observer timestamp — the same checks
+// `cosign verify-blob --certificate-identity` performs, done in-process.
+func verifyChecksumsBundle(tag, bundlePath, checksumsPath string) error {
+	if tag == "" {
+		return errors.New("release has no tag to derive the signing identity from")
 	}
+
+	trustedRoot, err := loadTrustedRoot()
+	if err != nil {
+		return fmt.Errorf("loading embedded sigstore trusted root: %w", err)
+	}
+
+	b, err := bundle.LoadJSONFromPath(bundlePath)
+	if err != nil {
+		return fmt.Errorf("parsing bundle: %w", err)
+	}
+
+	verifier, err := verify.NewVerifier(trustedRoot,
+		verify.WithSignedCertificateTimestamps(1),
+		verify.WithTransparencyLog(1),
+		verify.WithObserverTimestamps(1),
+	)
+	if err != nil {
+		return fmt.Errorf("creating verifier: %w", err)
+	}
+
+	identity, err := releaseCertificateIdentity(tag)
+	if err != nil {
+		return err
+	}
+
+	artifact, err := os.Open(checksumsPath)
+	if err != nil {
+		return fmt.Errorf("opening checksums: %w", err)
+	}
+	defer artifact.Close()
+
+	if _, err := verifier.Verify(b, verify.NewPolicy(
+		verify.WithArtifact(artifact),
+		verify.WithCertificateIdentity(identity),
+	)); err != nil {
+		return err
+	}
+	return nil
+}
+
+// releaseCertificateIdentity returns the certificate identity a release's
+// signature must carry. The SAN comes from branding.ReleaseWorkflowIdentity(tag)
+// and pins both the release workflow file and the git ref (refs/tags/<tag>).
+// It is matched EXACTLY (no regexp), so a signature produced by a different
+// workflow or on a different ref is rejected (fail closed).
+func releaseCertificateIdentity(tag string) (verify.CertificateIdentity, error) {
+	issuer, san := branding.ReleaseWorkflowIdentity(tag)
+	identity, err := verify.NewShortCertificateIdentity(issuer, "", san, "")
+	if err != nil {
+		return verify.CertificateIdentity{}, fmt.Errorf("building expected signing identity: %w", err)
+	}
+	return identity, nil
 }
 
 // logVerificationResult writes the verification outcome to stderr for user visibility.
 func logVerificationResult(result *VerificationResult) {
 	if result.Skipped {
-		fmt.Fprintf(os.Stderr, "  [info] %s\n", result.Message)
+		fmt.Fprintf(os.Stderr, "  [warning] %s; installing WITHOUT signature verification (--no-strict)\n", result.Message)
 	} else if result.Verified {
 		fmt.Fprintf(os.Stderr, "  [verified] %s\n", result.Message)
 	}

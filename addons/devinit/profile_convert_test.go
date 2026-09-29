@@ -26,7 +26,7 @@ func TestProfileToAnswers_BasicMapping(t *testing.T) {
 		InfraProfile:    "consulting-default",
 	}
 
-	answers := devinit.ExportProfileToAnswers(p, "/tmp/project", "my-project")
+	answers := profileAnswers(t, p, "/tmp/project", "my-project")
 
 	if answers.ProjectName != "my-project" {
 		t.Errorf("ProjectName = %q, want %q", answers.ProjectName, "my-project")
@@ -59,7 +59,7 @@ func TestProfileToAnswers_LanguageMapping(t *testing.T) {
 		},
 	}
 
-	answers := devinit.ExportProfileToAnswers(p, "/tmp", "test")
+	answers := profileAnswers(t, p, "/tmp", "test")
 
 	if len(answers.Languages) != 2 {
 		t.Fatalf("Languages length = %d, want 2", len(answers.Languages))
@@ -78,7 +78,7 @@ func TestProfileToAnswers_ServiceMapping(t *testing.T) {
 		Services: []string{"postgres", "redis", "mongodb"},
 	}
 
-	answers := devinit.ExportProfileToAnswers(p, "/tmp", "test")
+	answers := profileAnswers(t, p, "/tmp", "test")
 
 	if len(answers.Services) != 3 {
 		t.Fatalf("Services length = %d, want 3", len(answers.Services))
@@ -108,24 +108,42 @@ func TestProfileToAnswers_HookMapping(t *testing.T) {
 			hooks: nil,
 			want:  types.HookChoices{},
 		},
-		{
-			hooks: []string{"unknown-hook"},
-			want:  types.HookChoices{},
-		},
 	}
 
 	for _, tt := range tests {
 		p := devinit.ExportProfile{Hooks: tt.hooks}
-		answers := devinit.ExportProfileToAnswers(p, "/tmp", "test")
+		answers := profileAnswers(t, p, "/tmp", "test")
 		if answers.Hooks != tt.want {
 			t.Errorf("hooks %v: got %+v, want %+v", tt.hooks, answers.Hooks, tt.want)
 		}
 	}
 }
 
+// TestProfileToAnswers_UnknownHookFails is the regression test for unknown or
+// misspelled hook names being silently dropped (disabling the hook).
+func TestProfileToAnswers_UnknownHookFails(t *testing.T) {
+	t.Parallel()
+	for _, hooks := range [][]string{{"unknown-hook"}, {"safety_block"}, {"safety-block", "typo"}} {
+		p := devinit.ExportProfile{Hooks: hooks}
+		if _, err := devinit.ExportProfileToAnswers(p, "/tmp", "test"); err == nil {
+			t.Errorf("hooks %v: expected an error", hooks)
+		}
+	}
+}
+
+// profileAnswers converts p and fails the test on error.
+func profileAnswers(t *testing.T, p devinit.ExportProfile, root, name string) types.WizardAnswers {
+	t.Helper()
+	answers, err := devinit.ExportProfileToAnswers(p, root, name)
+	if err != nil {
+		t.Fatalf("ProfileToAnswers: %v", err)
+	}
+	return answers
+}
+
 func TestProfileToAnswers_EmptyProfile(t *testing.T) {
 	p := devinit.ExportProfile{}
-	answers := devinit.ExportProfileToAnswers(p, "/tmp", "empty")
+	answers := profileAnswers(t, p, "/tmp", "empty")
 
 	if len(answers.Languages) != 0 {
 		t.Errorf("Languages should be empty, got %v", answers.Languages)
@@ -142,7 +160,7 @@ func TestProfileToAnswers_EmptyProfile(t *testing.T) {
 }
 
 func TestProfileToAnswers_BuiltinGoWeb(t *testing.T) {
-	answers := devinit.ExportProfileToAnswers(devinit.ExportGoWeb, "/projects/myapp", "myapp")
+	answers := profileAnswers(t, builtinProfile(t, "go-web"), "/projects/myapp", "myapp")
 
 	if len(answers.Languages) != 1 || answers.Languages[0].Name != "go" {
 		t.Errorf("Languages = %v, want [{go 1.24}]", answers.Languages)
@@ -309,7 +327,10 @@ func TestMergeProfileWithFlags_TierOverride(t *testing.T) {
 }
 
 func TestHooksFromStrings(t *testing.T) {
-	hc := devinit.ExportHooksFromStrings([]string{"auto-format", "audit-log"})
+	hc, err := devinit.ExportHooksFromStrings([]string{"auto-format", "audit-log"})
+	if err != nil {
+		t.Fatal(err)
+	}
 
 	if !hc.AutoFormat {
 		t.Error("AutoFormat should be true")

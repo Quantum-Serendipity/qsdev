@@ -3,16 +3,15 @@ package devinit
 import (
 	"fmt"
 	"path/filepath"
-	"regexp"
 	"strings"
 
 	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
 
+	"github.com/Quantum-Serendipity/qsdev/internal/catalog"
+	"github.com/Quantum-Serendipity/qsdev/internal/validation"
 	"github.com/Quantum-Serendipity/qsdev/pkg/types"
 )
-
-var validEnvKey = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
 
 // FlagSet tracks which CLI flags were explicitly set by the user.
 type FlagSet struct {
@@ -29,8 +28,12 @@ func NewFlagSet(cmd *cobra.Command) *FlagSet {
 	return &FlagSet{changed: changed}
 }
 
-// IsSet reports whether a flag was explicitly set by the user.
+// IsSet reports whether a flag was explicitly set by the user. A nil FlagSet
+// has no flags set.
 func (f *FlagSet) IsSet(name string) bool {
+	if f == nil {
+		return false
+	}
 	return f.changed[name]
 }
 
@@ -41,6 +44,7 @@ type InitOptions struct {
 	Services    []string
 	Yes         bool
 	Force       bool
+	Merge       bool
 	DryRun      bool
 	Update      bool
 	DevenvOnly  bool
@@ -65,6 +69,11 @@ type InitOptions struct {
 	NixHardeningGuide bool
 	InfraProfile      string
 	Tier              string
+
+	// Infrastructure endpoints (.qsdev.yaml infrastructure:).
+	RegistryProxy     string
+	NixCache          string
+	NixCachePublicKey string
 
 	// Claude Code
 	ClaudeCode        bool
@@ -101,6 +110,7 @@ func RegisterInitFlags(cmd *cobra.Command, opts *InitOptions) {
 	cmd.Flags().StringSliceVar(&opts.Services, "service", nil, "Services to configure (e.g. postgres,redis)")
 	cmd.Flags().BoolVarP(&opts.Yes, "yes", "y", false, "Accept all defaults, skip confirmation prompts")
 	cmd.Flags().BoolVar(&opts.Force, "force", false, "Overwrite existing configuration files")
+	cmd.Flags().BoolVar(&opts.Merge, "merge", false, "Onboard a project with existing configuration: merge into CLAUDE.md, settings.json and .mcp.json, keep devenv.nix and .envrc (devenv.nix.new is written for manual merge)")
 	cmd.Flags().BoolVar(&opts.DryRun, "dry-run", false, "Preview changes without writing files")
 	cmd.Flags().BoolVar(&opts.Update, "update", false, "Regenerate files from saved config, preserving user modifications")
 	cmd.Flags().BoolVar(&opts.DevenvOnly, "devenv-only", false, "Only generate devenv configuration (skip Claude Code)")
@@ -118,7 +128,7 @@ func RegisterInitFlags(cmd *cobra.Command, opts *InitOptions) {
 	cmd.Flags().StringVar(&opts.PythonPkgMgr, "python-pkg-mgr", "", "Python package manager (pip, uv, poetry)")
 	cmd.Flags().StringVar(&opts.RustChannel, "rust-channel", "", "Rust channel (stable, beta, nightly)")
 	cmd.Flags().StringVar(&opts.JavaVersion, "java-version", "", "Java version (e.g. 21)")
-	cmd.Flags().StringVar(&opts.JavaBuildTool, "java-build-tool", "", "Java build tool (maven, gradle)")
+	cmd.Flags().StringVar(&opts.JavaBuildTool, "java-build-tool", "", "Java build tool (maven, gradle, both)")
 
 	// Dev environment flags.
 	cmd.Flags().BoolVar(&opts.Direnv, "direnv", true, "Enable direnv integration")
@@ -127,14 +137,20 @@ func RegisterInitFlags(cmd *cobra.Command, opts *InitOptions) {
 	cmd.Flags().StringSliceVar(&opts.Env, "env", nil, "Environment variables as KEY=VALUE pairs")
 	cmd.Flags().BoolVar(&opts.NixHardeningGuide, "nix-hardening-guide", false, "Generate Nix security hardening guide")
 	cmd.Flags().StringVar(&opts.InfraProfile, "infra-profile", "", "Infrastructure profile name (e.g. consulting-default)")
-	cmd.Flags().StringVar(&opts.Tier, "tier", "", "Security tier: supply-chain-only, standard, full (default: standard)")
+	cmd.Flags().StringVar(&opts.RegistryProxy, "registry-proxy", "", `Package registry proxy base URL (infrastructure.registry_proxy; "none" opts out)`)
+	cmd.Flags().StringVar(&opts.NixCache, "nix-cache", "", `Nix binary cache URL or Cachix cache name (infrastructure.nix_cache; "none" opts out)`)
+	cmd.Flags().StringVar(&opts.NixCachePublicKey, "nix-cache-public-key", "", "Nix binary cache public key, name:base64 (infrastructure.nix_cache_public_key)")
+	cmd.Flags().StringVar(&opts.Tier, "tier", "", tierFlagUsage())
 
 	// Claude Code flags.
 	cmd.Flags().BoolVar(&opts.ClaudeCode, "claude-code", true, "Enable Claude Code configuration")
-	cmd.Flags().StringVar(&opts.ClaudePermissions, "claude-permissions", "standard", "Permission preset (supply-chain-only, minimal, standard, permissive, custom)")
+	// No flag default: an unset permission level lets the tier's default
+	// preset apply (FillDefaults and the wizard fall back to standard when no
+	// tier is chosen either).
+	cmd.Flags().StringVar(&opts.ClaudePermissions, "claude-permissions", "", "Permission preset (supply-chain-only, minimal, standard, permissive, custom); defaults to the tier's preset, or standard")
 	cmd.Flags().StringSliceVar(&opts.ClaudeSkills, "claude-skills", nil, "Skills to install (e.g. deploy,review-pr)")
 	cmd.Flags().StringSliceVar(&opts.ClaudeHooks, "claude-hooks", nil, "Hook presets to enable (e.g. safety-block,auto-format)")
-	cmd.Flags().StringSliceVar(&opts.MCPServers, "mcp", nil, "MCP servers to configure (e.g. github,filesystem)")
+	cmd.Flags().StringSliceVar(&opts.MCPServers, "mcp", nil, "MCP servers to configure (e.g. github,filesystem); added to the servers enabled tools provide")
 	cmd.Flags().BoolVar(&opts.ListProfiles, "list-profiles", false, "List available project-type profiles and exit")
 
 	// AI Agent Tools flags.
@@ -155,6 +171,7 @@ func RegisterInitFlags(cmd *cobra.Command, opts *InitOptions) {
 
 	// Mark mutually exclusive flags.
 	cmd.MarkFlagsMutuallyExclusive("devenv-only", "claude-only")
+	cmd.MarkFlagsMutuallyExclusive("merge", "force")
 	cmd.MarkFlagsMutuallyExclusive("update", "lang")
 	cmd.MarkFlagsMutuallyExclusive("update", "service")
 	cmd.MarkFlagsMutuallyExclusive("update", "profile")
@@ -162,27 +179,47 @@ func RegisterInitFlags(cmd *cobra.Command, opts *InitOptions) {
 	cmd.MarkFlagsMutuallyExclusive("tier", "infra-profile")
 }
 
+// tierFlagUsage describes --tier from the catalog: its tiers and the default
+// tier an unset flag resolves to (FillDefaults records it in .qsdev.yaml).
+func tierFlagUsage() string {
+	cat, err := catalog.Default()
+	if err != nil {
+		return "Security tier (default: the catalog's default tier)"
+	}
+	return fmt.Sprintf("Security tier: %s (default: %s)", strings.Join(cat.TierOrder(), ", "), cat.DefaultTier())
+}
+
 // AnswersFromFlags converts flag values into WizardAnswers.
 // Language-specific version flags implicitly add their language if it is
 // not already present in the --lang list.
 func AnswersFromFlags(opts InitOptions, projectRoot string) (types.WizardAnswers, error) {
+	cat, err := catalog.Default()
+	if err != nil {
+		return types.WizardAnswers{}, fmt.Errorf("loading catalog for flag defaults: %w", err)
+	}
+
 	answers := types.WizardAnswers{
 		ProjectRoot:       projectRoot,
 		ProjectName:       filepath.Base(projectRoot),
 		Direnv:            opts.Direnv,
 		NixHardeningGuide: opts.NixHardeningGuide,
 		ProfileName:       opts.InfraProfile,
-		ClaudeCode:        opts.ClaudeCode,
-		PermissionLevel:   opts.ClaudePermissions,
-		Skills:            opts.ClaudeSkills,
-		MCPServers:        opts.MCPServers,
-		GitHooks:          opts.GitHooks,
-		ExtraPackages:     opts.Packages,
-		Confirmed:         opts.Yes,
+		Infrastructure: types.InfraConfig{
+			RegistryProxy:     opts.RegistryProxy,
+			NixCache:          opts.NixCache,
+			NixCachePublicKey: opts.NixCachePublicKey,
+		},
+		ClaudeCode:      opts.ClaudeCode,
+		PermissionLevel: opts.ClaudePermissions,
+		Skills:          opts.ClaudeSkills,
+		MCPServers:      opts.MCPServers,
+		GitHooks:        opts.GitHooks,
+		ExtraPackages:   opts.Packages,
+		Confirmed:       opts.Yes,
 		AgentTools: types.AgentToolsAnswers{
 			PostmortemEnabled:    opts.AgentPostmortem,
 			VersionSentinel:      opts.AgentVersionSentinel,
-			VersionSentinelHours: 24,
+			VersionSentinelHours: cat.DefaultVersionSentinelHours(),
 			SembleEnabled:        opts.AgentSemble,
 			SembleMode:           opts.AgentSembleMode,
 			SembleTextFiles:      opts.AgentSembleTextFiles,
@@ -258,10 +295,10 @@ func AnswersFromFlags(opts InitOptions, projectRoot string) (types.WizardAnswers
 		for _, kv := range opts.Env {
 			idx := strings.IndexByte(kv, '=')
 			if idx < 0 {
-				continue
+				return answers, fmt.Errorf("invalid --env value %q: must be KEY=VALUE", kv)
 			}
 			key := kv[:idx]
-			if !validEnvKey.MatchString(key) {
+			if !validation.IsValidEnvKey(key) {
 				return answers, fmt.Errorf("invalid environment variable name %q: must match [A-Za-z_][A-Za-z0-9_]*", key)
 			}
 			answers.EnvVars[key] = kv[idx+1:]
@@ -270,7 +307,11 @@ func AnswersFromFlags(opts InitOptions, projectRoot string) (types.WizardAnswers
 
 	// Convert --claude-hooks to HookChoices.
 	if len(opts.ClaudeHooks) > 0 {
-		answers.Hooks = hooksFromStrings(opts.ClaudeHooks)
+		hooks, err := hooksFromStrings(opts.ClaudeHooks)
+		if err != nil {
+			return answers, fmt.Errorf("--claude-hooks: %w", err)
+		}
+		answers.Hooks = hooks
 	}
 
 	// --devenv-only disables Claude Code.

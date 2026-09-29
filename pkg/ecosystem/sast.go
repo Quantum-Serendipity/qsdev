@@ -4,8 +4,8 @@ package ecosystem
 
 // SASTModule is an optional interface that ecosystem modules can implement
 // to declare which Semgrep rule sets are relevant for their language/platform.
-// Modules that implement this interface contribute rule sets to the generated
-// .semgrep.yml configuration file.
+// The security-scan task passes each declared rule set to semgrep as a
+// --config flag (see semgrepScanCommand).
 type SASTModule interface {
 	SemgrepRuleSets() []string
 }

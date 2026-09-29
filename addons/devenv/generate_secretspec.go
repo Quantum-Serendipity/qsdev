@@ -2,6 +2,7 @@ package devenv
 
 import (
 	"fmt"
+	"path/filepath"
 	"strings"
 
 	"github.com/Quantum-Serendipity/qsdev/pkg/ecosystem"
@@ -9,46 +10,22 @@ import (
 	"github.com/Quantum-Serendipity/qsdev/pkg/types"
 )
 
+// secretSpecRevision is the secretspec configuration format revision
+// ([project].revision); "1.0" is the only revision secretspec accepts.
+const secretSpecRevision = "1.0"
+
 // GenerateSecretSpecToml produces a secretspec.toml file describing the secrets
 // required by the project's services and ecosystem modules. It returns nil, nil
 // when no secrets are declared.
+//
+// The file follows secretspec's configuration schema: a [project] table
+// (name, revision) and the secrets declared in [profiles.default] as inline
+// tables (description, required, type, generate). Providers are chosen per
+// user by secretspec itself, so none are declared here.
 func GenerateSecretSpecToml(answers types.WizardAnswers, registry *ecosystem.Registry) (*types.GeneratedFile, error) {
-	var decls []ecosystem.SecretDecl
-
-	// Collect from services.
-	for _, svc := range answers.Services {
-		decls = append(decls, ServiceSecretDeclarations(svc.Name)...)
-	}
-
-	// Collect from ecosystem modules implementing SecretDeclarer.
-	if registry != nil {
-		for _, lang := range answers.Languages {
-			mod, ok := registry.ByName(lang.Name)
-			if !ok {
-				continue
-			}
-			declarer, ok := mod.(ecosystem.SecretDeclarer)
-			if !ok {
-				continue
-			}
-			cfg := ecosystem.ToModuleConfig(lang)
-			decls = append(decls, declarer.SecretDeclarations(cfg)...)
-		}
-	}
-
+	decls := collectSecretDecls(answers, registry)
 	if len(decls) == 0 {
 		return nil, nil
-	}
-
-	// Deduplicate by Name (first occurrence wins).
-	seen := make(map[string]bool)
-	var unique []ecosystem.SecretDecl
-	for _, d := range decls {
-		if seen[d.Name] {
-			continue
-		}
-		seen[d.Name] = true
-		unique = append(unique, d)
 	}
 
 	var b strings.Builder
@@ -56,28 +33,16 @@ func GenerateSecretSpecToml(answers types.WizardAnswers, registry *ecosystem.Reg
 	b.WriteString("# This file declares the secrets required by the project.\n")
 	b.WriteString("# Do NOT store actual secret values in this file.\n\n")
 
-	// Providers section.
-	sources := collectSources(unique)
-	b.WriteString("[providers]\n")
-	for _, src := range sources {
-		fmt.Fprintf(&b, "%s = \"env\"\n", src)
-	}
-	b.WriteString("\n")
+	b.WriteString("[project]\n")
+	fmt.Fprintf(&b, "name = %s\n", tomlString(secretSpecProjectName(answers)))
+	fmt.Fprintf(&b, "revision = %s\n\n", tomlString(secretSpecRevision))
 
-	// Per-secret blocks.
-	for _, d := range unique {
-		fmt.Fprintf(&b, "[secrets.%s]\n", d.Name)
-		fmt.Fprintf(&b, "description = %q\n", d.Description)
-		fmt.Fprintf(&b, "required = %t\n", d.Required)
-		fmt.Fprintf(&b, "source = %q\n", d.Source)
-		if d.AutoGenerate {
-			b.WriteString("auto_generate = true\n")
-			if d.GenerateSpec != nil {
-				fmt.Fprintf(&b, "generate_length = %d\n", d.GenerateSpec.Length)
-				fmt.Fprintf(&b, "generate_charset = %q\n", d.GenerateSpec.Charset)
-			}
+	b.WriteString("[profiles.default]\n")
+	for _, d := range decls {
+		if d.Source != "" {
+			fmt.Fprintf(&b, "# Declared by %s.\n", d.Source)
 		}
-		b.WriteString("\n")
+		fmt.Fprintf(&b, "%s = %s\n", d.Name, secretSpecEntry(d))
 	}
 
 	return &types.GeneratedFile{
@@ -89,16 +54,109 @@ func GenerateSecretSpecToml(answers types.WizardAnswers, registry *ecosystem.Reg
 	}, nil
 }
 
-// collectSources returns the unique source identifiers from declarations,
-// preserving order of first appearance.
-func collectSources(decls []ecosystem.SecretDecl) []string {
-	seen := make(map[string]bool)
-	var sources []string
-	for _, d := range decls {
-		if d.Source != "" && !seen[d.Source] {
-			seen[d.Source] = true
-			sources = append(sources, d.Source)
+// collectSecretDecls gathers the declarations from services and from
+// ecosystem modules implementing SecretDeclarer, deduplicated by name (first
+// occurrence wins).
+func collectSecretDecls(answers types.WizardAnswers, registry *ecosystem.Registry) []ecosystem.SecretDecl {
+	var decls []ecosystem.SecretDecl
+	for _, svc := range answers.Services {
+		decls = append(decls, ServiceSecretDeclarations(svc.Name)...)
+	}
+	if registry != nil {
+		for _, lang := range answers.Languages {
+			mod, ok := registry.ByName(lang.Name)
+			if !ok {
+				continue
+			}
+			declarer, ok := mod.(ecosystem.SecretDeclarer)
+			if !ok {
+				continue
+			}
+			decls = append(decls, declarer.SecretDeclarations(ecosystem.ToModuleConfig(lang))...)
 		}
 	}
-	return sources
+
+	seen := make(map[string]bool)
+	var unique []ecosystem.SecretDecl
+	for _, d := range decls {
+		if seen[d.Name] {
+			continue
+		}
+		seen[d.Name] = true
+		unique = append(unique, d)
+	}
+	return unique
+}
+
+// secretSpecProjectName returns the [project].name: the project name, else
+// the project directory name.
+func secretSpecProjectName(answers types.WizardAnswers) string {
+	if answers.ProjectName != "" {
+		return answers.ProjectName
+	}
+	if answers.ProjectRoot != "" {
+		return filepath.Base(answers.ProjectRoot)
+	}
+	return "project"
+}
+
+// secretSpecEntry renders one secret declaration as a secretspec inline
+// table. Auto-generated secrets get the secretspec type matching their
+// charset and a generate table sized from the declared length.
+func secretSpecEntry(d ecosystem.SecretDecl) string {
+	fields := []string{
+		"description = " + tomlString(d.Description),
+		fmt.Sprintf("required = %t", d.Required),
+	}
+	if d.AutoGenerate {
+		secretType, generate := secretSpecGeneration(d.GenerateSpec)
+		fields = append(fields, "type = "+tomlString(secretType), "generate = "+generate)
+	}
+	return "{ " + strings.Join(fields, ", ") + " }"
+}
+
+// secretSpecGeneration maps a GenerateSpec (length in output characters) to
+// a secretspec generation type and its generate value: "password" takes a
+// length, "hex" and "base64" take a byte count, "uuid" takes no options.
+func secretSpecGeneration(spec *ecosystem.GenerateSpec) (secretType, generate string) {
+	if spec == nil {
+		return "password", "true"
+	}
+	switch spec.Charset {
+	case "hex":
+		if spec.Length > 0 {
+			return "hex", fmt.Sprintf("{ bytes = %d }", (spec.Length+1)/2)
+		}
+		return "hex", "true"
+	case "base64":
+		if spec.Length > 0 {
+			return "base64", fmt.Sprintf("{ bytes = %d }", max(1, spec.Length*3/4))
+		}
+		return "base64", "true"
+	case "uuid":
+		return "uuid", "true"
+	default:
+		if spec.Length > 0 {
+			return "password", fmt.Sprintf("{ length = %d, charset = \"alphanumeric\" }", spec.Length)
+		}
+		return "password", "true"
+	}
+}
+
+// tomlString renders s as a TOML basic string. Quotes and backslashes are
+// escaped by ecosystem.TOMLEscapeString; every control character (which a
+// basic string may not contain literally, and a project name is user input)
+// is written as a \uXXXX escape.
+func tomlString(s string) string {
+	var b strings.Builder
+	b.WriteByte('"')
+	for _, r := range ecosystem.TOMLEscapeString(s) {
+		if r < 0x20 || r == 0x7f {
+			fmt.Fprintf(&b, `\u%04X`, r)
+			continue
+		}
+		b.WriteRune(r)
+	}
+	b.WriteByte('"')
+	return b.String()
 }

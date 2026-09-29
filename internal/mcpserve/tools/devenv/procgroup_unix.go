@@ -3,8 +3,8 @@
 package devenv
 
 import (
-	"bytes"
 	"context"
+	"os"
 	"os/exec"
 	"strings"
 	"syscall"
@@ -15,17 +15,22 @@ import (
 // launcher and every child it spawns share one group id. On timeout or context
 // cancellation it signals the whole group via a negative PID, killing orphaned
 // children (e.g. a nix build) rather than leaking them, then reaps the launcher.
-// stdout and stderr are captured separately.
-func runProcessGroup(ctx context.Context, name string, argv []string, stdin string, timeout time.Duration) procResult {
+// stdout and stderr are captured separately. The process gets the server's
+// environment minus its credentials (childEnv). The process runs in dir (the
+// server's working directory when dir is empty).
+func runProcessGroup(ctx context.Context, dir, name string, argv []string, stdin string, timeout time.Duration) procResult {
 	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 
 	cmd := exec.Command(name, argv...) //nolint:gosec // argv is an explicit array; no shell interpolation
+	cmd.Dir = dir
+	cmd.Env = childEnv(os.Environ())
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 
-	var outBuf, errBuf bytes.Buffer
-	cmd.Stdout = &outBuf
-	cmd.Stderr = &errBuf
+	outBuf, errBuf := newCappedBuffer(maxProcOutputBytes), newCappedBuffer(maxProcOutputBytes)
+	cmd.Stdout = outBuf
+	cmd.Stderr = errBuf
+	cmd.WaitDelay = procWaitDelay
 	if stdin != "" {
 		cmd.Stdin = strings.NewReader(stdin)
 	}
@@ -53,11 +58,13 @@ func runProcessGroup(ctx context.Context, name string, argv []string, stdin stri
 	}
 
 	return procResult{
-		stdout:   outBuf.String(),
-		stderr:   errBuf.String(),
-		exitCode: processExitCode(cmd, waitErr),
-		timedOut: timedOut,
-		duration: time.Since(start),
+		stdout:          outBuf.String(),
+		stderr:          errBuf.String(),
+		stdoutTruncated: outBuf.truncated,
+		stderrTruncated: errBuf.truncated,
+		exitCode:        processExitCode(cmd, waitErr),
+		timedOut:        timedOut,
+		duration:        time.Since(start),
 	}
 }
 

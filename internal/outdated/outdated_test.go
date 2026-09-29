@@ -3,6 +3,7 @@ package outdated
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 	"testing"
@@ -124,17 +125,29 @@ func TestRunOutdated_EcosystemFilter_NoMatch(t *testing.T) {
 	lookPathFunc = mockLookPath(map[string]bool{})
 	defer func() { lookPathFunc = original }()
 
-	var buf bytes.Buffer
-	ecosystems := []string{"javascript", "python"}
-	opts := OutdatedOptions{Ecosystem: "rust"}
-
-	result, err := RunOutdated(context.Background(), &buf, "/tmp", ecosystems, opts)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
+	tests := []struct {
+		name       string
+		ecosystems []string
+		filter     string
+		wantErr    error
+	}{
+		{"supported but not configured", []string{"javascript", "python"}, "rust", ErrEcosystemNotConfigured},
+		{"typo", []string{"javascript", "go"}, "bogus", ErrUnknownEcosystem},
+		{"common alias golang", []string{"go"}, "golang", ErrUnknownEcosystem},
+		{"common alias node", []string{"javascript"}, "node", ErrUnknownEcosystem},
+		{"nothing configured", nil, "go", ErrEcosystemNotConfigured},
 	}
-
-	if len(result.Ecosystems) != 0 {
-		t.Errorf("expected 0 ecosystem checks when filter doesn't match, got %d", len(result.Ecosystems))
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var buf bytes.Buffer
+			result, err := RunOutdated(context.Background(), &buf, "/tmp", tt.ecosystems, OutdatedOptions{Ecosystem: tt.filter})
+			if !errors.Is(err, tt.wantErr) {
+				t.Fatalf("RunOutdated(filter=%q) error = %v, want %v", tt.filter, err, tt.wantErr)
+			}
+			if result != nil {
+				t.Errorf("result = %+v, want nil on a filter error", result)
+			}
+		})
 	}
 }
 

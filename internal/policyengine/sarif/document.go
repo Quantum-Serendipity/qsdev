@@ -90,12 +90,15 @@ type ArtifactLocation struct {
 }
 
 // BuildLog assembles a valid SARIF 2.1.0 document. The driver advertises the
-// full branded rule catalog (AllRules) and the supplied findings become SARIF
-// results. results is always a non-nil array so the document conforms even when
-// there are no findings.
+// full branded rule catalog (AllRules), plus a descriptor for every finding
+// whose rule is not in the catalog (a custom policy rule), and the supplied
+// findings become SARIF results. results is always a non-nil array so the
+// document conforms even when there are no findings.
 func BuildLog(driverName, driverVersion, informationURI string, findings []SarifResult) Log {
 	rules := make([]ReportingDescriptor, 0, len(AllRules))
+	described := make(map[string]bool, len(AllRules))
 	for _, r := range AllRules {
+		described[r.ID] = true
 		rules = append(rules, ReportingDescriptor{
 			ID:                   r.ID,
 			Name:                 r.Name,
@@ -104,6 +107,20 @@ func BuildLog(driverName, driverVersion, informationURI string, findings []Sarif
 			Properties: &DescriptorProperty{
 				Tags:             r.Tags,
 				SecuritySeverity: formatSecuritySeverity(r.SecuritySeverity),
+			},
+		})
+	}
+	for _, f := range findings {
+		if described[f.RuleID] {
+			continue
+		}
+		described[f.RuleID] = true
+		rules = append(rules, ReportingDescriptor{
+			ID:                   f.RuleID,
+			ShortDescription:     Message{Text: "Rule " + f.RuleID},
+			DefaultConfiguration: Configuration{Level: f.Level},
+			Properties: &DescriptorProperty{
+				SecuritySeverity: formatSecuritySeverity(f.SecuritySeverity),
 			},
 		})
 	}

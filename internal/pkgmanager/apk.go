@@ -23,7 +23,12 @@ func (a *Apk) Available() bool {
 
 func (a *Apk) NeedsElevation() bool { return true }
 
+// InstallArgs returns the command Install runs, without sudo.
+func (a *Apk) InstallArgs(packages ...string) (string, []string) {
+	return "apk", append([]string{"add"}, packages...)
+}
+
 func (a *Apk) Install(ctx context.Context, packages ...string) error {
-	args := append([]string{"add"}, packages...)
-	return a.runner.Run(ctx, "apk", args...)
+	bin, args := a.InstallArgs(packages...)
+	return a.runner.Run(ctx, bin, args...)
 }

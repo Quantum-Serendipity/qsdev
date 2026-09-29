@@ -1,9 +1,12 @@
 package types
 
 import (
+	"cmp"
 	"fmt"
 	"os"
 	"time"
+
+	"github.com/Quantum-Serendipity/qsdev/internal/enumtext"
 )
 
 // ComposeMode determines how multiple fragments targeting the same file
@@ -19,8 +22,9 @@ const (
 )
 
 const (
-	// PriorityCeiling is the maximum supported priority value. SortKey inverts
-	// priorities using this ceiling so higher-priority fragments sort first.
+	// PriorityCeiling is the maximum priority SortKey can encode. SortKey
+	// inverts priorities using this ceiling so higher-priority fragments sort
+	// first; CompareFragments has no such limit.
 	PriorityCeiling = 99999
 
 	// PriorityGeneratorDefault is the default for fragments produced by legacy
@@ -39,37 +43,13 @@ var composeModeNames = [...]string{
 	ComposeMergeYAML: "merge-yaml",
 }
 
-var composeModeFromString = func() map[string]ComposeMode {
-	m := make(map[string]ComposeMode, len(composeModeNames))
-	for i, name := range composeModeNames {
-		m[name] = ComposeMode(i)
-	}
-	return m
-}()
+var composeModeText = enumtext.New[ComposeMode]("ComposeMode", "compose mode", "unknown", composeModeNames[:])
 
-func (c ComposeMode) String() string {
-	if int(c) >= 0 && int(c) < len(composeModeNames) {
-		return composeModeNames[c]
-	}
-	return "unknown"
-}
+func (c ComposeMode) String() string { return composeModeText.String(c) }
 
-func (c ComposeMode) MarshalText() ([]byte, error) {
-	s := c.String()
-	if s == "unknown" {
-		return nil, fmt.Errorf("cannot marshal unknown ComposeMode value %d", int(c))
-	}
-	return []byte(s), nil
-}
+func (c ComposeMode) MarshalText() ([]byte, error) { return composeModeText.MarshalText(c) }
 
-func (c *ComposeMode) UnmarshalText(text []byte) error {
-	s := string(text)
-	if v, ok := composeModeFromString[s]; ok {
-		*c = v
-		return nil
-	}
-	return fmt.Errorf("unknown compose mode: %q", s)
-}
+func (c *ComposeMode) UnmarshalText(text []byte) error { return composeModeText.UnmarshalText(text, c) }
 
 // FragmentEntry represents a single contribution from an addon or module
 // to a target file.
@@ -86,10 +66,27 @@ type FragmentEntry struct {
 	Provenance  FragmentProvenance // Metadata for the provenance ledger.
 }
 
-// SortKey returns a composite sort key ensuring deterministic fragment ordering.
-// Priority is inverted so higher-priority fragments sort first.
+// CompareFragments orders fragments deterministically for resolution: by
+// Target, then Priority descending (so the highest-priority fragment for a
+// target comes first), then Source, then Tag. Priorities compare numerically,
+// so negative or above-ceiling values order correctly.
+func CompareFragments(a, b FragmentEntry) int {
+	return cmp.Or(
+		cmp.Compare(a.Target, b.Target),
+		cmp.Compare(b.Priority, a.Priority),
+		cmp.Compare(a.Source, b.Source),
+		cmp.Compare(a.Tag, b.Tag),
+	)
+}
+
+// SortKey returns a composite string key of Target, inverted Priority (higher
+// priorities sort first), Source, and Tag, with out-of-range priorities
+// clamped to [0, PriorityCeiling]. It is an identifier, not a sort order: the
+// "|" separator makes its lexical order diverge from CompareFragments when one
+// Target or Source is a prefix of another, so sort with CompareFragments.
 func (f FragmentEntry) SortKey() string {
-	return fmt.Sprintf("%s|%s|%05d|%s", f.Source, f.Target, PriorityCeiling-f.Priority, f.Tag)
+	p := min(max(f.Priority, 0), PriorityCeiling)
+	return fmt.Sprintf("%s|%05d|%s|%s", f.Target, PriorityCeiling-p, f.Source, f.Tag)
 }
 
 // FragmentProvenance records metadata about how and when a fragment was produced.

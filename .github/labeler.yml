@@ -8,7 +8,7 @@ infrastructure:
 
 security:
   - changed-files:
-      - any-glob-to-any-file: ['.semgrep.yml', '.gitleaks.toml', '.scancode.yml']
+      - any-glob-to-any-file: ['.semgrepignore', '.semgrep/**', '.gitleaks.toml', '.scancode.yml']
 
 dependencies:
   - changed-files:

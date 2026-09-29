@@ -6,6 +6,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 )
@@ -152,5 +153,48 @@ func TestCreateArchive_EmptyFileList(t *testing.T) {
 	// Archive should still be created (empty tar.gz).
 	if _, err := os.Stat(archivePath); err != nil {
 		t.Fatalf("archive file should exist even with empty file list: %v", err)
+	}
+}
+
+// TestCreateArchive_RefusesExistingPath verifies the archive is always a new
+// file: an existing file, or a committed symlink pointing outside the project,
+// at the archive path is neither overwritten nor followed.
+func TestCreateArchive_RefusesExistingPath(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name    string
+		symlink bool
+	}{
+		{"existing file", false},
+		{"symlink leaving the project", true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			if tt.symlink && runtime.GOOS == "windows" {
+				t.Skip("symlink creation requires privileges on Windows")
+			}
+			const keep = "keep me\n"
+			root := t.TempDir()
+			existing := filepath.Join(root, "archive.tar.gz")
+			if tt.symlink {
+				existing = filepath.Join(t.TempDir(), "profile")
+			}
+			if err := os.WriteFile(existing, []byte(keep), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			if tt.symlink {
+				if err := os.Symlink(existing, filepath.Join(root, "archive.tar.gz")); err != nil {
+					t.Fatal(err)
+				}
+			}
+
+			if _, err := createArchive(root, "archive.tar.gz", nil); err == nil {
+				t.Fatal("createArchive succeeded over an existing path")
+			}
+			if data, err := os.ReadFile(existing); err != nil || string(data) != keep {
+				t.Errorf("existing file = %q (err %v), want it untouched", data, err)
+			}
+		})
 	}
 }

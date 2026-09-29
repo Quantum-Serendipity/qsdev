@@ -35,9 +35,10 @@ type Config struct {
 	CacheDir      string        // Directory for caching update check results
 	// Strict requires a verified Sigstore signature over checksums.txt before
 	// an update is installed. When true (the default for releases), an update is
-	// refused if signature verification is skipped (no bundle in the release or
-	// cosign not installed). Set false as an escape hatch for dev/self-built
-	// binaries.
+	// refused if the release publishes no signature bundle. Verification runs
+	// in-process against an embedded Sigstore trusted root; no external cosign
+	// is used. Set false (--no-strict) as an escape hatch for unsigned
+	// dev/self-built releases; a bundle that is present is always verified.
 	Strict bool
 }
 

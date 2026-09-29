@@ -8,6 +8,7 @@ import (
 
 	"github.com/Quantum-Serendipity/qsdev/pkg/ecosystem"
 	"github.com/Quantum-Serendipity/qsdev/pkg/ecosystem/modules/ruby"
+	"github.com/Quantum-Serendipity/qsdev/pkg/types"
 )
 
 // newModule returns a fresh Module for testing.
@@ -152,20 +153,117 @@ func TestSecurityConfigs(t *testing.T) {
 	m := newModule()
 	files := m.SecurityConfigs(ecosystem.ModuleConfig{})
 
-	if len(files) != 2 {
-		t.Fatalf("SecurityConfigs() returned %d files, want 2", len(files))
+	if len(files) != 1 {
+		t.Fatalf("SecurityConfigs() returned %d files, want 1", len(files))
+	}
+	if files[0].Path != ".gemrc" {
+		t.Errorf("Path = %q, want .gemrc", files[0].Path)
+	}
+	if files[0].Strategy != types.Skip {
+		t.Errorf(".gemrc Strategy = %v, want Skip", files[0].Strategy)
+	}
+}
+
+// TestSecurityConfigs_NeverOwnsBundleConfig guards against replacing the
+// user's (usually gitignored, unrecoverable) .bundle/config; the Bundler
+// hardening is delivered through devenv env vars instead.
+func TestSecurityConfigs_NeverOwnsBundleConfig(t *testing.T) {
+	t.Parallel()
+	for _, f := range newModule().SecurityConfigs(ecosystem.ModuleConfig{}) {
+		if f.Path == ".bundle/config" {
+			t.Fatal("SecurityConfigs must not generate .bundle/config")
+		}
 	}
 
-	paths := make(map[string]string)
-	for _, f := range files {
-		paths[f.Path] = string(f.Content)
+	frag, err := newModule().DevenvNixFragment(ecosystem.ModuleConfig{})
+	if err != nil {
+		t.Fatalf("DevenvNixFragment() error: %v", err)
 	}
+	for _, want := range []string{`env.BUNDLE_FROZEN = "true";`, `env.BUNDLE_DISABLE_EXEC_LOAD = "true";`} {
+		if !strings.Contains(frag, want) {
+			t.Errorf("fragment missing %q:\n%s", want, frag)
+		}
+	}
+}
 
-	if _, ok := paths[".bundle/config"]; !ok {
-		t.Error("missing .bundle/config")
+// --- Ruby version tests ---
+
+func TestDevenvNixFragment_Version(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name        string
+		version     string
+		wantLine    string
+		wantInput   bool
+		wantErr     bool
+		wantNoLines []string
+	}{
+		{name: "unset", version: "", wantNoLines: []string{"version ="}},
+		{name: "plain", version: "3.1.4", wantLine: `version = "3.1.4";`, wantInput: true},
+		{name: "ruby- prefix", version: "ruby-3.3.0", wantLine: `version = "3.3.0";`, wantInput: true},
+		{name: "preview", version: "3.4.0-preview1", wantLine: `version = "3.4.0-preview1";`, wantInput: true},
+		{name: "nix injection rejected", version: "3.3${builtins.abort \"x\"}", wantErr: true},
 	}
-	if _, ok := paths[".gemrc"]; !ok {
-		t.Error("missing .gemrc")
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			cfg := ecosystem.ModuleConfig{Version: tt.version}
+			frag, err := newModule().DevenvNixFragment(cfg)
+			if tt.wantErr {
+				if err == nil {
+					t.Fatalf("expected error for version %q, got fragment:\n%s", tt.version, frag)
+				}
+				if inputs := newModule().DevenvYamlInputs(cfg); len(inputs) != 0 {
+					t.Errorf("DevenvYamlInputs = %v for invalid version, want none", inputs)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("DevenvNixFragment() error: %v", err)
+			}
+			if tt.wantLine != "" && !strings.Contains(frag, tt.wantLine) {
+				t.Errorf("fragment missing %q:\n%s", tt.wantLine, frag)
+			}
+			for _, no := range tt.wantNoLines {
+				if strings.Contains(frag, no) {
+					t.Errorf("fragment unexpectedly contains %q:\n%s", no, frag)
+				}
+			}
+
+			inputs := newModule().DevenvYamlInputs(cfg)
+			if got := len(inputs) == 1 && inputs[0].URL == "github:bobvanderlinden/nixpkgs-ruby"; got != tt.wantInput {
+				t.Errorf("DevenvYamlInputs = %v, want nixpkgs-ruby input: %v", inputs, tt.wantInput)
+			}
+		})
+	}
+}
+
+func TestDetect_RubyVersionFile(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name    string
+		content string
+		want    string
+	}{
+		{"first line only", "3.2.2\n# comment\n", "3.2.2"},
+		{"ruby- prefix stripped", "ruby-3.3.0\n", "3.3.0"},
+		{"non-MRI ignored", "jruby-9.4.5.0\n", ""},
+		{"garbage ignored", "${evil}\n", ""},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			dir := t.TempDir()
+			if err := os.WriteFile(filepath.Join(dir, "Gemfile"), []byte("source 'https://rubygems.org'\n"), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(filepath.Join(dir, ".ruby-version"), []byte(tt.content), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			if got := newModule().Detect(dir).SuggestedConfig.Version; got != tt.want {
+				t.Errorf("SuggestedConfig.Version = %q, want %q", got, tt.want)
+			}
+		})
 	}
 }
 

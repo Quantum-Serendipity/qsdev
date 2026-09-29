@@ -62,42 +62,8 @@ func TestShellToolsOptIn(t *testing.T) {
 	}
 }
 
-func TestShellToolEnableDisable(t *testing.T) {
-	reg := DefaultRegistry()
-
-	for _, name := range []string{"starship-integration", "otel-config"} {
-		t.Run(name, func(t *testing.T) {
-			tool, ok := reg.ByName(name)
-			if !ok {
-				t.Fatalf("tool %q not found", name)
-			}
-
-			if tool.EnableFunc == nil {
-				t.Fatal("EnableFunc is nil")
-			}
-			if tool.DisableFunc == nil {
-				t.Fatal("DisableFunc is nil")
-			}
-
-			// Enable with nil EnabledTools map.
-			answers := &types.WizardAnswers{}
-			tool.EnableFunc(answers)
-
-			if answers.EnabledTools == nil {
-				t.Fatal("EnableFunc did not initialize EnabledTools")
-			}
-			if !answers.EnabledTools[name] {
-				t.Errorf("after EnableFunc, EnabledTools[%q] should be true", name)
-			}
-
-			// Disable.
-			tool.DisableFunc(answers)
-
-			if answers.EnabledTools[name] {
-				t.Errorf("after DisableFunc, EnabledTools[%q] should be false", name)
-			}
-		})
-	}
+func TestShellToolsLifecycleOnly(t *testing.T) {
+	assertLifecycleOnly(t, DefaultRegistry(), "starship-integration", "otel-config")
 }
 
 func TestStarshipSharedContent(t *testing.T) {
@@ -111,7 +77,7 @@ func TestStarshipSharedContent(t *testing.T) {
 		t.Fatal("SharedContent map is nil")
 	}
 
-	fn, ok := tool.SharedContent["starship"]
+	fn, ok := tool.SharedContent[SharedSection{Path: DevenvNixFile, SectionID: "starship"}]
 	if !ok {
 		t.Fatal("SharedContent missing 'starship' key")
 	}
@@ -141,7 +107,7 @@ func TestOtelConfigSharedContent(t *testing.T) {
 		t.Fatal("SharedContent map is nil")
 	}
 
-	fn, ok := tool.SharedContent["otel-config"]
+	fn, ok := tool.SharedContent[SharedSection{Path: DevenvNixFile, SectionID: "otel-config"}]
 	if !ok {
 		t.Fatal("SharedContent missing 'otel-config' key")
 	}
@@ -197,12 +163,47 @@ func TestOtelConfigSharedContent_CustomEndpoint(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
+	// The custom endpoint is rendered from answers.EnvVars by devenv.nix's env
+	// block; re-defining env.OTEL_EXPORTER_OTLP_ENDPOINT here would be a Nix
+	// "attribute already defined" error.
 	s := string(content)
-	if !strings.Contains(s, "http://collector:4317") {
-		t.Error("custom endpoint should be used when provided in EnvVars")
+	if strings.Contains(s, "OTEL_EXPORTER_OTLP_ENDPOINT") {
+		t.Errorf("endpoint set in EnvVars must not be defined again:\n%s", s)
+	}
+	if strings.Contains(s, "localhost:4317") {
+		t.Errorf("default endpoint must not override the user's endpoint:\n%s", s)
 	}
 	if !strings.Contains(s, `"myservice"`) {
 		t.Error("project name should appear in OTEL_SERVICE_NAME")
+	}
+}
+
+// TestOtelConfigSharedContent_EscapesNixStrings pins F470: user-controlled
+// values must be Nix-escaped so quotes cannot break devenv.nix and `${` cannot
+// inject a Nix interpolation.
+func TestOtelConfigSharedContent_EscapesNixStrings(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name        string
+		projectName string
+		want        string
+	}{
+		{name: "double quote", projectName: `my"proj`, want: `env.OTEL_SERVICE_NAME = "my\"proj";`},
+		{name: "interpolation", projectName: "x${builtins.currentSystem}", want: `env.OTEL_SERVICE_NAME = "x\${builtins.currentSystem}";`},
+		{name: "backslash", projectName: `a\b`, want: `env.OTEL_SERVICE_NAME = "a\\b";`},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			content, err := otelConfigNixContent(types.WizardAnswers{ProjectName: tt.projectName})
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if !strings.Contains(string(content), tt.want) {
+				t.Errorf("content missing %q:\n%s", tt.want, content)
+			}
+		})
 	}
 }
 

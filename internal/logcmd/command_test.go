@@ -3,6 +3,7 @@ package logcmd
 import (
 	"bytes"
 	"encoding/json"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -641,27 +642,27 @@ func TestRunShow_RedactsSecretsAtDisplayTime(t *testing.T) {
 	})
 }
 
-// TestWriteTo_RedactsSecrets is a regression for F-CAP-29.5-1: bug-report log
+// TestWriteExcerpt_RedactsSecrets is a regression for F-CAP-29.5-1: bug-report log
 // extraction must re-scrub secrets, since the excerpt becomes a shareable
 // artifact.
-func TestWriteTo_RedactsSecrets(t *testing.T) {
+func TestWriteExcerpt_RedactsSecrets(t *testing.T) {
 	t.Parallel()
 
 	input := strings.NewReader(`{"level":"INFO","msg":"token ` + awsExampleKey + `"}`)
 	var buf bytes.Buffer
-	if _, err := WriteTo(&buf, input, "", 0); err != nil {
+	if _, err := WriteExcerpt(&buf, input, ExcerptLimits{}); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	got := buf.String()
 	if strings.Contains(got, awsExampleKey) {
-		t.Errorf("WriteTo leaked secret into extract:\n%s", got)
+		t.Errorf("WriteExcerpt leaked secret into extract:\n%s", got)
 	}
 	if !strings.Contains(got, "[REDACTED]") {
 		t.Errorf("expected [REDACTED] marker in extract:\n%s", got)
 	}
 }
 
-func TestWriteTo(t *testing.T) {
+func TestWriteExcerpt_LevelAndLineFilters(t *testing.T) {
 	t.Parallel()
 
 	t.Run("writes all lines without filter", func(t *testing.T) {
@@ -673,7 +674,7 @@ func TestWriteTo(t *testing.T) {
 		}, "\n"))
 
 		var buf bytes.Buffer
-		count, err := WriteTo(&buf, input, "", 0)
+		count, err := excerptLineCount(&buf, input, "", 0)
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
@@ -696,7 +697,7 @@ func TestWriteTo(t *testing.T) {
 		}, "\n"))
 
 		var buf bytes.Buffer
-		count, err := WriteTo(&buf, input, "INFO", 0)
+		count, err := excerptLineCount(&buf, input, "INFO", 0)
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
@@ -710,7 +711,7 @@ func TestWriteTo(t *testing.T) {
 		input := strings.NewReader(`{"level":"info","msg":"test"}`)
 
 		var buf bytes.Buffer
-		count, err := WriteTo(&buf, input, "INFO", 0)
+		count, err := excerptLineCount(&buf, input, "INFO", 0)
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
@@ -730,7 +731,7 @@ func TestWriteTo(t *testing.T) {
 		}, "\n"))
 
 		var buf bytes.Buffer
-		count, err := WriteTo(&buf, input, "", 3)
+		count, err := excerptLineCount(&buf, input, "", 3)
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
@@ -750,7 +751,7 @@ func TestWriteTo(t *testing.T) {
 		}, "\n"))
 
 		var buf bytes.Buffer
-		count, err := WriteTo(&buf, input, "INFO", 2)
+		count, err := excerptLineCount(&buf, input, "INFO", 2)
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
@@ -764,7 +765,7 @@ func TestWriteTo(t *testing.T) {
 		input := strings.NewReader("")
 
 		var buf bytes.Buffer
-		count, err := WriteTo(&buf, input, "", 0)
+		count, err := excerptLineCount(&buf, input, "", 0)
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
@@ -781,7 +782,7 @@ func TestWriteTo(t *testing.T) {
 		input := strings.NewReader("not json\nalso not json\n")
 
 		var buf bytes.Buffer
-		count, err := WriteTo(&buf, input, "", 0)
+		count, err := excerptLineCount(&buf, input, "", 0)
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
@@ -795,7 +796,7 @@ func TestWriteTo(t *testing.T) {
 		input := strings.NewReader("not json\n")
 
 		var buf bytes.Buffer
-		count, err := WriteTo(&buf, input, "INFO", 0)
+		count, err := excerptLineCount(&buf, input, "INFO", 0)
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
@@ -803,6 +804,13 @@ func TestWriteTo(t *testing.T) {
 			t.Errorf("count = %d, want 0 (non-JSON should not match level filter)", count)
 		}
 	})
+}
+
+// excerptLineCount runs WriteExcerpt with only a level filter and line limit
+// and returns the number of lines written.
+func excerptLineCount(w io.Writer, r io.Reader, levelFilter string, maxLines int) (int, error) {
+	res, err := WriteExcerpt(w, r, ExcerptLimits{LevelFilter: levelFilter, MaxLines: maxLines})
+	return res.Lines, err
 }
 
 func TestCommandTree(t *testing.T) {

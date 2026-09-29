@@ -1,6 +1,7 @@
 package posture
 
 import (
+	"slices"
 	"time"
 
 	"github.com/Quantum-Serendipity/qsdev/internal/policyengine/sarif"
@@ -9,7 +10,7 @@ import (
 )
 
 // SchemaVersion is the current version of the PostureReport schema.
-const SchemaVersion = "1.1.0"
+const SchemaVersion = "1.2.0"
 
 // LayerStatus enumerates defense layer states.
 type LayerStatus string
@@ -48,6 +49,7 @@ type PostureReport struct {
 	QsdevVersion       string                    `json:"qsdevVersion"`
 	ProjectPath        string                    `json:"projectPath"`
 	ProjectName        string                    `json:"projectName"`
+	Repository         string                    `json:"repository,omitempty"` // "owner/name" source repository, when known; team-report files issues there
 	Tier               ReportTierInfo            `json:"tier"`
 	Score              AggregateScore            `json:"score"`
 	Conformance        ConformanceResult         `json:"conformance"`
@@ -64,11 +66,15 @@ type PostureReport struct {
 
 // AggregateScore holds the overall security posture grade and sub-scores.
 type AggregateScore struct {
-	Total     float64 `json:"total"`
-	Grade     string  `json:"grade"`
-	Defense   float64 `json:"defense"`
-	Config    float64 `json:"config"`
-	DepHealth float64 `json:"depHealth"`
+	Total   float64 `json:"total"`
+	Grade   string  `json:"grade"`
+	Defense float64 `json:"defense"`
+	Config  float64 `json:"config"`
+	// DepHealth is the dependency health sub-score, or nil (JSON null) when the
+	// dependencies were not scanned and their health is unknown. Total and Grade
+	// then weigh defense and config alone rather than counting unknown
+	// dependency health as clean.
+	DepHealth *float64 `json:"depHealth"`
 }
 
 // ConformanceResult holds pass/fail results for baseline and enhanced
@@ -79,17 +85,34 @@ type ConformanceResult struct {
 	Custom   *ConformanceLevel `json:"custom,omitempty"`
 }
 
-// ConformanceLevel holds a pass/fail verdict and individual checks.
+// ConformanceLevel holds a level's verdict and individual checks. Status is
+// the worst of its checks' statuses; Pass is true only when Status is
+// CheckPass, so an unknown level never reads as passed.
 type ConformanceLevel struct {
 	Pass   bool               `json:"pass"`
+	Status CheckStatus        `json:"status"`
 	Checks []ConformanceCheck `json:"checks"`
 }
 
+// Verdict returns the level's status. A level from a report that predates the
+// status field (schema < 1.2.0) is derived from Pass.
+func (l ConformanceLevel) Verdict() CheckStatus {
+	return verdict(l.Status, l.Pass)
+}
+
 // ConformanceCheck represents a single conformance check with its result.
+// Pass is true only when Status is CheckPass.
 type ConformanceCheck struct {
-	Name   CheckName `json:"name"`
-	Pass   bool      `json:"pass"`
-	Reason string    `json:"reason,omitempty"`
+	Name   CheckName   `json:"name"`
+	Pass   bool        `json:"pass"`
+	Status CheckStatus `json:"status"`
+	Reason string      `json:"reason,omitempty"`
+}
+
+// Verdict returns the check's status, derived from Pass for a check that
+// predates the status field (schema < 1.2.0).
+func (c ConformanceCheck) Verdict() CheckStatus {
+	return verdict(c.Status, c.Pass)
 }
 
 // DefenseCoverage summarizes which defense layers are active and the
@@ -120,6 +143,7 @@ type ConfigHealth struct {
 	Modified int              `json:"modified"`
 	Outdated int              `json:"outdated"`
 	Missing  int              `json:"missing"`
+	Corrupt  int              `json:"corrupt"`
 	Files    []ConfigFileInfo `json:"files"`
 }
 
@@ -135,7 +159,12 @@ type ConfigFileInfo struct {
 
 // DependencyHealth tracks vulnerability counts across ecosystems.
 type DependencyHealth struct {
-	Score      float64            `json:"score"`
+	// Score is the dependency health score (0-100), or nil (JSON null) when
+	// Status is DepUnscanned: unscanned dependencies have unknown health, which
+	// must not read as a clean 100.
+	Score *float64 `json:"score"`
+	// Status records what the vulnerability counts rest on; see DepScanStatus.
+	Status     DepScanStatus      `json:"status"`
 	Ecosystems []EcosystemStatus  `json:"ecosystems"`
 	Totals     VulnSeverityCounts `json:"totals"`
 	LastScan   *time.Time         `json:"lastScan,omitempty"`
@@ -153,20 +182,57 @@ type DependencyHealth struct {
 	ScanFailed bool `json:"scanFailed"`
 }
 
+// ScanStatus returns the dependency scan status. A report that predates the
+// status field (schema < 1.2.0) is derived from Scanned, ScanFailed and the
+// detected ecosystems, the same way ComputeDepScore derives it.
+func (d DependencyHealth) ScanStatus() DepScanStatus {
+	if d.Status != "" {
+		return d.Status
+	}
+	switch {
+	case d.ScanFailed:
+		return DepScanFailed
+	case d.Scanned:
+		return DepScanned
+	case !slices.ContainsFunc(d.Ecosystems, func(e EcosystemStatus) bool { return e.Detected }):
+		return DepNotApplicable
+	default:
+		return DepUnscanned
+	}
+}
+
 // Certifiable reports whether the scan result is conclusive — no failed
 // ecosystems and no unresolved severities. It is the single predicate every
 // consumer of dependency health must route "is this clean?" through; a fifth
 // consumer must call this rather than re-derive clean from raw counts.
 //
 // Semantics: a project with no fresh scan requested is Certifiable
-// (ScanFailed=false, Unknown=0), preserving the honest "not scanned" state as a
-// separate concern from an inconclusive scan. A completed scan that turned up an
+// (ScanFailed=false, Unknown=0), preserving the honest "not scanned" state
+// (ScanStatus DepUnscanned, reported as an unknown conformance result and a
+// nil score) as a separate concern from an inconclusive scan. A completed scan that turned up an
 // unknown-severity vulnerability, or an ecosystem whose scan errored, is NOT
 // certifiable: the true status could be anything up to critical, so callers must
 // fail closed rather than present zero Totals as a clean bill of health.
 func (d DependencyHealth) Certifiable() bool {
 	return !d.ScanFailed && d.Totals.Unknown == 0
 }
+
+// DepScanStatus records what a report's dependency vulnerability counts rest on.
+type DepScanStatus string
+
+const (
+	// DepScanned: a fresh scan completed for at least one ecosystem and none
+	// errored, so the counts are real.
+	DepScanned DepScanStatus = "scanned"
+	// DepUnscanned: no scan was requested, or no detected ecosystem has a lock
+	// file with OSV coverage. The zero counts mean "unknown", not "clean".
+	DepUnscanned DepScanStatus = "unscanned"
+	// DepScanFailed: a requested scan errored for at least one ecosystem.
+	DepScanFailed DepScanStatus = "scan-failed"
+	// DepNotApplicable: no dependency ecosystem was detected, so there is
+	// nothing to scan.
+	DepNotApplicable DepScanStatus = "not-applicable"
+)
 
 // VulnSeverityCounts holds vulnerability counts broken down by severity. Unknown
 // counts advisories whose severity could not be resolved (absent label or a
@@ -225,11 +291,10 @@ type ToolStatus struct {
 	Description string `json:"description"`
 }
 
-// AssessOptions configures the behavior of the Assess function.
+// AssessOptions configures the behavior of the Assess function. Gating on an
+// audit level and evaluating a custom conformance policy happen after
+// assessment (ShouldExitNonZero, conformance.Apply), so they are not options.
 type AssessOptions struct {
-	FreshScan  bool
-	AuditLevel string
-	PolicyFile string
-	CacheDir   string
-	CacheTTL   time.Duration
+	// FreshScan runs an OSV vulnerability scan of each detected lock file.
+	FreshScan bool
 }

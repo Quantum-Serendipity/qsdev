@@ -22,6 +22,18 @@ var toolBinaries = map[string]string{
 	"license-compliance": "scancode",
 }
 
+// ToolAvailable reports whether the binary a tool needs is on PATH. A tool
+// with no binary requirement (an MCP server, a skill) has nothing that can be
+// missing, so it is always available.
+func ToolAvailable(tool string) bool {
+	binary, ok := toolBinaries[tool]
+	if !ok {
+		return true
+	}
+	_, err := lookPath(binary)
+	return err == nil
+}
+
 // detectToolAvailability checks whether the binaries for each enabled tool
 // are available on the system PATH.
 func detectToolAvailability(enabledTools map[string]bool) Category {

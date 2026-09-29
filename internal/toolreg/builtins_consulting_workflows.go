@@ -5,44 +5,18 @@ import (
 	"github.com/Quantum-Serendipity/qsdev/pkg/types"
 )
 
-// consultingWorkflowNames lists all consulting workflow skill names in
-// a stable order.
-var consultingWorkflowNames = []string{
-	"review-pr",
-	"add-tests",
-	"upgrade-dep",
-	"onboard-me",
-	"write-adr",
-	"incident-debug",
-	"migration-plan",
-	"handoff-doc",
-}
+// consultingWorkflowReviewPR is the consulting workflow that supersedes the
+// basic "review-pr" skill.
+const consultingWorkflowReviewPR = "consulting-workflow-review-pr"
 
-func init() {
-	r := DefaultRegistry()
-	for _, name := range consultingWorkflowNames {
-		toolKey := "consulting-workflow-" + name
-		b := ToolBehavior{
+func consultingWorkflowBehaviors() map[string]ToolBehavior {
+	return map[string]ToolBehavior{
+		// Enabling the consulting review-pr workflow replaces the basic
+		// review-pr skill, which would otherwise deploy to the same path.
+		consultingWorkflowReviewPR: {
 			EnableFunc: func(a *types.WizardAnswers) {
-				ensureEnabledTools(a)
-				a.EnabledTools[toolKey] = true
-			},
-			DisableFunc: func(a *types.WizardAnswers) {
-				ensureEnabledTools(a)
-				a.EnabledTools[toolKey] = false
-			},
-		}
-
-		if name == "review-pr" {
-			innerEnable := b.EnableFunc
-			b.EnableFunc = func(a *types.WizardAnswers) {
-				if innerEnable != nil {
-					innerEnable(a)
-				}
 				a.Skills = sliceutil.Remove(a.Skills, "review-pr")
-			}
-		}
-
-		r.AttachBehavior(toolKey, b)
+			},
+		},
 	}
 }

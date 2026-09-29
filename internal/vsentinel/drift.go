@@ -6,10 +6,14 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"sort"
+	"strconv"
 	"strings"
 
+	"github.com/BurntSushi/toml"
 	"github.com/Masterminds/semver/v3"
+	"golang.org/x/mod/modfile"
 
 	"github.com/Quantum-Serendipity/qsdev/pkg/ecosystem"
 )
@@ -53,7 +57,12 @@ var specificCheckers = map[string]specificChecker{
 
 func goDeclaredCount(p string) (int, error)    { d, err := parseGoMod(p); return len(d), err }
 func jsDeclaredCount(p string) (int, error)    { d, err := parsePackageJSON(p); return len(d), err }
-func cargoDeclaredCount(p string) (int, error) { d, err := parseCargoToml(p); return len(d), err }
+func cargoDeclaredCount(p string) (int, error) { d, err := parseCargoDeps(p); return len(d), err }
+
+// notInLockfile is the LockedVersion reported for a declared dependency that
+// the lockfile does not pin at all — typically one added to the manifest
+// without regenerating the lockfile, so it would resolve fresh at install time.
+const notInLockfile = "(not in lockfile)"
 
 // driftPairs derives the manifest/lockfile pairs to check from the ecosystem
 // catalog (ManifestsByEcosystem + LockFilesByEcosystem) so every catalog
@@ -204,70 +213,158 @@ func firstPresentLockfile(root string, pair lockfilePair) string {
 	return ""
 }
 
+// checkGoDrift reports go.mod requirements whose exact module version go.sum
+// does not checksum. Go has no single "locked version" per module: go.sum lists
+// every version the module graph touched (older ones often as /go.mod-only
+// lines), while go.mod itself pins the selected version. So the check is
+// membership — is the required mod@version in go.sum — not a comparison with
+// one go.sum version. A require redirected by a replace directive is checked
+// against its replacement; one replaced by a local directory has no go.sum
+// entry and is skipped.
 func checkGoDrift(manifestPath, lockfilePath string) ([]DriftEntry, error) {
-	declared, err := parseGoMod(manifestPath)
+	mf, err := parseGoModFile(manifestPath)
 	if err != nil {
 		return nil, err
 	}
 
-	sumVersions, err := parseGoSum(lockfilePath)
+	sum, err := parseGoSum(lockfilePath)
 	if err != nil {
 		return nil, err
 	}
 
+	replaces := goModReplacements(mf)
 	var drifted []DriftEntry
-	for _, dep := range declared {
-		locked, ok := sumVersions[dep.Name]
-		if !ok {
+	for _, r := range mf.Require {
+		if r == nil {
 			continue
 		}
-		if locked != dep.DeclaredVersion {
-			drifted = append(drifted, DriftEntry{
-				Name:            dep.Name,
-				DeclaredVersion: dep.DeclaredVersion,
-				LockedVersion:   locked,
-			})
+		mod, ver := r.Mod.Path, r.Mod.Version
+		if rep, ok := replaces.lookup(mod, ver); ok {
+			if rep.Version == "" {
+				continue // local directory replacement: not checksummed in go.sum
+			}
+			mod, ver = rep.Path, rep.Version
 		}
+		if sum.has(mod, ver) {
+			continue
+		}
+		locked := strings.Join(sum.versions[mod], ", ")
+		if locked == "" {
+			locked = notInLockfile
+		}
+		drifted = append(drifted, DriftEntry{
+			Name:            r.Mod.Path,
+			DeclaredVersion: r.Mod.Version,
+			LockedVersion:   locked,
+		})
 	}
 
 	return drifted, nil
 }
 
-func parseGoSum(path string) (map[string]string, error) {
+// goSum is the set of module versions a go.sum checksums.
+type goSum struct {
+	entries  map[string]bool     // "mod@version", from zip-hash or /go.mod lines
+	versions map[string][]string // module -> versions in file order, deduplicated
+}
+
+func (g goSum) has(mod, ver string) bool { return g.entries[mod+"@"+ver] }
+
+func parseGoSum(path string) (goSum, error) {
 	f, err := os.Open(path)
 	if err != nil {
-		return nil, fmt.Errorf("opening go.sum: %w", err)
+		return goSum{}, fmt.Errorf("opening go.sum: %w", err)
 	}
 	defer f.Close()
 
-	versions := make(map[string]string)
+	sum := goSum{entries: make(map[string]bool), versions: make(map[string][]string)}
 	scanner := bufio.NewScanner(f)
 
 	for scanner.Scan() {
-		line := strings.TrimSpace(scanner.Text())
-		parts := strings.Fields(line)
+		parts := strings.Fields(scanner.Text())
 		if len(parts) < 2 {
 			continue
 		}
 
+		// go.sum has entries like "module v1.2.3/go.mod h1:..." and "module v1.2.3 h1:...".
 		mod := parts[0]
-		ver := parts[1]
-
-		// go.sum has entries like "module v1.2.3/go.mod h1:..." and "module v1.2.3 h1:..."
-		// Strip /go.mod suffix from version
-		ver = strings.TrimSuffix(ver, "/go.mod")
-
-		// Keep first version seen per module (avoid overwriting with /go.mod variant)
-		if _, exists := versions[mod]; !exists {
-			versions[mod] = ver
+		ver := strings.TrimSuffix(parts[1], "/go.mod")
+		key := mod + "@" + ver
+		if !sum.entries[key] {
+			sum.entries[key] = true
+			sum.versions[mod] = append(sum.versions[mod], ver)
 		}
 	}
 
 	if err := scanner.Err(); err != nil {
-		return nil, fmt.Errorf("scanning go.sum: %w", err)
+		return goSum{}, fmt.Errorf("scanning go.sum: %w", err)
 	}
 
-	return versions, nil
+	return sum, nil
+}
+
+// goReplacements maps a replaced module ("path" or "path@version") to its
+// replacement. A replacement with an empty Version is a local directory.
+type goReplacements map[string]goModuleVersion
+
+type goModuleVersion struct{ Path, Version string }
+
+// lookup returns the replacement for mod@ver: a version-specific replace wins
+// over one that covers every version of the module.
+func (r goReplacements) lookup(mod, ver string) (goModuleVersion, bool) {
+	if rep, ok := r[mod+"@"+ver]; ok {
+		return rep, true
+	}
+	rep, ok := r[mod]
+	return rep, ok
+}
+
+// goModReplacements reads the replace directives of a go.mod. modfile.ParseLax
+// (used so newer directives do not break parsing) skips replace statements, so
+// they are read from the parsed syntax tree instead: each is
+// "old [old-version] => new [new-version]".
+func goModReplacements(mf *modfile.File) goReplacements {
+	reps := make(goReplacements)
+	add := func(tokens []string) {
+		arrow := slices.Index(tokens, "=>")
+		if arrow < 1 || arrow > 2 || len(tokens)-arrow-1 < 1 || len(tokens)-arrow-1 > 2 {
+			return // malformed; the go command would reject it too
+		}
+		key := unquoteModToken(tokens[0])
+		if arrow == 2 {
+			key += "@" + unquoteModToken(tokens[1])
+		}
+		rep := goModuleVersion{Path: unquoteModToken(tokens[arrow+1])}
+		if len(tokens) == arrow+3 {
+			rep.Version = unquoteModToken(tokens[arrow+2])
+		}
+		reps[key] = rep
+	}
+	if mf == nil || mf.Syntax == nil {
+		return reps
+	}
+	for _, stmt := range mf.Syntax.Stmt {
+		switch x := stmt.(type) {
+		case *modfile.Line:
+			if len(x.Token) > 0 && x.Token[0] == "replace" {
+				add(x.Token[1:])
+			}
+		case *modfile.LineBlock:
+			if len(x.Token) > 0 && x.Token[0] == "replace" {
+				for _, l := range x.Line {
+					add(l.Token)
+				}
+			}
+		}
+	}
+	return reps
+}
+
+func unquoteModToken(tok string) string {
+	if u, err := strconv.Unquote(tok); err == nil {
+		return u
+	}
+	return tok
 }
 
 func checkJSDrift(manifestPath, lockfilePath string) ([]DriftEntry, error) {
@@ -285,6 +382,16 @@ func checkJSDrift(manifestPath, lockfilePath string) ([]DriftEntry, error) {
 	for _, dep := range declared {
 		lockedVer, ok := locked[dep.Name]
 		if !ok {
+			// A "workspace:" spec is a pnpm/yarn workspace link, which
+			// package-lock.json never records; anything else npm would have
+			// locked, so its absence means the lockfile is stale.
+			if !strings.HasPrefix(dep.DeclaredVersion, "workspace:") {
+				drifted = append(drifted, DriftEntry{
+					Name:            dep.Name,
+					DeclaredVersion: dep.DeclaredVersion,
+					LockedVersion:   notInLockfile,
+				})
+			}
 			continue
 		}
 		if !jsSemverSatisfies(dep.DeclaredVersion, lockedVer) {
@@ -397,8 +504,13 @@ func isBareVersion(constraint string) bool {
 	return c != "" && c[0] >= '0' && c[0] <= '9'
 }
 
+// checkCargoDrift reports Cargo.toml version requirements that no Cargo.lock
+// entry for the crate satisfies. A crate can be locked at several versions (two
+// majors pulled in by different dependents), so the requirement is met when any
+// of them satisfies it. Path, git and workspace-inherited specs with no version
+// requirement of their own are not compared.
 func checkCargoDrift(manifestPath, lockfilePath string) ([]DriftEntry, error) {
-	declared, err := parseCargoToml(manifestPath)
+	declared, err := parseCargoDeps(manifestPath)
 	if err != nil {
 		return nil, err
 	}
@@ -410,17 +522,28 @@ func checkCargoDrift(manifestPath, lockfilePath string) ([]DriftEntry, error) {
 
 	var drifted []DriftEntry
 	for _, dep := range declared {
-		lockedVer, ok := locked[dep.Name]
-		if !ok {
+		if dep.Version == "" {
+			continue
+		}
+		versions := locked[dep.Package]
+		if len(versions) == 0 {
+			drifted = append(drifted, DriftEntry{
+				Name:            dep.Name,
+				DeclaredVersion: dep.Version,
+				LockedVersion:   notInLockfile,
+			})
 			continue
 		}
 		// Cargo version requirements default to caret semantics, so a bare "1.0"
 		// means >=1.0.0 <2.0.0.
-		if !cargoSemverSatisfies(dep.DeclaredVersion, lockedVer) {
+		satisfied := slices.ContainsFunc(versions, func(v string) bool {
+			return cargoSemverSatisfies(dep.Version, v)
+		})
+		if !satisfied {
 			drifted = append(drifted, DriftEntry{
 				Name:            dep.Name,
-				DeclaredVersion: dep.DeclaredVersion,
-				LockedVersion:   lockedVer,
+				DeclaredVersion: dep.Version,
+				LockedVersion:   strings.Join(versions, ", "),
 			})
 		}
 	}
@@ -428,32 +551,24 @@ func checkCargoDrift(manifestPath, lockfilePath string) ([]DriftEntry, error) {
 	return drifted, nil
 }
 
-func parseCargoLock(path string) (map[string]string, error) {
-	f, err := os.Open(path)
-	if err != nil {
-		return nil, fmt.Errorf("opening Cargo.lock: %w", err)
+// parseCargoLock returns every locked version of each crate in a Cargo.lock.
+func parseCargoLock(path string) (map[string][]string, error) {
+	var lock struct {
+		Package []struct {
+			Name    string `toml:"name"`
+			Version string `toml:"version"`
+		} `toml:"package"`
 	}
-	defer f.Close()
+	if _, err := toml.DecodeFile(path, &lock); err != nil {
+		return nil, fmt.Errorf("parsing Cargo.lock: %w", err)
+	}
 
-	versions := make(map[string]string)
-	scanner := bufio.NewScanner(f)
-	var currentName string
-
-	for scanner.Scan() {
-		line := strings.TrimSpace(scanner.Text())
-
-		if v, ok := strings.CutPrefix(line, "name = "); ok {
-			currentName = strings.Trim(v, "\"")
+	versions := make(map[string][]string)
+	for _, p := range lock.Package {
+		if p.Name == "" || p.Version == "" || slices.Contains(versions[p.Name], p.Version) {
+			continue
 		}
-		if v, ok := strings.CutPrefix(line, "version = "); ok && currentName != "" {
-			versions[currentName] = strings.Trim(v, "\"")
-			currentName = ""
-		}
+		versions[p.Name] = append(versions[p.Name], p.Version)
 	}
-
-	if err := scanner.Err(); err != nil {
-		return nil, fmt.Errorf("scanning Cargo.lock: %w", err)
-	}
-
 	return versions, nil
 }

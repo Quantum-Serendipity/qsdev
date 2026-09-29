@@ -109,12 +109,76 @@ func TestVersionSentinelRecoverySkill(t *testing.T) {
 		return
 	}
 
+	// The skill must describe the MCP tools qsdev actually ships, not a
+	// blocking hook or slash commands that are never installed.
 	content := string(skillFile.Content)
-	if !strings.Contains(content, "BLOCKED") {
-		t.Error("skill should mention BLOCKED")
+	for _, tool := range []string{"check_versions", "detect_drift", "manifest_coverage", "version_history"} {
+		if !strings.Contains(content, tool) {
+			t.Errorf("skill should describe the %s MCP tool", tool)
+		}
 	}
-	if !strings.Contains(content, "/vs-record") {
-		t.Error("skill should mention /vs-record command")
+	for _, absent := range []string{"BLOCKED: version-sentinel", "/vs-record", "/check-versions"} {
+		if strings.Contains(content, absent) {
+			t.Errorf("skill references %q, which qsdev does not install", absent)
+		}
+	}
+	for _, f := range files {
+		if f.Path == ".version-sentinel/events.jsonl" {
+			t.Error("events.jsonl is an append-only log and must not be generated (regeneration would wipe history)")
+		}
+	}
+}
+
+// TestVersionSentinelClaudeMdSection verifies the CLAUDE.md section only claims
+// coverage for covered manifests and describes it as advisory: a Go-only
+// project (no covered manifests) must not read "guards dependency changes in: .".
+func TestVersionSentinelClaudeMdSection(t *testing.T) {
+	t.Parallel()
+	cases := []struct {
+		name  string
+		langs []string
+		want  string
+	}{
+		{
+			name:  "go only",
+			langs: []string{"go"},
+			want: "<!-- qsdev:version-sentinel -->\n" +
+				"- Version-Sentinel does NOT cover: go.mod. Review these manually.\n" +
+				"<!-- /qsdev:version-sentinel -->",
+		},
+		{
+			name:  "go and javascript",
+			langs: []string{"go", "javascript"},
+			want: "<!-- qsdev:version-sentinel -->\n" +
+				"- **Version-Sentinel** MCP tools give advisory (non-blocking) dependency version checks for: package.json. Use them when changing dependencies.\n" +
+				"- Version-Sentinel does NOT cover: go.mod. Review these manually.\n" +
+				"<!-- /qsdev:version-sentinel -->",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			reg := newTestRegistry(t, goMock(), jsMock())
+			answers := types.WizardAnswers{
+				Tier:         "standard",
+				AgentTools:   types.AgentToolsAnswers{VersionSentinel: true},
+				EnabledTools: map[string]bool{"version-sentinel": true},
+			}
+			for _, l := range tc.langs {
+				answers.Languages = append(answers.Languages, types.LanguageChoice{Name: l})
+			}
+			got, err := claudecode.GenerateClaudeMd(answers, reg)
+			if err != nil {
+				t.Fatal(err)
+			}
+			content := string(got.Content)
+			if !strings.Contains(content, tc.want) {
+				t.Errorf("CLAUDE.md version-sentinel section mismatch; want:\n%s\n\ngot:\n%s", tc.want, content)
+			}
+			if strings.Contains(content, "guards dependency changes") {
+				t.Error("CLAUDE.md claims Version-Sentinel guards changes; it is advisory")
+			}
+		})
 	}
 }
 

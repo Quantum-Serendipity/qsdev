@@ -35,7 +35,7 @@ mapped."
 Add the ranges to your user declaration:
 
 ```nix
-users.users.{{ .Username }} = {
+users.users.{{ nixAttrName .Username }} = {
   isNormalUser = true;
   subUidRanges = [{ startUid = 100000; count = 65536; }];
   subGidRanges = [{ startGid = 100000; count = 65536; }];
@@ -72,7 +72,7 @@ containers that must run as persistent background services, enable
 linger:
 
 ```nix
-users.users.{{ .Username }} = {
+users.users.{{ nixAttrName .Username }} = {
   # ... other settings ...
   linger = true;
 };
@@ -96,19 +96,27 @@ Add the flake input:
 inputs.quadlet-nix.url = "github:SEIAROTg/quadlet-nix";
 ```
 
-Import the Home Manager module and declare containers:
+Import the NixOS module in your system configuration. It enables Podman and
+the Quadlet systemd generator that the Home Manager module relies on:
+
+```nix
+# In the NixOS configuration (e.g. the nixosSystem modules list)
+imports = [ inputs.quadlet-nix.nixosModules.quadlet ];
+```
+
+Then import the Home Manager module and declare containers:
 
 ```nix
 # In Home Manager configuration (home.nix)
 imports = [ inputs.quadlet-nix.homeManagerModules.quadlet ];
 
-services.quadlet.containers.myapp = {
+virtualisation.quadlet.containers.myapp = {
+  autoStart = true;
   containerConfig = {
     image = "docker.io/nginx:latest";
-    publishPort = [ "8080:80" ];
+    publishPorts = [ "8080:80" ];
   };
   serviceConfig.Restart = "always";
-  installConfig.wantedBy = [ "default.target" ];
 };
 ```
 
@@ -157,7 +165,8 @@ In Home Manager, declare this persistently:
 
 ```nix
 home.sessionVariables = {
-  DOCKER_HOST = "unix:///run/user/1000/podman/podman.sock";
+  # Home Manager expands the variable when the session starts.
+  DOCKER_HOST = "unix://$XDG_RUNTIME_DIR/podman/podman.sock";
 };
 ```
 
@@ -224,7 +233,7 @@ Combining all sections into a single NixOS configuration snippet:
     };
   };
 
-  users.users.{{ .Username }} = {
+  users.users.{{ nixAttrName .Username }} = {
     isNormalUser = true;
     subUidRanges = [{ startUid = 100000; count = 65536; }];
     subGidRanges = [{ startGid = 100000; count = 65536; }];

@@ -77,7 +77,9 @@ func docsVerifyCmd() *cobra.Command {
 carries any detached Minisign signatures (<file>.minisig), the whole set is
 verified by signature against trusted keys — a missing or invalid sidecar then
 fails the set rather than downgrading it. A set with no signatures at all falls
-back to recomputing its recorded combined SHA-256. Exits non-zero when any set
+back to recomputing its combined SHA-256, which was recorded from the download
+itself (trust on first use): it detects later changes, not a tampered
+download. Exits non-zero when any set
 fails, for CI gating; --require-trusted additionally fails hash-only sets.`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			mgr := mcpregistry.NewDocsCorpusManager(
@@ -104,6 +106,9 @@ fails, for CI gating; --require-trusted additionally fails hash-only sets.`,
 // signed-verified).
 func runDocsVerify(cmd *cobra.Command, mgr *mcpregistry.DocsCorpusManager, manifest *mcpregistry.DocsManifest, keysDir string, requireTrusted, jsonOutput bool) error {
 	if len(manifest.DocSets) == 0 {
+		if jsonOutput {
+			return printVerifyResults(cmd, []docVerifyResult{}, true)
+		}
 		fmt.Fprintln(cmd.OutOrStdout(), "No documentation sets installed.")
 		return nil
 	}
@@ -151,7 +156,9 @@ func runDocsVerify(cmd *cobra.Command, mgr *mcpregistry.DocsCorpusManager, manif
 // unsigned manifest hash. Only a set with no signatures at all falls back to
 // the recorded combined-hash check, and that hash-only result does not satisfy
 // requireTrusted (the manifest itself is unsigned, so its hash is not a trust
-// anchor).
+// anchor). A hash-only pass carries a reason saying so: the hash was recorded
+// from the download itself (trust on first use), so it proves only that the
+// files have not changed since they were installed.
 func verifyDocSet(ctx context.Context, mgr *mcpregistry.DocsCorpusManager, entry *mcpregistry.DocSetEntry, trustedKeys []contentsign.PublicKey, requireTrusted bool) docVerifyResult {
 	res := docVerifyResult{Slug: entry.Slug, Type: entry.Type.String()}
 	if len(entry.Files) > 0 && anySigned(entry.Files) {
@@ -167,10 +174,15 @@ func verifyDocSet(ctx context.Context, mgr *mcpregistry.DocsCorpusManager, entry
 	case requireTrusted:
 		res.Status, res.Reason = contentsign.StatusHashVerified, "hash-only set; a trusted signature is required"
 	default:
-		res.Status, res.Verified = contentsign.StatusHashVerified, true
+		res.Status, res.Verified, res.Reason = contentsign.StatusHashVerified, true, hashOnlyReason
 	}
 	return res
 }
+
+// hashOnlyReason qualifies a hash-only pass: the compared hash was recorded
+// from the same unchecked download, so it is an integrity check, not
+// provenance.
+const hashOnlyReason = "unchanged since download; recorded hash is trust-on-first-use, not a trust anchor"
 
 // verifyDocSetSignatures verifies the set's files against trustedKeys via
 // contentsign.VerifyCorpus (bounded-parallel, exhaustive). The set is
@@ -247,6 +259,35 @@ func printVerifyResults(cmd *cobra.Command, results []docVerifyResult, jsonOutpu
 	return nil
 }
 
+// errDocsDownloadFailed is returned by `docs download` and `docs update` when
+// any documentation set fails to download, so the process exits non-zero.
+var errDocsDownloadFailed = errors.New("documentation download failed")
+
+// downloadTally counts per-set download outcomes and prints each one.
+type downloadTally struct {
+	attempted int
+	failed    int
+}
+
+// record prints the outcome of one set's download and counts it.
+func (t *downloadTally) record(w io.Writer, err error) {
+	t.attempted++
+	if err != nil {
+		t.failed++
+		fmt.Fprintf(w, " FAILED: %s\n", err)
+		return
+	}
+	fmt.Fprintln(w, " OK")
+}
+
+// err returns a non-nil error when any recorded download failed.
+func (t *downloadTally) err() error {
+	if t.failed == 0 {
+		return nil
+	}
+	return fmt.Errorf("%w: %d of %d documentation set(s) failed", errDocsDownloadFailed, t.failed, t.attempted)
+}
+
 // newDownloadManager builds a DocsCorpusManager wired with the download-time
 // sanitizer, so every command that fetches DevDocs content (download, update)
 // scrubs db.json identically before it is indexed. Read-only commands (status,
@@ -284,40 +325,27 @@ download only one type.`,
 				return fmt.Errorf("loading catalog: %w", err)
 			}
 
-			downloadZIM := !devdocsOnly
-			downloadDevDocs := !zimOnly
+			w := cmd.OutOrStdout()
+			var tally downloadTally
 
-			if downloadDevDocs {
-				baseURL := cat.DevDocsBaseURL()
+			if !zimOnly {
 				allSlugs := cat.DevDocsSlugs()
 				if len(allSlugs) == 0 {
 					allSlugs = mcpregistry.LanguageToDevDocsSlugs
 				}
-				projectEcosystems := projectEcosystemSet()
-				fmt.Fprintln(cmd.OutOrStdout(), "Downloading DevDocs documentation sets...")
-				for lang, langSlugs := range allSlugs {
-					if len(projectEcosystems) > 0 && !projectEcosystems[lang] {
-						continue
-					}
-					for _, slug := range langSlugs {
-						fmt.Fprintf(cmd.OutOrStdout(), "  %s (%s)...", slug, lang)
-						if err := mgr.DownloadDevDocs(ctx, slug, baseURL); err != nil {
-							fmt.Fprintf(cmd.OutOrStdout(), " FAILED: %s\n", err)
-							continue
-						}
-						fmt.Fprintln(cmd.OutOrStdout(), " OK")
-					}
-				}
+				fmt.Fprintln(w, "Downloading DevDocs documentation sets...")
+				downloadDevDocsSets(ctx, w, mgr, allSlugs, projectEcosystemSet(), cat.DevDocsBaseURL(), &tally)
 			}
 
-			if downloadZIM {
-				fmt.Fprintln(cmd.OutOrStdout(), "Downloading ZIM archives...")
-				if err := downloadZIMEntries(ctx, cmd, mgr, cat); err != nil {
-					return err
-				}
+			if !devdocsOnly {
+				fmt.Fprintln(w, "Downloading ZIM archives...")
+				downloadZIMEntries(ctx, w, mgr, catalogZIMEntries(cat), &tally)
 			}
 
-			fmt.Fprintln(cmd.OutOrStdout(), "\nDownload complete. Run 'qsdev docs status' to see installed sets.")
+			if err := tally.err(); err != nil {
+				return err
+			}
+			fmt.Fprintln(w, "\nDownload complete. Run 'qsdev docs status' to see installed sets.")
 			return nil
 		},
 	}
@@ -328,17 +356,32 @@ download only one type.`,
 	return cmd
 }
 
-func downloadZIMEntries(ctx context.Context, cmd *cobra.Command, mgr *mcpregistry.DocsCorpusManager, cat *catalog.Catalog) error {
-	entries := catalogZIMEntries(cat)
-	for _, entry := range entries {
-		fmt.Fprintf(cmd.OutOrStdout(), "  %s...", entry.DisplayName)
-		if err := mgr.DownloadZIM(ctx, entry); err != nil {
-			fmt.Fprintf(cmd.OutOrStdout(), " FAILED: %s\n", err)
-			continue
+// downloadDevDocsSets downloads the DevDocs slugs of every language in
+// slugsByLang, limited to ecosystems when it is non-empty, recording each
+// outcome in tally. Languages are visited in sorted order for stable output.
+func downloadDevDocsSets(ctx context.Context, w io.Writer, mgr *mcpregistry.DocsCorpusManager, slugsByLang map[string][]string, ecosystems map[string]bool, baseURL string, tally *downloadTally) {
+	langs := make([]string, 0, len(slugsByLang))
+	for lang := range slugsByLang {
+		if len(ecosystems) == 0 || ecosystems[lang] {
+			langs = append(langs, lang)
 		}
-		fmt.Fprintln(cmd.OutOrStdout(), " OK")
 	}
-	return nil
+	sort.Strings(langs)
+	for _, lang := range langs {
+		for _, slug := range slugsByLang[lang] {
+			fmt.Fprintf(w, "  %s (%s)...", slug, lang)
+			tally.record(w, mgr.DownloadDevDocs(ctx, slug, baseURL))
+		}
+	}
+}
+
+// downloadZIMEntries downloads every ZIM archive in entries, recording each
+// outcome in tally.
+func downloadZIMEntries(ctx context.Context, w io.Writer, mgr *mcpregistry.DocsCorpusManager, entries []mcpregistry.ZIMEntry, tally *downloadTally) {
+	for _, entry := range entries {
+		fmt.Fprintf(w, "  %s...", entry.DisplayName)
+		tally.record(w, mgr.DownloadZIM(ctx, entry))
+	}
 }
 
 func docsStatusCmd() *cobra.Command {
@@ -460,37 +503,42 @@ func docsUpdateCmd() *cobra.Command {
 				return nil
 			}
 
-			baseURL := cat.DevDocsBaseURL()
 			fmt.Fprintf(cmd.OutOrStdout(), "Updating %d documentation set(s)...\n", len(outdated))
-
-			for _, o := range outdated {
-				fmt.Fprintf(cmd.OutOrStdout(), "  %s...", o.Slug)
-				switch o.Type {
-				case mcpregistry.DocSetZIM:
-					for _, entry := range zimEntries {
-						if entry.Slug == o.AvailableVersion {
-							if err := mgr.DownloadZIM(ctx, entry); err != nil {
-								fmt.Fprintf(cmd.OutOrStdout(), " FAILED: %s\n", err)
-								continue
-							}
-							fmt.Fprintln(cmd.OutOrStdout(), " OK")
-							break
-						}
-					}
-				case mcpregistry.DocSetDevDocs:
-					if err := mgr.DownloadDevDocs(ctx, o.Slug, baseURL); err != nil {
-						fmt.Fprintf(cmd.OutOrStdout(), " FAILED: %s\n", err)
-						continue
-					}
-					fmt.Fprintln(cmd.OutOrStdout(), " OK")
-				}
-			}
-
-			return nil
+			return updateOutdatedSets(ctx, cmd.OutOrStdout(), mgr, outdated, zimEntries, cat.DevDocsBaseURL())
 		},
 	}
 
 	return cmd
+}
+
+// updateOutdatedSets downloads the available version of every outdated set and
+// returns a non-nil error when any of them fails.
+func updateOutdatedSets(ctx context.Context, w io.Writer, mgr *mcpregistry.DocsCorpusManager, outdated []mcpregistry.OutdatedEntry, zimEntries []mcpregistry.ZIMEntry, baseURL string) error {
+	var tally downloadTally
+	for _, o := range outdated {
+		fmt.Fprintf(w, "  %s...", o.Slug)
+		tally.record(w, updateOutdatedSet(ctx, mgr, o, zimEntries, baseURL))
+	}
+	return tally.err()
+}
+
+// updateOutdatedSet downloads the available version of one outdated set: a ZIM
+// set from the catalog entry whose slug is its available version, a DevDocs
+// set by re-downloading its slug.
+func updateOutdatedSet(ctx context.Context, mgr *mcpregistry.DocsCorpusManager, o mcpregistry.OutdatedEntry, zimEntries []mcpregistry.ZIMEntry, baseURL string) error {
+	switch o.Type {
+	case mcpregistry.DocSetZIM:
+		for _, entry := range zimEntries {
+			if entry.Slug == o.AvailableVersion {
+				return mgr.DownloadZIM(ctx, entry)
+			}
+		}
+		return fmt.Errorf("no catalog entry for ZIM version %q", o.AvailableVersion)
+	case mcpregistry.DocSetDevDocs:
+		return mgr.DownloadDevDocs(ctx, o.Slug, baseURL)
+	default:
+		return fmt.Errorf("updating %s documentation sets is not supported", o.Type)
+	}
 }
 
 func projectEcosystemSet() map[string]bool {
@@ -516,11 +564,12 @@ func catalogZIMEntries(cat *catalog.Catalog) []mcpregistry.ZIMEntry {
 	entries := make([]mcpregistry.ZIMEntry, len(defs))
 	for i, d := range defs {
 		entries[i] = mcpregistry.ZIMEntry{
-			Slug:        d.Slug,
-			DisplayName: d.DisplayName,
-			URL:         d.URL,
-			SizeBytes:   d.SizeBytes,
-			Ecosystems:  d.Ecosystems,
+			Slug:         d.Slug,
+			DisplayName:  d.DisplayName,
+			URL:          d.URL,
+			ExpectedHash: d.SHA256,
+			SizeBytes:    d.SizeBytes,
+			Ecosystems:   d.Ecosystems,
 		}
 	}
 	return entries

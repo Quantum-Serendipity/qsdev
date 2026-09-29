@@ -5,19 +5,22 @@
 // OSV.dev, and aggregates the advisories by severity.
 //
 // This package is the single lock-file parsing and OSV client implementation:
-// internal/posture consumes the high-level ScanProject/ScanFile entry points,
-// while the mcpserve security_scan tool builds its threshold-filtered report
-// from the exported QueryBatch/FetchDetails primitives and the LockFile
-// helpers.
+// internal/posture and the mcpserve security_scan tool both scan through the
+// ScanFile entry point (locating the file with LockFileForEcosystem or
+// DetectLockFile), so scan semantics such as batch chunking, result validation
+// and the no-pinned-dependencies signal are defined once, here.
 package vulnscan
 
 import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io"
 	"log/slog"
 	"net/http"
+	"net/url"
 	"sort"
 	"strings"
 	"sync"
@@ -35,6 +38,35 @@ const scanHTTPTimeout = 20 * time.Second
 // maxVulnDetailFetches caps how many unique vulnerability records the scanner
 // fetches full details for, bounding fan-out on a heavily-vulnerable project.
 const maxVulnDetailFetches = 200
+
+// maxBatchQueries is the largest number of queries OSV.dev accepts in one
+// /v1/querybatch request; larger batches are rejected with HTTP 400 ("too many
+// queries"), so QueryBatch splits the dependency set into chunks of this size.
+const maxBatchQueries = 1000
+
+// maxPageRounds bounds how many follow-up requests QueryBatch makes for queries
+// whose results OSV paginated (next_page_token). Exceeding it is an error rather
+// than a silent truncation of the vulnerability list.
+const maxPageRounds = 20
+
+// maxBatchResponseBytes and maxVulnResponseBytes bound how much of an OSV
+// response body is decoded, so a misbehaving endpoint or proxy cannot make the
+// scanner buffer an unbounded body. An over-long body fails to decode and is
+// reported as an error, never as a clean result.
+const (
+	maxBatchResponseBytes = 16 << 20
+	maxVulnResponseBytes  = 4 << 20
+)
+
+// ErrNoPinnedDeps reports a lock file that parsed but yielded no pinned
+// dependency coordinates (e.g. a requirements.txt of only loose specifiers such
+// as "requests>=2"). Nothing was sent to OSV, so callers must treat the
+// ecosystem as not scanned rather than as scanned clean.
+var ErrNoPinnedDeps = errors.New("lock file has no pinned dependencies to scan")
+
+// ErrLockParse reports a lock file that was found but could not be parsed
+// (truncated, tampered with, or malformed). The scan did not run.
+var ErrLockParse = errors.New("lock file could not be parsed")
 
 // detailFetchConcurrency bounds the parallel /v1/vulns/{id} detail fetches so
 // up to maxVulnDetailFetches records fit within the shared scan deadline
@@ -118,20 +150,12 @@ func (s *Scanner) baseURL() string {
 	return DefaultOSVBaseURL
 }
 
-// ScanProject auto-detects the first supported lock file under projectRoot and
-// scans it. It returns (nil, nil) when no supported lock file is present.
-func (s *Scanner) ScanProject(ctx context.Context, projectRoot string) (*Result, error) {
-	lf, path, ok := DetectLockFile(projectRoot)
-	if !ok {
-		return nil, nil
-	}
-	return s.scan(ctx, lf, path)
-}
-
 // ScanFile scans a single lock file at lockPath, resolving the parser and OSV
 // ecosystem from the file's base name. It returns (nil, nil) when the file is
 // not a lock format with OSV coverage — the caller then knows the ecosystem was
-// not scanned rather than confirmed vulnerability-free.
+// not scanned rather than confirmed vulnerability-free. A lock file that cannot
+// be parsed yields an error wrapping ErrLockParse, and one with no pinned
+// dependencies an error wrapping ErrNoPinnedDeps.
 func (s *Scanner) ScanFile(ctx context.Context, lockPath string) (*Result, error) {
 	lf, ok := LockFileForPath(lockPath)
 	if !ok {
@@ -145,15 +169,15 @@ func (s *Scanner) ScanFile(ctx context.Context, lockPath string) (*Result, error
 func (s *Scanner) scan(ctx context.Context, lf LockFile, path string) (*Result, error) {
 	pkgs, err := lf.parse(path)
 	if err != nil {
-		return nil, fmt.Errorf("parsing lock file %q: %w", path, err)
+		return nil, fmt.Errorf("%w: %q: %w", ErrLockParse, path, err)
+	}
+	if len(pkgs) == 0 {
+		return nil, fmt.Errorf("%s: %w", path, ErrNoPinnedDeps)
 	}
 	res := &Result{
 		LockFile:     path,
 		Ecosystem:    lf.ecosystem,
 		Dependencies: len(pkgs),
-	}
-	if len(pkgs) == 0 {
-		return res, nil
 	}
 
 	ctx, cancel := context.WithTimeout(ctx, scanHTTPTimeout)
@@ -190,8 +214,9 @@ type osvBatchRequest struct {
 }
 
 type osvQuery struct {
-	Package osvQueryPackage `json:"package"`
-	Version string          `json:"version"`
+	Package   osvQueryPackage `json:"package"`
+	Version   string          `json:"version"`
+	PageToken string          `json:"page_token,omitempty"`
 }
 
 type osvQueryPackage struct {
@@ -200,28 +225,82 @@ type osvQueryPackage struct {
 }
 
 type osvBatchResponse struct {
-	Results []struct {
-		Vulns []struct {
-			ID string `json:"id"`
-		} `json:"vulns"`
-	} `json:"results"`
+	Results []osvBatchResult `json:"results"`
 }
 
-// QueryBatch POSTs the dependency set to /v1/querybatch and returns, per query
-// index, the vulnerability ids OSV reported. The slice is index-aligned with
-// pkgs so callers can map a vuln back to the package that triggered it. It is
-// exported (together with FetchDetails) for consumers such as the mcpserve
-// security_scan tool that need the raw ids to build their own report shape.
-// Callers own the deadline: bound ctx before calling.
+// osvBatchResult is one query's slot of a /v1/querybatch response. A non-empty
+// NextPageToken means OSV returned only the first page of that query's vulns.
+type osvBatchResult struct {
+	Vulns []struct {
+		ID string `json:"id"`
+	} `json:"vulns"`
+	NextPageToken string `json:"next_page_token"`
+}
+
+// QueryBatch queries /v1/querybatch for the dependency set and returns, per
+// query index, the vulnerability ids OSV reported. The slice is index-aligned
+// with pkgs so callers can map a vuln back to the package that triggered it.
+// The set is split into requests of at most maxBatchQueries (OSV's per-request
+// limit), paginated results are followed to completion, and a response whose
+// result count does not match its query count is an error — a short or
+// mismatched response must never read as "no vulnerabilities". Callers own the
+// deadline: bound ctx before calling.
 func (s *Scanner) QueryBatch(ctx context.Context, pkgs []Package) ([][]string, error) {
-	reqBody := osvBatchRequest{Queries: make([]osvQuery, len(pkgs))}
+	out := make([][]string, len(pkgs))
+	for start := 0; start < len(pkgs); start += maxBatchQueries {
+		end := min(start+maxBatchQueries, len(pkgs))
+		if err := s.queryChunk(ctx, pkgs[start:end], out[start:end]); err != nil {
+			return nil, fmt.Errorf("querying OSV for dependencies %d-%d of %d: %w", start+1, end, len(pkgs), err)
+		}
+	}
+	return out, nil
+}
+
+// queryChunk resolves one chunk of at most maxBatchQueries packages into the
+// index-aligned out slice, re-querying any result that carries a
+// next_page_token (with that token) until every query's results are complete.
+func (s *Scanner) queryChunk(ctx context.Context, pkgs []Package, out [][]string) error {
+	queries := make([]osvQuery, len(pkgs))
+	pending := make([]int, len(pkgs)) // indices whose results are still incomplete
 	for i, p := range pkgs {
-		reqBody.Queries[i] = osvQuery{
+		queries[i] = osvQuery{
 			Package: osvQueryPackage{Name: p.Name, Ecosystem: p.Ecosystem},
 			Version: p.Version,
 		}
+		pending[i] = i
 	}
-	body, err := json.Marshal(reqBody)
+
+	for round := 0; len(pending) > 0; round++ {
+		if round == maxPageRounds {
+			return fmt.Errorf("OSV results still paginated after %d requests", maxPageRounds)
+		}
+		batch := make([]osvQuery, len(pending))
+		for j, idx := range pending {
+			batch[j] = queries[idx]
+		}
+		results, err := s.postBatch(ctx, batch)
+		if err != nil {
+			return err
+		}
+		var next []int
+		for j, idx := range pending {
+			for _, v := range results[j].Vulns {
+				out[idx] = append(out[idx], v.ID)
+			}
+			if tok := results[j].NextPageToken; tok != "" {
+				queries[idx].PageToken = tok
+				next = append(next, idx)
+			}
+		}
+		pending = next
+	}
+	return nil
+}
+
+// postBatch sends one /v1/querybatch request and returns its results, which are
+// guaranteed to be index-aligned with queries.
+func (s *Scanner) postBatch(ctx context.Context, queries []osvQuery) ([]osvBatchResult, error) {
+	body, err := json.Marshal(osvBatchRequest{Queries: queries})
 	if err != nil {
 		return nil, fmt.Errorf("marshaling OSV batch query: %w", err)
 	}
@@ -242,20 +321,13 @@ func (s *Scanner) QueryBatch(ctx context.Context, pkgs []Package) ([][]string, e
 	}
 
 	var parsed osvBatchResponse
-	if err := json.NewDecoder(resp.Body).Decode(&parsed); err != nil {
+	if err := json.NewDecoder(io.LimitReader(resp.Body, maxBatchResponseBytes)).Decode(&parsed); err != nil {
 		return nil, fmt.Errorf("decoding OSV response: %w", err)
 	}
-
-	out := make([][]string, len(pkgs))
-	for i := range pkgs {
-		if i >= len(parsed.Results) {
-			break
-		}
-		for _, v := range parsed.Results[i].Vulns {
-			out[i] = append(out[i], v.ID)
-		}
+	if len(parsed.Results) != len(queries) {
+		return nil, fmt.Errorf("OSV returned %d results for %d queries", len(parsed.Results), len(queries))
 	}
-	return out, nil
+	return parsed.Results, nil
 }
 
 // osvVuln models the subset of an OSV /v1/vulns/{id} record we surface. Severity
@@ -265,16 +337,10 @@ func (s *Scanner) QueryBatch(ctx context.Context, pkgs []Package) ([][]string, e
 // database_specific.severity. The top-level "details" text remains unmodeled
 // (unused).
 type osvVuln struct {
-	ID       string        `json:"id"`
-	Summary  string        `json:"summary"`
-	Severity []osvSeverity `json:"severity"`
-	Affected []struct {
-		Ranges []struct {
-			Events []struct {
-				Fixed string `json:"fixed"`
-			} `json:"events"`
-		} `json:"ranges"`
-	} `json:"affected"`
+	ID         string        `json:"id"`
+	Summary    string        `json:"summary"`
+	Severity   []osvSeverity `json:"severity"`
+	Affected   []osvAffected `json:"affected"`
 	References []struct {
 		Type string `json:"type"`
 		URL  string `json:"url"`
@@ -282,6 +348,23 @@ type osvVuln struct {
 	DatabaseSpecific struct {
 		Severity string `json:"severity"`
 	} `json:"database_specific"`
+}
+
+// osvAffected is one affected[] entry of an OSV record: the package it applies
+// to and the version ranges (each a list of introduced/fixed events) in which
+// that package is vulnerable. One record can cover several packages, and several
+// release branches of one package.
+type osvAffected struct {
+	Package struct {
+		Name      string `json:"name"`
+		Ecosystem string `json:"ecosystem"`
+	} `json:"package"`
+	Ranges []struct {
+		Type   string `json:"type"`
+		Events []struct {
+			Fixed string `json:"fixed"`
+		} `json:"events"`
+	} `json:"ranges"`
 }
 
 // osvSeverity is one entry of an OSV record's top-level severity[] array: a CVSS
@@ -299,13 +382,104 @@ type osvSeverity struct {
 // different severity vocabularies can apply their own mapping. A zero-value
 // Detail (failed or truncated fetch), or a record carrying neither source,
 // leaves SeverityLabel empty, which NormalizeSeverity resolves to "unknown"
-// (fail-closed), not "info".
+// (fail-closed), not "info". The fixed version depends on which package and
+// version the advisory was matched against, so it is resolved per package with
+// FixedInFor rather than stored once per advisory.
 type Detail struct {
 	ID            string
 	Summary       string
 	SeverityLabel string
-	FixedIn       string
 	AdvisoryURL   string
+	affected      []osvAffected
+}
+
+// newDetail builds the Detail for a fetched OSV record. It prefers
+// database_specific.severity and falls back to the top-level CVSS severity[]
+// vectors (the only source Go advisories carry) so their label is not left
+// empty → "unknown". severityFromCVSS returns "" when nothing parses, preserving
+// the fail-closed unknown path for records with neither source.
+func newDetail(id string, v osvVuln) Detail {
+	severity := v.DatabaseSpecific.Severity
+	if severity == "" {
+		severity = severityFromCVSS(v.Severity...)
+	}
+	return Detail{
+		ID:            id,
+		Summary:       v.Summary,
+		SeverityLabel: severity,
+		AdvisoryURL:   advisoryURL(v),
+		affected:      v.Affected,
+	}
+}
+
+// FixedInFor returns the version that fixes this advisory for pkg: the lowest
+// "fixed" event above pkg.Version among the record's affected entries for pkg's
+// own name and ecosystem. Entries for other packages, and fixes on older release
+// branches that are not above the installed version, are ignored so the advice
+// never names another package's version or a downgrade. It returns "" when the
+// record names no applicable fix. Version ordering is best-effort across
+// ecosystems (see compareVersions).
+func (d Detail) FixedInFor(pkg Package) string {
+	best := ""
+	for _, a := range d.affected {
+		if !affectsPackage(a, pkg) {
+			continue
+		}
+		for _, r := range a.Ranges {
+			if strings.EqualFold(r.Type, "GIT") {
+				continue // commit hashes, not release versions
+			}
+			for _, e := range r.Events {
+				if e.Fixed == "" {
+					continue
+				}
+				if pkg.Version != "" && compareVersions(e.Fixed, pkg.Version) <= 0 {
+					continue
+				}
+				if best == "" || compareVersions(e.Fixed, best) < 0 {
+					best = e.Fixed
+				}
+			}
+		}
+	}
+	return best
+}
+
+// affectsPackage reports whether an affected[] entry is about pkg. OSV
+// ecosystems may carry a release suffix ("Debian:11"), so only the part before
+// ":" is compared. PyPI names are compared in their PEP 503 normalized form.
+// An entry that names no package is treated as applying.
+func affectsPackage(a osvAffected, pkg Package) bool {
+	if a.Package.Name == "" {
+		return true
+	}
+	eco, _, _ := strings.Cut(a.Package.Ecosystem, ":")
+	if !strings.EqualFold(eco, pkg.Ecosystem) {
+		return false
+	}
+	if strings.EqualFold(pkg.Ecosystem, "PyPI") {
+		return normalizePyPIName(a.Package.Name) == normalizePyPIName(pkg.Name)
+	}
+	return a.Package.Name == pkg.Name
+}
+
+// normalizePyPIName applies PEP 503 name normalization: lowercase, with runs of
+// "-", "_" and "." collapsed to a single "-".
+func normalizePyPIName(name string) string {
+	var b strings.Builder
+	sep := false
+	for _, c := range strings.ToLower(name) {
+		if c == '-' || c == '_' || c == '.' {
+			sep = true
+			continue
+		}
+		if sep && b.Len() > 0 {
+			b.WriteByte('-')
+		}
+		sep = false
+		b.WriteRune(c)
+	}
+	return b.String()
 }
 
 // resolveVulns fetches details for each unique vulnerability id, maps it back to
@@ -324,7 +498,7 @@ func (s *Scanner) resolveVulns(ctx context.Context, pkgs []Package, idsByQuery [
 				Version:     pkgs[i].Version,
 				Ecosystem:   pkgs[i].Ecosystem,
 				Severity:    NormalizeSeverity(d.SeverityLabel),
-				FixedIn:     d.FixedIn,
+				FixedIn:     d.FixedInFor(pkgs[i]),
 				AdvisoryURL: d.AdvisoryURL,
 				Summary:     d.Summary,
 			})
@@ -383,22 +557,7 @@ func (s *Scanner) FetchDetails(ctx context.Context, idsByQuery [][]string) map[s
 				slots[i] = Detail{ID: id}
 				return
 			}
-			// Prefer database_specific.severity; fall back to the top-level CVSS
-			// severity[] vectors (the only source Go advisories carry) so their
-			// label is not left empty → "unknown". severityFromCVSS returns ""
-			// when nothing parses, preserving the fail-closed unknown path for
-			// records with neither source.
-			severity := v.DatabaseSpecific.Severity
-			if severity == "" {
-				severity = severityFromCVSS(v.Severity...)
-			}
-			slots[i] = Detail{
-				ID:            id,
-				Summary:       v.Summary,
-				SeverityLabel: severity,
-				FixedIn:       fixedVersion(v),
-				AdvisoryURL:   advisoryURL(v),
-			}
+			slots[i] = newDetail(id, v)
 		}(i, id)
 	}
 	wg.Wait()
@@ -410,9 +569,11 @@ func (s *Scanner) FetchDetails(ctx context.Context, idsByQuery [][]string) map[s
 	return details
 }
 
-// fetchVuln GETs a single /v1/vulns/{id} record.
+// fetchVuln GETs a single /v1/vulns/{id} record. The id comes from an OSV
+// response, so it is path-escaped: a "/", "?" or ".." in it cannot change the
+// request target.
 func (s *Scanner) fetchVuln(ctx context.Context, id string) (osvVuln, error) {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, s.baseURL()+"/v1/vulns/"+id, nil)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, s.baseURL()+"/v1/vulns/"+url.PathEscape(id), nil)
 	if err != nil {
 		return osvVuln{}, err
 	}
@@ -425,7 +586,7 @@ func (s *Scanner) fetchVuln(ctx context.Context, id string) (osvVuln, error) {
 		return osvVuln{}, fmt.Errorf("OSV vuln %s status %d", id, resp.StatusCode)
 	}
 	var v osvVuln
-	if err := json.NewDecoder(resp.Body).Decode(&v); err != nil {
+	if err := json.NewDecoder(io.LimitReader(resp.Body, maxVulnResponseBytes)).Decode(&v); err != nil {
 		return osvVuln{}, err
 	}
 	return v, nil
@@ -470,20 +631,6 @@ var severityOrder = map[string]int{
 // out by a threshold.
 func SeverityAtOrAbove(severity, threshold string) bool {
 	return severityOrder[severity] >= severityOrder[threshold]
-}
-
-// fixedVersion returns the first "fixed" event found across the affected ranges.
-func fixedVersion(v osvVuln) string {
-	for _, a := range v.Affected {
-		for _, r := range a.Ranges {
-			for _, e := range r.Events {
-				if e.Fixed != "" {
-					return e.Fixed
-				}
-			}
-		}
-	}
-	return ""
 }
 
 // advisoryURL returns the canonical advisory link, preferring a reference typed

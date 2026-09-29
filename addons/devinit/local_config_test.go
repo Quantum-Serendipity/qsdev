@@ -1,9 +1,12 @@
 package devinit
 
 import (
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
+	qsdevconfig "github.com/Quantum-Serendipity/qsdev/internal/config"
 	"github.com/Quantum-Serendipity/qsdev/pkg/types"
 )
 
@@ -126,5 +129,45 @@ func TestGenerateLocalConfigTemplate_DefaultVersions(t *testing.T) {
 	}
 	if !strings.Contains(s, "3.12") {
 		t.Error("template should include default python version example")
+	}
+}
+
+// The generated template must parse under the strict local-config decoder
+// both as written and with its example settings uncommented, so a developer
+// who enables an example never hits an unknown-key error.
+func TestGenerateLocalConfigTemplate_ParsesStrictly(t *testing.T) {
+	t.Parallel()
+	content := string(GenerateLocalConfigTemplate(types.WizardAnswers{
+		Languages:  []types.LanguageChoice{{Name: "go", Version: "1.24"}},
+		ClaudeCode: true,
+	}, types.DetectedProject{}))
+
+	start := strings.Index(content, "# extra_packages:")
+	if start < 0 {
+		t.Fatal("template has no extra_packages example")
+	}
+	var uncommented strings.Builder
+	for line := range strings.Lines(content[start:]) {
+		uncommented.WriteString(strings.TrimPrefix(strings.TrimPrefix(line, "#"), " "))
+	}
+
+	tests := []struct {
+		name    string
+		content string
+	}{
+		{"as written", content},
+		{"examples uncommented", uncommented.String()},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			path := filepath.Join(t.TempDir(), ".qsdev.local.yaml")
+			if err := os.WriteFile(path, []byte(tt.content), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := qsdevconfig.ParseLocalConfig(path); err != nil {
+				t.Fatalf("template does not parse strictly: %v\n%s", err, tt.content)
+			}
+		})
 	}
 }

@@ -34,17 +34,17 @@ security:
 	}
 
 	genState := types.GeneratedState{
-		LastRun:     time.Date(2026, 5, 14, 10, 0, 0, 0, time.UTC),
+		LastRun:      time.Date(2026, 5, 14, 10, 0, 0, 0, time.UTC),
 		QsdevVersion: "1.2.3",
 		Files: map[string]types.FileState{
-			"devenv.nix":   {Hash: "abc123"},
-			"devenv.yaml":  {Hash: "def456"},
-			".envrc":       {Hash: "ghi789"},
+			"devenv.nix":  {Hash: "abc123"},
+			"devenv.yaml": {Hash: "def456"},
+			".envrc":      {Hash: "ghi789"},
 		},
 		EnabledTools: map[string]bool{
-			"attach-guard":      true,
-			"agent-postmortem":  true,
-			"changelog":         false,
+			"attach-guard":     true,
+			"agent-postmortem": true,
+			"changelog":        false,
 		},
 	}
 	statePath := filepath.Join(devinitDir, ".qsdev-init-state.yaml")
@@ -89,8 +89,9 @@ languages:
 	if info.QsdevVersion != "1.2.3" {
 		t.Errorf("QsdevVersion = %q, want %q", info.QsdevVersion, "1.2.3")
 	}
-	if info.ConfigVersion != 1 {
-		t.Errorf("ConfigVersion = %d, want 1", info.ConfigVersion)
+	// The version 1 fixture is migrated to the current schema on load.
+	if info.ConfigVersion != types.ConfigVersionCurrent {
+		t.Errorf("ConfigVersion = %d, want %d", info.ConfigVersion, types.ConfigVersionCurrent)
 	}
 	if info.ManagedFileCount != 3 {
 		t.Errorf("ManagedFileCount = %d, want 3", info.ManagedFileCount)
@@ -173,7 +174,7 @@ languages:
 		t.Fatalf("creating .devinit dir: %v", err)
 	}
 	genState := types.GeneratedState{
-		LastRun:     time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC),
+		LastRun:      time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC),
 		QsdevVersion: "0.9.0",
 		Files: map[string]types.FileState{
 			"devenv.nix": {Hash: "aaa"},

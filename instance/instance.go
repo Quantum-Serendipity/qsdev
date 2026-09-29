@@ -1,18 +1,21 @@
 // Package instance is the entry point for building tools on the qsdev framework.
 // Downstream tools import this package and call its functions during initialization,
-// before cmd.Main() is invoked.
+// then call Main.
 //
 // Initialization order:
 //  1. SetBranding — configure app name, env vars, file paths, GitHub coordinates
 //  2. Addon Configure() calls — devenv.Configure(), claudecode.Configure(), etc.
 //  3. AddCommands / AddCommandBuilders — register custom CLI commands
-//  4. cmd.Main() — starts the application
+//  4. Main — installs the default runtime (DefaultRuntime) and starts the
+//     application (use it rather than gdev's cmd.Main)
 //
-// All customization must happen before cmd.Main() is called. The gdev lifecycle
+// All customization must happen before Main is called. The gdev lifecycle
 // enforces this: calls to SetBranding or AddEcosystemModules after lockdown will panic.
 package instance
 
 import (
+	"sync/atomic"
+
 	"github.com/spf13/cobra"
 
 	gdevinstance "fastcat.org/go/gdev/instance"
@@ -22,7 +25,7 @@ import (
 )
 
 // SetBranding configures all brand-specific naming for this *dev tool.
-// Must be called before any addon Configure() or cmd.Main().
+// Must be called before any addon Configure() or Main().
 func SetBranding(cfg branding.Config) {
 	gdevinstance.CheckCanCustomize()
 	branding.Set(cfg)
@@ -36,7 +39,7 @@ func EcosystemRegistry() *ecosystem.Registry {
 }
 
 // AddEcosystemModules registers one or more ecosystem modules into the
-// default registry. Must be called before cmd.Main().
+// default registry. Must be called before Main().
 func AddEcosystemModules(modules ...ecosystem.EcosystemModule) {
 	gdevinstance.CheckCanCustomize()
 	for _, m := range modules {
@@ -44,9 +47,16 @@ func AddEcosystemModules(modules ...ecosystem.EcosystemModule) {
 	}
 }
 
-// SetVersionOverride sets a custom version and commit for the binary.
+// versionOverridden records that the tool set its own version with
+// SetVersionOverride, which then takes precedence over the version stamped
+// into VersionPackage (see ApplyBuildVersion).
+var versionOverridden atomic.Bool
+
+// SetVersionOverride sets a custom version and commit for the binary. It
+// takes precedence over the version stamped into VersionPackage.
 func SetVersionOverride(version, commit string) {
 	gdevinstance.SetVersionOverride(version, commit)
+	versionOverridden.Store(true)
 }
 
 // AddCommands adds cobra commands to the root command tree.

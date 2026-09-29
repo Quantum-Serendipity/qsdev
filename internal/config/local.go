@@ -1,22 +1,21 @@
 package config
 
 import (
+	"bytes"
+	"errors"
 	"fmt"
+	"io"
 	"os"
-	"path/filepath"
-	"strings"
 
 	"gopkg.in/yaml.v3"
 
-	"github.com/Quantum-Serendipity/qsdev/pkg/branding"
-	"github.com/Quantum-Serendipity/qsdev/pkg/fileutil"
 	"github.com/Quantum-Serendipity/qsdev/pkg/types"
 )
 
 // LocalConfig represents the .qsdev.local.yaml file, which contains
 // per-developer overrides. It omits project-level fields (Version,
-// QsdevVersion, Profile, Client, Infrastructure) that only belong in
-// the shared .qsdev.yaml.
+// QsdevVersion, Profile, InfraProfile, Client, Infrastructure) that only
+// belong in the shared .qsdev.yaml.
 type LocalConfig struct {
 	Languages     []types.LanguageConfig `yaml:"languages,omitempty"`
 	Services      []types.ServiceConfig  `yaml:"services,omitempty"`
@@ -38,83 +37,17 @@ func ParseLocalConfig(path string) (*LocalConfig, error) {
 		return nil, fmt.Errorf("reading local config %s: %w", path, err)
 	}
 
+	// Strict (known-field) decode: the local file is the highest-precedence
+	// layer, so a misspelled key must surface as an error rather than silently
+	// dropping the developer's intended override (e.g. a local tool deny).
 	var local LocalConfig
-	if err := yaml.Unmarshal(data, &local); err != nil {
+	dec := yaml.NewDecoder(bytes.NewReader(data))
+	dec.KnownFields(true)
+	if err := dec.Decode(&local); err != nil && !errors.Is(err, io.EOF) {
+		// io.EOF means the file is empty or comments-only (the generated
+		// template), which is a valid empty override.
 		return nil, fmt.Errorf("parsing local config %s: %w", path, err)
 	}
 
 	return &local, nil
-}
-
-// localToQsdevConfig converts a LocalConfig to a QsdevConfig for use in the
-// merge chain. Fields that exist only in QsdevConfig (Version, QsdevVersion,
-// Profile, Client, Infrastructure) are left at zero values.
-func localToQsdevConfig(local *LocalConfig) *types.QsdevConfig {
-	if local == nil {
-		return nil
-	}
-
-	return &types.QsdevConfig{
-		Languages:  local.Languages,
-		Services:   local.Services,
-		Security:   local.Security,
-		Tools:      local.Tools,
-		ClaudeCode: local.ClaudeCode,
-	}
-}
-
-// GenerateLocalTemplate writes a .qsdev.local.yaml template file with
-// commented-out examples. It only creates the file if it doesn't already
-// exist (idempotent). The template content is context-sensitive: it includes
-// language version overrides if the resolved config contains languages.
-func GenerateLocalTemplate(projectRoot string, resolved *types.QsdevConfig) error {
-	b := branding.Get()
-	path := filepath.Join(projectRoot, b.LocalConfig)
-
-	// Don't overwrite an existing file.
-	if _, err := os.Stat(path); err == nil {
-		return nil
-	}
-
-	var sb strings.Builder
-	sb.WriteString("# " + b.LocalConfig + " — Local developer overrides (gitignored)\n")
-	sb.WriteString("# These settings override " + b.ConfigFile + " but cannot lower security settings.\n")
-	sb.WriteString("#\n")
-	sb.WriteString("# extra_packages:\n")
-	sb.WriteString("#   - neovim\n")
-	sb.WriteString("#   - lazygit\n")
-	sb.WriteString("#\n")
-
-	// Include language version overrides if resolved config has languages.
-	if resolved != nil && len(resolved.Languages) > 0 {
-		sb.WriteString("# languages:\n")
-		for _, lang := range resolved.Languages {
-			version := lang.Version
-			if version == "" {
-				version = "latest"
-			}
-			fmt.Fprintf(&sb, "#   - name: %s\n", lang.Name)
-			fmt.Fprintf(&sb, "#     version: %q\n", version)
-		}
-		sb.WriteString("#\n")
-	}
-
-	// Include Claude Code section if enabled.
-	if resolved != nil && resolved.ClaudeCode.Enabled != nil && *resolved.ClaudeCode.Enabled {
-		sb.WriteString("# claude_code:\n")
-		sb.WriteString("#   permission_level: permissive\n")
-		sb.WriteString("#\n")
-	}
-
-	sb.WriteString("# tools:\n")
-	sb.WriteString("#   enabled:\n")
-	sb.WriteString("#     - changelog\n")
-
-	return fileutil.WriteFileAtomic(path, []byte(sb.String()), fileutil.ModeReadWrite)
-}
-
-// EnsureGitignoreEntry ensures that entry appears in the .gitignore file at
-// projectRoot. It delegates to the canonical implementation in pkg/fileutil.
-func EnsureGitignoreEntry(projectRoot, entry string) error {
-	return fileutil.EnsureGitignoreEntry(projectRoot, entry)
 }

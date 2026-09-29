@@ -9,7 +9,6 @@ import (
 	"github.com/spf13/cobra"
 
 	"fastcat.org/go/gdev/addons/bootstrap"
-	"fastcat.org/go/gdev/cmd"
 
 	"github.com/Quantum-Serendipity/qsdev/addons/claudecode"
 	"github.com/Quantum-Serendipity/qsdev/addons/devenv"
@@ -21,18 +20,18 @@ import (
 
 func main() {
 	instance.SetBranding(branding.Config{
-		AppName:      "acmedev",
-		ConfigFile:   ".acmedev.yaml",
-		LocalConfig:  ".acmedev.local.yaml",
-		StateDir:     ".acmedev",
-		EnvLogVar:    "ACMEDEV_LOG",
-		EnvLogDirVar: "ACMEDEV_LOG_DIR",
-		EnvNoUpdate:  "ACMEDEV_NO_UPDATE_CHECK",
-		EnvPrefix:    "ACMEDEV_",
+		AppName:       "acmedev",
+		ConfigFile:    ".acmedev.yaml",
+		LocalConfig:   ".acmedev.local.yaml",
+		StateDir:      ".acmedev",
+		EnvLogVar:     "ACMEDEV_LOG",
+		EnvLogDirVar:  "ACMEDEV_LOG_DIR",
+		EnvNoUpdate:   "ACMEDEV_NO_UPDATE_CHECK",
+		EnvPrefix:     "ACMEDEV_",
 		LogFilePrefix: "acmedev-",
-		TempPrefix:   ".acmedev-tmp-",
-		GitHubOwner:  "acme-corp",
-		GitHubRepo:   "acmedev",
+		TempPrefix:    ".acmedev-tmp-",
+		GitHubOwner:   "acme-corp",
+		GitHubRepo:    "acmedev",
 	})
 
 	bootstrap.Configure(
@@ -56,7 +55,10 @@ func main() {
 
 	instance.AddCommands(acmeHelloCmd())
 
-	cmd.Main()
+	// Main installs the same runtime as qsdev (MCP framework adapters,
+	// external-log providers, build version, project defaults, the self-update,
+	// logs and report commands, and redacting session logging) and runs.
+	instance.Main()
 }
 
 func acmeHelloCmd() *cobra.Command {

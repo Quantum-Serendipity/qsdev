@@ -94,8 +94,38 @@ type ToolRegistration struct {
 	Category string
 	// Tier is an ordering/grouping hint; lower tiers are considered more core.
 	Tier int
+	// Annotations are the MCP behavioral hints advertised in tools/list. The
+	// zero value advertises none, which clients read as the conservative MCP
+	// defaults (not read-only, destructive, open-world).
+	Annotations ToolAnnotations
 	// Handler executes the tool.
 	Handler ToolHandler
+}
+
+// ToolAnnotations are optional MCP behavioral hints a tool advertises so a
+// client can tailor its approval UX. A nil hint is omitted from tools/list,
+// which the MCP specification defines as the conservative default: not
+// read-only, destructive, not idempotent, and open-world.
+type ToolAnnotations struct {
+	// ReadOnly reports that the tool does not modify its environment.
+	ReadOnly *bool
+	// Destructive reports that the tool may perform destructive updates. It is
+	// meaningful only when ReadOnly is false.
+	Destructive *bool
+	// Idempotent reports that repeated calls with the same arguments have no
+	// additional effect.
+	Idempotent *bool
+	// OpenWorld reports that the tool interacts with external entities (the
+	// network, a remote API) rather than a closed local domain.
+	OpenWorld *bool
+}
+
+// ReadOnlyAnnotations returns the hints for a tool that only reads state:
+// read-only and idempotent, and open-world only when it consults an external
+// service.
+func ReadOnlyAnnotations(openWorld bool) ToolAnnotations {
+	readOnly, idempotent := true, true
+	return ToolAnnotations{ReadOnly: &readOnly, Idempotent: &idempotent, OpenWorld: &openWorld}
 }
 
 // ResourceRegistration declares a single resource exposed by the server.

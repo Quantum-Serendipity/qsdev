@@ -6,7 +6,9 @@ import "context"
 
 // PackageManager abstracts system package manager operations.
 type PackageManager interface {
-	// Name returns the package manager identifier (e.g. "apt", "brew", "nix").
+	// Name returns the canonical package manager identifier (e.g. "apt",
+	// "brew", "nix"). Package-name lookups (PackageFor, ResolvePackageName)
+	// are keyed by this name.
 	Name() string
 
 	// Available reports whether this package manager is installed on the system.
@@ -16,6 +18,14 @@ type PackageManager interface {
 	// The caller is responsible for wrapping commands with sudo; implementations
 	// must NOT prepend sudo themselves.
 	NeedsElevation() bool
+
+	// InstallArgs returns the binary and arguments that Install runs for the
+	// given packages, without any sudo prefix. It is the single source of the
+	// install command line: callers that must run the install themselves (for
+	// example under sudo) or display it use this rather than rebuilding it.
+	// Managers that install one package per invocation (winget, nix) run it
+	// once per package, so callers describing an install pass one package.
+	InstallArgs(packages ...string) (bin string, args []string)
 
 	// Install installs one or more packages.
 	Install(ctx context.Context, packages ...string) error
@@ -28,7 +38,4 @@ type CommandRunner interface {
 
 	// Run executes a command, inheriting stdout/stderr.
 	Run(ctx context.Context, name string, args ...string) error
-
-	// Output executes a command and returns its combined output.
-	Output(ctx context.Context, name string, args ...string) ([]byte, error)
 }

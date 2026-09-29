@@ -3,7 +3,9 @@ package logging
 import (
 	"crypto/rand"
 	"encoding/hex"
+	"errors"
 	"fmt"
+	"io/fs"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -25,13 +27,28 @@ type Session struct {
 	logFile   *os.File
 }
 
+// SessionAttrKey is the attribute key that tags every record with its session
+// ID. It must not be a name secrets.IsSensitiveName matches (as "session" and
+// "session_id" do), or the RedactingHandler would replace every ID with the
+// redaction marker and `logs list` / `logs show` could no longer tell sessions
+// apart.
+const SessionAttrKey = "run_id"
+
+// modeDirPrivate is the permission for log directories: session logs can hold
+// diagnostic detail about the user's environment, so only the owner may list
+// or read them.
+const modeDirPrivate os.FileMode = 0o700
+
 // Config controls logger initialization.
 type Config struct {
 	Level         slog.Level
 	ProjectRoot   string
 	ProjectScoped bool
-	MaxFiles      int
-	StderrToo     bool
+	// Automated routes the session to the AutomatedLogSubdir of its tier, for
+	// commands invoked by tooling rather than the user (see ClassAutomated).
+	Automated bool
+	MaxFiles  int
+	StderrToo bool
 }
 
 // Init initializes the logging system and returns a Session.
@@ -50,8 +67,19 @@ func Init(cfg Config) (*Session, error) {
 	}
 
 	logDir := ResolveLogDir(cfg.ProjectRoot, cfg.ProjectScoped)
-	if err := os.MkdirAll(logDir, fileutil.ModeDirDefault); err != nil {
-		return nil, fmt.Errorf("creating log directory %s: %w", logDir, err)
+	if logDir == "" {
+		return nil, fmt.Errorf("resolving log directory: no home directory and no %s override", branding.Get().EnvLogDirVar)
+	}
+	if err := ensurePrivateDir(logDir); err != nil {
+		return nil, err
+	}
+	if cfg.Automated {
+		// Create the tier's log directory first (above) so it is private too,
+		// rather than a default-mode parent of the automated sub-directory.
+		logDir = filepath.Join(logDir, AutomatedLogSubdir)
+		if err := ensurePrivateDir(logDir); err != nil {
+			return nil, err
+		}
 	}
 
 	sessionID := generateSessionID()
@@ -63,7 +91,7 @@ func Init(cfg Config) (*Session, error) {
 	)
 
 	logPath := filepath.Join(logDir, filename)
-	f, err := os.OpenFile(logPath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, fileutil.ModeReadWrite)
+	f, err := os.OpenFile(logPath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, fileutil.ModePrivate)
 	if err != nil {
 		return nil, fmt.Errorf("opening log file %s: %w", logPath, err)
 	}
@@ -87,7 +115,7 @@ func Init(cfg Config) (*Session, error) {
 		handler = redactedFile
 	}
 
-	logger := slog.New(handler).With("session", sessionID)
+	logger := slog.New(handler).With(SessionAttrKey, sessionID)
 	slog.SetDefault(logger)
 
 	writeOpeningRecord(session)
@@ -123,6 +151,19 @@ func LevelFromEnv() slog.Level {
 	default:
 		return slog.LevelInfo
 	}
+}
+
+// ensurePrivateDir creates dir with owner-only permissions. Missing parents
+// (e.g. the project's .qsdev/, which other tooling shares) get the default
+// directory mode; only the log directory itself is made private.
+func ensurePrivateDir(dir string) error {
+	if err := os.MkdirAll(filepath.Dir(dir), fileutil.ModeDirDefault); err != nil {
+		return fmt.Errorf("creating log directory parent %s: %w", filepath.Dir(dir), err)
+	}
+	if err := os.Mkdir(dir, modeDirPrivate); err != nil && !errors.Is(err, fs.ErrExist) {
+		return fmt.Errorf("creating log directory %s: %w", dir, err)
+	}
+	return nil
 }
 
 func isDisabled() bool {

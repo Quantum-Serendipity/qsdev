@@ -556,9 +556,12 @@ func TestWriteFiles_SectionMarkerNilFunc(t *testing.T) {
 		t.Errorf("Updated = %d, want 1", result.Updated)
 	}
 
+	// With no SectionMergeFunc the pipeline still merges (via
+	// merge.SectionMarkers): user content outside the markers survives.
 	got, _ := os.ReadFile(filepath.Join(dir, "FILE.md"))
-	if string(got) != newContent {
-		t.Error("with nil SectionMergeFunc, file should be fully overwritten")
+	want := "<!-- BEGIN GENERATED SECTION -->\nnew\n<!-- END GENERATED SECTION -->\nUser stuff\n"
+	if string(got) != want {
+		t.Errorf("with nil SectionMergeFunc, got %q, want default section merge %q", got, want)
 	}
 }
 

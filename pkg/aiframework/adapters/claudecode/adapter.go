@@ -1,13 +1,17 @@
 // Package claudecode is the P19 reference adapter that wires the Claude Code
 // framework into the framework-agnostic aiframework interface layer.
 //
-// It proves the interface contracts are implementable for a real framework by
-// delegating every operation to the concrete generators in
-// addons/claudecode (GenerateSettings, GenerateMcpJson, CalculateContextBudget,
-// and the detection/permission logic). It performs no generation of its own:
-// it only translates framework-agnostic policy input into the inputs those
-// real generators expect, and adapts their output back into the aiframework
-// artifact types.
+// It is the single aiframework implementation for Claude Code: detection,
+// config rendering and policy translation live here and build on the addon's
+// exported generators (GenerateSettings, GenerateMcpJson,
+// CalculateContextBudget), so hook invariants, permission rules, sandbox and
+// MCP servers have exactly one definition.
+//
+// The adapter implements only the interfaces Claude Code genuinely supports:
+// DetectionAdapter, ConfigRenderer and ToolAdapter. It deliberately does not
+// implement HookDeployer, RegistryClient, MetricsProvider or StateBackend:
+// a stub that reported success (a permanently healthy metrics report, a no-op
+// undeploy) would be trusted by any caller that wired it in.
 //
 // The pkg/aiframework -> addons/claudecode import direction is deliberate and
 // lint-legal: depguard's isolation rules are scoped to addon<->addon imports
@@ -18,7 +22,6 @@ import (
 	ccaddon "github.com/Quantum-Serendipity/qsdev/addons/claudecode"
 	"github.com/Quantum-Serendipity/qsdev/pkg/aiframework"
 	"github.com/Quantum-Serendipity/qsdev/pkg/ecosystem"
-	"github.com/Quantum-Serendipity/qsdev/pkg/types"
 )
 
 // Adapter implements the three P19 interfaces that a config-generating
@@ -28,18 +31,13 @@ import (
 type Adapter struct {
 	cfg      ccaddon.Config
 	registry *ecosystem.Registry
-	addon    *ccaddon.Adapter
 }
 
 // New returns a reference Adapter wired to the given addon configuration and
 // ecosystem registry. The registry may be nil; the underlying generators
 // tolerate a nil registry (no ecosystem-specific deny rules are contributed).
 func New(cfg ccaddon.Config, registry *ecosystem.Registry) *Adapter {
-	return &Adapter{
-		cfg:      cfg,
-		registry: registry,
-		addon:    ccaddon.New(cfg, registry),
-	}
+	return &Adapter{cfg: cfg, registry: registry}
 }
 
 var (
@@ -52,35 +50,3 @@ var (
 // single method shared by the DetectionAdapter, ToolAdapter, and
 // ConfigRenderer interfaces.
 func (a *Adapter) FrameworkID() aiframework.FrameworkID { return aiframework.ClaudeCode }
-
-// rulePatterns extracts the non-empty Pattern strings from permission rules.
-func rulePatterns(rules []aiframework.PermissionRule) []string {
-	out := make([]string, 0, len(rules))
-	for _, r := range rules {
-		if r.Pattern != "" {
-			out = append(out, r.Pattern)
-		}
-	}
-	return out
-}
-
-// hookSpecsToChoices maps framework-agnostic hook specs onto the addon's
-// HookChoices by matching each spec's Command against the known hook logic IDs.
-func hookSpecsToChoices(specs []aiframework.HookSpec) types.HookChoices {
-	var c types.HookChoices
-	for _, s := range specs {
-		switch aiframework.HookLogicID(s.Command) {
-		case aiframework.LogicPackageGuard:
-			c.SafetyBlock = true
-		case aiframework.LogicCredentialScan:
-			c.CredentialScan = true
-		case aiframework.LogicDestructiveBlock:
-			c.DestructivePrevention = true
-		case aiframework.LogicFileBoundary:
-			c.FileBoundary = true
-		case aiframework.LogicToolGates:
-			c.ToolGates = true
-		}
-	}
-	return c
-}

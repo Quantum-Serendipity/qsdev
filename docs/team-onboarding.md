@@ -41,8 +41,14 @@ Flags explicitly set on the command line always take precedence over profile def
 | `startup-github` | GitHub-native; GitHub Packages, OSV + Socket scanning, Dependabot |
 | `enterprise` | Regulated environments; Artifactory, Snyk + Socket scanning, Renovate with 7-day age gate, Cosign signing |
 
+An infrastructure profile needs your organization's real endpoints; qsdev
+refuses to apply one without them (see
+[Infrastructure settings](configuration-reference.md#infrastructure-settings)):
+
 ```bash
-qsdev init --profile go-web --infra-profile enterprise --yes
+qsdev init --profile go-web --infra-profile enterprise \
+  --registry-proxy https://repo.corp.internal/artifactory \
+  --nix-cache corp --nix-cache-public-key "corp.cachix.org-1:<base64 key>" --yes
 ```
 
 ### Compliance Levels
@@ -75,8 +81,8 @@ Package installs are hook-gated (the user is asked for confirmation), not blocke
 | Preset | Allow | Deny | Ask | Notes |
 |--------|-------|------|-----|-------|
 | `minimal` | `Read(*)`, basic build/test commands | All base deny rules + ecosystem-specific | `nix flake update` | Read-only by default; every write requires approval |
-| `standard` | `Read(*)`, `Edit(*)`, `Write(*)`, `Bash(git *)`, build/test/lint, Nix dev commands | All base deny rules + ecosystem-specific | `nix flake update`, `pip install -r`, `pip install -e .` | Recommended for most teams |
-| `permissive` | Everything in standard + `Bash(make *)`, `Bash(docker *)` | All base deny rules + ecosystem-specific | Same as standard | For teams with Docker/Make workflows |
+| `standard` | `Read(*)`, `Edit(*)`, `Write(*)`, read-only and commit `git` subcommands (never `git *`), build/test/lint, Nix dev shells | All base deny rules + ecosystem-specific | `nix flake update`, `pip install -r`, `pip install -e .` | Recommended for most teams |
+| `permissive` | Everything in standard + `Bash(make *)` and docker/podman build, ps and images (never `docker *`: daemon access is root-equivalent) | All base deny rules + ecosystem-specific | Same as standard | For teams with Docker/Make workflows |
 | `supply-chain-only` | Minimal | All base + ecosystem deny rules | (none) | Supply chain defense only; no dev tooling permissions |
 | `custom` | Only `ExtraAllowPatterns` from config | All base + ecosystem + `ExtraDenyPatterns` | (none) | Full manual control |
 
@@ -158,12 +164,12 @@ Hook presets control Claude Code runtime behavior:
 
 | Hook | Effect |
 |------|--------|
-| `safety-block` | Installs `package-guard.py` as a PreToolUse hook; intercepts package install commands in real-time |
+| `safety-block` | Installs `package-guard.py` as a PreToolUse hook; intercepts package install commands sent through Bash, PowerShell or Monitor in real-time |
 | `credential-scan` | Scans Write/Edit operations for credentials before they reach disk |
-| `destructive-prevention` | Blocks destructive Bash commands (rm -rf, git push --force, etc.) |
-| `file-boundary` | Prevents Write/Edit/Read operations outside the project tree |
-| `tool-gates` | Enforces per-tool approval policies on all tool invocations |
-| `soc2-audit` | Logs session start/end, tool invocations, and checkpoints for SOC 2 compliance (4-event audit trail with monthly rotation) |
+| `destructive-prevention` | Blocks destructive shell commands sent through Bash, PowerShell or Monitor (rm -rf, git push --force, etc.) |
+| `file-boundary` | Prevents Write/Edit/Read/Grep/Glob operations outside the project tree (reads of dependency caches such as the Go module cache and /nix/store, and of `.qsdev.yaml` `hooks.file_boundary.extra_read_paths`, are allowed). Shell commands are out of its scope; use the sandbox to confine them |
+| `tool-gates` | Blocks the tools listed in `.qsdev.yaml` `hooks.tool_gates.denied`, and every tool outside `hooks.tool_gates.allowed` when that list is set, on all tool invocations. With neither list set it has no policy and allows every tool; `qsdev claude hooks list` and `qsdev check` report it as "no policy" |
+| `soc2-audit` | Logs session start/end (with the end reason), tool invocations, failed and denied tool calls, and checkpoints for SOC 2 compliance (metadata-only audit trail with monthly rotation) |
 | `auto-format` | Runs formatters after file writes |
 | `pre-commit` | Runs pre-commit checks before git operations |
 | `audit-log` | Logs all tool invocations for compliance auditing (simpler alternative to soc2-audit) |
@@ -187,12 +193,11 @@ MCP servers are configured by default or activated based on project detection:
 | `context7` | Library documentation lookup | Default |
 | `github` | GitHub API integration | Default |
 | `socket` | Package security analysis | Default |
-| `semble` | Semantic code search | Default |
+| `semble` | Semantic code search | Opt-in (`--agent-semble` or `qsdev enable semble`) |
 | `agent-postmortem` | Session analysis and failure patterns | Default |
 | `version-sentinel` | Dependency version monitoring | Default |
 | `local-docs-devdocs` | Offline DevDocs API references | On when detected |
 | `local-docs-zim` | Offline Stack Exchange via ZIM | Opt-in |
-| `man-pages` | Local man page documentation | Opt-in |
 | `mcp-nixos` | NixOS packages and options | Opt-in |
 
 These are included automatically during `qsdev init`. No additional flags are needed.
@@ -200,11 +205,15 @@ These are included automatically during `qsdev init`. No additional flags are ne
 Use `qsdev mcp grade` to check compliance levels and `qsdev mcp health` to verify connectivity:
 
 ```bash
-qsdev mcp grade                # Show compliance grades for all servers
+qsdev mcp grade                # Grade the servers configured in .mcp.json
+qsdev mcp grade --all          # Also grade registry servers not configured
 qsdev mcp grade context7       # Grade a specific server
-qsdev mcp install <name>       # Install a server from the registry
+qsdev mcp install <name>       # Install a server's pinned release; .mcp.json then runs the binary
+qsdev mcp update --all         # After cloning: install the pinned releases the project state records
 qsdev mcp health               # Health check all configured servers
 ```
+
+`qsdev devenv doctor` also lists the configured servers under **MCP Servers**. It checks each `.mcp.json` entry without starting the server: the command is on `PATH`, a remote URL uses `https://`, and the environment variables the server needs are set. See [Layer 13](security-architecture.md#layer-13-package-and-mcp-risk-scoring).
 
 ## Managing Security Policies
 
@@ -222,27 +231,27 @@ qsdev policy check --audit-level high  # Fail only on high+ severity
 
 ### Session Bypass
 
-Some rules support session-level bypass for temporary exceptions:
+Some rules support a bypass for temporary exceptions. A bypass is bound to one Claude Code session in one project and expires; the block message names the session ID:
 
 ```bash
-qsdev session allow RULE-001 RULE-002   # Bypass specific rules
+qsdev session allow RULE-001 RULE-002 --session <claude-session-id>   # Bypass specific rules
 qsdev session list                       # Show active bypasses
 qsdev session clear                      # Remove all bypasses
 ```
 
-Rules with `bypass_tier: enforce_always` (all 18 self-protection rules) cannot be bypassed. Rules with `bypass_tier: session` require per-session approval. Rules with `bypass_tier: command` can be bypassed per-invocation.
+Rules with `bypass_tier: enforce_always` (all 18 self-protection rules) cannot be bypassed. Rules with `bypass_tier: session` are lifted for the named session until the grant expires (default 8h). Rules with `bypass_tier: command` get a one-shot token that the next matching tool call spends.
 
 ## Cloud Ecosystem Coverage
 
-When AWS, GCP, or Azure project files are detected (CDK, SAM, Terraform providers, CLI config files, etc.), qsdev generates cloud-specific security configuration with 3 layers of credential isolation:
+When AWS, GCP, or Azure project files are detected (CDK, SAM, Terraform providers, CLI config files, etc.), qsdev generates cloud-specific security configuration with 3 layers of credential protection:
 
-1. **Environment separation** — Cloud credential variables are unset in the devenv shell, preventing ambient credential access across projects.
+1. **Environment separation** — Cloud credential variables (`AWS_SECRET_ACCESS_KEY`, `AZURE_CLIENT_SECRET`, ...) are unset in the devenv shell, and devenv.nix documents per-project variables that select a default account. The CLIs still share their logins under the home directory. Set `cloud.isolate_cli_config: true` in `.qsdev.yaml` to give the Azure and Google Cloud CLIs a per-project configuration directory (see [Cloud CLI configuration isolation](configuration-reference.md#cloud-cli-configuration-isolation)).
 2. **Credential file masking** — Read-deny rules block agent access to `~/.aws/credentials`, `~/.config/gcloud/`, and `~/.azure/`.
 3. **Agent deny rules** — Authentication and credential modification commands (`aws configure`, `gcloud auth login`, `az login`) are denied.
 
 Cloud CLIs remain available for read-only operations like listing resources or describing infrastructure.
 
-`qsdev devenv doctor` includes a CloudProviders section verifying CLI availability and isolation status for each detected provider.
+`qsdev devenv doctor` and `qsdev check` verify the three layers for each configured provider without running a cloud CLI. A missing credential masking path or deny rule fails `qsdev check` at high severity; run `qsdev init --update` to restore it. A per-project variable (`AWS_PROFILE`, `CLOUDSDK_ACTIVE_CONFIG_NAME`, `ARM_SUBSCRIPTION_ID`) that is not declared in `devenv.nix` or `devenv.local.nix`, or still holds a placeholder, is reported as a warning. Doctor's **Ecosystem Checks** section lists each provider's login command (for example `az account show`) for you to run; doctor does not run it. See [Layer 11: Cloud Credential Isolation](security-architecture.md#layer-11-cloud-credential-isolation).
 
 ## Available Services
 
@@ -279,7 +288,7 @@ qsdev docs status        # Show installed documentation sets
 qsdev docs enable go     # Enable a documentation set
 ```
 
-Downloaded documentation is served through MCP servers (local-docs-devdocs, local-docs-zim) and routed by the lookup-docs skill, which queries 5 sources in priority order: local DevDocs, Stack Exchange ZIM, man pages, mcp-nixos, Context7 (web fallback).
+Downloaded documentation is served through MCP servers (local-docs-devdocs, local-docs-zim) and routed by the lookup-docs skill, which queries 4 sources in priority order: local DevDocs, Stack Exchange ZIM, mcp-nixos, Context7 (web fallback).
 
 ## Rolling Out to a Team
 
@@ -289,7 +298,9 @@ Pick a project-type profile and infrastructure profile. Run on a sample project:
 
 ```bash
 cd sample-project
-qsdev init --profile go-web --infra-profile consulting-default --dry-run
+qsdev init --profile go-web --infra-profile consulting-default \
+  --registry-proxy https://nexus.corp.internal \
+  --nix-cache corp --nix-cache-public-key "corp.cachix.org-1:<base64 key>" --dry-run
 ```
 
 Review the `--dry-run` output to verify the generated files match expectations.
@@ -299,7 +310,9 @@ Review the `--dry-run` output to verify the generated files match expectations.
 Run the init without `--dry-run` and commit all generated files:
 
 ```bash
-qsdev init --profile go-web --infra-profile consulting-default --yes
+qsdev init --profile go-web --infra-profile consulting-default \
+  --registry-proxy https://nexus.corp.internal \
+  --nix-cache corp --nix-cache-public-key "corp.cachix.org-1:<base64 key>" --yes
 git add -A
 git commit -m "chore: add qsdev security-hardened devenv configuration"
 ```
@@ -327,7 +340,7 @@ qsdev update --configs-only  # Regenerate configs only
 qsdev update --deps-only     # Update devenv inputs only
 ```
 
-The update workflow respects user modifications via three-way merge. Files you have customized are merged intelligently rather than overwritten.
+The binary stage verifies the release's Sigstore signature in-process before installing it and refuses an unsigned release unless you pass `--no-strict` (see [Self-Update Verification](security-architecture.md#self-update-verification)). The update workflow respects user modifications via three-way merge. Files you have customized are merged intelligently rather than overwritten.
 
 ### Step 5: Enforce in CI
 
@@ -338,7 +351,11 @@ Add `qsdev check` to your CI pipeline to enforce configuration integrity and sec
 qsdev check
 ```
 
-`qsdev check` validates that security controls are present, deny rules are intact, and no configuration has drifted. It exits non-zero on violations and supports JSON, SARIF, and JUnit output formats for integration with CI dashboards.
+`qsdev check` validates that security controls are present, deny rules are intact, no configuration has drifted, and the tools on `PATH` are new enough to honour the generated settings (for example, an npm project fails when `npm` is older than 11.10.0, which ignores the `.npmrc` `min-release-age` gate). Run it inside the devenv shell so those probes see the project's tools. It exits non-zero on violations and supports JSON, SARIF, and JUnit output formats for integration with CI dashboards.
+
+To enforce team-specific requirements (a score floor, a tool that must be enabled, no critical vulnerabilities), commit a [`.qsdev-policy.yaml`](configuration-reference.md#qsdev-policyyaml). Both `qsdev check` and `qsdev status` evaluate it; add `--scan` when a requirement reads `dependencies.totals`, since those fail without a fresh scan.
+
+The generation state under `.devinit/` is gitignored, so on a CI checkout `qsdev check` verifies the machine-owned generated files (hooks, rules, skills, `package-guard.py`, workflows) against the committed `.qsdev-generated.sha256` manifest instead. An edited or deleted file fails the run, and so does a missing or empty manifest when `.qsdev.yaml` is present. `qsdev init`, `init --update`, `enable`, `disable` and `repair` rewrite the manifest; commit it with the files it describes.
 
 ### Step 6: Monitor Security Posture
 
@@ -347,6 +364,11 @@ Use `qsdev status` to see each project's security score and grade:
 ```bash
 qsdev status
 ```
+
+Add `--scan` to check the dependencies against OSV. Without it their health is
+unknown: the dependency sub-score reads `unscanned`, the grade is computed from
+defense and configuration alone, and baseline conformance reads `UNKNOWN`
+rather than `PASS`, because `no-critical-vulns` cannot be evaluated.
 
 For multi-project visibility, `qsdev team-report` aggregates posture across repositories.
 
@@ -357,6 +379,10 @@ For organizations with many repositories, define your standard configuration in 
 ```yaml
 profile: go-web
 infra_profile: consulting-default
+infrastructure:
+  registry_proxy: https://nexus.corp.internal
+  nix_cache: corp
+  nix_cache_public_key: "corp.cachix.org-1:<base64 key>"
 claude:
   permissions: standard
   skills:
@@ -401,5 +427,5 @@ This ensures consistent security policies, tooling versions, and Claude Code per
 | `qsdev docs status` | Show installed documentation |
 | `qsdev policy check` | Evaluate security policy posture |
 | `qsdev policy list` | List security policy rules |
-| `qsdev session allow <ids>` | Enable session bypass for rules |
-| `qsdev session clear` | Remove session bypass overrides |
+| `qsdev session allow <ids> --session <id>` | Bypass rules for one Claude Code session in this project |
+| `qsdev session clear` | Remove session bypass grants |

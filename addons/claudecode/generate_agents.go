@@ -47,21 +47,32 @@ func deployAgents(answers types.WizardAnswers) ([]types.GeneratedFile, error) {
 			continue
 		}
 
-		content, err := templateFS.ReadFile("templates/agents/" + a.Name + ".md")
+		f, err := consultingAgentFile(a.Name)
 		if err != nil {
-			return nil, fmt.Errorf("reading agent file %q: %w", a.Name, err)
+			return nil, err
 		}
-
-		files = append(files, types.GeneratedFile{
-			Path:     ".claude/agents/" + a.Name + ".md",
-			Content:  content,
-			Mode:     fileutil.ModeReadWrite,
-			Strategy: types.LibraryManaged,
-			Owner:    toolKey,
-		})
+		files = append(files, f)
 	}
 
 	return files, nil
+}
+
+// consultingAgentFile builds the .claude/agents file for one consulting agent.
+// It is the single builder for both init/update (deployAgents) and `enable`
+// (the consulting-agent-* tool GenerateFunc), so both paths agree on the
+// file's content, strategy and owner.
+func consultingAgentFile(name string) (types.GeneratedFile, error) {
+	content, err := templateFS.ReadFile("templates/agents/" + name + ".md")
+	if err != nil {
+		return types.GeneratedFile{}, fmt.Errorf("reading agent file %q: %w", name, err)
+	}
+	return types.GeneratedFile{
+		Path:     ".claude/agents/" + name + ".md",
+		Content:  content,
+		Mode:     fileutil.ModeReadWrite,
+		Strategy: types.LibraryManaged,
+		Owner:    "consulting-agent-" + name,
+	}, nil
 }
 
 // AvailableAgentNames returns the names of all agents from the embedded manifest.

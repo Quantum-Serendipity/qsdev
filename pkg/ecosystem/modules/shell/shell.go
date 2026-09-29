@@ -35,7 +35,7 @@ func (m *Module) DisplayName() string { return "Bash/Shell" }
 func (m *Module) Tier() int { return 2 }
 
 // Detect scans projectRoot for shell script indicators.
-// *.sh files in the root and scripts/ directories yield Probable confidence.
+// *.sh files in the root and *.sh/*.bash files in scripts/ yield Probable confidence.
 // .envrc is recorded as evidence but does not boost confidence.
 // Maximum confidence is Probable since shell scripts are ubiquitous.
 func (m *Module) Detect(projectRoot string) ecosystem.DetectionResult {
@@ -49,9 +49,12 @@ func (m *Module) Detect(projectRoot string) ecosystem.DetectionResult {
 		result.Evidence = append(result.Evidence, fmt.Sprintf("%d .sh file(s) in root", len(shFiles)))
 	}
 
-	// Check for scripts/ directory.
-	if fileutil.DirExists(projectRoot, "scripts") {
-		result.Evidence = append(result.Evidence, "scripts/ directory found")
+	// Check for shell scripts in scripts/. The directory alone is not
+	// evidence: it commonly holds Python, JS or PowerShell helpers.
+	scriptFiles, _ := filepath.Glob(filepath.Join(projectRoot, "scripts", "*.sh"))
+	bashFiles, _ := filepath.Glob(filepath.Join(projectRoot, "scripts", "*.bash"))
+	if n := len(scriptFiles) + len(bashFiles); n > 0 {
+		result.Evidence = append(result.Evidence, fmt.Sprintf("%d shell script(s) in scripts/", n))
 		if !result.Detected {
 			result.Detected = true
 			result.Confidence = ecosystem.ConfidenceProbable
@@ -83,6 +86,12 @@ func (m *Module) SecurityConfigs(_ ecosystem.ModuleConfig) []types.GeneratedFile
 	return nil
 }
 
+// unsupportedShellTypes are identify tags of shell files that shellcheck and
+// shfmt cannot parse. identify tags *.zsh as both "shell" and "zsh", so
+// without the exclusion the hooks fail every commit touching zsh completions
+// or dotfiles (ShellCheck only supports sh/bash/dash/ksh).
+var unsupportedShellTypes = []string{"zsh"}
+
 // PreCommitHooks returns pre-commit hook definitions for the Shell ecosystem.
 func (m *Module) PreCommitHooks(_ ecosystem.ModuleConfig) []ecosystem.HookConfig {
 	return []ecosystem.HookConfig{
@@ -93,6 +102,7 @@ func (m *Module) PreCommitHooks(_ ecosystem.ModuleConfig) []ecosystem.HookConfig
 			Entry:         "shellcheck",
 			Language:      "system",
 			Types:         []string{"shell"},
+			ExcludeTypes:  unsupportedShellTypes,
 			Stages:        []string{"pre-commit"},
 			PassFilenames: true,
 			BuiltIn:       true,
@@ -104,6 +114,7 @@ func (m *Module) PreCommitHooks(_ ecosystem.ModuleConfig) []ecosystem.HookConfig
 			Entry:         "shfmt -d",
 			Language:      "system",
 			Types:         []string{"shell"},
+			ExcludeTypes:  unsupportedShellTypes,
 			Stages:        []string{"pre-commit"},
 			PassFilenames: true,
 			BuiltIn:       true,
@@ -117,6 +128,14 @@ func (m *Module) DenyRules(_ ecosystem.ModuleConfig) []string {
 	return ecosystem.PipeToShellDenyRules()
 }
 
+// bashSyntaxCheck runs `bash -n` on every *.sh file and fails when any of
+// them has a syntax error. bash -n checks only its first operand (the rest
+// become the script's positional parameters), so the files cannot be passed
+// to one `bash -n` with `find -exec ... +`; `find -exec ... \;` would check
+// each file but exits 0 whatever the checks return. The inner loop checks
+// every file and reports all errors, and `-exec ... +` propagates its status.
+const bashSyntaxCheck = `find . -name '*.sh' -type f -exec bash -c 'status=0; for script do bash -n "$script" || status=1; done; exit "$status"' bash-syntax-check {} +`
+
 // CICommands returns CI pipeline commands for the Shell ecosystem.
 func (m *Module) CICommands(_ ecosystem.ModuleConfig) []ecosystem.CICommand {
 	return []ecosystem.CICommand{
@@ -128,7 +147,7 @@ func (m *Module) CICommands(_ ecosystem.ModuleConfig) []ecosystem.CICommand {
 		},
 		{
 			Name:        "bash-syntax-check",
-			Command:     "find . -name '*.sh' -type f -exec bash -n {} +",
+			Command:     bashSyntaxCheck,
 			Description: "Check shell script syntax with bash -n",
 			Phase:       ecosystem.CIPhaseTest,
 		},

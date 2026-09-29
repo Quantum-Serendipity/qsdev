@@ -2,6 +2,7 @@ package mcpserve
 
 import (
 	"context"
+	"encoding/json"
 	"strings"
 	"testing"
 
@@ -17,14 +18,21 @@ import (
 // client name without a live transport.
 type fakeClientSession struct {
 	info mcp.Implementation
+	// id overrides the reported session id; empty reports "test-session".
+	id string
 }
 
 func (f *fakeClientSession) Initialize()                                         {}
 func (f *fakeClientSession) Initialized() bool                                   { return true }
 func (f *fakeClientSession) NotificationChannel() chan<- mcp.JSONRPCNotification { return nil }
-func (f *fakeClientSession) SessionID() string                                   { return "test-session" }
-func (f *fakeClientSession) GetClientInfo() mcp.Implementation                   { return f.info }
-func (f *fakeClientSession) SetClientInfo(info mcp.Implementation)               { f.info = info }
+func (f *fakeClientSession) SessionID() string {
+	if f.id != "" {
+		return f.id
+	}
+	return "test-session"
+}
+func (f *fakeClientSession) GetClientInfo() mcp.Implementation     { return f.info }
+func (f *fakeClientSession) SetClientInfo(info mcp.Implementation) { f.info = info }
 func (f *fakeClientSession) GetClientCapabilities() mcp.ClientCapabilities {
 	return mcp.ClientCapabilities{}
 }
@@ -226,5 +234,44 @@ func TestToolFilterUntrackedToolVisible(t *testing.T) {
 	got := toolNames(srv.toolFilter(ctxWithClient(srv, "someide"), []mcp.Tool{{Name: "never_mounted"}}))
 	if !got["never_mounted"] {
 		t.Error("untracked tool was hidden; filter must fail open for unrecorded tools")
+	}
+}
+
+// TestToolCallEnforcesVisibility is the regression test for the list-only
+// filter: a tool hidden from a client's tools/list must also be rejected when
+// that client calls it by name, while visible tools keep working.
+func TestToolCallEnforcesVisibility(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name      string
+		multi     bool
+		client    string
+		tool      string
+		wantError bool
+	}{
+		{"unmatched client calls framework tool", false, "cursor", ccToolName, true},
+		{"no client info calls framework tool", false, "", ccToolName, true},
+		{"matched client calls framework tool", false, "claude-code", ccToolName, false},
+		{"unmatched client calls generic tool", false, "cursor", genericToolName, false},
+		{"multi-adapter exposes framework tool", true, "cursor", ccToolName, false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			srv := newFilterServer(t, tt.multi)
+			msg := `{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"` + tt.tool + `","arguments":{}}}`
+			resp := srv.mcp.HandleMessage(ctxWithClient(srv, tt.client), json.RawMessage(msg))
+			rpc, ok := resp.(mcp.JSONRPCResponse)
+			if !ok {
+				t.Fatalf("response = %T (%+v), want a JSON-RPC result", resp, resp)
+			}
+			res, ok := rpc.Result.(*mcp.CallToolResult)
+			if !ok {
+				t.Fatalf("result = %T, want *mcp.CallToolResult", rpc.Result)
+			}
+			if res.IsError != tt.wantError {
+				t.Errorf("IsError = %v, want %v (content %+v)", res.IsError, tt.wantError, res.Content)
+			}
+		})
 	}
 }

@@ -17,14 +17,17 @@ var ExportSaveAnswers = saveAnswers
 // ExportLoadAnswers exposes loadAnswers for external tests.
 var ExportLoadAnswers = loadAnswers
 
+// ExportValidateNixPackageName exposes validateNixPackageName for external tests.
+var ExportValidateNixPackageName = validateNixPackageName
+
 // ExportBuildAnswersFromFlags exposes buildAnswersFromFlags for external tests.
 var ExportBuildAnswersFromFlags = buildAnswersFromFlags
 
 // ExportValidServices exposes validServices for external tests.
-var ExportValidServices = validServices
+var ExportValidServices = validServices()
 
 // ExportValidLanguages exposes validLanguages for external tests.
-var ExportValidLanguages = validLanguages
+var ExportValidLanguages = validLanguages()
 
 // ExportContains exposes contains for external tests.
 var ExportContains = func(slice []string, val string) bool {
@@ -52,3 +55,10 @@ var ExportDefaultRCFile = defaultRCFile
 // (NewDevenvGenerator is already exported, but this pattern keeps the export
 // file consistent.)
 var _ types.Generator = (*DevenvGenerator)(nil)
+
+// ExportDevenvToolSpec and ExportDirenvToolSpec expose the bootstrap install
+// specs, built from a given catalog, for external tests.
+var (
+	ExportDevenvToolSpec = devenvTool.toolSpec
+	ExportDirenvToolSpec = direnvTool.toolSpec
+)

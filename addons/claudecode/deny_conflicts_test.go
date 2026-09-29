@@ -1,150 +1,207 @@
 package claudecode
 
-import "testing"
+import (
+	"io/fs"
+	"slices"
+	"strings"
+	"testing"
 
-func TestValidateDenyRuleConflicts_NoConflicts(t *testing.T) {
-	// Safe deny rules that don't overlap with safe skill operations.
-	denyRules := []string{
-		"Bash(npm install *)",
-		"Bash(pip install *)",
-		"Read(./.env)",
-	}
-	skills := []SkillDefinition{
-		{Name: "review-pr", AllowedTools: []string{"Bash(git *)", "Bash(gh *)"}},
-		{Name: "add-tests", AllowedTools: []string{"Bash(npm test *)", "Bash(go test *)"}},
-	}
+	"github.com/Quantum-Serendipity/qsdev/internal/check"
+)
 
-	conflicts := ValidateDenyRuleConflicts(denyRules, skills)
-	if len(conflicts) != 0 {
-		t.Errorf("expected no conflicts, got %d: %+v", len(conflicts), conflicts)
-	}
-}
-
-func TestValidateDenyRuleConflicts_DetectsConflict(t *testing.T) {
-	// An overly broad deny rule that blocks a skill operation.
-	denyRules := []string{
-		"Bash(npm *)", // Too broad — blocks npm test too.
-	}
-	skills := []SkillDefinition{
-		{Name: "add-tests", AllowedTools: []string{"Bash(npm test *)"}},
-	}
-
-	conflicts := ValidateDenyRuleConflicts(denyRules, skills)
-	if len(conflicts) != 1 {
-		t.Fatalf("expected 1 conflict, got %d: %+v", len(conflicts), conflicts)
-	}
-	if conflicts[0].Skill != "add-tests" {
-		t.Errorf("conflict skill = %q, want %q", conflicts[0].Skill, "add-tests")
-	}
-	if conflicts[0].DenyRule != "Bash(npm *)" {
-		t.Errorf("conflict deny rule = %q, want %q", conflicts[0].DenyRule, "Bash(npm *)")
-	}
-	if conflicts[0].Operation != "Bash(npm test *)" {
-		t.Errorf("conflict operation = %q, want %q", conflicts[0].Operation, "Bash(npm test *)")
-	}
-}
-
-func TestValidateDenyRuleConflicts_UpgradeDepNoConflicts(t *testing.T) {
-	// Package install commands are now in ask (not deny), so upgrade-dep
-	// should have zero conflicts with the deny list.
-	denyRules := AllBaseDenyRules()
-	skills := []SkillDefinition{
-		{Name: "upgrade-dep", AllowedTools: []string{
-			"Bash(npm install *)", "Bash(npm uninstall *)",
-			"Bash(pip install *)", "Bash(cargo install *)",
-		}},
-	}
-
-	conflicts := ValidateDenyRuleConflicts(denyRules, skills)
-	if len(conflicts) != 0 {
-		for _, c := range conflicts {
-			t.Errorf("unexpected conflict: %s", c.Message)
-		}
-		t.Fatalf("expected no conflicts for upgrade-dep skill (package installs are in ask), got %d", len(conflicts))
-	}
-}
-
-func TestFilterExpectedConflicts_NoExpectedConflicts(t *testing.T) {
-	// With package installs moved to ask, there are no expected conflicts.
-	// Any conflict passed to FilterExpectedConflicts should come back as unexpected.
-	conflicts := []DenyRuleConflict{
-		{Skill: "some-skill", DenyRule: "Bash(something *)", Operation: "Bash(something *)"},
-	}
-
-	unexpected := FilterExpectedConflicts(conflicts)
-	if len(unexpected) != 1 {
-		t.Errorf("expected 1 unexpected conflict (no expected conflicts exist), got %d",
-			len(unexpected))
-	}
-}
-
-func TestFilterExpectedConflicts_PassesThroughAllConflicts(t *testing.T) {
-	// Since ExpectedConflicts() is empty, all conflicts are unexpected.
-	conflicts := []DenyRuleConflict{
-		{Skill: "add-tests", DenyRule: "Bash(npm *)", Operation: "Bash(npm test *)"},
-		{Skill: "some-skill", DenyRule: "Bash(other *)", Operation: "Bash(other thing *)"},
-	}
-
-	unexpected := FilterExpectedConflicts(conflicts)
-	if len(unexpected) != 2 {
-		t.Fatalf("expected 2 unexpected conflicts (none are expected), got %d: %+v", len(unexpected), unexpected)
-	}
-}
-
-func TestBuiltinSkillDefinitions_NotEmpty(t *testing.T) {
-	skills := BuiltinSkillDefinitions()
-	if len(skills) == 0 {
-		t.Fatal("BuiltinSkillDefinitions should not be empty")
-	}
-}
-
-func TestBuiltinSkillDefinitions_QsdevOpsUseGdevBash(t *testing.T) {
-	skills := BuiltinSkillDefinitions()
-
-	qsdevSkills := []string{
-		"qsdev-init", "qsdev-onboard", "qsdev-setup", "qsdev-enable",
-		"qsdev-disable", "qsdev-update", "qsdev-doctor", "qsdev-status",
-		"qsdev-tools", "qsdev-detect",
-	}
-
-	skillMap := make(map[string]SkillDefinition)
+// unexpectedDenyConflicts runs the production deny-conflict check
+// (internal/check) over denyRules and skills, returning the failing results.
+func unexpectedDenyConflicts(t *testing.T, denyRules []string, skills []SkillDefinition) []check.CheckResult {
+	t.Helper()
+	ctx := check.CheckContext{DenyRules: denyRules, ExpectedConflictKeys: ExpectedConflicts()}
 	for _, s := range skills {
-		skillMap[s.Name] = s
+		ctx.SkillOps = append(ctx.SkillOps, check.SkillOps{Name: s.Name, AllowedTools: s.AllowedTools})
+	}
+	var failed []check.CheckResult
+	for _, r := range check.CheckDenyRuleConflicts(ctx) {
+		if r.Status == check.StatusFail {
+			failed = append(failed, r)
+		}
+	}
+	return failed
+}
+
+func TestDenyRuleConflicts(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name      string
+		denyRules []string
+		skills    []SkillDefinition
+		want      int
+	}{
+		{
+			name:      "safe deny rules do not overlap safe operations",
+			denyRules: []string{"Bash(npm install *)", "Bash(pip install *)", "Read(./.env)"},
+			skills: []SkillDefinition{
+				{Name: "review-pr", AllowedTools: []string{"Bash(git *)", "Bash(gh *)"}},
+				{Name: "add-tests", AllowedTools: []string{"Bash(npm test *)", "Bash(go test *)"}},
+			},
+		},
+		{
+			name:      "overly broad deny rule blocks a skill operation",
+			denyRules: []string{"Bash(npm *)"},
+			skills:    []SkillDefinition{{Name: "add-tests", AllowedTools: []string{"Bash(npm test *)"}}},
+			want:      1,
+		},
+		{
+			name:      "package installs are in ask, not deny",
+			denyRules: AllBaseDenyRules(),
+			skills: []SkillDefinition{{Name: "upgrade-dep", AllowedTools: []string{
+				"Bash(npm install *)", "Bash(npm uninstall *)", "Bash(pip install *)", "Bash(cargo install *)",
+			}}},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			got := unexpectedDenyConflicts(t, tt.denyRules, tt.skills)
+			if len(got) != tt.want {
+				t.Errorf("got %d conflicts, want %d: %+v", len(got), tt.want, got)
+			}
+		})
+	}
+}
+
+// TestBuiltinSkillDefinitions_ParseWithoutErrors guards the embedded templates:
+// every skill and subagent frontmatter must parse.
+func TestBuiltinSkillDefinitions_ParseWithoutErrors(t *testing.T) {
+	t.Parallel()
+	defs, err := loadBuiltinSkillDefinitions()
+	if err != nil {
+		t.Fatalf("loadBuiltinSkillDefinitions: %v", err)
+	}
+	if len(defs) == 0 {
+		t.Fatal("no skill definitions parsed from the templates")
+	}
+}
+
+// TestBuiltinSkillDefinitions_MatchTemplates pins F101: the definitions come
+// from the deployed templates' frontmatter, not a hand-maintained list that
+// drifts (missing skills, fictional skills, wrong operations).
+func TestBuiltinSkillDefinitions_MatchTemplates(t *testing.T) {
+	t.Parallel()
+	byName := make(map[string][]string)
+	for _, d := range BuiltinSkillDefinitions() {
+		byName[d.Name] = d.AllowedTools
 	}
 
-	for _, name := range qsdevSkills {
-		s, ok := skillMap[name]
-		if !ok {
-			t.Errorf("expected skill %q to exist", name)
-			continue
+	tests := []struct {
+		skill string
+		want  []string
+	}{
+		{"qsdev-add-dep", []string{"Bash(qsdev *)", "Bash(npm *)", "Bash(pip *)", "Read"}},
+		{"qsdev-init", []string{"Bash(qsdev *)", "Read", "Grep", "Glob"}},
+		{"upgrade-dep", []string{"Bash(*)", "Write", "Edit"}},
+		{"write-adr", []string{"Write", "Edit", "Bash(git log *)"}},
+		{"lookup-docs", []string{"Bash(qsdev *)", "mcp__local-docs-devdocs(*)", "mcp__context7(*)"}},
+		{"security-reviewer", []string{"Read", "Grep", "Glob", "Bash"}},
+		// semble-search is a subagent: its template uses the subagent
+		// "tools:" key (F085), which lists tool names, not Bash patterns.
+		{"semble-search", []string{"Bash", "Read", "Grep", "Glob"}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.skill, func(t *testing.T) {
+			t.Parallel()
+			got, ok := byName[tt.skill]
+			if !ok {
+				t.Fatalf("skill %q missing from BuiltinSkillDefinitions", tt.skill)
+			}
+			for _, op := range tt.want {
+				if !slices.Contains(got, op) {
+					t.Errorf("skill %q operations %v missing %q", tt.skill, got, op)
+				}
+			}
+		})
+	}
+
+	if _, ok := byName["container-migrate"]; ok {
+		t.Error("container-migrate has no template but is listed")
+	}
+}
+
+// TestBuiltinSkillDefinitions_CoverEveryDeclaringTemplate walks the skill
+// directories and checks that every SKILL.md declaring allowed-tools yields a
+// definition.
+func TestBuiltinSkillDefinitions_CoverEveryDeclaringTemplate(t *testing.T) {
+	t.Parallel()
+	names := make(map[string]bool)
+	for _, d := range BuiltinSkillDefinitions() {
+		names[d.Name] = true
+	}
+	err := fs.WalkDir(templateFS, "templates/skills", func(p string, d fs.DirEntry, err error) error {
+		if err != nil || d.IsDir() || !strings.Contains(p, "/SKILL.md") {
+			return err
 		}
-		if len(s.AllowedTools) != 1 || s.AllowedTools[0] != "Bash(qsdev *)" {
-			t.Errorf("skill %q AllowedTools = %v, want [Bash(qsdev *)]", name, s.AllowedTools)
+		content, err := templateFS.ReadFile(p)
+		if err != nil {
+			return err
 		}
+		if strings.Contains(string(content), "\nallowed-tools:") && !names[templateSkillName(p)] {
+			t.Errorf("%s declares allowed-tools but produced no definition", p)
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+}
+
+// TestBuiltinSkillDefinitions_NoUnexpectedConflicts is the integration check:
+// the real deny rules must not block any operation the real templates request.
+func TestBuiltinSkillDefinitions_NoUnexpectedConflicts(t *testing.T) {
+	t.Parallel()
+	for _, c := range unexpectedDenyConflicts(t, AllBaseDenyRules(), BuiltinSkillDefinitions()) {
+		t.Errorf("unexpected conflict: %s", c.Message)
+	}
+}
+
+// TestBuiltinSkillDefinitions_DetectNewDenyConflict pins the F101 failure
+// scenario: a deny rule that would block qsdev-add-dep must be reported.
+func TestBuiltinSkillDefinitions_DetectNewDenyConflict(t *testing.T) {
+	t.Parallel()
+	conflicts := unexpectedDenyConflicts(t, []string{"Bash(npm *)"}, BuiltinSkillDefinitions())
+	found := false
+	for _, c := range conflicts {
+		if strings.Contains(c.Message, `"qsdev-add-dep"`) {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("deny rule Bash(npm *) not reported as blocking qsdev-add-dep: %+v", conflicts)
 	}
 }
 
 func TestExpectedConflicts_Empty(t *testing.T) {
+	t.Parallel()
 	// Package installs are now in ask, not deny. No expected conflicts remain.
-	ec := ExpectedConflicts()
-	if len(ec) != 0 {
+	if ec := ExpectedConflicts(); len(ec) != 0 {
 		t.Fatalf("ExpectedConflicts should be empty (package installs moved to ask), got %d entries", len(ec))
 	}
 }
 
-func TestValidateDenyRuleConflicts_BuiltinSkillsNoUnexpectedConflicts(t *testing.T) {
-	// This is the integration test: validate that the actual deny rules
-	// and actual skill definitions produce no unexpected conflicts.
-	denyRules := AllBaseDenyRules()
-	skills := BuiltinSkillDefinitions()
-
-	conflicts := ValidateDenyRuleConflicts(denyRules, skills)
-	unexpected := FilterExpectedConflicts(conflicts)
-
-	if len(unexpected) > 0 {
-		for _, c := range unexpected {
-			t.Errorf("unexpected conflict: %s", c.Message)
-		}
-		t.Fatalf("%d unexpected deny rule conflicts detected", len(unexpected))
+func TestSplitToolList(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		in   string
+		want []string
+	}{
+		{"Bash(git log *) Read Grep", []string{"Bash(git log *)", "Read", "Grep"}},
+		{"Read, Grep, Glob, Bash", []string{"Read", "Grep", "Glob", "Bash"}},
+		{"  Bash(qsdev *)  mcp__x(*) ", []string{"Bash(qsdev *)", "mcp__x(*)"}},
+		{"", nil},
+	}
+	for _, tt := range tests {
+		t.Run(tt.in, func(t *testing.T) {
+			t.Parallel()
+			if got := splitToolList(tt.in); !slices.Equal(got, tt.want) {
+				t.Errorf("splitToolList(%q) = %q, want %q", tt.in, got, tt.want)
+			}
+		})
 	}
 }

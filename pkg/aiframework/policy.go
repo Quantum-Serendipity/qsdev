@@ -2,11 +2,10 @@ package aiframework
 
 // PermissionPolicy declares framework-agnostic permission rules.
 type PermissionPolicy struct {
-	Preset       string
-	AllowRules   []PermissionRule
-	DenyRules    []PermissionRule
-	AskRules     []PermissionRule
-	ApprovalMode string
+	Preset     string
+	AllowRules []PermissionRule
+	DenyRules  []PermissionRule
+	AskRules   []PermissionRule
 }
 
 // PermissionRule is a single allow/deny/ask pattern with an optional reason.

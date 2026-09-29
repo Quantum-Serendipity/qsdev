@@ -1,20 +1,27 @@
 package toolreg
 
 import (
+	"maps"
+
 	"github.com/Quantum-Serendipity/qsdev/internal/sectools"
 	"github.com/Quantum-Serendipity/qsdev/internal/sliceutil"
 	"github.com/Quantum-Serendipity/qsdev/pkg/ecosystem"
 	"github.com/Quantum-Serendipity/qsdev/pkg/types"
 )
 
-func init() {
-	r := DefaultRegistry()
-	for name, b := range builtinBehaviors() {
-		r.AttachBehavior(name, b)
-	}
+// builtinBehaviors returns the Go behavior hooks this package attaches to
+// catalog tools when the default registry is built (see Default). Tools
+// whose only lifecycle effect is recording themselves in EnabledTools need
+// no Enable/DisableFunc: the enable and disable commands already do that.
+func builtinBehaviors() map[string]ToolBehavior {
+	m := coreBehaviors()
+	maps.Copy(m, gitWorkflowBehaviors())
+	maps.Copy(m, shellBehaviors())
+	maps.Copy(m, consultingWorkflowBehaviors())
+	return m
 }
 
-func builtinBehaviors() map[string]ToolBehavior {
+func coreBehaviors() map[string]ToolBehavior {
 	return map[string]ToolBehavior{
 		ToolVersionSentinel: {
 			EnableFunc: func(a *types.WizardAnswers) {
@@ -27,21 +34,7 @@ func builtinBehaviors() map[string]ToolBehavior {
 				a.AgentTools.VersionSentinel = false
 			},
 			SectionDataFunc: func(answers types.WizardAnswers, ecoReg *ecosystem.Registry) map[string]any {
-				var modules []ecosystem.EcosystemModule
-				configFor := func(mod ecosystem.EcosystemModule) ecosystem.ModuleConfig {
-					for _, lang := range answers.Languages {
-						if lang.Name == mod.Name() {
-							return ecosystem.ToModuleConfig(lang)
-						}
-					}
-					return ecosystem.ModuleConfig{}
-				}
-				for _, lang := range answers.Languages {
-					if mod, ok := ecoReg.ByName(lang.Name); ok {
-						modules = append(modules, mod)
-					}
-				}
-				report := ecosystem.AggregateManifestCoverage(modules, configFor)
+				report := ecosystem.LanguageManifestCoverage(answers.Languages, ecoReg)
 				covered := make([]string, len(report.Covered))
 				for i, m := range report.Covered {
 					covered[i] = m.Path
@@ -70,7 +63,9 @@ func builtinBehaviors() map[string]ToolBehavior {
 		},
 		"semgrep": {
 			GenerateFunc: func(a types.WizardAnswers) ([]types.GeneratedFile, error) {
-				f, err := sectools.GenerateSemgrepYml(a, ecosystem.DefaultRegistry())
+				// Semgrep's rule packs are passed by the security-scan
+				// task; the tool generates only the scan exclusions.
+				f, err := sectools.GenerateSemgrepIgnore(a)
 				if err != nil {
 					return nil, err
 				}
@@ -88,8 +83,8 @@ func builtinBehaviors() map[string]ToolBehavior {
 		},
 		"opengrep": {
 			GenerateFunc: func(a types.WizardAnswers) ([]types.GeneratedFile, error) {
-				// Delivers the config plus the embedded core rule library so the
-				// rules the config references exist in the user's project.
+				// Delivers the package derivation plus the embedded core rule
+				// library the security-scan task runs `opengrep scan` against.
 				return sectools.GenerateOpengrepFiles(a)
 			},
 		},

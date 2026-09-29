@@ -3,10 +3,7 @@ package config
 import (
 	"os"
 	"path/filepath"
-	"strings"
 	"testing"
-
-	"github.com/Quantum-Serendipity/qsdev/pkg/types"
 )
 
 func TestParseLocalConfig_FileNotFound(t *testing.T) {
@@ -71,168 +68,44 @@ func TestParseLocalConfig_InvalidYAML(t *testing.T) {
 	}
 }
 
-func TestGenerateLocalTemplate_CreatesFile(t *testing.T) {
-	dir := t.TempDir()
-	resolved := &types.QsdevConfig{}
-
-	if err := GenerateLocalTemplate(dir, resolved); err != nil {
-		t.Fatal(err)
+// Regression: the local override file is decoded strictly, so a misspelled
+// key (which would otherwise silently drop a local deny) is an error, while
+// an empty or comments-only file is a valid empty override.
+func TestParseLocalConfig_StrictKeys(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name    string
+		content string
+		wantErr bool
+	}{
+		{"misspelled nested key", "tools:\n  disable: [semgrep]\n", true},
+		{"misspelled top-level key", "tools:\n  disabled: [semgrep]\nsecurty:\n  level: baseline\n", true},
+		{"valid keys", "tools:\n  disabled: [semgrep]\n", false},
+		// Hook settings are team policy: a local file cannot widen them.
+		{"hooks block", "hooks:\n  file_boundary:\n    extra_read_paths: [/]\n", true},
+		{"empty file", "", false},
+		{"comments only", "# extra_packages:\n#   - neovim\n", false},
 	}
-
-	path := filepath.Join(dir, ".qsdev.local.yaml")
-	data, err := os.ReadFile(path)
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	content := string(data)
-	if !strings.Contains(content, "Local developer overrides") {
-		t.Error("expected template header in generated file")
-	}
-	if !strings.Contains(content, "extra_packages") {
-		t.Error("expected extra_packages example in generated file")
-	}
-}
-
-func TestGenerateLocalTemplate_Idempotent(t *testing.T) {
-	dir := t.TempDir()
-	path := filepath.Join(dir, ".qsdev.local.yaml")
-
-	// Write an existing file.
-	existingContent := "# my custom config\n"
-	if err := os.WriteFile(path, []byte(existingContent), 0o644); err != nil {
-		t.Fatal(err)
-	}
-
-	// GenerateLocalTemplate should NOT overwrite.
-	if err := GenerateLocalTemplate(dir, nil); err != nil {
-		t.Fatal(err)
-	}
-
-	data, err := os.ReadFile(path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if string(data) != existingContent {
-		t.Error("expected existing file to be preserved")
-	}
-}
-
-func TestGenerateLocalTemplate_IncludesLanguageOverrides(t *testing.T) {
-	dir := t.TempDir()
-	resolved := &types.QsdevConfig{
-		Languages: []types.LanguageConfig{
-			{Name: "go", Version: "1.22"},
-			{Name: "python", Version: "3.12"},
-		},
-	}
-
-	if err := GenerateLocalTemplate(dir, resolved); err != nil {
-		t.Fatal(err)
-	}
-
-	data, err := os.ReadFile(filepath.Join(dir, ".qsdev.local.yaml"))
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	content := string(data)
-	if !strings.Contains(content, "name: go") {
-		t.Error("expected go language in template")
-	}
-	if !strings.Contains(content, "name: python") {
-		t.Error("expected python language in template")
-	}
-}
-
-func TestGenerateLocalTemplate_IncludesClaudeSection(t *testing.T) {
-	dir := t.TempDir()
-	enabled := true
-	resolved := &types.QsdevConfig{
-		ClaudeCode: types.ClaudeCodeConfig{
-			Enabled: &enabled,
-		},
-	}
-
-	if err := GenerateLocalTemplate(dir, resolved); err != nil {
-		t.Fatal(err)
-	}
-
-	data, err := os.ReadFile(filepath.Join(dir, ".qsdev.local.yaml"))
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	content := string(data)
-	if !strings.Contains(content, "claude_code:") {
-		t.Error("expected claude_code section in template when Claude is enabled")
-	}
-}
-
-func TestEnsureGitignoreEntry_CreatesFile(t *testing.T) {
-	dir := t.TempDir()
-
-	if err := EnsureGitignoreEntry(dir, ".qsdev.local.yaml"); err != nil {
-		t.Fatal(err)
-	}
-
-	data, err := os.ReadFile(filepath.Join(dir, ".gitignore"))
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	content := string(data)
-	if !strings.Contains(content, ".qsdev.local.yaml") {
-		t.Error("expected .qsdev.local.yaml in .gitignore")
-	}
-	if !strings.Contains(content, "# qsdev local configuration") {
-		t.Error("expected section comment in .gitignore")
-	}
-}
-
-func TestEnsureGitignoreEntry_AppendsWhenNotPresent(t *testing.T) {
-	dir := t.TempDir()
-	existing := "node_modules/\n.env\n"
-	if err := os.WriteFile(filepath.Join(dir, ".gitignore"), []byte(existing), 0o644); err != nil {
-		t.Fatal(err)
-	}
-
-	if err := EnsureGitignoreEntry(dir, ".qsdev.local.yaml"); err != nil {
-		t.Fatal(err)
-	}
-
-	data, err := os.ReadFile(filepath.Join(dir, ".gitignore"))
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	content := string(data)
-	if !strings.Contains(content, "node_modules/") {
-		t.Error("expected existing content to be preserved")
-	}
-	if !strings.Contains(content, ".qsdev.local.yaml") {
-		t.Error("expected .qsdev.local.yaml to be appended")
-	}
-}
-
-func TestEnsureGitignoreEntry_NoOpWhenPresent(t *testing.T) {
-	dir := t.TempDir()
-	existing := "node_modules/\n.qsdev.local.yaml\n.env\n"
-	if err := os.WriteFile(filepath.Join(dir, ".gitignore"), []byte(existing), 0o644); err != nil {
-		t.Fatal(err)
-	}
-
-	if err := EnsureGitignoreEntry(dir, ".qsdev.local.yaml"); err != nil {
-		t.Fatal(err)
-	}
-
-	data, err := os.ReadFile(filepath.Join(dir, ".gitignore"))
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	// Should be unchanged.
-	if string(data) != existing {
-		t.Errorf("expected no changes, got %q", string(data))
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			path := filepath.Join(t.TempDir(), ".qsdev.local.yaml")
+			if err := os.WriteFile(path, []byte(tt.content), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			cfg, err := ParseLocalConfig(path)
+			if tt.wantErr {
+				if err == nil {
+					t.Fatalf("expected error, got config %+v", cfg)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if cfg == nil {
+				t.Fatal("expected non-nil config for an existing file")
+			}
+		})
 	}
 }

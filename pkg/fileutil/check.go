@@ -2,6 +2,7 @@ package fileutil
 
 import (
 	"bufio"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -26,39 +27,31 @@ func DirExists(parts ...string) bool {
 }
 
 // ReadFirstLine reads and returns the first non-empty trimmed line from a file.
-// Returns an empty string if the file cannot be read or contains no non-empty lines.
+// Returns an empty string if the file cannot be read or contains no non-empty
+// lines; use ReadFirstLineErr to distinguish those cases.
 func ReadFirstLine(path string) string {
+	line, _ := ReadFirstLineErr(path)
+	return line
+}
+
+// ReadFirstLineErr returns the first non-empty trimmed line from a file, like
+// ReadFirstLine, but reports open and scan errors (such as a line longer than
+// the scanner's buffer) instead of returning an empty string.
+func ReadFirstLineErr(path string) (string, error) {
 	f, err := os.Open(path)
 	if err != nil {
-		return ""
+		return "", fmt.Errorf("opening %s: %w", path, err)
 	}
 	defer f.Close() //nolint:errcheck
 
 	scanner := bufio.NewScanner(f)
 	for scanner.Scan() {
-		line := strings.TrimSpace(scanner.Text())
-		if line != "" {
-			return line
+		if line := strings.TrimSpace(scanner.Text()); line != "" {
+			return line, nil
 		}
 	}
-	return ""
-}
-
-// ReadFirstLineErr reads the first line of a file, returning any error encountered.
-// Unlike ReadFirstLine, this does not silently swallow errors.
-func ReadFirstLineErr(path string) (string, error) {
-	f, err := os.Open(path)
-	if err != nil {
-		return "", err
-	}
-	defer f.Close() //nolint:errcheck
-
-	scanner := bufio.NewScanner(f)
-	if scanner.Scan() {
-		return scanner.Text(), nil
-	}
 	if err := scanner.Err(); err != nil {
-		return "", err
+		return "", fmt.Errorf("reading %s: %w", path, err)
 	}
 	return "", nil
 }

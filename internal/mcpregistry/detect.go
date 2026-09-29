@@ -14,11 +14,25 @@ type mcpJSONFile struct {
 	MCPServers map[string]mcpJSONEntry `json:"mcpServers"`
 }
 
-// mcpJSONEntry represents a single server entry in .mcp.json.
+// mcpJSONEntry represents a single server entry in .mcp.json. Stdio servers
+// use Command/Args/Env; remote servers use Type ("http" or "sse") with URL and
+// optional Headers.
 type mcpJSONEntry struct {
-	Command string            `json:"command"`
-	Args    []string          `json:"args"`
+	Type    string            `json:"type,omitempty"`
+	URL     string            `json:"url,omitempty"`
+	Headers map[string]string `json:"headers,omitempty"`
+	Command string            `json:"command,omitempty"`
+	Args    []string          `json:"args,omitempty"`
 	Env     map[string]string `json:"env,omitempty"`
+}
+
+// transport returns the entry's transport. An entry with a URL but no type is
+// a remote server, which Claude Code treats as HTTP.
+func (e mcpJSONEntry) transport() McpTransport {
+	if e.Type == "" && e.URL != "" {
+		return TransportHTTP
+	}
+	return parseMcpTransport(e.Type)
 }
 
 // ScanMcpJSON reads .mcp.json from projectRoot and returns a map of
@@ -46,8 +60,10 @@ func ScanMcpJSON(projectRoot string) (map[string]McpServerDefinition, error) {
 			Name:      name,
 			Command:   entry.Command,
 			Args:      entry.Args,
+			URL:       entry.URL,
+			Headers:   entry.Headers,
 			Env:       entry.Env,
-			Transport: TransportStdio,
+			Transport: entry.transport(),
 			Source:    SourceConfig,
 		}
 	}

@@ -2,8 +2,6 @@ package toolreg
 
 import (
 	"testing"
-
-	"github.com/Quantum-Serendipity/qsdev/pkg/types"
 )
 
 func TestDevExToolsRegistered(t *testing.T) {
@@ -39,39 +37,6 @@ func TestDevExToolsRegistered(t *testing.T) {
 	}
 }
 
-func TestDevExToolEnableDisable(t *testing.T) {
-	reg := DefaultRegistry()
-
-	for _, name := range []string{"changelog", "commitlint", "secretspec"} {
-		tool, ok := reg.ByName(name)
-		if !ok {
-			t.Errorf("tool %q not found", name)
-			continue
-		}
-
-		t.Run(name, func(t *testing.T) {
-			answers := types.WizardAnswers{}
-
-			if tool.EnableFunc == nil {
-				t.Fatal("EnableFunc is nil")
-			}
-			tool.EnableFunc(&answers)
-
-			if answers.EnabledTools == nil {
-				t.Fatal("EnabledTools should be initialized after Enable")
-			}
-			if !answers.EnabledTools[name] {
-				t.Errorf("after Enable, EnabledTools[%q] should be true", name)
-			}
-
-			if tool.DisableFunc == nil {
-				t.Fatal("DisableFunc is nil")
-			}
-			tool.DisableFunc(&answers)
-
-			if answers.EnabledTools[name] {
-				t.Errorf("after Disable, EnabledTools[%q] should be false", name)
-			}
-		})
-	}
+func TestDevExToolsLifecycleOnly(t *testing.T) {
+	assertLifecycleOnly(t, DefaultRegistry(), "changelog", "commitlint", "secretspec")
 }

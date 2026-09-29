@@ -3,6 +3,7 @@ package config
 import (
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
@@ -71,8 +72,9 @@ client:
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	if cfg.Version != 1 {
-		t.Errorf("Version = %d, want 1", cfg.Version)
+	// A version 1 file is migrated to the current schema on load.
+	if cfg.Version != types.ConfigVersionCurrent {
+		t.Errorf("Version = %d, want %d", cfg.Version, types.ConfigVersionCurrent)
 	}
 	if cfg.QsdevVersion != ">= 0.15.0" {
 		t.Errorf("QsdevVersion = %q, want %q", cfg.QsdevVersion, ">= 0.15.0")
@@ -137,8 +139,9 @@ func TestParseQsdevConfig_MinimalConfig(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if cfg.Version != 1 {
-		t.Errorf("Version = %d, want 1", cfg.Version)
+	// A version 1 file is migrated to the current schema on load.
+	if cfg.Version != types.ConfigVersionCurrent {
+		t.Errorf("Version = %d, want %d", cfg.Version, types.ConfigVersionCurrent)
 	}
 	if len(cfg.Languages) != 0 {
 		t.Errorf("Languages should be empty, got %d", len(cfg.Languages))
@@ -261,8 +264,9 @@ func TestParseQsdevConfig_FromFile(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if cfg.Version != 1 {
-		t.Errorf("Version = %d, want 1", cfg.Version)
+	// A version 1 file is migrated to the current schema on load.
+	if cfg.Version != types.ConfigVersionCurrent {
+		t.Errorf("Version = %d, want %d", cfg.Version, types.ConfigVersionCurrent)
 	}
 	if len(cfg.Languages) != 1 || cfg.Languages[0].Name != "go" {
 		t.Errorf("Languages = %+v", cfg.Languages)
@@ -535,5 +539,112 @@ func TestValidateQsdevConfig_QsdevVersionValidation(t *testing.T) {
 	}
 	if errs[0].Field != "qsdev_version" {
 		t.Errorf("Field = %q, want qsdev_version", errs[0].Field)
+	}
+}
+
+func TestValidateQsdevConfig_BranchPattern(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name      string
+		pattern   string
+		wantField bool
+	}{
+		{"unset", "", false},
+		{"valid ERE", `^(feat|fix|chore)/[a-z0-9._-]+$`, false},
+		{"invalid ERE", `^(feat|fix/`, true},
+		{"single quote", `^it's$`, true},
+		{"control character", "^feat/\u0007", true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			cfg := &types.QsdevConfig{Version: 2, Git: types.GitConfig{BranchPattern: tt.pattern}}
+			errs := ValidateQsdevConfig(cfg, ValidateOptions{})
+			gotField := slices.ContainsFunc(errs, func(e ValidationError) bool { return e.Field == "git.branch_pattern" })
+			if gotField != tt.wantField || len(errs) > 1 {
+				t.Errorf("ValidateQsdevConfig(git.branch_pattern=%q) = %v, want git.branch_pattern error: %v", tt.pattern, errs, tt.wantField)
+			}
+		})
+	}
+}
+
+// TestQsdevConfig_HooksFileBoundary covers parsing and validating
+// hooks.file_boundary.extra_read_paths.
+func TestQsdevConfig_HooksFileBoundary(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name       string
+		paths      string
+		wantFields []string
+	}{
+		{name: "valid paths", paths: `["/opt/sdk", "~/.m2/repository"]`},
+		{
+			name:       "root, relative and dotdot rejected",
+			paths:      `["/opt/sdk", "/", "vendor", "/opt/../etc"]`,
+			wantFields: []string{"hooks.file_boundary.extra_read_paths[1]", "hooks.file_boundary.extra_read_paths[2]", "hooks.file_boundary.extra_read_paths[3]"},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			data := "version: 2\nhooks:\n  file_boundary:\n    extra_read_paths: " + tt.paths + "\n"
+			cfg, err := ParseQsdevConfigBytes([]byte(data))
+			if err != nil {
+				t.Fatalf("ParseQsdevConfigBytes: %v", err)
+			}
+			if len(cfg.Hooks.FileBoundary.ExtraReadPaths) == 0 {
+				t.Fatal("extra_read_paths not parsed")
+			}
+			var fields []string
+			for _, e := range ValidateQsdevConfig(cfg, ValidateOptions{}) {
+				fields = append(fields, e.Field)
+			}
+			if strings.Join(fields, " ") != strings.Join(tt.wantFields, " ") {
+				t.Errorf("validation error fields = %v, want %v", fields, tt.wantFields)
+			}
+		})
+	}
+}
+
+// TestQsdevConfig_HooksToolGates covers parsing and validating
+// hooks.tool_gates, the policy the tool-gates hook enforces (W046).
+func TestQsdevConfig_HooksToolGates(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name       string
+		yaml       string
+		wantFields []string
+	}{
+		{name: "valid entries", yaml: `{allowed: [Read, "mcp__context7__*"], denied: [WebFetch, mcp__github__delete_repo]}`},
+		{
+			name:       "comma, space and slash rejected",
+			yaml:       `{allowed: [Read, "Bash,WebFetch"], denied: ["Web Fetch", ok, "a/b"]}`,
+			wantFields: []string{"hooks.tool_gates.allowed[1]", "hooks.tool_gates.denied[0]", "hooks.tool_gates.denied[2]"},
+		},
+		{
+			name:       "invisible character rejected",
+			yaml:       "{denied: [\"Bash\\u200b\"]}",
+			wantFields: []string{"hooks.tool_gates.denied[0]"},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			data := "version: 2\nhooks:\n  tool_gates: " + tt.yaml + "\n"
+			cfg, err := ParseQsdevConfigBytes([]byte(data))
+			if err != nil {
+				t.Fatalf("ParseQsdevConfigBytes: %v", err)
+			}
+			if !cfg.Hooks.ToolGates.HasPolicy() {
+				t.Fatal("tool_gates not parsed")
+			}
+			var fields []string
+			for _, e := range ValidateQsdevConfig(cfg, ValidateOptions{}) {
+				fields = append(fields, e.Field)
+			}
+			if strings.Join(fields, " ") != strings.Join(tt.wantFields, " ") {
+				t.Errorf("validation error fields = %v, want %v", fields, tt.wantFields)
+			}
+		})
 	}
 }

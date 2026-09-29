@@ -50,21 +50,31 @@ func deployWorkflowSkills(answers types.WizardAnswers, _ *ecosystem.Registry) ([
 			continue
 		}
 
-		content, err := templateFS.ReadFile("templates/skills/" + skill.Name + "/SKILL.md")
+		f, err := consultingWorkflowFile(skill.Name)
 		if err != nil {
-			return nil, fmt.Errorf("reading consulting skill file %q: %w", skill.Name, err)
+			return nil, err
 		}
-
-		files = append(files, types.GeneratedFile{
-			Path:     ".claude/skills/" + skill.Name + "/SKILL.md",
-			Content:  content,
-			Mode:     fileutil.ModeReadWrite,
-			Strategy: types.LibraryManaged,
-			Owner:    "consulting-workflow-" + skill.Name,
-		})
+		files = append(files, f)
 	}
 
 	return files, nil
+}
+
+// consultingWorkflowFile builds the SKILL.md file for one consulting workflow.
+// It is the single builder for both init/update (deployWorkflowSkills) and
+// `enable` (the consulting-workflow-* tool GenerateFunc).
+func consultingWorkflowFile(name string) (types.GeneratedFile, error) {
+	content, err := templateFS.ReadFile("templates/skills/" + name + "/SKILL.md")
+	if err != nil {
+		return types.GeneratedFile{}, fmt.Errorf("reading consulting skill file %q: %w", name, err)
+	}
+	return types.GeneratedFile{
+		Path:     ".claude/skills/" + name + "/SKILL.md",
+		Content:  content,
+		Mode:     fileutil.ModeReadWrite,
+		Strategy: types.LibraryManaged,
+		Owner:    "consulting-workflow-" + name,
+	}, nil
 }
 
 // AvailableConsultingSkillNames returns the names of all consulting workflow

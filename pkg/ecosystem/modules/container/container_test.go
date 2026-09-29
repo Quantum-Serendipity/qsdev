@@ -3,13 +3,16 @@ package container_test
 import (
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
 	"gopkg.in/yaml.v3"
 
+	"github.com/Quantum-Serendipity/qsdev/pkg/denyutil"
 	"github.com/Quantum-Serendipity/qsdev/pkg/ecosystem"
 	"github.com/Quantum-Serendipity/qsdev/pkg/ecosystem/modules/container"
+	"github.com/Quantum-Serendipity/qsdev/pkg/types"
 )
 
 // Compile-time interface compliance.
@@ -154,7 +157,7 @@ func TestDevenvPackages_Docker(t *testing.T) {
 		Extras: map[string]string{"container_runtime": "docker"},
 	}
 	pkgs := newModule().DevenvPackages(cfg)
-	want := []string{"docker", "hadolint", "dive"}
+	want := []string{"docker", "hadolint", "dive", "syft", "grype"}
 	if len(pkgs) != len(want) {
 		t.Fatalf("DevenvPackages(docker) = %v, want %v", pkgs, want)
 	}
@@ -174,7 +177,7 @@ func TestDevenvPackages_Podman(t *testing.T) {
 				Extras: map[string]string{"container_runtime": rt},
 			}
 			pkgs := newModule().DevenvPackages(cfg)
-			want := []string{"podman", "podman-compose", "buildah", "skopeo", "hadolint", "dive"}
+			want := []string{"podman", "podman-compose", "buildah", "skopeo", "hadolint", "dive", "syft", "grype"}
 			if len(pkgs) != len(want) {
 				t.Fatalf("DevenvPackages(%s) = %v, want %v", rt, pkgs, want)
 			}
@@ -191,7 +194,7 @@ func TestDevenvPackages_NoRuntime(t *testing.T) {
 	t.Parallel()
 	pkgs := newModule().DevenvPackages(ecosystem.ModuleConfig{})
 	// Default should be docker packages.
-	want := []string{"docker", "hadolint", "dive"}
+	want := []string{"docker", "hadolint", "dive", "syft", "grype"}
 	if len(pkgs) != len(want) {
 		t.Fatalf("DevenvPackages(default) = %v, want %v", pkgs, want)
 	}
@@ -313,25 +316,13 @@ func TestPreCommitHooks(t *testing.T) {
 	}
 }
 
-// ---------- DenyRules ----------
-
-func TestDenyRules(t *testing.T) {
-	rules := newModule().DenyRules(ecosystem.ModuleConfig{})
-	if len(rules) != 1 {
-		t.Fatalf("expected 1 deny rule, got %d", len(rules))
-	}
-	if rules[0] != "Bash(docker pull *)" {
-		t.Errorf("deny rule = %q, want %q", rules[0], "Bash(docker pull *)")
-	}
-}
-
 // ---------- CICommands ----------
 
 func TestCICommands(t *testing.T) {
 	t.Parallel()
 	cmds := newModule().CICommands(ecosystem.ModuleConfig{})
-	if len(cmds) != 5 {
-		t.Fatalf("expected 5 CI commands, got %d", len(cmds))
+	if len(cmds) != 4 {
+		t.Fatalf("expected 4 CI commands, got %d", len(cmds))
 	}
 
 	names := make(map[string]ecosystem.CICommand, len(cmds))
@@ -358,8 +349,20 @@ func TestCICommands(t *testing.T) {
 	if _, ok := names["grype-scan"]; !ok {
 		t.Error("missing grype-scan CI command")
 	}
-	if _, ok := names["cosign-verify"]; !ok {
-		t.Error("missing cosign-verify CI command")
+	// A locally built image carries no signature, so verifying one can
+	// only fail; signature checks belong to the pipeline that signs.
+	if _, ok := names["cosign-verify"]; ok {
+		t.Error("cosign-verify must not run against the unsigned CI build")
+	}
+
+	// The scan must target the image the build step tagged, not whichever
+	// image happens to be newest in the local store.
+	build, sbom := names["container-build"].Command, names["syft-sbom"].Command
+	if !strings.Contains(build, "-t qsdev-ci-image:latest") {
+		t.Errorf("container-build = %q, want it tagged qsdev-ci-image:latest", build)
+	}
+	if sbom != "syft scan docker:qsdev-ci-image:latest -o spdx-json=sbom.spdx.json" {
+		t.Errorf("syft-sbom = %q, want it to scan the tagged build from the docker store", sbom)
 	}
 
 	// trivy-image should be absent (replaced by syft-sbom + grype-scan).
@@ -412,15 +415,8 @@ func TestCICommands_PodmanRuntime(t *testing.T) {
 					t.Errorf("container-build should start with 'podman ', got %q", build.Command)
 				}
 			}
-			if sbom, ok := names["syft-sbom"]; ok {
-				if !strings.Contains(sbom.Command, "podman images") {
-					t.Errorf("syft-sbom should use 'podman images', got %q", sbom.Command)
-				}
-			}
-			if cosign, ok := names["cosign-verify"]; ok {
-				if !strings.Contains(cosign.Command, "podman images") {
-					t.Errorf("cosign-verify should use 'podman images', got %q", cosign.Command)
-				}
+			if sbom := names["syft-sbom"].Command; !strings.Contains(sbom, "syft scan podman:qsdev-ci-image:latest") {
+				t.Errorf("syft-sbom should scan the build from the podman store, got %q", sbom)
 			}
 		})
 	}
@@ -449,8 +445,9 @@ func TestWizardFields(t *testing.T) {
 	if f.Type != ecosystem.FieldTypeInput {
 		t.Errorf("field Type = %v, want FieldTypeInput", f.Type)
 	}
-	if f.Default != "docker.io,gcr.io,ghcr.io" {
-		t.Errorf("field Default = %q, want docker.io,gcr.io,ghcr.io", f.Default)
+	// Unset keeps the built-in registry list, so the field has no default.
+	if f.Default != "" || f.Placeholder == "" {
+		t.Errorf("field Default = %q, Placeholder = %q, want no default and an example", f.Default, f.Placeholder)
 	}
 }
 
@@ -501,47 +498,16 @@ func TestDevenvNixFragment_NoRuntime(t *testing.T) {
 	}
 }
 
-// ---------- DevenvYamlInputs (runtime-aware) ----------
+// ---------- DevenvYamlInputs ----------
 
-func TestDevenvYamlInputs_PodmanNixOS(t *testing.T) {
+// TestNoDevenvYamlInputs covers W138: the module adds no flake inputs.
+// quadlet-nix exports only NixOS/Home Manager modules, which devenv cannot
+// import, so adding it only locked an unused third-party repository into
+// devenv.lock; the quadlet guidance lives in the NixOS Podman guide.
+func TestNoDevenvYamlInputs(t *testing.T) {
 	t.Parallel()
-	cfg := ecosystem.ModuleConfig{
-		Extras: map[string]string{
-			"container_runtime": "podman-rootless",
-			"os_family":         "nixos",
-		},
-	}
-	inputs := newModule().DevenvYamlInputs(cfg)
-	if len(inputs) != 1 {
-		t.Fatalf("expected 1 input, got %d", len(inputs))
-	}
-	if !strings.Contains(inputs[0].URL, "quadlet-nix") {
-		t.Errorf("input URL should reference quadlet-nix, got %q", inputs[0].URL)
-	}
-}
-
-func TestDevenvYamlInputs_PodmanNonNixOS(t *testing.T) {
-	t.Parallel()
-	cfg := ecosystem.ModuleConfig{
-		Extras: map[string]string{
-			"container_runtime": "podman-rootless",
-			"os_family":         "ubuntu",
-		},
-	}
-	inputs := newModule().DevenvYamlInputs(cfg)
-	if len(inputs) != 0 {
-		t.Errorf("expected nil/empty inputs for non-NixOS Podman, got %d", len(inputs))
-	}
-}
-
-func TestDevenvYamlInputs_Docker(t *testing.T) {
-	t.Parallel()
-	cfg := ecosystem.ModuleConfig{
-		Extras: map[string]string{"container_runtime": "docker"},
-	}
-	inputs := newModule().DevenvYamlInputs(cfg)
-	if len(inputs) != 0 {
-		t.Errorf("expected nil/empty inputs for Docker, got %d", len(inputs))
+	if _, ok := any(newModule()).(ecosystem.DevenvYamlInputProvider); ok {
+		t.Error("container module must not contribute devenv.yaml inputs")
 	}
 }
 
@@ -571,69 +537,99 @@ func TestVerificationCommands_PodmanRuntime(t *testing.T) {
 
 // ---------- DenyRules (runtime-aware) ----------
 
-func TestDenyRules_DockerRuntime(t *testing.T) {
+// TestDenyRules_BlocksEscapesForEveryRuntime runs representative commands
+// through the project's deny matcher. Container-escape arguments and image
+// pulls must be denied for both CLIs whatever runtime is configured, while
+// ordinary build/run commands stay allowed.
+func TestDenyRules_BlocksEscapesForEveryRuntime(t *testing.T) {
 	t.Parallel()
-	cfg := ecosystem.ModuleConfig{
-		Extras: map[string]string{"container_runtime": "docker"},
-	}
-	rules := newModule().DenyRules(cfg)
-	if len(rules) != 1 {
-		t.Fatalf("expected 1 deny rule for docker, got %d: %v", len(rules), rules)
-	}
-	if rules[0] != "Bash(docker pull *)" {
-		t.Errorf("deny rule = %q, want %q", rules[0], "Bash(docker pull *)")
-	}
-}
 
-func TestDenyRules_PodmanRuntime(t *testing.T) {
-	t.Parallel()
-	for _, rt := range []string{"podman-rootless", "podman-rootful"} {
-		t.Run(rt, func(t *testing.T) {
+	denied := []string{
+		"docker pull evil/image",
+		"docker pull",
+		"podman pull evil/image",
+		"docker run --privileged -v /:/host alpine chroot /host",
+		"podman run --privileged alpine",
+		"docker run -v /var/run/docker.sock:/var/run/docker.sock alpine",
+		"podman run -v /run/podman/podman.sock:/sock alpine",
+		"docker run --rm -v /:/host alpine",
+		"docker run --volume=/:/host alpine",
+		"docker run -v/:/host alpine",
+		"docker run --mount type=bind,source=/,target=/host alpine",
+		"podman run --mount type=bind,src=/,dst=/host alpine",
+		"docker run --pid=host alpine",
+		"podman run --network=host alpine",
+		"docker run --net host alpine",
+		"docker exec --privileged ctr sh",
+		"docker container run --privileged alpine",
+	}
+	allowed := []string{
+		"docker build .",
+		"podman build .",
+		"docker run --rm -v ./src:/src alpine ls",
+		"docker run --mount type=bind,source=/home/me/src,target=/src alpine",
+		"docker images -q",
+		"podman ps",
+	}
+
+	for _, rt := range []string{"", "docker", "podman-rootless", "podman-rootful"} {
+		t.Run("runtime="+rt, func(t *testing.T) {
 			t.Parallel()
-			cfg := ecosystem.ModuleConfig{
+			rules := newModule().DenyRules(ecosystem.ModuleConfig{
 				Extras: map[string]string{"container_runtime": rt},
-			}
-			rules := newModule().DenyRules(cfg)
-			if len(rules) != 3 {
-				t.Fatalf("expected 3 deny rules for podman, got %d: %v", len(rules), rules)
-			}
-
-			hasSocketBlock := false
-			hasDockerPull := false
-			hasPrivileged := false
-			for _, r := range rules {
-				if strings.Contains(r, "docker.sock") {
-					hasSocketBlock = true
-				}
-				if r == "Bash(docker pull *)" {
-					hasDockerPull = true
-				}
-				if r == "Bash(podman run --privileged *)" {
-					hasPrivileged = true
+			})
+			for _, cmd := range denied {
+				if !deniedBy(rules, cmd) {
+					t.Errorf("%q is not denied", cmd)
 				}
 			}
-			if !hasSocketBlock {
-				t.Error("missing docker.sock mount block rule")
-			}
-			if !hasDockerPull {
-				t.Error("missing docker pull deny rule")
-			}
-			if !hasPrivileged {
-				t.Error("missing podman privileged deny rule")
+			for _, cmd := range allowed {
+				if deniedBy(rules, cmd) {
+					t.Errorf("%q is unexpectedly denied", cmd)
+				}
 			}
 		})
 	}
 }
 
-func TestDenyRules_NoRuntime(t *testing.T) {
+// TestRegistryCredentialsProtected covers W132: registry credential files
+// are read-denied and cannot be printed with cat.
+func TestRegistryCredentialsProtected(t *testing.T) {
 	t.Parallel()
-	rules := newModule().DenyRules(ecosystem.ModuleConfig{})
-	if len(rules) != 1 {
-		t.Fatalf("expected 1 deny rule for no runtime (default), got %d: %v", len(rules), rules)
+	m := newModule()
+	read := m.ReadDenyRules(ecosystem.ModuleConfig{})
+	for _, want := range []string{"~/.docker/config.json", "~/.config/containers/auth.json"} {
+		if !slices.Contains(read, want) {
+			t.Errorf("ReadDenyRules missing %q: %v", want, read)
+		}
 	}
-	if rules[0] != "Bash(docker pull *)" {
-		t.Errorf("deny rule = %q, want %q", rules[0], "Bash(docker pull *)")
+	rules := m.DenyRules(ecosystem.ModuleConfig{})
+	for _, cmd := range []string{"cat ~/.docker/config.json", "cat ~/.config/containers/auth.json"} {
+		if !slices.ContainsFunc(rules, func(r string) bool { return denyutil.MatchesBashRule(r, cmd) }) {
+			t.Errorf("%q is not denied", cmd)
+		}
 	}
+}
+
+// TestHadolintConfigIsCreateOnly covers W134: an existing .hadolint.yaml
+// (a team's restrictive trustedRegistries and ignored lists) must never be
+// replaced by the public-registry defaults.
+func TestHadolintConfigIsCreateOnly(t *testing.T) {
+	t.Parallel()
+	for _, f := range newModule().SecurityConfigs(ecosystem.ModuleConfig{}) {
+		if f.Path == ".hadolint.yaml" && f.Strategy != types.Skip {
+			t.Errorf(".hadolint.yaml Strategy = %v, want types.Skip", f.Strategy)
+		}
+	}
+}
+
+func deniedBy(rules []string, cmd string) bool {
+	for _, r := range rules {
+		if denyutil.MatchesDenyRule(r, "Bash("+cmd+")") {
+			return true
+		}
+	}
+	return false
 }
 
 // ---------- helpers ----------

@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/Quantum-Serendipity/qsdev/addons/claudecode"
@@ -85,6 +86,12 @@ func TestVerifyDocSet_HashVerified(t *testing.T) {
 	}
 	if res.Status != "hash-verified" {
 		t.Errorf("status = %q, want hash-verified", res.Status)
+	}
+	// F103: the recorded hash comes from the unchecked download itself, so a
+	// hash-only pass must say it is trust-on-first-use rather than read as
+	// provenance.
+	if !strings.Contains(res.Reason, "trust-on-first-use") {
+		t.Errorf("reason = %q, want it to flag the hash as trust-on-first-use", res.Reason)
 	}
 	if res.Slug != "go" || res.Type != "devdocs" {
 		t.Errorf("slug/type = %q/%q, want go/devdocs", res.Slug, res.Type)

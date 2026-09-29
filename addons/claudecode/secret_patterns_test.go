@@ -2,6 +2,7 @@ package claudecode_test
 
 import (
 	"regexp"
+	"strings"
 	"testing"
 
 	claudecode "github.com/Quantum-Serendipity/qsdev/addons/claudecode"
@@ -9,7 +10,8 @@ import (
 
 func TestDefaultSecretPatterns_AllCompile(t *testing.T) {
 	t.Parallel()
-	for i, pattern := range claudecode.ExportDefaultSecretPatterns {
+	all := append(append([]string{}, claudecode.ExportDefaultSecretPatterns...), claudecode.ExportConfigSecretPatterns...)
+	for i, pattern := range all {
 		if _, err := regexp.Compile(pattern); err != nil {
 			t.Errorf("pattern %d (%q) failed to compile: %v", i, pattern, err)
 		}
@@ -18,8 +20,8 @@ func TestDefaultSecretPatterns_AllCompile(t *testing.T) {
 
 func TestDefaultSecretPatterns_Count(t *testing.T) {
 	t.Parallel()
-	if len(claudecode.ExportDefaultSecretPatterns) != 12 {
-		t.Errorf("expected 12 default patterns, got %d", len(claudecode.ExportDefaultSecretPatterns))
+	if len(claudecode.ExportDefaultSecretPatterns) != 19 {
+		t.Errorf("expected 19 default patterns, got %d", len(claudecode.ExportDefaultSecretPatterns))
 	}
 }
 
@@ -60,6 +62,21 @@ func TestSecretPatterns_PositiveMatches(t *testing.T) {
 		{"SECRET uppercase", 11, `SECRET: "my_very_secret_value_here"`},
 		{"TOKEN uppercase", 11, `TOKEN = "abcdefghijklmnopqrstuvwxyz"`},
 		{"Slack enterprise token", 8, "xoxe-AAAAAAAAAA-AAAAAAAAAAAAA"},
+		// W044: formats the scan used to miss.
+		{"AWS temporary key", 0, "ASIA" + strings.Repeat("Q", 16)},
+		{"GitHub OAuth token", 2, "gho_" + strings.Repeat("a", 36)},
+		{"GitHub refresh token", 2, "ghr_" + strings.Repeat("a", 36)},
+		{"Encrypted private key", 5, "-----BEGIN ENCRYPTED PRIVATE KEY-----"},
+		{"PGP private key block", 5, "-----BEGIN PGP PRIVATE KEY BLOCK-----"},
+		{"JSON password", 11, `{"password": "hunter2hunter2"}`},
+		{"GitHub fine-grained PAT", 12, "github_pat_" + strings.Repeat("A1b2", 6)},
+		{"Anthropic key", 13, "sk-ant-api03-" + strings.Repeat("Ab9_", 6)},
+		{"OpenAI project key", 14, "sk-proj-" + strings.Repeat("Ab9-", 6)},
+		{"OpenAI legacy key", 14, "sk-" + strings.Repeat("a", 20) + "T3BlbkFJ" + strings.Repeat("b", 20)},
+		{"Google API key", 15, "AIza" + strings.Repeat("x", 35)},
+		{"npm token", 16, "npm_" + strings.Repeat("a1", 18)},
+		{"PyPI token", 17, "pypi-" + strings.Repeat("AgE", 20)},
+		{"Slack webhook", 18, "https://hooks.slack.com/services/T0001/B0002/" + strings.Repeat("x", 24)},
 	}
 
 	for _, tt := range tests {
@@ -99,6 +116,10 @@ func TestSecretPatterns_NegativeMatches(t *testing.T) {
 		{"Short password", 11, `password = "short"`},
 		{"Password no quotes", 11, "password = noquotes"},
 		{"Env var reference", 11, "password = ${DB_PASSWORD}"},
+		{"Anthropic prefix only", 13, "sk-ant-short"},
+		{"OpenAI unrelated sk- word", 14, "sk-learn-is-a-library"},
+		{"Google short", 15, "AIzaShort"},
+		{"npm short", 16, "npm_install"},
 	}
 
 	for _, tt := range tests {
@@ -116,5 +137,36 @@ func TestPlaceholderIndicators_Defined(t *testing.T) {
 	t.Parallel()
 	if len(claudecode.ExportPlaceholderIndicators) == 0 {
 		t.Error("expected non-empty PlaceholderIndicators")
+	}
+}
+
+// TestConfigSecretPatterns matches the unquoted assignments the hook checks in
+// dotenv and config files (W044) and leaves variable references alone.
+func TestConfigSecretPatterns(t *testing.T) {
+	t.Parallel()
+	re := regexp.MustCompile(claudecode.ExportConfigSecretPatterns[0])
+	tests := []struct {
+		input string
+		want  bool
+	}{
+		{"DB_PASSWORD=hunter2hunter2", true},
+		{"export API_KEY=abcdef0123456789", true},
+		{"db:\n  password: hunter2hunter2", true},
+		{"client_secret = s3cr3tv4lu3", true},
+		{"DB_PASSWORD=${DB_PASSWORD}", false},
+		{"password: <password>", false},
+		{"password: short", false},
+		{"DB_HOST=db.example.com", false},
+		// Keys that name or point at a secret, not hold one.
+		{"      secretName: tls-cert-production", false},
+		{"      tokenUrl: https://auth.example.com/oauth/token", false},
+		{"POSTGRES_PASSWORD_FILE=/run/secrets/db_password", false},
+		// The value must be on the key's own line.
+		{"password:\n  valueFrom: vault-secret-ref", false},
+	}
+	for _, tt := range tests {
+		if got := re.MatchString(tt.input); got != tt.want {
+			t.Errorf("config pattern on %q = %v, want %v", tt.input, got, tt.want)
+		}
 	}
 }

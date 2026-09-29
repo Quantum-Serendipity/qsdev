@@ -3,6 +3,7 @@ package drift
 import (
 	"os"
 	"path/filepath"
+	"slices"
 	"testing"
 	"time"
 )
@@ -116,8 +117,8 @@ func TestDetectLockfileDrift_MultipleManifests(t *testing.T) {
 
 	cat := detectLockfileDrift(dir)
 
-	// Should report missing lockfiles for package-lock.json, pnpm-lock.yaml, bun.lockb,
-	// and go.sum, but NOT yarn.lock (which is present and fresh).
+	// Should report the missing go.sum, but nothing for package.json: yarn.lock
+	// is present and fresh, and it satisfies the manifest on its own.
 	yarnFinding := false
 	goSumFinding := false
 	for _, f := range cat.Findings {
@@ -133,6 +134,61 @@ func TestDetectLockfileDrift_MultipleManifests(t *testing.T) {
 	}
 	if !goSumFinding {
 		t.Error("go.sum is missing; should have a finding")
+	}
+	if len(cat.Findings) != 1 {
+		t.Errorf("expected exactly 1 finding (go.sum), got %d: %+v", len(cat.Findings), cat.Findings)
+	}
+}
+
+// TestDetectLockfileDrift_AlternativeLockfiles guards against reporting every
+// unused package manager's lockfile as missing: one present alternative
+// satisfies the manifest, and only an entirely unlocked manifest is an error.
+func TestDetectLockfileDrift_AlternativeLockfiles(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name         string
+		files        []string
+		wantSubjects []string
+	}{
+		{name: "pnpm project", files: []string{"package.json", "pnpm-lock.yaml"}},
+		{name: "yarn project", files: []string{"package.json", "yarn.lock"}},
+		{name: "bun project", files: []string{"package.json", "bun.lockb"}},
+		{name: "uv project", files: []string{"pyproject.toml", "uv.lock"}},
+		{name: "poetry project", files: []string{"pyproject.toml", "poetry.lock"}},
+		{name: "unlocked package.json", files: []string{"package.json"}, wantSubjects: []string{"package.json"}},
+		{name: "unlocked pyproject.toml", files: []string{"pyproject.toml"}, wantSubjects: []string{"pyproject.toml"}},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			dir := t.TempDir()
+			past := time.Now().Add(-10 * time.Second)
+			for i, name := range tt.files {
+				path := filepath.Join(dir, name)
+				writeFile(t, path, "content")
+				// The manifest (first file) is older than its lockfile.
+				if i == 0 {
+					if err := os.Chtimes(path, past, past); err != nil {
+						t.Fatal(err)
+					}
+				}
+			}
+
+			cat := detectLockfileDrift(dir)
+
+			var got []string
+			for _, f := range cat.Findings {
+				got = append(got, f.Subject)
+				if f.Severity != Error {
+					t.Errorf("unexpected %s finding: %+v", f.Severity, f)
+				}
+			}
+			if !slices.Equal(got, tt.wantSubjects) {
+				t.Errorf("finding subjects = %v, want %v", got, tt.wantSubjects)
+			}
+		})
 	}
 }
 

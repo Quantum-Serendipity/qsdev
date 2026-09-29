@@ -1,12 +1,9 @@
 package cgroup
 
 import (
-	"bytes"
 	"context"
 	"fmt"
-	"os"
 	"os/exec"
-	"strconv"
 	"time"
 
 	"github.com/Quantum-Serendipity/qsdev/internal/sandbox"
@@ -28,15 +25,12 @@ func NewSystemdRunBackend(path string) *SystemdRunBackend {
 // Name returns the backend identifier.
 func (s *SystemdRunBackend) Name() string { return "systemd-run" }
 
-// Available checks whether the systemd-run binary exists at the configured path.
+// Available checks that the systemd-run binary exists AND that a systemd user
+// session bus is reachable. Without one, every `systemd-run --user` invocation
+// fails, and selecting this backend over the unsandboxed fallback would turn
+// every hook into a spurious exit 1.
 func (s *SystemdRunBackend) Available() error {
-	if s.systemdRunPath == "" {
-		return fmt.Errorf("systemd-run binary path not set")
-	}
-	if _, err := os.Stat(s.systemdRunPath); err != nil {
-		return fmt.Errorf("systemd-run binary not found at %s: %w", s.systemdRunPath, err)
-	}
-	return nil
+	return sandbox.UserScopeUsable(s.systemdRunPath)
 }
 
 // Tier returns TierSystemdRun.
@@ -46,27 +40,22 @@ func (s *SystemdRunBackend) Tier() sandbox.DegradationTier {
 
 // BuildArgs constructs the systemd-run command arguments from a SandboxConfig.
 func BuildArgs(cfg *sandbox.SandboxConfig) []string {
-	args := []string{
-		"--user",
-		"--scope",
+	return append(sandbox.SystemdScopeArgs(cfg.Resources), cfg.HookCommand...)
+}
+
+// hookEnvironment returns the environment for systemd-run: the hook's filtered
+// environment (always filtered, including when the caller supplied none and the
+// process environment is the source) plus the user-bus variables systemd-run
+// itself needs. In scope mode systemd-run execs the hook with its own
+// environment, so the bus variables reach the hook as well; this tier has no
+// namespace isolation, and the bus socket's location is derivable from the uid
+// anyway, so that exposes nothing the hook could not already reach.
+func hookEnvironment(cfg *sandbox.SandboxConfig) []string {
+	env := bwrap.FilterEnvironment(sandbox.SourceEnvironment(cfg), cfg.HookCategory)
+	for k, v := range sandbox.UserBusEnv() {
+		env[k] = v
 	}
-
-	if cfg.Resources.MemoryBytes > 0 {
-		args = append(args, "-p", "MemoryMax="+strconv.FormatInt(cfg.Resources.MemoryBytes, 10))
-	}
-
-	if cfg.Resources.MaxPIDs > 0 {
-		args = append(args, "-p", "TasksMax="+strconv.Itoa(cfg.Resources.MaxPIDs))
-	}
-
-	if cfg.Resources.CPUQuotaPercent > 0 && cfg.Resources.CPUQuotaPercent <= 10000 {
-		args = append(args, "-p", "CPUQuota="+strconv.Itoa(cfg.Resources.CPUQuotaPercent)+"%")
-	}
-
-	args = append(args, "--")
-	args = append(args, cfg.HookCommand...)
-
-	return args
+	return sandbox.EnvList(env)
 }
 
 // RunHook executes the hook command inside a systemd-run --user scope with
@@ -81,45 +70,21 @@ func (s *SystemdRunBackend) RunHook(ctx context.Context, cfg *sandbox.SandboxCon
 	args := BuildArgs(cfg)
 
 	sandboxOverhead := time.Since(setupStart)
-	execStart := time.Now()
 
 	cmd := exec.CommandContext(ctx, s.systemdRunPath, args...)
-
-	var stdout, stderr bytes.Buffer
-	cmd.Stdout = &stdout
-	cmd.Stderr = &stderr
-
-	if cfg.Environment != nil {
-		filtered := bwrap.FilterEnvironment(cfg.Environment, cfg.HookCategory)
-		for k, v := range filtered {
-			cmd.Env = append(cmd.Env, k+"="+v)
-		}
-	}
+	cfg.Attach(cmd)
+	cmd.Env = hookEnvironment(cfg)
 
 	if cfg.ProjectDir != "" {
 		cmd.Dir = cfg.ProjectDir
 	}
 
-	err := cmd.Run()
-	duration := time.Since(execStart)
-
-	exitCode := 0
+	result, err := sandbox.RunCommand(ctx, cmd, sandbox.TierSystemdRun)
 	if err != nil {
-		if exitErr, ok := err.(*exec.ExitError); ok {
-			exitCode = exitErr.ExitCode()
-		} else {
-			return nil, fmt.Errorf("executing systemd-run: %w", err)
-		}
+		return nil, fmt.Errorf("executing systemd-run: %w", err)
 	}
-
-	return &sandbox.SandboxResult{
-		ExitCode:        exitCode,
-		Stdout:          stdout.Bytes(),
-		Stderr:          stderr.Bytes(),
-		Duration:        duration,
-		SandboxOverhead: sandboxOverhead,
-		Tier:            sandbox.TierSystemdRun,
-	}, nil
+	result.SandboxOverhead = sandboxOverhead
+	return result, nil
 }
 
 // Compile-time interface compliance check.

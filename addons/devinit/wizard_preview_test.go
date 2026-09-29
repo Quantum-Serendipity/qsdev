@@ -172,7 +172,7 @@ func TestBuildDetailedDefaults_GoProject(t *testing.T) {
 	}
 	defaults := devinit.ExportMapDetectionToDefaults(detected, "/tmp/project")
 
-	output := devinit.ExportBuildDetailedDefaults(detected, defaults)
+	output := devinit.ExportBuildDetailedDefaults(defaults)
 
 	if !strings.Contains(output, "Go") {
 		t.Error("output should contain Go language")
@@ -191,7 +191,7 @@ func TestBuildDetailedDefaults_EmptyDetection(t *testing.T) {
 	detected := types.DetectedProject{}
 	defaults := devinit.ExportMapDetectionToDefaults(detected, "/tmp/project")
 
-	output := devinit.ExportBuildDetailedDefaults(detected, defaults)
+	output := devinit.ExportBuildDetailedDefaults(defaults)
 
 	if !strings.Contains(output, "(none") {
 		t.Errorf("output should contain '(none' for empty languages, got:\n%s", output)

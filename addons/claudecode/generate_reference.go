@@ -64,7 +64,7 @@ func GenerateQsdevReference(answers types.WizardAnswers, registry *ecosystem.Reg
 	b.WriteString("## Troubleshooting\n\n")
 	fmt.Fprintf(&b, "### %s commands not found\nInstall %s: see project README for installation instructions.\n\n", app, app)
 	b.WriteString("### devenv not activated\nRun `direnv allow` in the project root, then `devenv shell`.\n\n")
-	fmt.Fprintf(&b, "### Permission denied on tool operations\nCheck `.claude/settings.json` deny rules. Use `%s check --deny-rules` to validate.\n\n", app)
+	fmt.Fprintf(&b, "### Permission denied on tool operations\nCheck `.claude/settings.json` deny rules. Run `%s check` to validate the configuration.\n\n", app)
 
 	return &types.GeneratedFile{
 		Path:     ".claude/qsdev-reference.md",

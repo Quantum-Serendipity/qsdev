@@ -1,18 +1,25 @@
 package config
 
 import (
+	"slices"
+
 	"github.com/Quantum-Serendipity/qsdev/pkg/types"
 )
 
 // ResolvedConfig is the result of merging all configuration layers.
 type ResolvedConfig struct {
-	Config     *types.QsdevConfig
-	Traces     []ResolutionTrace
+	Config *types.QsdevConfig
+	// Local is the local developer layer as it was applied: only what adds
+	// to or tightens the committed layers (see sanitizeLocal). It is nil when
+	// no local layer was given.
+	Local      *types.QsdevConfig
 	Violations []FloorViolation
 }
 
 // FloorViolation records a case where a local or project override attempted
-// to weaken a security setting below the enforced floor.
+// to weaken a security setting below the enforced floor, or where a local
+// override tried to change something it may only add to. Enforced is the
+// value kept, or nil when the override was dropped with nothing to enforce.
 type FloorViolation struct {
 	Field     string
 	Attempted any
@@ -20,59 +27,51 @@ type FloorViolation struct {
 	Reason    string
 }
 
-// ResolveConfig performs five-layer configuration resolution:
+// ResolveConfig performs four-layer configuration resolution:
 //  1. Organization defaults (orgDefaults)
-//  2. Profile overlay (if profile is not nil)
-//  3. Compliance level overlay (if project has Client.SecurityLevel)
-//  4. Project overrides (project)
-//  5. Local developer overrides (local, converted to QsdevConfig)
+//  2. Compliance level overlay (if project has Client.SecurityLevel)
+//  3. Project overrides (project)
+//  4. Local developer overrides (local), which may only add to or tighten
+//     layers 1-3: sanitizeLocal drops, as FloorViolations, whatever would
+//     remove or loosen something, including a permission level less strict
+//     than the committed one, and mergeLocal merges languages and services
+//     by name instead of replacing them.
 //
 // After merging, enforceSecurityFloor ensures security settings cannot be
 // weakened below the project's declared floor.
-func ResolveConfig(orgDefaults, profile, project *types.QsdevConfig, local *LocalConfig, verbose bool) (*ResolvedConfig, error) {
-	tracer := NewTracer(verbose)
-
+func ResolveConfig(orgDefaults, project *types.QsdevConfig, local *LocalConfig) (*ResolvedConfig, error) {
 	// Layer 1: Start from org defaults.
 	resolved := cloneQsdevConfig(orgDefaults)
 	if resolved == nil {
 		resolved = &types.QsdevConfig{}
 	}
-	tracer.Record("*", "org-defaults", "layer-1", nil, "base layer")
 
-	// Layer 2: Merge profile overlay.
-	if profile != nil {
-		resolved = deepMerge(resolved, profile)
-		tracer.Record("*", "profile", "layer-2", nil, "profile overlay applied")
-	}
-
-	// Layer 3: Compliance level overlay from client config.
+	// Layer 2: Compliance level overlay from client config.
 	if project != nil && project.Client != nil && project.Client.SecurityLevel != "" {
-		complianceOverlay := ComplianceLevelToConfig(project.Client.SecurityLevel)
-		if complianceOverlay != nil {
+		if complianceOverlay := ComplianceLevelToConfig(project.Client.SecurityLevel); complianceOverlay != nil {
 			resolved = deepMerge(resolved, complianceOverlay)
-			tracer.Record("security.level", project.Client.SecurityLevel, "layer-3", nil, "client compliance overlay")
 		}
 	}
 
-	// Layer 4: Merge project overrides.
+	// Layer 3: Merge project overrides.
 	if project != nil {
 		resolved = deepMerge(resolved, project)
-		tracer.Record("*", "project", "layer-4", nil, "project overrides applied")
 	}
 
-	// Layer 5: Merge local overrides.
+	// Layer 4: Merge local overrides, keeping only additions and tightenings.
+	var applied *types.QsdevConfig
+	var violations []FloorViolation
 	if local != nil {
-		localCfg := localToQsdevConfig(local)
-		resolved = deepMerge(resolved, localCfg)
-		tracer.Record("*", "local", "layer-5", nil, "local overrides applied")
+		applied, violations = sanitizeLocal(resolved, local)
+		resolved = mergeLocal(resolved, applied)
 	}
 
 	// Post-merge: enforce security floor.
-	violations := enforceSecurityFloor(resolved, project)
+	violations = append(violations, enforceSecurityFloor(resolved, project)...)
 
 	return &ResolvedConfig{
 		Config:     resolved,
-		Traces:     tracer.Traces(),
+		Local:      applied,
 		Violations: violations,
 	}, nil
 }
@@ -98,6 +97,10 @@ func deepMerge(base, overlay *types.QsdevConfig) *types.QsdevConfig {
 	// Services: replacement semantics.
 	result.Services = mergeReplaceServices(base.Services, overlay.Services)
 
+	// Packages and overlays: union.
+	result.Packages = mergeUnionStrings(base.Packages, overlay.Packages)
+	result.Overlays = mergeUnionStrings(base.Overlays, overlay.Overlays)
+
 	// Security.Level: last-wins scalar.
 	if overlay.Security.Level != "" {
 		result.Security.Level = overlay.Security.Level
@@ -108,6 +111,12 @@ func deepMerge(base, overlay *types.QsdevConfig) *types.QsdevConfig {
 	result.Security.ScriptBlocking = mergePointerBool(base.Security.ScriptBlocking, overlay.Security.ScriptBlocking)
 	result.Security.LockEnforcement = mergePointerBool(base.Security.LockEnforcement, overlay.Security.LockEnforcement)
 	result.Security.VulnScanning = mergePointerBool(base.Security.VulnScanning, overlay.Security.VulnScanning)
+
+	// Security.CredentialVend: the overlay's block replaces the base's whole,
+	// so an allow-list is never widened by entries from another layer.
+	if !overlay.Security.CredentialVend.IsZero() {
+		result.Security.CredentialVend = overlay.Security.CredentialVend.Clone()
+	}
 
 	// Tools.Enabled: union.
 	result.Tools.Enabled = mergeUnionStrings(base.Tools.Enabled, overlay.Tools.Enabled)
@@ -132,6 +141,15 @@ func deepMerge(base, overlay *types.QsdevConfig) *types.QsdevConfig {
 	// ClaudeCode.MCPServers: union.
 	result.ClaudeCode.MCPServers = mergeUnionStrings(base.ClaudeCode.MCPServers, overlay.ClaudeCode.MCPServers)
 
+	// MCP.DisabledTools: union, so an MCP tool denied at any layer stays denied.
+	result.MCP.DisabledTools = mergeUnionStrings(base.MCP.DisabledTools, overlay.MCP.DisabledTools)
+	// Hooks.FileBoundary.ExtraReadPaths: union.
+	result.Hooks.FileBoundary.ExtraReadPaths = mergeUnionStrings(base.Hooks.FileBoundary.ExtraReadPaths, overlay.Hooks.FileBoundary.ExtraReadPaths)
+
+	// Hooks.ToolGates lists: union.
+	result.Hooks.ToolGates.Allowed = mergeUnionStrings(base.Hooks.ToolGates.Allowed, overlay.Hooks.ToolGates.Allowed)
+	result.Hooks.ToolGates.Denied = mergeUnionStrings(base.Hooks.ToolGates.Denied, overlay.Hooks.ToolGates.Denied)
+
 	// Infrastructure: last-wins scalars, map merge for overrides.
 	if overlay.Infrastructure.RegistryProxy != "" {
 		result.Infrastructure.RegistryProxy = overlay.Infrastructure.RegistryProxy
@@ -155,8 +173,14 @@ func deepMerge(base, overlay *types.QsdevConfig) *types.QsdevConfig {
 	if overlay.Infrastructure.NixCache != "" {
 		result.Infrastructure.NixCache = overlay.Infrastructure.NixCache
 	}
+	if overlay.Infrastructure.NixCachePublicKey != "" {
+		result.Infrastructure.NixCachePublicKey = overlay.Infrastructure.NixCachePublicKey
+	}
 	if overlay.Infrastructure.BuildCache != "" {
 		result.Infrastructure.BuildCache = overlay.Infrastructure.BuildCache
+	}
+	if overlay.Infrastructure.BuildCacheURL != "" {
+		result.Infrastructure.BuildCacheURL = overlay.Infrastructure.BuildCacheURL
 	}
 
 	// Git: last-wins scalar.
@@ -164,10 +188,18 @@ func deepMerge(base, overlay *types.QsdevConfig) *types.QsdevConfig {
 		result.Git.BranchPattern = overlay.Git.BranchPattern
 	}
 
+	// Java.RepositoryAllowlist: union.
+	result.Java.RepositoryAllowlist = mergeUnionStrings(base.Java.RepositoryAllowlist, overlay.Java.RepositoryAllowlist)
+
+	// Cloud.IsolateCLIConfig: any layer may turn isolation on; none turns
+	// it off.
+	result.Cloud.IsolateCLIConfig = base.Cloud.IsolateCLIConfig || overlay.Cloud.IsolateCLIConfig
+
 	// Client: NOT merged, only from project config.
-	// The overlay's Client is used directly if present.
+	// The overlay's Client replaces the base's if present (as a deep copy,
+	// so later edits to the resolved config never reach the caller's input).
 	if overlay.Client != nil {
-		result.Client = overlay.Client
+		result.Client = cloneClient(overlay.Client)
 	}
 
 	// Tier: last-wins scalar.
@@ -178,6 +210,11 @@ func deepMerge(base, overlay *types.QsdevConfig) *types.QsdevConfig {
 	// Profile: NOT merged, only from project.
 	if overlay.Profile != "" {
 		result.Profile = overlay.Profile
+	}
+
+	// InfraProfile: NOT merged, only from project.
+	if overlay.InfraProfile != "" {
+		result.InfraProfile = overlay.InfraProfile
 	}
 
 	// Version: NOT merged, only from project.
@@ -247,13 +284,9 @@ func enforceSecurityFloor(resolved, project *types.QsdevConfig) []FloorViolation
 	violations = append(violations, enforceBoolFloor(&resolved.Security.VulnScanning,
 		strongerBoolFloor(project.Security.VulnScanning, complianceFloor.VulnScanning), "security.vuln_scanning")...)
 
-	// Client blocked MCP: union-only, never removed.
-	if project.Client != nil {
-		// Enforce blocked MCP servers.
-		if len(project.Client.BlockedMCP) > 0 {
-			filterBlockedMCP(resolved, project.Client.BlockedMCP, project.Client.AllowedMCP)
-		}
-	}
+	// Client MCP policy: only the project's client block sets it, and no
+	// layer can re-add a server it blocks.
+	filterBlockedMCP(resolved, ClientMCPPolicy(project))
 
 	return violations
 }
@@ -269,81 +302,39 @@ func strongerBoolFloor(a, b *bool) bool {
 }
 
 // enforceBoolFloor ensures a resolved *bool cannot be weaker than the floor.
-// When the floor requires the setting to be true, any resolved value that is
-// below that floor (explicitly false, or unset/nil which downstream treats as
-// disabled) is both recorded as a FloorViolation and enforced back up to true —
-// a compliance- or project-mandated control must never be locally disabled.
+// When the floor requires the setting to be true, any resolved value below it
+// is enforced back up to true — a compliance- or project-mandated control must
+// never be locally disabled. Only an explicit false is recorded as a
+// FloorViolation: an unset value (which downstream treats as disabled) is
+// raised silently, because nothing tried to weaken it. Without that
+// distinction every project that declares a security level but leaves the
+// individual bools unset (the file init writes) would report violations.
 func enforceBoolFloor(resolved **bool, floor bool, field string) []FloorViolation {
 	if !floor {
 		return nil
 	}
-
-	// Floor is true. If resolved is below the floor (false or unset), enforce.
-	if *resolved == nil || !**resolved {
-		var attempted any
-		if *resolved != nil {
-			attempted = **resolved
-		}
-		t := true
-		*resolved = &t
-		return []FloorViolation{{
-			Field:     field,
-			Attempted: attempted,
-			Enforced:  true,
-			Reason:    "cannot disable security setting that project or compliance level requires",
-		}}
+	if *resolved != nil && **resolved {
+		return nil
 	}
 
-	return nil
+	attempted := *resolved
+	t := true
+	*resolved = &t
+	if attempted == nil {
+		return nil
+	}
+	return []FloorViolation{{
+		Field:     field,
+		Attempted: false,
+		Enforced:  true,
+		Reason:    "cannot disable security setting that project or compliance level requires",
+	}}
 }
 
-// filterBlockedMCP removes blocked MCP servers from the resolved config.
-// If BlockedMCP contains ["*"], all servers except those in AllowedMCP are removed.
-func filterBlockedMCP(resolved *types.QsdevConfig, blocked, allowed []string) *types.QsdevConfig {
-	if len(blocked) == 0 {
-		return resolved
-	}
-
-	// Check for wildcard block.
-	wildcard := false
-	for _, b := range blocked {
-		if b == "*" {
-			wildcard = true
-			break
-		}
-	}
-
-	allowedSet := make(map[string]bool, len(allowed))
-	for _, a := range allowed {
-		allowedSet[a] = true
-	}
-
-	if wildcard {
-		// Block all except allowed.
-		var filtered []string
-		for _, s := range resolved.ClaudeCode.MCPServers {
-			if allowedSet[s] {
-				filtered = append(filtered, s)
-			}
-		}
-		resolved.ClaudeCode.MCPServers = filtered
-	} else {
-		// Block specific servers.
-		blockedSet := make(map[string]bool, len(blocked))
-		for _, b := range blocked {
-			blockedSet[b] = true
-		}
-
-		var filtered []string
-		for _, s := range resolved.ClaudeCode.MCPServers {
-			if !blockedSet[s] {
-				filtered = append(filtered, s)
-			}
-		}
-		resolved.ClaudeCode.MCPServers = filtered
-	}
-
-	return resolved
+// filterBlockedMCP removes the servers the client MCP policy does not permit
+// from the resolved claude_code.mcp_servers.
+func filterBlockedMCP(resolved *types.QsdevConfig, policy types.MCPPolicy) {
+	resolved.ClaudeCode.MCPServers = policy.Filter(resolved.ClaudeCode.MCPServers)
 }
 
 // cloneQsdevConfig creates a deep copy of a QsdevConfig.
@@ -357,23 +348,32 @@ func cloneQsdevConfig(cfg *types.QsdevConfig) *types.QsdevConfig {
 		QsdevVersion: cfg.QsdevVersion,
 		Tier:         cfg.Tier,
 		Profile:      cfg.Profile,
+		InfraProfile: cfg.InfraProfile,
 		Security: types.SecurityConfig{
 			Level:           cfg.Security.Level,
 			AgeGating:       cloneBoolPtr(cfg.Security.AgeGating),
 			ScriptBlocking:  cloneBoolPtr(cfg.Security.ScriptBlocking),
 			LockEnforcement: cloneBoolPtr(cfg.Security.LockEnforcement),
 			VulnScanning:    cloneBoolPtr(cfg.Security.VulnScanning),
+			CredentialVend:  cfg.Security.CredentialVend.Clone(),
 		},
 		ClaudeCode: types.ClaudeCodeConfig{
 			Enabled:         cloneBoolPtr(cfg.ClaudeCode.Enabled),
 			PermissionLevel: cfg.ClaudeCode.PermissionLevel,
 		},
 		Infrastructure: types.InfraConfig{
-			RegistryProxy: cfg.Infrastructure.RegistryProxy,
-			NixCache:      cfg.Infrastructure.NixCache,
-			BuildCache:    cfg.Infrastructure.BuildCache,
+			RegistryProxy:     cfg.Infrastructure.RegistryProxy,
+			NixCache:          cfg.Infrastructure.NixCache,
+			NixCachePublicKey: cfg.Infrastructure.NixCachePublicKey,
+			BuildCache:        cfg.Infrastructure.BuildCache,
+			BuildCacheURL:     cfg.Infrastructure.BuildCacheURL,
 		},
-		Git: cfg.Git,
+		Hooks:    cfg.Hooks.Clone(),
+		Git:      cfg.Git,
+		Java:     cloneJava(cfg.Java),
+		Cloud:    cfg.Cloud,
+		Packages: slices.Clone(cfg.Packages),
+		Overlays: slices.Clone(cfg.Overlays),
 	}
 
 	if len(cfg.Infrastructure.RegistryProxyOverrides) > 0 {
@@ -443,25 +443,22 @@ func cloneQsdevConfig(cfg *types.QsdevConfig) *types.QsdevConfig {
 		copy(result.ClaudeCode.MCPServers, cfg.ClaudeCode.MCPServers)
 	}
 
-	// Clone Client.
-	if cfg.Client != nil {
-		client := *cfg.Client
-		if len(cfg.Client.Compliance) > 0 {
-			client.Compliance = make([]string, len(cfg.Client.Compliance))
-			copy(client.Compliance, cfg.Client.Compliance)
-		}
-		if len(cfg.Client.AllowedMCP) > 0 {
-			client.AllowedMCP = make([]string, len(cfg.Client.AllowedMCP))
-			copy(client.AllowedMCP, cfg.Client.AllowedMCP)
-		}
-		if len(cfg.Client.BlockedMCP) > 0 {
-			client.BlockedMCP = make([]string, len(cfg.Client.BlockedMCP))
-			copy(client.BlockedMCP, cfg.Client.BlockedMCP)
-		}
-		result.Client = &client
-	}
+	result.MCP.DisabledTools = slices.Clone(cfg.MCP.DisabledTools)
+	result.Client = cloneClient(cfg.Client)
 
 	return result
+}
+
+// cloneClient returns a deep copy of a *ClientConfig, or nil for nil.
+func cloneClient(c *types.ClientConfig) *types.ClientConfig {
+	if c == nil {
+		return nil
+	}
+	client := *c
+	client.Compliance = slices.Clone(c.Compliance)
+	client.AllowedMCP = slices.Clone(c.AllowedMCP)
+	client.BlockedMCP = slices.Clone(c.BlockedMCP)
+	return &client
 }
 
 // cloneBoolPtr returns a copy of a *bool value.

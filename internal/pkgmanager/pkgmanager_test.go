@@ -2,7 +2,10 @@ package pkgmanager
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"os"
+	"os/exec"
 	"strings"
 	"testing"
 )
@@ -34,10 +37,7 @@ type MockRunner struct {
 	// RunResults maps "name args..." to an error result.
 	RunResults map[string]error
 
-	// OutputResults maps "name args..." to (output, error) results.
-	OutputResults map[string]outputResult
-
-	// Calls records all Run/Output invocations as "name arg1 arg2 ...".
+	// Calls records all Run invocations as "name arg1 arg2 ...".
 	Calls []string
 }
 
@@ -46,16 +46,10 @@ type lookPathResult struct {
 	err  error
 }
 
-type outputResult struct {
-	data []byte
-	err  error
-}
-
 func NewMockRunner() *MockRunner {
 	return &MockRunner{
 		LookPathResults: make(map[string]lookPathResult),
 		RunResults:      make(map[string]error),
-		OutputResults:   make(map[string]outputResult),
 	}
 }
 
@@ -73,15 +67,6 @@ func (m *MockRunner) Run(_ context.Context, name string, args ...string) error {
 		return err
 	}
 	return nil
-}
-
-func (m *MockRunner) Output(_ context.Context, name string, args ...string) ([]byte, error) {
-	key := m.makeKey(name, args...)
-	m.Calls = append(m.Calls, key)
-	if r, ok := m.OutputResults[key]; ok {
-		return r.data, r.err
-	}
-	return nil, nil
 }
 
 func (m *MockRunner) makeKey(name string, args ...string) string {
@@ -155,19 +140,112 @@ func TestManagerNames(t *testing.T) {
 }
 
 func TestNilRunnerDefaults(t *testing.T) {
-	// Constructors with nil runner should not panic.
-	_ = NewApt(nil)
-	_ = NewDnf(nil)
-	_ = NewPacman(nil)
-	_ = NewZypper(nil)
-	_ = NewApk(nil)
-	_ = NewXbps(nil)
-	_ = NewEmerge(nil)
-	_ = NewBrew(nil)
-	_ = NewNix(nil, false)
-	_ = NewWinget(nil)
-	_ = NewScoop(nil)
-	_ = NewChoco(nil)
+	t.Parallel()
+	// A nil runner must be replaced by the production ExecRunner, streaming
+	// to the process's output. (Winget/Scoop/Choco are runner-less stubs off
+	// Windows, so they are not listed.)
+	tests := []struct {
+		name   string
+		runner func() CommandRunner
+	}{
+		{"apt", func() CommandRunner { return NewApt(nil).runner }},
+		{"dnf", func() CommandRunner { return NewDnf(nil).runner }},
+		{"pacman", func() CommandRunner { return NewPacman(nil).runner }},
+		{"zypper", func() CommandRunner { return NewZypper(nil).runner }},
+		{"apk", func() CommandRunner { return NewApk(nil).runner }},
+		{"xbps", func() CommandRunner { return NewXbps(nil).runner }},
+		{"emerge", func() CommandRunner { return NewEmerge(nil).runner }},
+		{"brew", func() CommandRunner { return NewBrew(nil).runner }},
+		{"nix", func() CommandRunner { return NewNix(nil, false).runner }},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			er, ok := tt.runner().(*ExecRunner)
+			if !ok || er == nil {
+				t.Fatalf("runner = %T, want non-nil *ExecRunner", tt.runner())
+			}
+			if er.Stdout != os.Stdout || er.Stderr != os.Stderr {
+				t.Error("default runner does not stream to os.Stdout/os.Stderr")
+			}
+		})
+	}
+}
+
+// TestExecRunnerHelperProcess is not a real test: ExecRunner tests re-run the
+// test binary with pkgmanagerHelperEnv set to get a portable child process
+// that writes to stdout and stderr and exits non-zero.
+func TestExecRunnerHelperProcess(t *testing.T) {
+	if os.Getenv(pkgmanagerHelperEnv) != "1" {
+		return
+	}
+	fmt.Fprint(os.Stdout, "resolving dependencies")
+	fmt.Fprint(os.Stderr, "E: Unable to locate package shellcheck")
+	os.Exit(3)
+}
+
+const pkgmanagerHelperEnv = "QSDEV_PKGMANAGER_TEST_HELPER"
+
+func TestExecRunnerRun_StreamsOutputAndReportsStderr(t *testing.T) {
+	t.Setenv(pkgmanagerHelperEnv, "1")
+
+	var stdout, stderr strings.Builder
+	r := &ExecRunner{Stdout: &stdout, Stderr: &stderr}
+	err := r.Run(context.Background(), os.Args[0], "-test.run=^TestExecRunnerHelperProcess$")
+	if err == nil {
+		t.Fatal("expected an error from a non-zero exit")
+	}
+
+	if !strings.Contains(stdout.String(), "resolving dependencies") {
+		t.Errorf("stdout not streamed; got %q", stdout.String())
+	}
+	if !strings.Contains(stderr.String(), "Unable to locate package") {
+		t.Errorf("stderr not streamed; got %q", stderr.String())
+	}
+	if !strings.Contains(err.Error(), "Unable to locate package shellcheck") {
+		t.Errorf("error does not quote the command's stderr: %v", err)
+	}
+	var exitErr *exec.ExitError
+	if !errors.As(err, &exitErr) || exitErr.ExitCode() != 3 {
+		t.Errorf("error does not wrap the *exec.ExitError (code 3): %v", err)
+	}
+}
+
+func TestExecRunnerRun_NilWritersStillReportStderr(t *testing.T) {
+	t.Setenv(pkgmanagerHelperEnv, "1")
+
+	err := (&ExecRunner{}).Run(context.Background(), os.Args[0], "-test.run=^TestExecRunnerHelperProcess$")
+	if err == nil || !strings.Contains(err.Error(), "Unable to locate package shellcheck") {
+		t.Fatalf("error = %v, want it to quote the command's stderr", err)
+	}
+}
+
+func TestTailBufferKeepsLastBytes(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name   string
+		max    int
+		writes []string
+		want   string
+	}{
+		{"under limit", 10, []string{"abc", "def"}, "abcdef"},
+		{"single write over limit", 4, []string{"abcdefgh"}, "efgh"},
+		{"spans writes", 5, []string{"abc", "defg", "hi"}, "efghi"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			tb := &tailBuffer{max: tt.max}
+			for _, w := range tt.writes {
+				if n, err := tb.Write([]byte(w)); err != nil || n != len(w) {
+					t.Fatalf("Write(%q) = %d, %v", w, n, err)
+				}
+			}
+			if got := tb.String(); got != tt.want {
+				t.Errorf("tail = %q, want %q", got, tt.want)
+			}
+		})
+	}
 }
 
 func TestNixNixOSReturnsError(t *testing.T) {
@@ -249,5 +327,47 @@ func TestElevation(t *testing.T) {
 		if pm.NeedsElevation() {
 			t.Errorf("%s should not need elevation", pm.Name())
 		}
+	}
+}
+
+// TestInstallRunsInstallArgs pins F474: Install must run exactly the command
+// InstallArgs reports, since setup's elevated path and every displayed
+// command are built from InstallArgs.
+func TestInstallRunsInstallArgs(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name string
+		pm   func(CommandRunner) PackageManager
+		path []string // binaries present on PATH
+	}{
+		{"apt", func(r CommandRunner) PackageManager { return NewApt(r) }, []string{"apt-get"}},
+		{"dnf", func(r CommandRunner) PackageManager { return NewDnf(r) }, []string{"dnf"}},
+		{"yum fallback", func(r CommandRunner) PackageManager { return NewDnf(r) }, []string{"yum"}},
+		{"pacman", func(r CommandRunner) PackageManager { return NewPacman(r) }, []string{"pacman"}},
+		{"zypper", func(r CommandRunner) PackageManager { return NewZypper(r) }, []string{"zypper"}},
+		{"apk", func(r CommandRunner) PackageManager { return NewApk(r) }, []string{"apk"}},
+		{"xbps", func(r CommandRunner) PackageManager { return NewXbps(r) }, []string{"xbps-install"}},
+		{"emerge", func(r CommandRunner) PackageManager { return NewEmerge(r) }, []string{"emerge"}},
+		{"brew", func(r CommandRunner) PackageManager { return NewBrew(r) }, []string{"brew"}},
+		{"nix", func(r CommandRunner) PackageManager { return NewNix(r, false) }, []string{"nix"}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			mock := NewMockRunner()
+			for _, bin := range tt.path {
+				mock.LookPathResults[bin] = lookPathResult{path: "/usr/bin/" + bin}
+			}
+			pm := tt.pm(mock)
+			if err := pm.Install(context.Background(), "pkg"); err != nil {
+				t.Fatalf("Install: %v", err)
+			}
+			bin, args := pm.InstallArgs("pkg")
+			want := strings.Join(append([]string{bin}, args...), " ")
+			if len(mock.Calls) != 1 || mock.Calls[0] != want {
+				t.Errorf("Install ran %v, InstallArgs reports %q", mock.Calls, want)
+			}
+		})
 	}
 }

@@ -27,11 +27,13 @@ func Dispatch(relPath string, strategy types.MergeStrategy, base, theirs, ours [
 			return MergeMcpJson(base, theirs, ours)
 		case strings.HasSuffix(relPath, "settings.json"):
 			return MergeSettings(base, theirs, ours)
+		case strings.HasSuffix(relPath, ".yaml"), strings.HasSuffix(relPath, ".yml"):
+			return MergeYAML(base, theirs, ours)
 		default:
 			return nil, fmt.Errorf("no three-way merge handler for %q", relPath)
 		}
 	case types.SectionMarker:
-		return SectionMarkers(theirs, ours)
+		return SectionMarkersOrAppend(theirs, ours)
 	case types.LibraryManaged:
 		return ours, nil
 	default:

@@ -15,10 +15,16 @@ import (
 
 const staleScanThreshold = 7 * 24 * time.Hour
 
+// historyRetention bounds how long score history is kept, so the history file
+// does not grow without limit across daily runs.
+const historyRetention = 180 * 24 * time.Hour
+
 // LoadPostureReports walks dir recursively for .json files, deserializes
-// each as a PostureReport, and validates the schemaVersion field. It returns
-// the successfully loaded reports and a list of warning messages for files
-// that could not be loaded.
+// each as a PostureReport, and validates the schemaVersion field. Any report
+// with the same major schema version is accepted: minor versions only add
+// optional fields, so older and newer projects in a fleet aggregate together.
+// It returns the successfully loaded reports and a list of warning messages
+// for files that could not be loaded.
 func LoadPostureReports(dir string) ([]*posture.PostureReport, []string, error) {
 	info, err := os.Stat(dir)
 	if err != nil {
@@ -59,10 +65,10 @@ func LoadPostureReports(dir string) ([]*posture.PostureReport, []string, error) 
 			warnings = append(warnings, fmt.Sprintf("skipping %s: missing schemaVersion", path))
 			return nil
 		}
-		if report.SchemaVersion != posture.SchemaVersion {
+		if !compatibleSchema(report.SchemaVersion) {
 			warnings = append(warnings, fmt.Sprintf(
-				"skipping %s: unsupported schema version %q (expected %q)",
-				path, report.SchemaVersion, posture.SchemaVersion,
+				"skipping %s: unsupported schema version %q (expected %s.x)",
+				path, report.SchemaVersion, schemaMajor(posture.SchemaVersion),
 			))
 			return nil
 		}
@@ -77,6 +83,19 @@ func LoadPostureReports(dir string) ([]*posture.PostureReport, []string, error) 
 	return reports, warnings, nil
 }
 
+// schemaMajor returns the major component of a dotted schema version.
+func schemaMajor(v string) string {
+	major, _, _ := strings.Cut(strings.TrimPrefix(v, "v"), ".")
+	return major
+}
+
+// compatibleSchema reports whether a report schema version shares the
+// running schema's major version.
+func compatibleSchema(v string) bool {
+	major := schemaMajor(v)
+	return major != "" && major == schemaMajor(posture.SchemaVersion)
+}
+
 // Aggregate converts a set of PostureReports into a TeamReport with computed
 // summary statistics, alerts, and optional trend data.
 func Aggregate(reports []*posture.PostureReport, opts AggregateOptions) (*TeamReport, error) {
@@ -88,22 +107,7 @@ func Aggregate(reports []*posture.PostureReport, opts AggregateOptions) (*TeamRe
 	projects := make([]ProjectSummary, 0, len(reports))
 
 	for _, r := range reports {
-		ps := ProjectSummary{
-			Name:         r.ProjectName,
-			Score:        r.Score,
-			Conformance:  r.Conformance,
-			VulnTotals:   r.Dependencies.Totals,
-			Certifiable:  r.Dependencies.Certifiable(),
-			QsdevVersion: r.QsdevVersion,
-			LastScan:     r.GeneratedAt,
-		}
-
-		// Mark as stale if the scan is older than the threshold.
-		if now.Sub(r.GeneratedAt) > staleScanThreshold {
-			ps.Stale = true
-		}
-
-		projects = append(projects, ps)
+		projects = append(projects, summarizeProject(r, now))
 	}
 
 	summary := computeSummary(projects, opts)
@@ -131,8 +135,9 @@ func Aggregate(reports []*posture.PostureReport, opts AggregateOptions) (*TeamRe
 
 	// Add trends if history is available and requested.
 	if opts.IncludeTrends && history != nil {
-		// Append current scores to history.
+		// Append current scores to history, dropping expired points.
 		history.Append(projects)
+		history.Prune(historyRetention)
 
 		trends := make([]ProjectTrend, 0, len(history.Entries))
 		for project, points := range history.Entries {
@@ -156,6 +161,33 @@ func Aggregate(reports []*posture.PostureReport, opts AggregateOptions) (*TeamRe
 	return teamReport, nil
 }
 
+// summarizeProject condenses one posture report. The scan date and staleness
+// come from the dependency scan itself, not from when the report was
+// generated: a report generated today without a scan is not a fresh scan.
+func summarizeProject(r *posture.PostureReport, now time.Time) ProjectSummary {
+	ps := ProjectSummary{
+		Name:         r.ProjectName,
+		Repo:         r.Repository,
+		Score:        r.Score,
+		Conformance:  r.Conformance,
+		VulnTotals:   r.Dependencies.Totals,
+		Certifiable:  r.Dependencies.Certifiable(),
+		Scanned:      r.Dependencies.Scanned,
+		QsdevVersion: r.QsdevVersion,
+		LastScan:     r.Dependencies.LastScan,
+	}
+	if ps.Scanned && ps.LastScan == nil {
+		// A completed scan without its own timestamp ran when the report
+		// was generated.
+		generated := r.GeneratedAt
+		ps.LastScan = &generated
+	}
+	if ps.Scanned && now.Sub(*ps.LastScan) > staleScanThreshold {
+		ps.Stale = true
+	}
+	return ps
+}
+
 // computeSummary calculates aggregate statistics from the project summaries.
 func computeSummary(projects []ProjectSummary, opts AggregateOptions) TeamSummary {
 	n := len(projects)
@@ -170,6 +202,7 @@ func computeSummary(projects []ProjectSummary, opts AggregateOptions) TeamSummar
 		enhancedPass  int
 		criticalVulns int
 		highVulns     int
+		unscanned     int
 		needUpdate    int
 	)
 
@@ -186,6 +219,9 @@ func computeSummary(projects []ProjectSummary, opts AggregateOptions) TeamSummar
 
 		criticalVulns += p.VulnTotals.Critical
 		highVulns += p.VulnTotals.High
+		if !p.Scanned {
+			unscanned++
+		}
 
 		if isOutdatedGdev(p.QsdevVersion, opts.QsdevVersion) {
 			needUpdate++
@@ -202,6 +238,7 @@ func computeSummary(projects []ProjectSummary, opts AggregateOptions) TeamSummar
 		EnhancedPassRate:   roundTo1(float64(enhancedPass) / float64(n) * 100),
 		TotalCriticalVulns: criticalVulns,
 		TotalHighVulns:     highVulns,
+		UnscannedProjects:  unscanned,
 		ProjectsNeedUpdate: needUpdate,
 	}
 }

@@ -435,3 +435,30 @@ func TestGeneratedState_FragmentsRoundTrip(t *testing.T) {
 		t.Errorf("round-trip mismatch: %+v", entry)
 	}
 }
+
+func TestIsRecordedOutput(t *testing.T) {
+	t.Parallel()
+	states := []types.GeneratedState{
+		{Files: map[string]types.FileState{"a.md": {Hash: ComputeHash([]byte("old"))}}},
+		{Files: map[string]types.FileState{"a.md": {Hash: ComputeHash([]byte("devenv"))}}},
+	}
+	tests := []struct {
+		name    string
+		path    string
+		content string
+		want    bool
+	}{
+		{"matches first state", "a.md", "old", true},
+		{"matches later state", "a.md", "devenv", true},
+		{"user content", "a.md", "mine", false},
+		{"untracked path", "b.md", "old", false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			if got := IsRecordedOutput(states, tt.path, []byte(tt.content)); got != tt.want {
+				t.Errorf("IsRecordedOutput(%q, %q) = %v, want %v", tt.path, tt.content, got, tt.want)
+			}
+		})
+	}
+}

@@ -3,17 +3,32 @@ package catalog
 import (
 	"os"
 	"path/filepath"
+	"testing"
 
 	"github.com/Quantum-Serendipity/qsdev/pkg/branding"
 )
 
 // OrgConfigPath returns the expected path for the user-level defaults file.
 // Priority: $QSDEV_ORG_CONFIG > ~/.config/qsdev/defaults.yaml
+//
+// Inside a test binary the home-directory fallback is not used, so tests
+// exercise the embedded catalog rather than whatever overlay the developer's
+// machine happens to have (and they are loaded during package init, before
+// any TestMain could isolate HOME). Tests that need an org overlay set
+// $QSDEV_ORG_CONFIG explicitly.
 func OrgConfigPath() string {
 	if p := os.Getenv(branding.Get().EnvPrefix + "ORG_CONFIG"); p != "" {
 		return p
 	}
+	if testing.Testing() {
+		return ""
+	}
+	return homeOrgConfigPath()
+}
 
+// homeOrgConfigPath returns ~/.config/<app>/defaults.yaml, or "" when the
+// home directory cannot be determined.
+func homeOrgConfigPath() string {
 	home, err := os.UserHomeDir()
 	if err != nil {
 		return ""
@@ -35,7 +50,9 @@ func OrgConfigFile() string {
 	return ""
 }
 
-// ProjectConfigPath returns the expected path for a project-level defaults file.
+// ProjectConfigPath returns the expected path for a project-level defaults
+// file, <projectRoot>/.qsdev/defaults.yaml. The file is committed with the
+// project and may only add or tighten (see Load).
 func ProjectConfigPath(projectRoot string) string {
 	if projectRoot == "" {
 		return ""

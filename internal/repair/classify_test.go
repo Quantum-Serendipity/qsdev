@@ -268,6 +268,7 @@ func TestClassifyFileModification_Deleted(t *testing.T) {
 					{
 						Subject:     ".envrc",
 						Description: "Generated file \".envrc\" has been deleted",
+						FileStatus:  types.Deleted,
 						Severity:    drift.Error,
 					},
 				},
@@ -301,6 +302,7 @@ func TestClassifyFileModification_DeletedDevenvNix(t *testing.T) {
 					{
 						Subject:     "devenv.nix",
 						Description: "Generated file \"devenv.nix\" has been deleted",
+						FileStatus:  types.Deleted,
 						Severity:    drift.Error,
 					},
 				},
@@ -337,6 +339,7 @@ func TestClassifyFileModification_DeletedDevenvYaml(t *testing.T) {
 					{
 						Subject:     "devenv.yaml",
 						Description: "Generated file \"devenv.yaml\" has been deleted",
+						FileStatus:  types.Deleted,
 						Severity:    drift.Error,
 					},
 				},
@@ -381,11 +384,14 @@ func TestClassifyHookDrift(t *testing.T) {
 		t.Fatalf("got %d actions, want 1", len(actions))
 	}
 	a := actions[0]
-	if a.ActionType != ActionReinstall {
-		t.Errorf("ActionType = %d, want ActionReinstall", a.ActionType)
+	if a.ActionType != ActionSkip {
+		t.Errorf("ActionType = %d, want ActionSkip (hooks are installed by the devenv shell)", a.ActionType)
 	}
-	if !a.AutoFixable {
-		t.Error("expected AutoFixable=true for hook drift")
+	if a.AutoFixable {
+		t.Error("expected AutoFixable=false for hook drift")
+	}
+	if a.Severity != drift.Warning {
+		t.Errorf("Severity = %q, want the finding's severity", a.Severity)
 	}
 	if a.Category != CategoryHookDrift {
 		t.Errorf("Category = %q, want %q", a.Category, CategoryHookDrift)
@@ -413,11 +419,14 @@ func TestClassifyMarkerDrift(t *testing.T) {
 		t.Fatalf("got %d actions, want 1", len(actions))
 	}
 	a := actions[0]
-	if a.ActionType != ActionRegenerate {
-		t.Errorf("ActionType = %d, want ActionRegenerate", a.ActionType)
+	if a.ActionType != ActionSkip {
+		t.Errorf("ActionType = %d, want ActionSkip", a.ActionType)
 	}
-	if !a.AutoFixable {
-		t.Error("expected AutoFixable=true for marker drift")
+	if a.AutoFixable {
+		t.Error("expected AutoFixable=false for marker drift")
+	}
+	if a.ResolvedBy != "CLAUDE.md" {
+		t.Errorf("ResolvedBy = %q, want CLAUDE.md", a.ResolvedBy)
 	}
 	if a.Category != CategoryMarkerDrift {
 		t.Errorf("Category = %q, want %q", a.Category, CategoryMarkerDrift)
@@ -543,8 +552,8 @@ func TestClassifyFindings_MultipleCategories(t *testing.T) {
 	if actions[0].ActionType != ActionRegenerate {
 		t.Errorf("action[0] type = %d, want ActionRegenerate", actions[0].ActionType)
 	}
-	if actions[1].ActionType != ActionReinstall {
-		t.Errorf("action[1] type = %d, want ActionReinstall", actions[1].ActionType)
+	if actions[1].ActionType != ActionSkip {
+		t.Errorf("action[1] type = %d, want ActionSkip", actions[1].ActionType)
 	}
 	if actions[2].ActionType != ActionSkip {
 		t.Errorf("action[2] type = %d, want ActionSkip", actions[2].ActionType)

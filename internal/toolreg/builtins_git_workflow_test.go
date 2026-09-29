@@ -1,9 +1,14 @@
 package toolreg
 
 import (
+	"encoding/json"
+	"errors"
+	"os/exec"
 	"strings"
 	"testing"
 
+	"github.com/Quantum-Serendipity/qsdev/internal/gitworkflow"
+	"github.com/Quantum-Serendipity/qsdev/internal/validation"
 	"github.com/Quantum-Serendipity/qsdev/pkg/types"
 )
 
@@ -60,80 +65,199 @@ func TestGitWorkflowToolDefaults(t *testing.T) {
 	}
 }
 
-func TestGitWorkflowToolEnableDisable(t *testing.T) {
-	reg := DefaultRegistry()
+func TestGitWorkflowToolsLifecycleOnly(t *testing.T) {
+	assertLifecycleOnly(t, DefaultRegistry(), gitWorkflowToolNames...)
+}
 
-	for _, name := range gitWorkflowToolNames {
-		t.Run(name, func(t *testing.T) {
-			tool, ok := reg.ByName(name)
-			if !ok {
-				t.Fatalf("tool %q not found", name)
+// renderInDevenvModule wraps a devenv.nix shared section in a minimal devenv
+// module, the context lifecycle surgery inserts it into.
+func renderInDevenvModule(t *testing.T, fn SharedContentFunc) string {
+	t.Helper()
+	return renderInDevenvModuleFor(t, fn, types.WizardAnswers{})
+}
+
+// renderInDevenvModuleFor is renderInDevenvModule for the given answers.
+func renderInDevenvModuleFor(t *testing.T, fn SharedContentFunc, answers types.WizardAnswers) string {
+	t.Helper()
+	content, err := fn(answers)
+	if err != nil {
+		t.Fatalf("SharedContent function returned error: %v", err)
+	}
+	return "{ pkgs, lib, config, ... }:\n{\n" + string(content) + "\n}\n"
+}
+
+// hookScriptBody extracts the shell script body: the Nix indented string
+// passed to pkgs.writeShellScript in a hook entry.
+func hookScriptBody(t *testing.T, nix string) string {
+	t.Helper()
+	_, rest, ok := strings.Cut(nix, "writeShellScript")
+	if !ok {
+		t.Fatal("no writeShellScript in hook content")
+	}
+	_, rest, ok = strings.Cut(rest, "''\n")
+	if !ok {
+		t.Fatal("no indented-string script body in hook content")
+	}
+	body, _, ok := strings.Cut(rest, "''}")
+	if !ok {
+		t.Fatal("unterminated indented-string script body in hook content")
+	}
+	return body
+}
+
+// TestGitWorkflowNixHooksParse is the regression guard for hook sections
+// that `enable` splices into devenv.nix: the Nix must parse and the embedded
+// script must be valid shell, or the whole devenv shell stops evaluating.
+func TestGitWorkflowNixHooksParse(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name string
+		fn   SharedContentFunc
+	}{
+		{"branch-naming", branchNamingNixContent},
+		{"commit-ticket", commitTicketNixContent},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			module := renderInDevenvModule(t, tt.fn)
+
+			// A backslash-escaped quote is not a Nix token outside a string;
+			// inside the ${ } interpolation it breaks parsing.
+			if strings.Contains(module, `\"`) {
+				t.Errorf("hook content contains a backslash-escaped quote:\n%s", module)
 			}
 
-			if tool.EnableFunc == nil {
-				t.Fatalf("tool %q has nil EnableFunc", name)
-			}
-			if tool.DisableFunc == nil {
-				t.Fatalf("tool %q has nil DisableFunc", name)
-			}
-
-			// Test enable.
-			answers := &types.WizardAnswers{
-				EnabledTools: make(map[string]bool),
-			}
-			tool.EnableFunc(answers)
-			if !answers.EnabledTools[name] {
-				t.Errorf("after EnableFunc, EnabledTools[%q] should be true", name)
+			if nixInstantiate, err := exec.LookPath("nix-instantiate"); err == nil {
+				cmd := exec.Command(nixInstantiate, "--parse", "-")
+				cmd.Stdin = strings.NewReader(module)
+				if out, err := cmd.CombinedOutput(); err != nil {
+					t.Errorf("nix-instantiate --parse failed: %v\n%s\n--- module ---\n%s", err, out, module)
+				}
 			}
 
-			// Test disable.
-			tool.DisableFunc(answers)
-			if answers.EnabledTools[name] {
-				t.Errorf("after DisableFunc, EnabledTools[%q] should be false", name)
+			if sh, err := exec.LookPath("sh"); err == nil {
+				cmd := exec.Command(sh, "-n")
+				cmd.Stdin = strings.NewReader(hookScriptBody(t, module))
+				if out, err := cmd.CombinedOutput(); err != nil {
+					t.Errorf("hook script is not valid shell: %v\n%s", err, out)
+				}
 			}
 		})
 	}
 }
 
-func TestGitWorkflowToolEnableFunc_NilMap(t *testing.T) {
-	reg := DefaultRegistry()
+// branchNamingScript renders the branch-naming hook for pattern and returns
+// its shell script with the git call replaced by "$1", so the script checks
+// a fixed branch name. With nix-instantiate available the script is the
+// string Nix evaluates the indented string to (proving the Nix escaping);
+// otherwise it is the raw indented-string body, which is the same text for
+// patterns without Nix escapes.
+func branchNamingScript(t *testing.T, pattern string) string {
+	t.Helper()
+	module := renderInDevenvModuleFor(t, branchNamingNixContent, types.WizardAnswers{BranchPattern: pattern})
+	script := hookScriptBody(t, module)
+	if nixInstantiate, err := exec.LookPath("nix-instantiate"); err == nil {
+		expr := "let m = (" + module + ") { pkgs = { writeShellScript = name: text: text; }; lib = {}; config = {}; };" +
+			" in m.git-hooks.hooks.branch-naming.entry"
+		cmd := exec.Command(nixInstantiate, "--eval", "--strict", "--json", "-")
+		cmd.Stdin = strings.NewReader(expr)
+		out, err := cmd.Output()
+		if err != nil {
+			t.Fatalf("nix-instantiate --eval failed: %v\n--- module ---\n%s", err, module)
+		}
+		if err := json.Unmarshal(out, &script); err != nil {
+			t.Fatalf("decoding evaluated hook script %q: %v", out, err)
+		}
+	} else if strings.Contains(pattern, "${") {
+		t.Skip("nix-instantiate not available to evaluate a Nix-escaped pattern")
+	}
+	return strings.Replace(script, "$(git rev-parse --abbrev-ref HEAD)", `"$1"`, 1)
+}
 
-	for _, name := range gitWorkflowToolNames {
-		t.Run(name, func(t *testing.T) {
-			tool, ok := reg.ByName(name)
-			if !ok {
-				t.Fatalf("tool %q not found", name)
-			}
+// TestBranchNamingHookScript runs the rendered branch-naming script against
+// branch names, proving the configured pattern (or the broad default)
+// reaches the shell intact.
+func TestBranchNamingHookScript(t *testing.T) {
+	t.Parallel()
+	sh, err := exec.LookPath("sh")
+	if err != nil {
+		t.Skip("sh not available")
+	}
 
-			answers := &types.WizardAnswers{}
-			tool.EnableFunc(answers)
-			if answers.EnabledTools == nil {
-				t.Fatal("EnableFunc should initialize EnabledTools map when nil")
-			}
-			if !answers.EnabledTools[name] {
-				t.Errorf("EnableFunc should set %q to true", name)
+	const conventional = `^(feat|fix|chore|docs|refactor|test|ci)/[a-z0-9._-]+$`
+	tests := []struct {
+		name    string
+		pattern string
+		branch  string
+		wantOK  bool
+	}{
+		{"default accepts main", "", "main", true},
+		{"default accepts conventional prefix", "", "feat/add-login", true},
+		{"default accepts any prefix", "", "audit/deep-review", true},
+		{"default accepts upper case and ticket ids", "", "users/jane/JIRA-12_fix", true},
+		{"default accepts dependabot names", "", "dependabot/npm_and_yarn/@types/node-20.1.0", true},
+		{"default rejects shell metacharacters", "", "feat/$(id)", false},
+		{"default rejects a backquote", "", "feat/`id`", false},
+		{"default rejects a semicolon", "", "fix;rm", false},
+		{"default rejects a leading dash", "", "-n", false},
+		{"default rejects non-ASCII", "", "feat/\u202eexe", false},
+		{"custom accepts a match", conventional, "fix/v1.2_patch", true},
+		{"custom rejects a mismatch", conventional, "audit/deep-review", false},
+		{"custom rejects upper case", conventional, "feature/Upper", false},
+		{"custom still accepts main", conventional, "main", true},
+		{"custom accepts detached HEAD", conventional, "HEAD", true},
+		{"pattern starting with a dash is not an option", `-x$|^ok$`, "ok", true},
+		{"backslash reaches grep", `^release/v[0-9]+\.[0-9]+$`, "release/v1.2", true},
+		{"escaped dot is literal", `^release/v[0-9]+\.[0-9]+$`, "release/v1x2", false},
+		{"percent is not a format verb", `^pct%[0-9]+$`, "pct%12", true},
+		{"nix antiquotation opener is escaped", `^a${2}$|^b$`, "b", true},
+		{"double dollar before brace", `^b$|$${`, "b", true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			script := branchNamingScript(t, tt.pattern)
+			cmd := exec.Command(sh, "-c", script, "branch-naming", tt.branch)
+			out, err := cmd.CombinedOutput()
+			if gotOK := err == nil; gotOK != tt.wantOK {
+				t.Errorf("pattern %q, branch %q: accepted=%v, want %v (output: %s)", tt.pattern, tt.branch, gotOK, tt.wantOK, out)
 			}
 		})
 	}
 }
 
-func TestGitWorkflowToolDisableFunc_NilMap(t *testing.T) {
-	reg := DefaultRegistry()
-
-	for _, name := range gitWorkflowToolNames {
-		t.Run(name, func(t *testing.T) {
-			tool, ok := reg.ByName(name)
-			if !ok {
-				t.Fatalf("tool %q not found", name)
+// TestBranchNamingNixContent_Pattern checks which pattern the hook embeds and
+// that an unsafe committed pattern is rejected instead of rendered.
+func TestBranchNamingNixContent_Pattern(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name    string
+		pattern string
+		want    string
+		wantErr bool
+	}{
+		{"unset uses the default", "", "pattern='" + gitworkflow.DefaultBranchPattern + "'", false},
+		{"configured pattern is embedded", `^(feat|fix)/.+$`, `pattern='^(feat|fix)/.+$'`, false},
+		{"single quote is rejected", `^it's$`, "", true},
+		{"newline is rejected", "^a$\n  };", "", true},
+		{"invalid regex is rejected", `^(feat`, "", true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			got, err := branchNamingNixContent(types.WizardAnswers{BranchPattern: tt.pattern})
+			if tt.wantErr {
+				if !errors.Is(err, validation.ErrInvalidBranchPattern) {
+					t.Fatalf("error = %v, want ErrInvalidBranchPattern", err)
+				}
+				return
 			}
-
-			answers := &types.WizardAnswers{}
-			tool.DisableFunc(answers)
-			if answers.EnabledTools == nil {
-				t.Fatal("DisableFunc should initialize EnabledTools map when nil")
+			if err != nil {
+				t.Fatalf("branchNamingNixContent: %v", err)
 			}
-			if answers.EnabledTools[name] {
-				t.Errorf("DisableFunc should set %q to false", name)
+			if !strings.Contains(string(got), tt.want) {
+				t.Errorf("hook content does not contain %q:\n%s", tt.want, got)
 			}
 		})
 	}
@@ -151,7 +275,7 @@ func TestGitWorkflowSharedContent_BranchNaming(t *testing.T) {
 		t.Fatal("branch-naming should have SharedContent map")
 	}
 
-	fn, ok := tool.SharedContent["branch-naming"]
+	fn, ok := tool.SharedContent[SharedSection{Path: DevenvNixFile, SectionID: "branch-naming"}]
 	if !ok {
 		t.Fatal("SharedContent missing 'branch-naming' key")
 	}
@@ -186,7 +310,7 @@ func TestGitWorkflowSharedContent_CommitTicket(t *testing.T) {
 		t.Fatal("commit-ticket should have SharedContent map")
 	}
 
-	fn, ok := tool.SharedContent["commit-ticket"]
+	fn, ok := tool.SharedContent[SharedSection{Path: DevenvNixFile, SectionID: "commit-ticket"}]
 	if !ok {
 		t.Fatal("SharedContent missing 'commit-ticket' key")
 	}
@@ -297,4 +421,3 @@ func TestGitWorkflowCommitTicketNoGenerateFunc(t *testing.T) {
 		t.Error("commit-ticket should not have GenerateFunc (uses SharedContent only)")
 	}
 }
-

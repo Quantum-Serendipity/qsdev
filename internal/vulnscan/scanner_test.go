@@ -191,36 +191,6 @@ func TestScanFile_UnsupportedLockFormat(t *testing.T) {
 	}
 }
 
-func TestScanProject_AutoDetects(t *testing.T) {
-	dir := t.TempDir()
-	writeLock(t, dir, "requirements.txt", "requests==2.19.0\n")
-
-	srv := vulnscantest.NewServer(t,
-		map[int][]string{0: {"GHSA-critical-1"}},
-		map[string]string{"GHSA-critical-1": "CRITICAL"},
-	)
-	s := &Scanner{BaseURL: srv.URL, HTTPClient: srv.Client()}
-
-	res, err := s.ScanProject(context.Background(), dir)
-	if err != nil {
-		t.Fatalf("ScanProject: %v", err)
-	}
-	if res == nil || res.Counts.Critical != 1 {
-		t.Fatalf("ScanProject result = %+v, want one critical", res)
-	}
-}
-
-func TestScanProject_NoLockFile(t *testing.T) {
-	s := New()
-	res, err := s.ScanProject(context.Background(), t.TempDir())
-	if err != nil {
-		t.Fatalf("ScanProject: %v", err)
-	}
-	if res != nil {
-		t.Errorf("expected nil result when no lock file is present, got %+v", res)
-	}
-}
-
 // TestFetchDetails_DeterministicTruncation proves that when more than
 // maxVulnDetailFetches unique vulnerabilities are present, the subset whose
 // details are fetched is deterministic (the lexicographically smallest ids) and

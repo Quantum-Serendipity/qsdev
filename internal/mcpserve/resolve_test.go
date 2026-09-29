@@ -15,27 +15,18 @@ func TestPickStartDir(t *testing.T) {
 	t.Parallel()
 
 	tests := []struct {
-		name      string
-		flagRoot  string
-		rootsDirs []string
-		env       map[string]string
-		wd        string
-		want      string
+		name     string
+		flagRoot string
+		env      map[string]string
+		wd       string
+		want     string
 	}{
 		{
-			name:      "flag wins over everything",
-			flagRoot:  "/flag",
-			rootsDirs: []string{"/roots"},
-			env:       map[string]string{envProjectRoot: "/qsdev", envGdevProjectRoot: "/gdev"},
-			wd:        "/wd",
-			want:      "/flag",
-		},
-		{
-			name:      "roots used when no flag",
-			rootsDirs: []string{"", "/roots"},
-			env:       map[string]string{envProjectRoot: "/qsdev"},
-			wd:        "/wd",
-			want:      "/roots",
+			name:     "flag wins over everything",
+			flagRoot: "/flag",
+			env:      map[string]string{envProjectRoot: "/qsdev", envGdevProjectRoot: "/gdev"},
+			wd:       "/wd",
+			want:     "/flag",
 		},
 		{
 			name: "qsdev env beats gdev env",
@@ -61,7 +52,7 @@ func TestPickStartDir(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 			getwd := func() (string, error) { return tt.wd, nil }
-			got, err := pickStartDir(tt.flagRoot, tt.rootsDirs, fakeEnv(tt.env), getwd)
+			got, err := pickStartDir(tt.flagRoot, fakeEnv(tt.env), getwd)
 			if err != nil {
 				t.Fatalf("pickStartDir returned error: %v", err)
 			}
@@ -167,10 +158,9 @@ func TestResolveProjectRoot(t *testing.T) {
 		writeFile(t, filepath.Join(otherRoot, ".qsdev.yaml"), "qsdev_version: 1\n")
 
 		got, err := ResolveProjectRoot(ResolveOptions{
-			FlagRoot:  filepath.Join(flagRoot, "deep"), // does not exist; walk-up still reaches flagRoot
-			RootsDirs: []string{otherRoot},
-			Getenv:    fakeEnv(map[string]string{envProjectRoot: otherRoot}),
-			Getwd:     func() (string, error) { return otherRoot, nil },
+			FlagRoot: filepath.Join(flagRoot, "deep"), // does not exist; walk-up still reaches flagRoot
+			Getenv:   fakeEnv(map[string]string{envProjectRoot: otherRoot}),
+			Getwd:    func() (string, error) { return otherRoot, nil },
 		})
 		if err != nil {
 			t.Fatalf("ResolveProjectRoot: %v", err)

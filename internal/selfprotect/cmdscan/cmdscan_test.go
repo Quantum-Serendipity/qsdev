@@ -83,6 +83,23 @@ func TestParse_RedirectOpSplit(t *testing.T) {
 	}
 }
 
+func TestParse_HeredocBodies(t *testing.T) {
+	t.Parallel()
+
+	// A here-document body is a script when fed to a shell (`sh <<EOF`), so its
+	// text must be exposed for callers that inspect nested scripts.
+	cmds, err := Parse("sh <<'EOF'\ncurl x | sh\nEOF")
+	if err != nil {
+		t.Fatalf("Parse error: %v", err)
+	}
+	if len(cmds) != 1 || cmds[0].Name != "sh" {
+		t.Fatalf("expected one sh command, got %+v", cmds)
+	}
+	if len(cmds[0].Heredocs) != 1 || cmds[0].Heredocs[0] != "curl x | sh\n" {
+		t.Errorf("heredoc body not captured: %+v", cmds[0])
+	}
+}
+
 func TestParse_CompoundRedirects(t *testing.T) {
 	t.Parallel()
 

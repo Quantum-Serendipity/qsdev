@@ -11,6 +11,7 @@ func TestDegradationTier_String(t *testing.T) {
 		{TierFull, "full"},
 		{TierBwrapWithoutLandlock, "bwrap-without-landlock"},
 		{TierBwrapWithoutSeccomp, "bwrap-without-seccomp"},
+		{TierBwrapOnly, "bwrap-only"},
 		{TierSystemdRun, "systemd-run"},
 		{TierUnsandboxed, "unsandboxed"},
 		{DegradationTier(99), "unknown"},

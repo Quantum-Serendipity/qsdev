@@ -2,8 +2,8 @@ package aiframework
 
 import (
 	"context"
-	"fmt"
 
+	"github.com/Quantum-Serendipity/qsdev/internal/enumtext"
 	"github.com/Quantum-Serendipity/qsdev/pkg/types"
 )
 
@@ -22,29 +22,14 @@ var mcpTransportNames = [...]string{
 	TransportSSE:            "sse",
 }
 
-func (t MCPTransport) String() string {
-	if int(t) >= 0 && int(t) < len(mcpTransportNames) {
-		return mcpTransportNames[t]
-	}
-	return "unknown"
-}
+var mCPTransportText = enumtext.New[MCPTransport]("MCPTransport", "MCP transport", "unknown", mcpTransportNames[:])
 
-func (t MCPTransport) MarshalText() ([]byte, error) {
-	s := t.String()
-	if s == "unknown" {
-		return nil, fmt.Errorf("cannot marshal unknown MCPTransport value %d", int(t))
-	}
-	return []byte(s), nil
-}
+func (t MCPTransport) String() string { return mCPTransportText.String(t) }
+
+func (t MCPTransport) MarshalText() ([]byte, error) { return mCPTransportText.MarshalText(t) }
 
 func (t *MCPTransport) UnmarshalText(text []byte) error {
-	for i, name := range mcpTransportNames {
-		if name == string(text) {
-			*t = MCPTransport(i)
-			return nil
-		}
-	}
-	return fmt.Errorf("unknown MCP transport: %q", string(text))
+	return mCPTransportText.UnmarshalText(text, t)
 }
 
 // MCPServerSpec describes an MCP server for registration and config generation.
@@ -68,12 +53,6 @@ type MCPToolSpec struct {
 	Description string
 	Category    string
 }
-
-const (
-	ToolCeilingCursor   = 40
-	ToolCeilingWindsurf = 100
-	ToolCeilingCopilot  = 128
-)
 
 // RegistryClient manages MCP server configuration for a specific framework.
 type RegistryClient interface {

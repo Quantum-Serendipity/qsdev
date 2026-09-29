@@ -53,15 +53,11 @@ var allLanguages = []struct {
 // Detected languages appear first in the list, each annotated with the
 // marker file that triggered detection.
 func BuildLanguageOptions(detected types.DetectedProject) []LanguageOption {
-	detectedSet := make(map[string]bool)
 	var first, rest []LanguageOption
 
 	for _, lang := range allLanguages {
 		ann := DetectionAnnotation(lang.Value, detected)
 		isDetected := ann != ""
-		if isDetected {
-			detectedSet[lang.Value] = true
-		}
 
 		opt := LanguageOption{
 			Label:    lang.Display,
@@ -70,16 +66,12 @@ func BuildLanguageOptions(detected types.DetectedProject) []LanguageOption {
 		}
 		if isDetected {
 			opt.Label = fmt.Sprintf("%s %s", lang.Display, ann)
-		}
-
-		if isDetected {
 			first = append(first, opt)
 		} else {
 			rest = append(rest, opt)
 		}
 	}
 
-	_ = detectedSet // used only in loop above
 	return append(first, rest...)
 }
 

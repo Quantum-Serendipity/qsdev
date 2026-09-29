@@ -252,8 +252,39 @@ func TestBuildDevenvNixData_ModulePackagesCollected(t *testing.T) {
 	}
 }
 
+// exprModule is a mock ecosystem module that also implements
+// ecosystem.PackageExprProvider.
+type exprModule struct {
+	ecosystem.MockModule
+	exprs []string
+}
+
+func (m *exprModule) DevenvPackageExprs(_ ecosystem.ModuleConfig) []string { return m.exprs }
+
+func TestBuildDevenvNixData_ModulePackageExprsCollected(t *testing.T) {
+	t.Parallel()
+	const expr = "(pkgs.google-cloud-sdk.withExtraComponents [ pkgs.google-cloud-sdk.components.gke-gcloud-auth-plugin ])"
+	reg := ecosystem.NewRegistry()
+	_ = reg.Register(&exprModule{
+		MockModule: ecosystem.MockModule{NameVal: "gcp", DisplayNameVal: "Google Cloud CLI", TierVal: 2},
+		exprs:      []string{expr},
+	})
+
+	answers := types.WizardAnswers{
+		Languages: []types.LanguageChoice{{Name: "gcp"}},
+	}
+
+	data, err := BuildDevenvNixData(answers, reg)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !slices.Contains(data.PackageExprs, expr) {
+		t.Errorf("data.PackageExprs missing module PackageExprProvider expression; got %v", data.PackageExprs)
+	}
+}
+
 func TestBuildEnterShellScript_ContainsGdevVars(t *testing.T) {
-	script := buildEnterShellScript()
+	script := buildEnterShellScript(defaultUnsetEnvVars())
 
 	for _, want := range []string{"QSDEV_PROJECT_NAME", "QSDEV_SECURITY_PROFILE", "QSDEV_TOOL_COUNT"} {
 		if !strings.Contains(script, want) {
@@ -336,15 +367,15 @@ func TestBuildDevenvNixData_FillDefaultsThenBuild(t *testing.T) {
 
 	cat := catalog.MustDefault()
 
-	wantCompliance := cat.TierToCompliance()["full"]
+	wantCompliance := cat.TierCompliance("full")
 	if got := data.EnvVars["QSDEV_SECURITY_PROFILE"]; got != wantCompliance {
-		t.Errorf("QSDEV_SECURITY_PROFILE = %q, want %q (from catalog TierToCompliance)", got, wantCompliance)
+		t.Errorf("QSDEV_SECURITY_PROFILE = %q, want %q (from catalog TierCompliance)", got, wantCompliance)
 	}
 
-	wantTools := cat.TierToEnabledTools()["full"]
+	wantTools := cat.TierEnabledTools("full")
 	wantCount := strconv.Itoa(len(wantTools))
 	if got := data.EnvVars["QSDEV_TOOL_COUNT"]; got != wantCount {
-		t.Errorf("QSDEV_TOOL_COUNT = %q, want %q (from catalog TierToEnabledTools)", got, wantCount)
+		t.Errorf("QSDEV_TOOL_COUNT = %q, want %q (from catalog TierEnabledTools)", got, wantCount)
 	}
 
 	catPkgs := cat.BasePackages()

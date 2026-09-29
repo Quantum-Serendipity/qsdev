@@ -2,8 +2,9 @@ package aiframework
 
 import (
 	"context"
-	"fmt"
 	"time"
+
+	"github.com/Quantum-Serendipity/qsdev/internal/enumtext"
 )
 
 // MetricsProvider collects telemetry and health data for a framework.
@@ -26,124 +27,90 @@ type MetricEvent struct {
 }
 
 // ContentTier controls how much detail is retained in event storage.
+//
+// The zero value is ContentUnknown, which never marshals; consumers must treat
+// it as ContentMetadataOnly, so an unset tier never retains prompts or source.
 type ContentTier int
 
 const (
-	ContentFull         ContentTier = iota // All event data including prompts and source.
+	ContentUnknown      ContentTier = iota // Unset; treat as metadata-only, never marshalled.
+	ContentFull                            // All event data including prompts and source.
 	ContentRedacted                        // Credential/secret values stripped.
 	ContentMetadataOnly                    // Only timing, counts, and hashes.
 )
 
 var contentTierNames = [...]string{
+	ContentUnknown:      "",
 	ContentFull:         "full",
 	ContentRedacted:     "redacted",
 	ContentMetadataOnly: "metadata_only",
 }
 
-func (c ContentTier) String() string {
-	if int(c) >= 0 && int(c) < len(contentTierNames) {
-		return contentTierNames[c]
-	}
-	return "unknown"
-}
+var contentTierText = enumtext.New[ContentTier]("ContentTier", "content tier", "unknown", contentTierNames[:])
 
-func (c ContentTier) MarshalText() ([]byte, error) {
-	s := c.String()
-	if s == "unknown" {
-		return nil, fmt.Errorf("cannot marshal unknown ContentTier value %d", int(c))
-	}
-	return []byte(s), nil
-}
+func (c ContentTier) String() string { return contentTierText.String(c) }
 
-func (c *ContentTier) UnmarshalText(text []byte) error {
-	for i, name := range contentTierNames {
-		if name == string(text) {
-			*c = ContentTier(i)
-			return nil
-		}
-	}
-	return fmt.Errorf("unknown content tier: %q", string(text))
-}
+func (c ContentTier) MarshalText() ([]byte, error) { return contentTierText.MarshalText(c) }
+
+func (c *ContentTier) UnmarshalText(text []byte) error { return contentTierText.UnmarshalText(text, c) }
 
 // HealthStatus summarises a framework's overall health.
+//
+// The zero value is StatusUnknown, which never marshals and must be treated
+// as unhealthy, so a zero HealthReport never reads as healthy.
 type HealthStatus int
 
 const (
-	StatusHealthy HealthStatus = iota
+	StatusUnknown HealthStatus = iota // Unset; treat as unhealthy, never marshalled.
+	StatusHealthy
 	StatusDegraded
 	StatusUnhealthy
 )
 
 var healthStatusNames = [...]string{
+	StatusUnknown:   "",
 	StatusHealthy:   "healthy",
 	StatusDegraded:  "degraded",
 	StatusUnhealthy: "unhealthy",
 }
 
-func (s HealthStatus) String() string {
-	if int(s) >= 0 && int(s) < len(healthStatusNames) {
-		return healthStatusNames[s]
-	}
-	return "unknown"
-}
+var healthStatusText = enumtext.New[HealthStatus]("HealthStatus", "health status", "unknown", healthStatusNames[:])
 
-func (s HealthStatus) MarshalText() ([]byte, error) {
-	str := s.String()
-	if str == "unknown" {
-		return nil, fmt.Errorf("cannot marshal unknown HealthStatus value %d", int(s))
-	}
-	return []byte(str), nil
-}
+func (s HealthStatus) String() string { return healthStatusText.String(s) }
+
+func (s HealthStatus) MarshalText() ([]byte, error) { return healthStatusText.MarshalText(s) }
 
 func (s *HealthStatus) UnmarshalText(text []byte) error {
-	for i, name := range healthStatusNames {
-		if name == string(text) {
-			*s = HealthStatus(i)
-			return nil
-		}
-	}
-	return fmt.Errorf("unknown health status: %q", string(text))
+	return healthStatusText.UnmarshalText(text, s)
 }
 
 // CheckStatus represents the result of a single health check.
+//
+// The zero value is CheckUnknown, which never marshals and must be treated as
+// a failure, so a zero HealthCheck never reads as passing.
 type CheckStatus int
 
 const (
-	CheckPass CheckStatus = iota
+	CheckUnknown CheckStatus = iota // Unset; treat as failed, never marshalled.
+	CheckPass
 	CheckFail
 	CheckSkip
 )
 
 var checkStatusNames = [...]string{
-	CheckPass: "pass",
-	CheckFail: "fail",
-	CheckSkip: "skip",
+	CheckUnknown: "",
+	CheckPass:    "pass",
+	CheckFail:    "fail",
+	CheckSkip:    "skip",
 }
 
-func (c CheckStatus) String() string {
-	if int(c) >= 0 && int(c) < len(checkStatusNames) {
-		return checkStatusNames[c]
-	}
-	return "unknown"
-}
+var checkStatusText = enumtext.New[CheckStatus]("CheckStatus", "check status", "unknown", checkStatusNames[:])
 
-func (c CheckStatus) MarshalText() ([]byte, error) {
-	s := c.String()
-	if s == "unknown" {
-		return nil, fmt.Errorf("cannot marshal unknown CheckStatus value %d", int(c))
-	}
-	return []byte(s), nil
-}
+func (c CheckStatus) String() string { return checkStatusText.String(c) }
 
-func (c *CheckStatus) UnmarshalText(text []byte) error {
-	for i, name := range checkStatusNames {
-		if name == string(text) {
-			*c = CheckStatus(i)
-			return nil
-		}
-	}
-	return fmt.Errorf("unknown check status: %q", string(text))
-}
+func (c CheckStatus) MarshalText() ([]byte, error) { return checkStatusText.MarshalText(c) }
+
+func (c *CheckStatus) UnmarshalText(text []byte) error { return checkStatusText.UnmarshalText(text, c) }
 
 // HealthReport aggregates health checks for a framework.
 type HealthReport struct {

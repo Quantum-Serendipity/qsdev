@@ -1,7 +1,6 @@
 package devenv
 
 import (
-	"bufio"
 	"io"
 	"os"
 	"path/filepath"
@@ -9,6 +8,7 @@ import (
 	"time"
 
 	"github.com/Quantum-Serendipity/qsdev/internal/extlog"
+	"github.com/Quantum-Serendipity/qsdev/internal/logging"
 	"github.com/Quantum-Serendipity/qsdev/pkg/branding"
 )
 
@@ -66,7 +66,7 @@ func (p *Provider) Discover(projectRoot, _ string, since time.Time) ([]extlog.Lo
 
 func (p *Provider) Parse(r io.Reader, sourceFile string) ([]extlog.LogEntry, error) {
 	fileMtime := extlog.FileModTime(sourceFile)
-	scanner := bufio.NewScanner(r)
+	scanner := logging.NewLineScanner(r)
 	var entries []extlog.LogEntry
 	lineNo := 0
 

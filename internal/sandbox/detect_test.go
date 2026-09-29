@@ -2,6 +2,7 @@ package sandbox
 
 import (
 	"context"
+	"errors"
 	"os"
 	"testing"
 )
@@ -82,8 +83,8 @@ func TestProbeCapabilities_FullSupport(t *testing.T) {
 	mock.files["/proc/sys/kernel/seccomp/actions_avail"] = []byte("kill_process kill_thread trap errno trace log allow user_notif\n")
 	mock.files["/proc/version"] = []byte("Linux version 6.8.0-40-generic (buildd@x86-64) #40-Ubuntu\n")
 	mock.fileInfos["/sys/fs/cgroup/cgroup.controllers"] = true
-	mock.envVars["UID"] = "1000"
-	mock.files["/sys/fs/cgroup/user.slice/user-1000.slice/cgroup.controllers"] = []byte("cpu memory pids\n")
+	mock.files["/proc/self/status"] = []byte("Name:\ttest\nUid:\t1000\t1000\t1000\t1000\n")
+	mock.files[delegatedControllersPath("1000")] = []byte("cpu memory pids\n")
 
 	caps := ProbeCapabilities(context.Background(), mock)
 
@@ -197,44 +198,121 @@ func TestProbeCapabilities_SeccompNotEnforceableWithoutFilter(t *testing.T) {
 	}
 }
 
-func TestProbeCapabilities_CgroupDelegation_ViaUID(t *testing.T) {
+// delegatedControllersPath is where probeCgroupDelegation looks for the
+// controllers delegated to the user's systemd service manager.
+func delegatedControllersPath(uid string) string {
+	return "/sys/fs/cgroup/user.slice/user-" + uid + ".slice/user@" + uid + ".service/cgroup.controllers"
+}
+
+func TestProbeCapabilities_CgroupDelegation(t *testing.T) {
 	t.Parallel()
-	mock := newMockProber()
-	mock.files["/proc/self/status"] = []byte("Name:\ttest\nUid:\t1000\t1000\t1000\t1000\n")
-	mock.files["/sys/fs/cgroup/user.slice/user-1000.slice/cgroup.controllers"] = []byte("cpu memory pids\n")
 
-	caps := ProbeCapabilities(context.Background(), mock)
+	const status1000 = "Name:\ttest\nUid:\t1000\t1000\t1000\t1000\n"
+	tests := []struct {
+		name   string
+		status string
+		env    map[string]string
+		files  map[string]string
+		want   bool
+	}{
+		{
+			name:   "memory and pids delegated to user manager",
+			status: status1000,
+			files:  map[string]string{delegatedControllersPath("1000"): "cpu memory pids\n"},
+			want:   true,
+		},
+		{
+			// The root-owned user slice is not where --user scopes are created.
+			name:   "controllers only on the user slice",
+			status: status1000,
+			files: map[string]string{
+				"/sys/fs/cgroup/user.slice/user-1000.slice/cgroup.controllers": "cpu memory pids\n",
+			},
+			want: false,
+		},
+		{
+			name:   "memory not delegated",
+			status: status1000,
+			files:  map[string]string{delegatedControllersPath("1000"): "cpu pids\n"},
+			want:   false,
+		},
+		{
+			// $UID is a shell variable a parent can set; only the kernel's
+			// view of the process UID counts.
+			name:   "spoofed UID env var ignored",
+			status: status1000,
+			env:    map[string]string{"UID": "0"},
+			files:  map[string]string{delegatedControllersPath("0"): "memory pids\n"},
+			want:   false,
+		},
+		{
+			name:  "no proc status",
+			files: map[string]string{delegatedControllersPath("1000"): "memory pids\n"},
+			want:  false,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			mock := newMockProber()
+			if tt.status != "" {
+				mock.files["/proc/self/status"] = []byte(tt.status)
+			}
+			for k, v := range tt.env {
+				mock.envVars[k] = v
+			}
+			for path, content := range tt.files {
+				mock.files[path] = []byte(content)
+			}
 
-	if !caps.HasCgroupDeleg {
-		t.Error("expected HasCgroupDeleg = true")
+			caps := ProbeCapabilities(context.Background(), mock)
+
+			if caps.HasCgroupDeleg != tt.want {
+				t.Errorf("HasCgroupDeleg = %v, want %v", caps.HasCgroupDeleg, tt.want)
+			}
+		})
 	}
 }
 
-func TestProbeCapabilities_LandlockViaKernelVersion(t *testing.T) {
+// TestProbeCapabilities_LandlockABI pins that the reported ABI comes only from
+// the helper's `--version` self-report. A modern kernel version must not be
+// taken as proof: Landlock can be compiled in yet absent from the boot lsm=
+// list, where the helper reports 0 and every ll-restrict run would fail.
+func TestProbeCapabilities_LandlockABI(t *testing.T) {
 	t.Parallel()
-	mock := newMockProber()
-	// Helper present so Landlock is enforceable; ABI resolves via kernel heuristic.
-	mock.landlockHelper = "/usr/bin/ll-restrict"
-	mock.files["/proc/version"] = []byte("Linux version 6.1.0-arch1 (builder@arch) #1 SMP\n")
 
-	caps := ProbeCapabilities(context.Background(), mock)
-
-	if caps.LandlockABI < 1 {
-		t.Errorf("expected LandlockABI >= 1 for kernel 6.1 with helper, got %d", caps.LandlockABI)
+	const helper = "/usr/bin/ll-restrict"
+	tests := []struct {
+		name      string
+		output    string
+		outputErr error
+		want      int
+	}{
+		{name: "helper reports ABI", output: "landlock-abi:3\n", want: 3},
+		{name: "helper reports Landlock disabled", output: "landlock-abi:0\n", want: 0},
+		{name: "helper without --version support", outputErr: errors.New("exit status 120"), want: 0},
+		{name: "unparseable self-report", output: "ll-restrict 0.1.0\n", want: 0},
+		{name: "negative ABI", output: "landlock-abi:-1\n", want: 0},
 	}
-}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			mock := newMockProber()
+			mock.landlockHelper = helper
+			// A Landlock-capable kernel version must not influence the result.
+			mock.files["/proc/version"] = []byte("Linux version 6.8.0-40-generic\n")
+			if tt.outputErr != nil {
+				mock.outputErrors[helper] = tt.outputErr
+			} else {
+				mock.outputResults[helper] = []byte(tt.output)
+			}
 
-func TestProbeCapabilities_LandlockOldKernel(t *testing.T) {
-	t.Parallel()
-	mock := newMockProber()
-	// Helper present but kernel too old — Landlock cannot be enforced.
-	mock.landlockHelper = "/usr/bin/ll-restrict"
-	mock.files["/proc/version"] = []byte("Linux version 5.10.0-generic\n")
+			caps := ProbeCapabilities(context.Background(), mock)
 
-	caps := ProbeCapabilities(context.Background(), mock)
-
-	if caps.LandlockABI != 0 {
-		t.Errorf("expected LandlockABI = 0 for kernel 5.10, got %d", caps.LandlockABI)
+			if caps.LandlockABI != tt.want {
+				t.Errorf("LandlockABI = %d, want %d", caps.LandlockABI, tt.want)
+			}
+		})
 	}
 }
 
@@ -291,31 +369,6 @@ func TestParseKernelVersion(t *testing.T) {
 			t.Parallel()
 			if got := parseKernelVersion(tt.input); got != tt.want {
 				t.Errorf("parseKernelVersion(%q) = %q, want %q", tt.input, got, tt.want)
-			}
-		})
-	}
-}
-
-func TestParseKernelMajorMinor(t *testing.T) {
-	t.Parallel()
-	tests := []struct {
-		input     string
-		wantMajor int
-		wantMinor int
-	}{
-		{"6.8.0-40-generic", 6, 8},
-		{"5.13.0", 5, 13},
-		{"5.10", 5, 10},
-		{"", 0, 0},
-		{"abc", 0, 0},
-	}
-	for _, tt := range tests {
-		t.Run(tt.input, func(t *testing.T) {
-			t.Parallel()
-			major, minor := parseKernelMajorMinor(tt.input)
-			if major != tt.wantMajor || minor != tt.wantMinor {
-				t.Errorf("parseKernelMajorMinor(%q) = (%d, %d), want (%d, %d)",
-					tt.input, major, minor, tt.wantMajor, tt.wantMinor)
 			}
 		})
 	}

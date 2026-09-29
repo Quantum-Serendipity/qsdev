@@ -63,6 +63,9 @@ func TestProfileRegistry_ListSorted(t *testing.T) {
 	}
 }
 
+// TestDefaultProfileRegistry_BuiltinsRegistered pins the built-in
+// infrastructure profiles. If the set changes, update README.md ("N
+// infrastructure tiers").
 func TestDefaultProfileRegistry_BuiltinsRegistered(t *testing.T) {
 	r := DefaultProfileRegistry()
 

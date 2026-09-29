@@ -15,9 +15,9 @@ permissions:
 jobs:
   security-scan:
     runs-on: ubuntu-latest
+    # No step uploads SARIF, so the job needs no write scope.
     permissions:
       contents: read
-      security-events: write
     steps:
 {{- if .HasHardenRunner }}
       - name: Harden Runner
@@ -27,6 +27,10 @@ jobs:
 {{ end }}
       - name: Checkout
         uses: {{ .ActionCheckout }} {{ .ActionCheckout.Comment }}
+        # Keep the job token out of .git/config: the scanner actions below
+        # run third-party code over the checked-out workspace.
+        with:
+          persist-credentials: false
 
       - name: Validate lock files
         shell: bash
@@ -44,42 +48,87 @@ jobs:
           # produces a pristine tree, so `git diff` is clean by construction and
           # such a check can never fail regardless of what was committed.
 
-          # $1 = manifest, remaining args = acceptable lock files for it.
+          # Every tracked manifest is checked, not only the repository root;
+          # vendored and fixture trees are skipped.
+          manifests() {
+            git ls-files -- "$1" "*/$1" | grep -Ev '(^|/)(vendor|node_modules|testdata|third_party)/' || true
+          }
+
+          # Prints the first of the lock files (args after $2) found in
+          # directory $1, or in an ancestor for the workspace lock files
+          # listed in $2: workspace members (npm/pnpm/yarn/bun, Cargo, uv)
+          # share the lock file at the workspace root, while a nested Go
+          # module, Gemfile or flake needs its own.
+          find_lock() {
+            dir="$1"
+            workspace=" $2 "
+            shift 2
+            member=""
+            while :; do
+              for lock in "$@"; do
+                if [ -n "$member" ] && [ "${workspace#* "$lock" }" = "$workspace" ]; then
+                  continue
+                fi
+                if [ -f "$dir/$lock" ]; then
+                  echo "$dir/$lock"
+                  return 0
+                fi
+              done
+              [ "$dir" = "." ] && return 1
+              dir="$(dirname "$dir")"
+              member=1
+            done
+          }
+
+          # Whether a manifest needs a lock file at all. A module with no
+          # dependencies has no go.sum, and pyproject.toml is locked only
+          # when a locking tool (Poetry, uv) manages the project.
+          needs_lock() {
+            case "$(basename "$1")" in
+              go.mod) grep -qE '^[[:space:]]*require' "$1" ;;
+              pyproject.toml) grep -qE '^\[tool\.(poetry|uv)(\]|\.)' "$1" ;;
+              *) return 0 ;;
+            esac
+          }
+
+          # $1 = manifest file name, $2 = the lock files (space-separated)
+          # a workspace root may hold, remaining args = acceptable lock files.
           require_lock() {
-            manifest="$1"
-            shift
-            [ -f "$manifest" ] || return 0
-            for lock in "$@"; do
-              if [ -f "$lock" ]; then
-                echo "  ✓ $manifest -> $lock"
-                return 0
+            name="$1"
+            workspace="$2"
+            shift 2
+            while IFS= read -r manifest; do
+              [ -n "$manifest" ] || continue
+              needs_lock "$manifest" || continue
+              dir="$(dirname "$manifest")"
+              if found="$(find_lock "$dir" "$workspace" "$@")"; then
+                echo "  ✓ $manifest -> ${found#./}"
+                continue
               fi
-            done
-            # Distinguish "never generated" from "generated but deliberately
-            # excluded" — the second is a policy problem, not an oversight.
-            for lock in "$@"; do
-              if git check-ignore -q "$lock" 2>/dev/null; then
-                echo "::error file=$manifest::$lock is excluded by .gitignore, so it can never be committed. Lock files must be committed."
-                fail=1
-                return 0
+              # Distinguish "never generated" from "generated but deliberately
+              # excluded" — the second is a policy problem, not an oversight.
+              ignored=""
+              for lock in "$@"; do
+                if git check-ignore -q "$dir/$lock" 2>/dev/null; then
+                  ignored="$lock"
+                  break
+                fi
+              done
+              if [ -n "$ignored" ]; then
+                echo "::error file=$manifest::$ignored is excluded by .gitignore, so it can never be committed. Lock files must be committed."
+              else
+                echo "::error file=$manifest::$manifest has no lock file (expected one of: $*). Dependencies would resolve at build time instead of being pinned to verified versions."
               fi
-            done
-            echo "::error file=$manifest::$manifest has no lock file (expected one of: $*). Dependencies would resolve at build time instead of being pinned to verified versions."
-            fail=1
+              fail=1
+            done < <(manifests "$name")
           }
 
           echo "Checking lock file integrity..."
 
-          require_lock package.json package-lock.json npm-shrinkwrap.json pnpm-lock.yaml yarn.lock bun.lock bun.lockb
-          require_lock composer.json composer.lock
-          # Cargo keeps a single lock file at the workspace root, so members
-          # legitimately have no Cargo.lock. Only the root is checked.
-          require_lock Cargo.toml Cargo.lock
-          # A module with no dependencies correctly has no go.sum, so only
-          # require one when go.mod actually declares requirements.
-          if [ -f go.mod ] && grep -qE '^[[:space:]]*require' go.mod; then
-            require_lock go.mod go.sum
-          fi
+          # Manifest/lock-file pairs from the qsdev ecosystem catalog.
+{{- range .LockChecks }}
+          require_lock {{ .Manifest }} "{{ range $i, $l := .Workspace }}{{ if $i }} {{ end }}{{ $l }}{{ end }}"{{ range .Lockfiles }} {{ . }}{{ end }}
+{{- end }}
 
           if [ "$fail" -ne 0 ]; then
             echo "Lock file validation failed."
@@ -106,11 +155,14 @@ jobs:
 {{- if .HasSnyk }}
 
       - name: Snyk Security Scan
-        uses: {{ .ActionSnyk }} {{ .ActionSnyk.Comment }}
+        # The Snyk CLI image runs directly, pinned by digest. The snyk/actions
+        # action runs this image by its mutable tag, so pinning the action's
+        # SHA would not pin the code that runs with SNYK_TOKEN.
+        uses: {{ .ImageSnyk }} {{ .ImageSnyk.Comment }}
         env:
           SNYK_TOKEN: ${{ "{{" }} secrets.SNYK_TOKEN {{ "}}" }}
         with:
-          args: --all-projects
+          args: snyk test --all-projects
 {{- end }}
 {{- if .HasGrype }}
 
@@ -119,4 +171,47 @@ jobs:
         with:
           path: "."
           fail-build: true
+{{- end }}
+{{- if .EcosystemCI }}
+
+  # Each ecosystem's CI commands: frozen/locked dependency installs first, so
+  # a drifted or unlocked dependency set fails before anything builds, then
+  # tests, then audits. They run in the project's devenv shell, so CI uses
+  # the toolchains and tools devenv.nix pins rather than whatever the runner
+  # image ships.
+  ecosystem-ci:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    defaults:
+      run:
+        shell: devenv shell bash -- -eo pipefail {0}
+    steps:
+{{- if .HasHardenRunner }}
+      - name: Harden Runner
+        uses: {{ .ActionHardenRunner }} {{ .ActionHardenRunner.Comment }}
+        with:
+          egress-policy: audit
+{{ end }}
+      - name: Checkout
+        uses: {{ .ActionCheckout }} {{ .ActionCheckout.Comment }}
+        with:
+          persist-credentials: false
+
+      - name: Install Nix
+        uses: {{ .ActionInstallNix }} {{ .ActionInstallNix.Comment }}
+
+      - name: Install devenv
+        shell: bash
+        run: nix profile add nixpkgs#devenv
+{{- range .EcosystemCI }}
+{{- $phase := .Phase.String }}
+{{- range .Commands }}
+
+      # {{ oneLine .Description }}
+      - name: {{ yamlString (printf "%s: %s" $phase .Name) }}
+        run: |
+          {{ indentBlock 10 .Command }}
+{{- end }}
+{{- end }}
 {{- end }}

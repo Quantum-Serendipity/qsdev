@@ -1,8 +1,14 @@
 package devinit
 
-// ecosystemGitignoreEntries maps ecosystem names to their recommended .gitignore
-// entries. These cover build artifacts, dependency directories, and secret files
-// that should never be committed.
+// ecosystemGitignoreEntries maps ecosystem module names (EcosystemModule.Name(),
+// the value stored in WizardAnswers.Languages[].Name) to their recommended
+// .gitignore entries. These cover build artifacts, dependency directories, and
+// secret files that should never be committed.
+//
+// Entries must never ignore files the ecosystem needs committed: Go's vendor/
+// directory is deliberately absent (vendored modules are committed for
+// reproducible -mod=vendor builds), and the Java build-wrapper jars are
+// re-included after *.jar so ./gradlew and ./mvnw work on a fresh clone.
 var ecosystemGitignoreEntries = map[string][]string{
 	"javascript": {
 		"node_modules/",
@@ -23,8 +29,7 @@ var ecosystemGitignoreEntries = map[string][]string{
 		"*.pem",
 		"*.key",
 	},
-	"golang": {
-		"vendor/",
+	"go": {
 		"*.exe",
 		".env",
 		".env.*",
@@ -59,6 +64,8 @@ var ecosystemGitignoreEntries = map[string][]string{
 		"build/",
 		"*.class",
 		"*.jar",
+		"!gradle/wrapper/gradle-wrapper.jar",
+		"!.mvn/wrapper/maven-wrapper.jar",
 		".env",
 		".env.*",
 		"*.pem",
@@ -105,6 +112,28 @@ var ecosystemGitignoreEntries = map[string][]string{
 		"*.pem",
 		"*.key",
 	},
+	// Terraform/OpenTofu: state and variable files hold plaintext secrets,
+	// .terraform/ is the provider/module cache (with backend credentials in
+	// .terraform/terraform.tfstate), and override files are local-only.
+	// .terraform.lock.hcl is not matched and stays committed, and neither is
+	// the .terraformrc the terraform module generates for the team.
+	"terraform": {
+		".terraform/",
+		"*.tfstate",
+		"*.tfstate.*",
+		"*.tfvars",
+		"*.tfvars.json",
+		"crash.log",
+		"crash.*.log",
+		"override.tf",
+		"override.tf.json",
+		"*_override.tf",
+		"*_override.tf.json",
+		".env",
+		".env.*",
+		"*.pem",
+		"*.key",
+	},
 	"zig": {
 		"zig-cache/",
 		"zig-out/",
@@ -121,6 +150,11 @@ var securityGitignoreEntries = []string{
 	".env.*",
 	"*.pem",
 	"*.key",
+	// Claude Code hook audit logs record full command lines, which can carry
+	// credentials (tokens in index URLs, NPM_TOKEN=...). The second entry is
+	// the package guard's location in older templates.
+	".claude/logs/",
+	".claude/hook-audit.log",
 }
 
 // gitignoreEntriesForLanguages returns the combined .gitignore entries for

@@ -163,9 +163,12 @@ func (r *Registry[T]) Range(fn func(key string, item T) bool) {
 	}
 }
 
-// Modify looks up the item for key and, if found, calls fn while holding
-// the write lock. Returns false if key was not found.
-func (r *Registry[T]) Modify(key string, fn func(item T)) bool {
+// Modify looks up the item for key and, if found, replaces it with the
+// value fn returns, all while holding the write lock. fn receives a copy of
+// the stored item, so it must return the updated item; this makes Modify
+// work for value types as well as pointers. Returns false if key was not
+// found.
+func (r *Registry[T]) Modify(key string, fn func(item T) T) bool {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
@@ -173,8 +176,7 @@ func (r *Registry[T]) Modify(key string, fn func(item T)) bool {
 	if !ok {
 		return false
 	}
-	fn(item)
-	r.items[key] = item
+	r.items[key] = fn(item)
 	return true
 }
 

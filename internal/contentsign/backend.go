@@ -2,6 +2,7 @@ package contentsign
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -24,7 +25,8 @@ type Verifier interface {
 	//     untrusted/unknown key), it returns ("", false, nil) so the caller can
 	//     record the result as failed/untrusted rather than an I/O error.
 	//   - It returns a non-nil error only for genuine I/O failures (e.g. the
-	//     content file cannot be read).
+	//     content file cannot be read), or ErrLegacyContentTooLarge when a
+	//     legacy (non-prehashed) signature would require buffering too much.
 	VerifyContent(ctx context.Context, contentPath string, sig []byte, keys []PublicKey) (KeyID, bool, error)
 }
 
@@ -49,6 +51,18 @@ type Backend interface {
 	// Name identifies the backend for diagnostics.
 	Name() string
 }
+
+// maxBufferedContentSize bounds the content a legacy (non-prehashed) signature
+// may force into memory. Legacy signatures cannot be verified by streaming, and
+// the signature's algorithm is chosen by whoever wrote it, so without a bound a
+// planted legacy sidecar next to a multi-GB corpus file would turn a streaming
+// check into a whole-file allocation per verification worker.
+const maxBufferedContentSize = 64 << 20
+
+// ErrLegacyContentTooLarge indicates a legacy (non-prehashed) signature covers
+// content larger than maxBufferedContentSize, so it is refused rather than
+// buffered.
+var ErrLegacyContentTooLarge = errors.New("contentsign: content too large for a legacy (non-prehashed) signature")
 
 // DefaultBackend returns the bundled pure-Go Minisign backend, which both signs
 // and verifies using the streaming (Blake2b-512 prehash) code path.
@@ -81,7 +95,7 @@ func (pureGoBackend) VerifyContent(ctx context.Context, contentPath string, sig 
 		return "", false, fmt.Errorf("parsing signature for %q: %w", contentPath, ErrSignatureInvalid)
 	}
 	if parsed.Algorithm != minisign.HashEdDSA {
-		return verifyBuffered(ctx, contentPath, sig, keys)
+		return verifyBuffered(ctx, contentPath, parsed.KeyID, sig, keys, maxBufferedContentSize)
 	}
 	return verifyStreaming(ctx, contentPath, sig, keys)
 }
@@ -107,22 +121,54 @@ func verifyStreaming(ctx context.Context, contentPath string, sig []byte, keys [
 }
 
 // verifyBuffered verifies a legacy (non-prehashed) signature over the raw
-// message, which requires the whole file in memory.
-func verifyBuffered(ctx context.Context, contentPath string, sig []byte, keys []PublicKey) (KeyID, bool, error) {
+// message, which requires the whole file in memory. Only keys whose ID matches
+// the signature's key ID can verify it (minisign enforces this too), so a
+// signature from an unknown key is rejected without reading the content, and
+// content over maxSize is refused with ErrLegacyContentTooLarge.
+func verifyBuffered(ctx context.Context, contentPath string, sigKeyID uint64, sig []byte, keys []PublicKey, maxSize int64) (KeyID, bool, error) {
+	var candidates []PublicKey
+	for _, k := range keys {
+		if k.inner.ID() == sigKeyID {
+			candidates = append(candidates, k)
+		}
+	}
+	if len(candidates) == 0 {
+		return "", false, nil
+	}
 	if err := ctx.Err(); err != nil {
 		return "", false, fmt.Errorf("reading content %q: %w", contentPath, err)
 	}
-	content, err := os.ReadFile(contentPath) //nolint:gosec // contentPath is a manifest-controlled corpus path.
+	content, err := readBoundedContent(contentPath, maxSize)
 	if err != nil {
-		return "", false, fmt.Errorf("reading content %q: %w", contentPath, err)
+		return "", false, err
 	}
 
-	for _, k := range keys {
+	for _, k := range candidates {
 		if minisign.Verify(k.inner, content, sig) {
 			return k.ID(), true, nil
 		}
 	}
 	return "", false, nil
+}
+
+// readBoundedContent reads contentPath whole, failing with
+// ErrLegacyContentTooLarge (without buffering it) when it exceeds maxSize.
+func readBoundedContent(contentPath string, maxSize int64) ([]byte, error) {
+	f, err := os.Open(contentPath) //nolint:gosec // contentPath is a manifest-controlled corpus path.
+	if err != nil {
+		return nil, fmt.Errorf("reading content %q: %w", contentPath, err)
+	}
+	defer func() { _ = f.Close() }()
+
+	content, err := io.ReadAll(io.LimitReader(f, maxSize+1))
+	if err != nil {
+		return nil, fmt.Errorf("reading content %q: %w", contentPath, err)
+	}
+	if int64(len(content)) > maxSize {
+		return nil, fmt.Errorf("verifying %q (limit %d bytes; re-sign with qsdev for streaming verification): %w",
+			contentPath, maxSize, ErrLegacyContentTooLarge)
+	}
+	return content, nil
 }
 
 // SignContent implements Signer using the streaming Reader path.

@@ -68,29 +68,3 @@ func (r *BackendRegistry) SelectByName(name string) (SandboxBackend, error) {
 
 	return nil, fmt.Errorf("backend %q not registered", name)
 }
-
-// List returns all registered backends with their availability status.
-func (r *BackendRegistry) List() []BackendStatus {
-	r.mu.RLock()
-	defer r.mu.RUnlock()
-
-	statuses := make([]BackendStatus, 0, len(r.backends))
-	for _, b := range r.backends {
-		err := b.Available()
-		statuses = append(statuses, BackendStatus{
-			Name:      b.Name(),
-			Tier:      b.Tier(),
-			Available: err == nil,
-			Error:     err,
-		})
-	}
-	return statuses
-}
-
-// BackendStatus summarises a registered backend's availability.
-type BackendStatus struct {
-	Name      string
-	Tier      DegradationTier
-	Available bool
-	Error     error
-}

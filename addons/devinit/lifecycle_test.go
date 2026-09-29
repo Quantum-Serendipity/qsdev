@@ -13,10 +13,23 @@ import (
 	"github.com/spf13/cobra"
 )
 
-// TestWriteToolFiles_AlwaysOnAgentPostmortem_StandardTier is the BL-P1-9
+// enableToolFilesForTest plans and applies an enable of tool into root with an
+// empty generated state, returning the files written.
+func enableToolFilesForTest(t *testing.T, tool *toolreg.Tool, name, root string, answers types.WizardAnswers) ([]types.GeneratedFile, error) {
+	t.Helper()
+	st := types.GeneratedState{Files: map[string]types.FileState{}}
+	change, err := planToolEnable(tool, name, root, answers, st, false)
+	if err != nil {
+		return nil, err
+	}
+	res, err := applyToolChange(root, change, st)
+	return res.written, err
+}
+
+// TestEnableTool_AlwaysOnAgentPostmortem_StandardTier is the BL-P1-9
 // regression: enabling the always-on agent-postmortem tool at the standard tier
 // must write its exclusive SKILL.md (RED before the fix — silently omitted).
-func TestWriteToolFiles_AlwaysOnAgentPostmortem_StandardTier(t *testing.T) {
+func TestEnableTool_AlwaysOnAgentPostmortem_StandardTier(t *testing.T) {
 	root := t.TempDir()
 	tool, ok := toolreg.DefaultRegistry().ByName("agent-postmortem")
 	if !ok {
@@ -29,9 +42,9 @@ func TestWriteToolFiles_AlwaysOnAgentPostmortem_StandardTier(t *testing.T) {
 		EnabledTools: map[string]bool{},
 	}
 
-	written, err := writeToolFiles(tool, "agent-postmortem", root, answers)
+	written, err := enableToolFilesForTest(t, tool, "agent-postmortem", root, answers)
 	if err != nil {
-		t.Fatalf("writeToolFiles: %v", err)
+		t.Fatalf("enable: %v", err)
 	}
 
 	skillPath := filepath.Join(root, ".claude", "skills", "agent-postmortem", "SKILL.md")
@@ -54,11 +67,11 @@ func TestWriteToolFiles_AlwaysOnAgentPostmortem_StandardTier(t *testing.T) {
 	}
 }
 
-// TestWriteToolFiles_OptInBelowFull_RefusesInsteadOfFalseSuccess is the BL-P1-9
+// TestEnableTool_OptInBelowFull_RefusesInsteadOfFalseSuccess is the BL-P1-9
 // honesty guard: enabling a Full-gated opt-in tool (lookup-docs) below Full must
 // refuse with an actionable tier error and write nothing — never report success
 // while silently omitting the SKILL.md and leaving CLAUDE.md advertising it.
-func TestWriteToolFiles_OptInBelowFull_RefusesInsteadOfFalseSuccess(t *testing.T) {
+func TestEnableTool_OptInBelowFull_RefusesInsteadOfFalseSuccess(t *testing.T) {
 	root := t.TempDir()
 	tool, ok := toolreg.DefaultRegistry().ByName("lookup-docs")
 	if !ok {
@@ -70,7 +83,7 @@ func TestWriteToolFiles_OptInBelowFull_RefusesInsteadOfFalseSuccess(t *testing.T
 		EnabledTools: map[string]bool{},
 	}
 
-	_, err := writeToolFiles(tool, "lookup-docs", root, answers)
+	_, err := enableToolFilesForTest(t, tool, "lookup-docs", root, answers)
 	if err == nil {
 		t.Fatal("expected an actionable error enabling a Full-gated tool below Full, got nil")
 	}

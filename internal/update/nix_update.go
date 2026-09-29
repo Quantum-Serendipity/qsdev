@@ -35,21 +35,36 @@ type NixUpdateOptions struct {
 	NewMode     os.FileMode
 	Status      types.ModificationStatus
 	Force       bool
-	DryRun      bool
+	DryRun      bool // report the action that would be taken without touching the filesystem
 }
 
-// UpdateDevenvNix implements the devenv.nix update strategy.
+// UpdateDevenvNix implements the devenv.nix update strategy. With DryRun set it
+// computes and reports the same result but performs no filesystem mutation (no
+// sidecar cleanup, overwrite, or sidecar write).
 func UpdateDevenvNix(opts NixUpdateOptions) (*NixUpdateResult, error) {
 	if opts.NewMode == 0 {
 		opts.NewMode = fileutil.ModeReadWrite
 	}
 
-	absPath := filepath.Join(opts.ProjectRoot, opts.FilePath)
+	relPath := filepath.FromSlash(opts.FilePath)
+	absPath := filepath.Join(opts.ProjectRoot, relPath)
 	sidecarPath := absPath + ".new"
 
+	// write performs every file write below, so DryRun is honored uniformly.
+	// rel is relative to the project root, and the write is confined to it: a
+	// symlinked file or parent directory resolving outside is refused.
+	write := func(rel string) error {
+		if opts.DryRun {
+			return nil
+		}
+		return fileutil.WriteFileAtomicInRoot(opts.ProjectRoot, rel, opts.NewContent, opts.NewMode)
+	}
+
 	// Clean up any stale sidecar.
-	if err := CleanupSidecar(sidecarPath); err != nil {
-		return nil, fmt.Errorf("cleanup stale sidecar: %w", err)
+	if !opts.DryRun {
+		if err := CleanupSidecar(sidecarPath); err != nil {
+			return nil, fmt.Errorf("cleanup stale sidecar: %w", err)
+		}
 	}
 
 	switch opts.Status {
@@ -57,11 +72,11 @@ func UpdateDevenvNix(opts NixUpdateOptions) (*NixUpdateResult, error) {
 		if !opts.Force {
 			return &NixUpdateResult{
 				Action:  NixSkipped,
-				Message: "devenv.nix was deleted by user; skipping",
+				Message: fmt.Sprintf("%s was deleted by user; skipping", opts.FilePath),
 			}, nil
 		}
-		if err := fileutil.WriteFileAtomic(absPath, opts.NewContent, opts.NewMode); err != nil {
-			return nil, fmt.Errorf("force write deleted devenv.nix: %w", err)
+		if err := write(relPath); err != nil {
+			return nil, fmt.Errorf("force write deleted %s: %w", opts.FilePath, err)
 		}
 		return &NixUpdateResult{
 			Action:  NixForceOverwritten,
@@ -69,18 +84,18 @@ func UpdateDevenvNix(opts NixUpdateOptions) (*NixUpdateResult, error) {
 		}, nil
 
 	case types.Unmodified, types.New:
-		if err := fileutil.WriteFileAtomic(absPath, opts.NewContent, opts.NewMode); err != nil {
-			return nil, fmt.Errorf("regenerate devenv.nix: %w", err)
+		if err := write(relPath); err != nil {
+			return nil, fmt.Errorf("regenerate %s: %w", opts.FilePath, err)
 		}
 		return &NixUpdateResult{
 			Action:  NixRegenerated,
-			Message: "devenv.nix regenerated",
+			Message: opts.FilePath + " regenerated",
 		}, nil
 
 	case types.Modified:
 		if opts.Force {
-			if err := fileutil.WriteFileAtomic(absPath, opts.NewContent, opts.NewMode); err != nil {
-				return nil, fmt.Errorf("force overwrite devenv.nix: %w", err)
+			if err := write(relPath); err != nil {
+				return nil, fmt.Errorf("force overwrite %s: %w", opts.FilePath, err)
 			}
 			return &NixUpdateResult{
 				Action:  NixForceOverwritten,
@@ -90,7 +105,7 @@ func UpdateDevenvNix(opts NixUpdateOptions) (*NixUpdateResult, error) {
 
 		oldContent, err := os.ReadFile(absPath)
 		if err != nil {
-			return nil, fmt.Errorf("read current devenv.nix: %w", err)
+			return nil, fmt.Errorf("read current %s: %w", opts.FilePath, err)
 		}
 
 		diffOutput, err := ComputeUnifiedDiff(oldContent, opts.NewContent, opts.FilePath, opts.FilePath+".new")
@@ -98,10 +113,8 @@ func UpdateDevenvNix(opts NixUpdateOptions) (*NixUpdateResult, error) {
 			return nil, fmt.Errorf("compute diff: %w", err)
 		}
 
-		if !opts.DryRun {
-			if err := fileutil.WriteFileAtomic(sidecarPath, opts.NewContent, opts.NewMode); err != nil {
-				return nil, fmt.Errorf("write sidecar %s: %w", sidecarPath, err)
-			}
+		if err := write(relPath + ".new"); err != nil {
+			return nil, fmt.Errorf("write sidecar %s: %w", sidecarPath, err)
 		}
 
 		return &NixUpdateResult{
@@ -114,13 +127,13 @@ func UpdateDevenvNix(opts NixUpdateOptions) (*NixUpdateResult, error) {
 	case types.Unknown:
 		return &NixUpdateResult{
 			Action:  NixSkipped,
-			Message: "devenv.nix status unknown; skipping update",
+			Message: fmt.Sprintf("%s status unknown; skipping update", opts.FilePath),
 		}, nil
 
 	default:
 		return &NixUpdateResult{
 			Action:  NixSkipped,
-			Message: fmt.Sprintf("devenv.nix: unrecognized status %v; skipping", opts.Status),
+			Message: fmt.Sprintf("%s: unrecognized status %v; skipping", opts.FilePath, opts.Status),
 		}, nil
 	}
 }

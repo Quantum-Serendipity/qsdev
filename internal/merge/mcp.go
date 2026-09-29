@@ -91,6 +91,12 @@ func MergeMcpJson(base, theirs, ours []byte) ([]byte, error) {
 				// but preserve any unmodeled fields the user added (e.g. headers).
 				resultRaw[name] = mergeServerRaw(theirsServers[name], oursServers[name])
 			}
+		} else if inTheirs {
+			// Newly generated server whose name the user already configured
+			// (always the case on the nil-base create path): ours' modeled
+			// fields win, but the user's env keys and unmodeled fields (e.g.
+			// headers carrying tokens) survive.
+			resultRaw[name] = mergeServerRaw(theirsServers[name], oursServers[name])
 		} else {
 			// Newly generated server — add from ours.
 			resultRaw[name] = oursServers[name]
@@ -130,11 +136,11 @@ func MergeMcpJson(base, theirs, ours []byte) ([]byte, error) {
 	}
 	top["mcpServers"] = serversBytes
 
-	out, err := json.MarshalIndent(top, "", "  ")
+	out, err := json.Marshal(top)
 	if err != nil {
 		return nil, fmt.Errorf("marshaling merged mcp.json: %w", err)
 	}
-	return append(out, '\n'), nil
+	return CanonicalJSON(out)
 }
 
 // rawServersFrom parses the mcpServers object of a document into per-server raw

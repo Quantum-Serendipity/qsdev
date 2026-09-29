@@ -28,7 +28,7 @@ func Analyze(ctx context.Context, projectRoot string, prober Prober) (*Migration
 		return nil, fmt.Errorf("detecting container runtime: %w", err)
 	}
 
-	caps, err := DetectCapabilities(ctx, prober, info)
+	caps, err := DetectCapabilities(ctx, prober, info, projectRoot)
 	if err != nil {
 		return nil, fmt.Errorf("detecting capabilities: %w", err)
 	}
@@ -103,6 +103,10 @@ func analyzeComposeFile(filePath string, caps *Capabilities, selinuxActive bool)
 
 	// Extract top-level volume names for bind-mount vs named-volume detection.
 	topLevelVolumes := extractTopLevelVolumes(doc)
+	// File-wide facts the per-service fixes depend on: which host ports are
+	// already taken, and which project paths several services share.
+	published := publishedPorts(services)
+	bindHosts := countBindHosts(volumesByService(services))
 
 	var issues []MigrationIssue
 	for name, svcRaw := range services {
@@ -112,10 +116,10 @@ func analyzeComposeFile(filePath string, caps *Capabilities, selinuxActive bool)
 		}
 		issues = append(issues, checkVolumePermissions(name, svc, filePath, topLevelVolumes)...)
 		issues = append(issues, checkImageQualification(name, svc, filePath)...)
-		issues = append(issues, checkPrivilegedPorts(name, svc, filePath, caps)...)
+		issues = append(issues, checkPrivilegedPorts(name, svc, filePath, caps, published)...)
 		issues = append(issues, checkPrivilegedMode(name, svc, filePath)...)
 		issues = append(issues, checkDockerSocketMount(name, svc, filePath)...)
-		issues = append(issues, checkSELinuxLabels(name, svc, filePath, selinuxActive, topLevelVolumes)...)
+		issues = append(issues, checkSELinuxLabels(name, svc, filePath, selinuxActive, topLevelVolumes, bindHosts)...)
 	}
 
 	return issues, nil
@@ -137,6 +141,65 @@ func extractTopLevelVolumes(doc map[string]any) map[string]bool {
 		result[name] = true
 	}
 	return result
+}
+
+// volumesByService returns each service's short-syntax volume entries.
+func volumesByService(services map[string]any) map[string][]string {
+	result := make(map[string][]string, len(services))
+	for name, svcRaw := range services {
+		if svc, ok := svcRaw.(map[string]any); ok {
+			result[name] = extractStringList(svc, "volumes")
+		}
+	}
+	return result
+}
+
+// publishedPorts returns every host port the compose file's services publish.
+func publishedPorts(services map[string]any) map[publishedPort]bool {
+	result := make(map[publishedPort]bool)
+	for _, svcRaw := range services {
+		svc, ok := svcRaw.(map[string]any)
+		if !ok {
+			continue
+		}
+		ports, ok := svc["ports"].([]any)
+		if !ok {
+			continue
+		}
+		for _, entry := range ports {
+			if p, ok := portEntry(entry); ok {
+				result[p] = true
+			}
+		}
+	}
+	return result
+}
+
+// portEntry parses a decoded port entry (short or long syntax) into the host
+// port it publishes. Bare integers (e.g. `- 80`) are container-only ports in
+// Docker Compose and publish nothing.
+func portEntry(entry any) (publishedPort, bool) {
+	switch v := entry.(type) {
+	case string:
+		return parsePortSpec(v)
+	case map[string]any:
+		protocol, _ := v["protocol"].(string)
+		return longPortSpec(scalarString(v["published"]), protocol)
+	}
+	return publishedPort{}, false
+}
+
+// scalarString renders a decoded YAML scalar as a string.
+func scalarString(v any) string {
+	switch t := v.(type) {
+	case string:
+		return t
+	case int:
+		return strconv.Itoa(t)
+	case float64:
+		return strconv.Itoa(int(t))
+	}
+	return ""
 }
 
 // isBindMount returns true if a volume string looks like a bind mount
@@ -263,67 +326,55 @@ func qualifyImageName(image string) string {
 	return "docker.io/" + nameOnly + suffix
 }
 
-// checkPrivilegedPorts flags ports < 1024 bound on the host.
-func checkPrivilegedPorts(serviceName string, svc map[string]any, filePath string, caps *Capabilities) []MigrationIssue {
+// checkPrivilegedPorts flags ports < 1024 bound on the host. A port whose
+// remap target is already published in the file is reported for a manual fix.
+func checkPrivilegedPorts(serviceName string, svc map[string]any, filePath string, caps *Capabilities, published map[publishedPort]bool) []MigrationIssue {
 	if caps != nil && caps.PrivilegedPorts {
 		return nil
 	}
 
-	portsRaw, ok := svc["ports"]
-	if !ok {
-		return nil
-	}
-	portsList, ok := portsRaw.([]any)
+	portsList, ok := svc["ports"].([]any)
 	if !ok {
 		return nil
 	}
 
 	var issues []MigrationIssue
-	for _, portEntry := range portsList {
-		hostPort := extractHostPort(portEntry)
-		if hostPort > 0 && hostPort < 1024 {
-			remapped := hostPort + portRemapOffset
+	for _, entry := range portsList {
+		p, ok := portEntry(entry)
+		if !ok || p.port >= 1024 {
+			continue
+		}
+		description := fmt.Sprintf("service %q binds privileged host port %d; rootless containers cannot bind ports below 1024", serviceName, p.port)
+		remapped, ok := portRemapTarget(p, published)
+		if !ok {
 			issues = append(issues, MigrationIssue{
 				Category:    CategoryPrivPorts,
 				Severity:    SeverityWarning,
 				File:        filePath,
 				Service:     serviceName,
-				Description: fmt.Sprintf("service %q binds privileged host port %d; rootless containers cannot bind ports below 1024", serviceName, hostPort),
-				AutoFixable: true,
+				Description: fmt.Sprintf("%s; port %d/%s is already published in this file, so it cannot be remapped automatically", description, p.port+portRemapOffset, p.proto),
 				Fix: &MigrationFix{
-					Description: fmt.Sprintf("remap host port %d to %d", hostPort, remapped),
+					Description: fmt.Sprintf("choose a free host port of 1024 or above for port %d", p.port),
 					YAMLPath:    fmt.Sprintf("services.%s.ports", serviceName),
-					YAMLValue:   fmt.Sprintf("%d (remapped from %d)", remapped, hostPort),
 				},
 			})
+			continue
 		}
+		issues = append(issues, MigrationIssue{
+			Category:    CategoryPrivPorts,
+			Severity:    SeverityWarning,
+			File:        filePath,
+			Service:     serviceName,
+			Description: description,
+			AutoFixable: true,
+			Fix: &MigrationFix{
+				Description: fmt.Sprintf("remap host port %d to %d", p.port, remapped),
+				YAMLPath:    fmt.Sprintf("services.%s.ports", serviceName),
+				YAMLValue:   fmt.Sprintf("%d (remapped from %d)", remapped, p.port),
+			},
+		})
 	}
 	return issues
-}
-
-// extractHostPort parses a port entry and returns the host port, or 0.
-// Bare integers (e.g. `- 80`) are container-only ports in Docker Compose
-// and do not map to a host port.
-func extractHostPort(entry any) int {
-	switch v := entry.(type) {
-	case string:
-		return parseHostPortFromString(v)
-	case int, float64:
-		return 0
-	case map[string]any:
-		if pub, ok := v["published"]; ok {
-			switch p := pub.(type) {
-			case string:
-				n, _ := strconv.Atoi(p)
-				return n
-			case int:
-				return p
-			case float64:
-				return int(p)
-			}
-		}
-	}
-	return 0
 }
 
 // parseHostPortFromString parses "80:80", "0.0.0.0:80:80", or "80" forms.
@@ -403,8 +454,9 @@ func checkDockerSocketMount(serviceName string, svc map[string]any, filePath str
 }
 
 // checkSELinuxLabels flags bind mounts missing :z or :Z suffixes when
-// SELinux is active.
-func checkSELinuxLabels(serviceName string, svc map[string]any, filePath string, selinuxActive bool, topLevelVolumes map[string]bool) []MigrationIssue {
+// SELinux is active. Only project paths are auto-fixable; see
+// selinuxRelabelOption.
+func checkSELinuxLabels(serviceName string, svc map[string]any, filePath string, selinuxActive bool, topLevelVolumes map[string]bool, bindHosts map[string]int) []MigrationIssue {
 	if !selinuxActive {
 		return nil
 	}
@@ -412,45 +464,37 @@ func checkSELinuxLabels(serviceName string, svc map[string]any, filePath string,
 	volumes := extractStringList(svc, "volumes")
 	var issues []MigrationIssue
 	for _, vol := range volumes {
-		if !isBindMount(vol, topLevelVolumes) {
+		if !isBindMount(vol, topLevelVolumes) || hasSELinuxOption(vol) {
 			continue
 		}
-		// Check if already has :z or :Z suffix.
-		parts := strings.Split(vol, ":")
-		if len(parts) >= 3 {
-			opts := parts[len(parts)-1]
-			if strings.Contains(opts, "z") || strings.Contains(opts, "Z") {
-				continue
-			}
+		issue := MigrationIssue{
+			Category: CategorySELinux,
+			Severity: SeverityInfo,
+			File:     filePath,
+			Service:  serviceName,
 		}
-		issues = append(issues, MigrationIssue{
-			Category:    CategorySELinux,
-			Severity:    SeverityInfo,
-			File:        filePath,
-			Service:     serviceName,
-			Description: fmt.Sprintf("service %q bind mount %q lacks SELinux label (:Z); containers may not be able to access the volume", serviceName, vol),
-			AutoFixable: true,
-			Fix: &MigrationFix{
+		option, ok := selinuxRelabelOption(bindHostOf(vol), bindHosts)
+		if ok {
+			issue.Description = fmt.Sprintf("service %q bind mount %q lacks SELinux label (:%s); containers may not be able to access the volume", serviceName, vol, option)
+			issue.AutoFixable = true
+			issue.Fix = &MigrationFix{
 				Description: fmt.Sprintf("add SELinux label to bind mount %q", vol),
 				YAMLPath:    fmt.Sprintf("services.%s.volumes", serviceName),
-				YAMLValue:   appendSELinuxOption(vol),
-			},
-		})
+				YAMLValue:   appendSELinuxOption(vol, option),
+			}
+		} else {
+			issue.Description = fmt.Sprintf("service %q bind mount %q lacks an SELinux label; it is outside the project, so it is not relabelled automatically", serviceName, vol)
+			issue.Fix = &MigrationFix{
+				Description: "relabel only a path dedicated to containers (:z if several containers share it); " +
+					"never relabel system or home directories or sockets, which breaks other processes on the host",
+				YAMLPath: fmt.Sprintf("services.%s.volumes", serviceName),
+			}
+		}
+		issues = append(issues, issue)
 	}
 	return issues
 }
 
-func appendSELinuxOption(vol string) string {
-	parts := strings.Split(vol, ":")
-	if len(parts) >= 3 {
-		parts[len(parts)-1] = parts[len(parts)-1] + ",Z"
-		return strings.Join(parts, ":")
-	}
-	return vol + ":Z"
-}
-
-// extractStringList extracts a []string from a map key that holds either
-// a []any of strings or is absent.
 func extractStringList(m map[string]any, key string) []string {
 	raw, ok := m[key]
 	if !ok {

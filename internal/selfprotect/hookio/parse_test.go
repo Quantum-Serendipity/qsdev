@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"strings"
 	"testing"
 )
@@ -23,7 +24,10 @@ func TestParseToolCall_Valid(t *testing.T) {
 		t.Fatal("ToolInput is nil")
 	}
 
-	parsed := ParseInput(call.ToolInput)
+	parsed, err := ParseInput(call.ToolName, call.ToolInput)
+	if err != nil {
+		t.Fatalf("ParseInput: %v", err)
+	}
 	if parsed.FilePath != "/tmp/test.go" {
 		t.Errorf("FilePath = %q, want %q", parsed.FilePath, "/tmp/test.go")
 	}
@@ -78,7 +82,7 @@ func TestParseToolCall_CancelledContext(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error for cancelled context")
 	}
-	if err != context.Canceled {
+	if !errors.Is(err, context.Canceled) {
 		t.Errorf("error = %v, want %v", err, context.Canceled)
 	}
 }
@@ -87,7 +91,7 @@ func TestParseInput_AllFields(t *testing.T) {
 	t.Parallel()
 
 	raw := json.RawMessage(`{"file_path":"/etc/passwd","content":"root","command":"cat /etc/passwd"}`)
-	input := ParseInput(raw)
+	input := mustParseInput(t, "Bash", raw)
 
 	if input.FilePath != "/etc/passwd" {
 		t.Errorf("FilePath = %q, want %q", input.FilePath, "/etc/passwd")
@@ -104,7 +108,7 @@ func TestParseInput_MissingFields(t *testing.T) {
 	t.Parallel()
 
 	raw := json.RawMessage(`{"file_path":"/tmp/x"}`)
-	input := ParseInput(raw)
+	input := mustParseInput(t, "Bash", raw)
 
 	if input.FilePath != "/tmp/x" {
 		t.Errorf("FilePath = %q, want %q", input.FilePath, "/tmp/x")
@@ -120,7 +124,7 @@ func TestParseInput_MissingFields(t *testing.T) {
 func TestParseInput_NilInput(t *testing.T) {
 	t.Parallel()
 
-	input := ParseInput(nil)
+	input := mustParseInput(t, "Write", nil)
 
 	if input.FilePath != "" {
 		t.Errorf("FilePath = %q, want empty string", input.FilePath)
@@ -137,12 +141,12 @@ func TestParseInput_EditFields(t *testing.T) {
 	t.Parallel()
 
 	// Edit tool input carries old_string/new_string, not content.
-	edit := ParseInput(json.RawMessage(`{"file_path":".mcp.json","old_string":"a","new_string":"b"}`))
+	edit := mustParseInput(t, "Edit", json.RawMessage(`{"file_path":".mcp.json","old_string":"a","new_string":"b"}`))
 	if edit.NewString != "b" || edit.OldString != "a" {
 		t.Errorf("Edit fields not parsed: %+v", edit)
 	}
 	// MultiEdit carries an edits array.
-	multi := ParseInput(json.RawMessage(`{"file_path":"x","edits":[{"old_string":"a","new_string":"b"},{"old_string":"c","new_string":"d"}]}`))
+	multi := mustParseInput(t, "MultiEdit", json.RawMessage(`{"file_path":"x","edits":[{"old_string":"a","new_string":"b"},{"old_string":"c","new_string":"d"}]}`))
 	if len(multi.Edits) != 2 || multi.Edits[1].NewString != "d" {
 		t.Errorf("MultiEdit fields not parsed: %+v", multi)
 	}

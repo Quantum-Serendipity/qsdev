@@ -46,7 +46,13 @@ func (a *Adapter) readSettings(ctx context.Context, cc *spi.ToolCallContext, _ *
 		return nil, fmt.Errorf("reading %s: %w", deployedPath, err)
 	}
 
-	files, err := a.ref.Render(ctx, a.policyInputFor(cc.ProjectRoot))
+	input, _, err := a.policyInputFor(cc.ProjectRoot)
+	if err != nil {
+		return notConfiguredResource(resURISettings,
+			"no deployed .claude/settings.json and the project config could not be parsed",
+			map[string]any{"error": err.Error()})
+	}
+	files, err := a.ref.Render(ctx, input)
 	if err != nil {
 		return notConfiguredResource(resURISettings,
 			"no deployed .claude/settings.json and rendering from policy failed",

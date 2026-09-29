@@ -31,6 +31,9 @@ type FileAction struct {
 	Path     string
 	Reason   string
 	Modified bool
+	// BaseContent is the generated content recorded in state for a shared
+	// structured file (e.g. settings.json), used to identify qsdev's entries.
+	BaseContent []byte
 }
 
 // TeardownPlan describes the operations a teardown will perform.

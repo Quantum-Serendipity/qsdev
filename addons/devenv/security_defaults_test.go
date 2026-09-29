@@ -45,7 +45,7 @@ func TestDefaultCleanKeep_MatchesCatalog(t *testing.T) {
 
 func TestDefaultSpecializedHooks_MatchesCatalog(t *testing.T) {
 	t.Parallel()
-	got := defaultSpecializedHooks()
+	got := defaultSpecializedHooks(nil)
 	catHooks := catalog.MustDefault().CustomHooks()
 
 	if len(got) != len(catHooks) {

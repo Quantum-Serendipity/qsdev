@@ -23,15 +23,21 @@ func TestJSONAddSettingsEntries_AddsToAllArrays(t *testing.T) {
 		t.Fatalf("result is not valid JSON: %v", err)
 	}
 
-	assertStringArray(t, doc["permissions.allow"], []string{"Bash(npm run *)"})
-	assertStringArray(t, doc["permissions.deny"], []string{"Bash(rm -rf /*)"})
-	assertStringArray(t, doc["permissions.ask"], []string{"Bash(git push *)"})
+	assertStringArray(t, permissionsOf(t, doc)["allow"], []string{"Bash(npm run *)"})
+	assertStringArray(t, permissionsOf(t, doc)["deny"], []string{"Bash(rm -rf /*)"})
+	assertStringArray(t, permissionsOf(t, doc)["ask"], []string{"Bash(git push *)"})
 }
 
 func TestJSONAddSettingsEntries_AddsToExistingArrays(t *testing.T) {
 	existing := []byte(`{
-  "permissions.allow": ["Bash(echo *)"],
-  "permissions.deny": ["Bash(shutdown)"]
+  "permissions": {
+    "allow": [
+      "Bash(echo *)"
+    ],
+    "deny": [
+      "Bash(shutdown)"
+    ]
+  }
 }`)
 	additions := SettingsAdditions{
 		AllowRules: []string{"Bash(npm run *)"},
@@ -48,13 +54,18 @@ func TestJSONAddSettingsEntries_AddsToExistingArrays(t *testing.T) {
 		t.Fatalf("result is not valid JSON: %v", err)
 	}
 
-	assertStringArray(t, doc["permissions.allow"], []string{"Bash(echo *)", "Bash(npm run *)"})
-	assertStringArray(t, doc["permissions.deny"], []string{"Bash(shutdown)", "Bash(rm -rf /*)"})
+	assertStringArray(t, permissionsOf(t, doc)["allow"], []string{"Bash(echo *)", "Bash(npm run *)"})
+	assertStringArray(t, permissionsOf(t, doc)["deny"], []string{"Bash(shutdown)", "Bash(rm -rf /*)"})
 }
 
 func TestJSONAddSettingsEntries_Deduplicates(t *testing.T) {
 	existing := []byte(`{
-  "permissions.allow": ["Bash(npm run *)", "Bash(echo *)"]
+  "permissions": {
+    "allow": [
+      "Bash(npm run *)",
+      "Bash(echo *)"
+    ]
+  }
 }`)
 	additions := SettingsAdditions{
 		AllowRules: []string{"Bash(npm run *)", "Bash(new-command)"},
@@ -71,12 +82,16 @@ func TestJSONAddSettingsEntries_Deduplicates(t *testing.T) {
 	}
 
 	// "Bash(npm run *)" should not be duplicated.
-	assertStringArray(t, doc["permissions.allow"], []string{"Bash(npm run *)", "Bash(echo *)", "Bash(new-command)"})
+	assertStringArray(t, permissionsOf(t, doc)["allow"], []string{"Bash(npm run *)", "Bash(echo *)", "Bash(new-command)"})
 }
 
 func TestJSONAddSettingsEntries_DeduplicatesMultipleSameRule(t *testing.T) {
 	existing := []byte(`{
-  "permissions.allow": ["Bash(echo *)"]
+  "permissions": {
+    "allow": [
+      "Bash(echo *)"
+    ]
+  }
 }`)
 	// Additions list itself has duplicates.
 	additions := SettingsAdditions{
@@ -93,13 +108,17 @@ func TestJSONAddSettingsEntries_DeduplicatesMultipleSameRule(t *testing.T) {
 		t.Fatalf("result is not valid JSON: %v", err)
 	}
 
-	assertStringArray(t, doc["permissions.allow"], []string{"Bash(echo *)", "Bash(new)"})
+	assertStringArray(t, permissionsOf(t, doc)["allow"], []string{"Bash(echo *)", "Bash(new)"})
 }
 
 func TestJSONAddSettingsEntries_PreservesOtherKeys(t *testing.T) {
 	existing := []byte(`{
   "model": "claude-sonnet-4-20250514",
-  "permissions.allow": ["Bash(echo *)"]
+  "permissions": {
+    "allow": [
+      "Bash(echo *)"
+    ]
+  }
 }`)
 	additions := SettingsAdditions{
 		AllowRules: []string{"Bash(npm run *)"},
@@ -130,7 +149,11 @@ func TestJSONAddSettingsEntries_PreservesOtherKeys(t *testing.T) {
 
 func TestJSONAddSettingsEntries_EmptyAdditions(t *testing.T) {
 	existing := []byte(`{
-  "permissions.allow": ["Bash(echo *)"]
+  "permissions": {
+    "allow": [
+      "Bash(echo *)"
+    ]
+  }
 }`)
 	additions := SettingsAdditions{} // No rules to add.
 
@@ -145,7 +168,7 @@ func TestJSONAddSettingsEntries_EmptyAdditions(t *testing.T) {
 	}
 
 	// Existing data should be preserved.
-	assertStringArray(t, doc["permissions.allow"], []string{"Bash(echo *)"})
+	assertStringArray(t, permissionsOf(t, doc)["allow"], []string{"Bash(echo *)"})
 }
 
 func TestJSONAddSettingsEntries_InvalidJSON(t *testing.T) {
@@ -175,8 +198,17 @@ func TestJSONAddSettingsEntries_TrailingNewline(t *testing.T) {
 
 func TestJSONRemoveSettingsEntries_RemovesExactMatches(t *testing.T) {
 	existing := []byte(`{
-  "permissions.allow": ["Bash(npm run *)", "Bash(echo *)", "Bash(go test *)"],
-  "permissions.deny": ["Bash(rm -rf /*)", "Bash(shutdown)"]
+  "permissions": {
+    "allow": [
+      "Bash(npm run *)",
+      "Bash(echo *)",
+      "Bash(go test *)"
+    ],
+    "deny": [
+      "Bash(rm -rf /*)",
+      "Bash(shutdown)"
+    ]
+  }
 }`)
 	removals := SettingsRemovals{
 		AllowRules: []string{"Bash(npm run *)"},
@@ -193,13 +225,19 @@ func TestJSONRemoveSettingsEntries_RemovesExactMatches(t *testing.T) {
 		t.Fatalf("result is not valid JSON: %v", err)
 	}
 
-	assertStringArray(t, doc["permissions.allow"], []string{"Bash(echo *)", "Bash(go test *)"})
-	assertStringArray(t, doc["permissions.deny"], []string{"Bash(shutdown)"})
+	assertStringArray(t, permissionsOf(t, doc)["allow"], []string{"Bash(echo *)", "Bash(go test *)"})
+	assertStringArray(t, permissionsOf(t, doc)["deny"], []string{"Bash(shutdown)"})
 }
 
 func TestJSONRemoveSettingsEntries_PreservesNonMatchingEntries(t *testing.T) {
 	existing := []byte(`{
-  "permissions.allow": ["Bash(echo *)", "Bash(npm run *)", "Bash(go test *)"]
+  "permissions": {
+    "allow": [
+      "Bash(echo *)",
+      "Bash(npm run *)",
+      "Bash(go test *)"
+    ]
+  }
 }`)
 	removals := SettingsRemovals{
 		AllowRules: []string{"Bash(npm run *)"},
@@ -215,12 +253,16 @@ func TestJSONRemoveSettingsEntries_PreservesNonMatchingEntries(t *testing.T) {
 		t.Fatalf("result is not valid JSON: %v", err)
 	}
 
-	assertStringArray(t, doc["permissions.allow"], []string{"Bash(echo *)", "Bash(go test *)"})
+	assertStringArray(t, permissionsOf(t, doc)["allow"], []string{"Bash(echo *)", "Bash(go test *)"})
 }
 
 func TestJSONRemoveSettingsEntries_RemoveAll(t *testing.T) {
 	existing := []byte(`{
-  "permissions.allow": ["Bash(echo *)"]
+  "permissions": {
+    "allow": [
+      "Bash(echo *)"
+    ]
+  }
 }`)
 	removals := SettingsRemovals{
 		AllowRules: []string{"Bash(echo *)"},
@@ -238,7 +280,7 @@ func TestJSONRemoveSettingsEntries_RemoveAll(t *testing.T) {
 
 	// The key should still exist but with an empty array (null in Go).
 	var arr []string
-	if err := json.Unmarshal(doc["permissions.allow"], &arr); err != nil {
+	if err := json.Unmarshal(permissionsOf(t, doc)["allow"], &arr); err != nil {
 		t.Fatalf("failed to unmarshal allow array: %v", err)
 	}
 	if len(arr) != 0 {
@@ -248,7 +290,11 @@ func TestJSONRemoveSettingsEntries_RemoveAll(t *testing.T) {
 
 func TestJSONRemoveSettingsEntries_NoMatchingRules(t *testing.T) {
 	existing := []byte(`{
-  "permissions.allow": ["Bash(echo *)"]
+  "permissions": {
+    "allow": [
+      "Bash(echo *)"
+    ]
+  }
 }`)
 	removals := SettingsRemovals{
 		AllowRules: []string{"Bash(nonexistent)"},
@@ -264,12 +310,16 @@ func TestJSONRemoveSettingsEntries_NoMatchingRules(t *testing.T) {
 		t.Fatalf("result is not valid JSON: %v", err)
 	}
 
-	assertStringArray(t, doc["permissions.allow"], []string{"Bash(echo *)"})
+	assertStringArray(t, permissionsOf(t, doc)["allow"], []string{"Bash(echo *)"})
 }
 
 func TestJSONRemoveSettingsEntries_EmptyRemovals(t *testing.T) {
 	existing := []byte(`{
-  "permissions.allow": ["Bash(echo *)"]
+  "permissions": {
+    "allow": [
+      "Bash(echo *)"
+    ]
+  }
 }`)
 	removals := SettingsRemovals{}
 
@@ -283,13 +333,17 @@ func TestJSONRemoveSettingsEntries_EmptyRemovals(t *testing.T) {
 		t.Fatalf("result is not valid JSON: %v", err)
 	}
 
-	assertStringArray(t, doc["permissions.allow"], []string{"Bash(echo *)"})
+	assertStringArray(t, permissionsOf(t, doc)["allow"], []string{"Bash(echo *)"})
 }
 
 func TestJSONRemoveSettingsEntries_MissingArrayKey(t *testing.T) {
 	// Remove from a key that doesn't exist in the document.
 	existing := []byte(`{
-  "permissions.allow": ["Bash(echo *)"]
+  "permissions": {
+    "allow": [
+      "Bash(echo *)"
+    ]
+  }
 }`)
 	removals := SettingsRemovals{
 		DenyRules: []string{"Bash(rm *)"},
@@ -306,13 +360,18 @@ func TestJSONRemoveSettingsEntries_MissingArrayKey(t *testing.T) {
 	}
 
 	// Allow should be unchanged.
-	assertStringArray(t, doc["permissions.allow"], []string{"Bash(echo *)"})
+	assertStringArray(t, permissionsOf(t, doc)["allow"], []string{"Bash(echo *)"})
 }
 
 func TestJSONRemoveSettingsEntries_PreservesOtherKeys(t *testing.T) {
 	existing := []byte(`{
   "model": "claude-sonnet-4-20250514",
-  "permissions.allow": ["Bash(echo *)", "Bash(npm run *)"]
+  "permissions": {
+    "allow": [
+      "Bash(echo *)",
+      "Bash(npm run *)"
+    ]
+  }
 }`)
 	removals := SettingsRemovals{
 		AllowRules: []string{"Bash(npm run *)"},
@@ -345,7 +404,12 @@ func TestJSONRemoveSettingsEntries_InvalidJSON(t *testing.T) {
 
 func TestJSONRemoveSettingsEntries_AskRules(t *testing.T) {
 	existing := []byte(`{
-  "permissions.ask": ["Bash(git push *)", "Bash(git rebase *)"]
+  "permissions": {
+    "ask": [
+      "Bash(git push *)",
+      "Bash(git rebase *)"
+    ]
+  }
 }`)
 	removals := SettingsRemovals{
 		AskRules: []string{"Bash(git push *)"},
@@ -361,7 +425,7 @@ func TestJSONRemoveSettingsEntries_AskRules(t *testing.T) {
 		t.Fatalf("result is not valid JSON: %v", err)
 	}
 
-	assertStringArray(t, doc["permissions.ask"], []string{"Bash(git rebase *)"})
+	assertStringArray(t, permissionsOf(t, doc)["ask"], []string{"Bash(git rebase *)"})
 }
 
 // assertStringArray checks that a JSON raw message contains the expected string array.
@@ -388,5 +452,93 @@ func assertStringArray(t *testing.T, raw json.RawMessage, expected []string) {
 		if got[i] != v {
 			t.Errorf("element [%d]: expected %q, got %q", i, v, got[i])
 		}
+	}
+}
+
+// permissionsOf returns the nested "permissions" object of a settings document.
+func permissionsOf(t *testing.T, doc map[string]json.RawMessage) map[string]json.RawMessage {
+	t.Helper()
+	raw, ok := doc["permissions"]
+	if !ok {
+		return nil
+	}
+	var perms map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &perms); err != nil {
+		t.Fatalf("failed to unmarshal permissions object: %v", err)
+	}
+	return perms
+}
+
+// TestJSONSettingsEntries_NestedShape verifies rules land in the nested
+// permissions object Claude Code reads (never a flat "permissions.allow" key)
+// and that sibling permission keys survive both add and remove.
+func TestJSONSettingsEntries_NestedShape(t *testing.T) {
+	t.Parallel()
+
+	existing := []byte(`{
+  "permissions": {
+    "defaultMode": "default",
+    "additionalDirectories": ["../shared"],
+    "deny": ["Read(./.env)"]
+  }
+}`)
+
+	tests := []struct {
+		name      string
+		run       func([]byte) ([]byte, error)
+		wantAllow []string
+		wantDeny  []string
+	}{
+		{
+			name: "add",
+			run: func(b []byte) ([]byte, error) {
+				return JSONAddSettingsEntries(b, SettingsAdditions{
+					AllowRules: []string{"Bash(npm run *)"},
+					DenyRules:  []string{"Bash(curl *)"},
+				})
+			},
+			wantAllow: []string{"Bash(npm run *)"},
+			wantDeny:  []string{"Read(./.env)", "Bash(curl *)"},
+		},
+		{
+			name: "remove",
+			run: func(b []byte) ([]byte, error) {
+				return JSONRemoveSettingsEntries(b, SettingsRemovals{
+					DenyRules: []string{"Read(./.env)"},
+				})
+			},
+			wantAllow: nil,
+			wantDeny:  []string{},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			result, err := tt.run(existing)
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			var doc map[string]json.RawMessage
+			if err := json.Unmarshal(result, &doc); err != nil {
+				t.Fatalf("result is not valid JSON: %v", err)
+			}
+			for k := range doc {
+				if k != "permissions" {
+					t.Errorf("unexpected top-level key %q", k)
+				}
+			}
+
+			perms := permissionsOf(t, doc)
+			assertStringArray(t, perms["allow"], tt.wantAllow)
+			assertStringArray(t, perms["deny"], tt.wantDeny)
+			if string(perms["defaultMode"]) != `"default"` {
+				t.Errorf("defaultMode not preserved: %s", perms["defaultMode"])
+			}
+			if _, ok := perms["additionalDirectories"]; !ok {
+				t.Error("additionalDirectories not preserved")
+			}
+		})
 	}
 }

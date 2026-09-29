@@ -13,8 +13,8 @@ import (
 )
 
 // Verify checks the detached signature for the file at path against the trusted
-// key set in opts (or the keys from DefaultTrustedKeysDir when opts.TrustedKeys
-// is empty).
+// key set in opts (or the default keys from LoadTrustedKeys("") when
+// opts.TrustedKeys is nil; a non-nil empty set means "no trusted keys").
 //
 // A failed verification — a missing signature, a tampered file, or a signature
 // from an untrusted key — is an expected outcome reported in the returned
@@ -46,11 +46,21 @@ func VerifyEntry(ctx context.Context, entry ContentManifestEntry, opts VerifyOpt
 	}
 
 	res.Signed = true
+	if len(keys) == 0 {
+		res.Status = StatusFailed
+		res.Reason = "no trusted keys configured"
+		return res, nil
+	}
 	keyID, trusted, err := DefaultBackend().VerifyContent(ctx, entry.Path, sig, keys)
 	if err != nil {
-		if errors.Is(err, ErrSignatureInvalid) {
+		switch {
+		case errors.Is(err, ErrSignatureInvalid):
 			res.Status = StatusFailed
 			res.Reason = "signature is malformed"
+			return res, nil
+		case errors.Is(err, ErrLegacyContentTooLarge):
+			res.Status = StatusFailed
+			res.Reason = err.Error()
 			return res, nil
 		}
 		return res, err
@@ -107,10 +117,12 @@ func unsignedResult(ctx context.Context, res VerificationResult, entry ContentMa
 	return res
 }
 
-// resolveTrustedKeys returns opts.TrustedKeys or, when empty, loads keys from
-// the default trusted-keys directory.
+// resolveTrustedKeys returns opts.TrustedKeys when the caller supplied a key
+// set, or loads the default keys when it is nil. A supplied but EMPTY set is
+// honored as-is: falling back to the default keys would silently widen the
+// trust anchor the caller asked for.
 func resolveTrustedKeys(opts VerifyOptions) ([]PublicKey, error) {
-	if len(opts.TrustedKeys) > 0 {
+	if opts.TrustedKeys != nil {
 		return opts.TrustedKeys, nil
 	}
 	keys, err := LoadTrustedKeys("")

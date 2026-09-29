@@ -11,19 +11,19 @@ func CheckRequiredTools(ctx CheckContext) []CheckResult {
 				Name:     "required_tools",
 				Status:   StatusSkip,
 				Severity: SeverityInfo,
-				Message:  "No " + branding.Get().ConfigFile + " found; skipping required tools check",
+				Message:  configUnavailableMessage(ctx, "required tools check"),
 			},
 		}
 	}
 
-	if len(ctx.ToolNames) == 0 {
+	if len(ctx.AlwaysOnToolNames) == 0 {
 		return []CheckResult{
 			{
 				Category: CategoryRequiredTools,
 				Name:     "required_tools",
 				Status:   StatusSkip,
 				Severity: SeverityInfo,
-				Message:  "No tools registered; skipping required tools check",
+				Message:  "No always-on tools registered; skipping required tools check",
 			},
 		}
 	}
@@ -34,7 +34,9 @@ func CheckRequiredTools(ctx CheckContext) []CheckResult {
 	}
 
 	var results []CheckResult
-	for _, toolName := range ctx.ToolNames {
+	// Only always-on tools are required; opt-in and detected tools may be
+	// legitimately listed in tools.disabled.
+	for _, toolName := range ctx.AlwaysOnToolNames {
 		if disabled[toolName] {
 			results = append(results, CheckResult{
 				Category:    CategoryRequiredTools,

@@ -19,11 +19,11 @@ import (
 // are validated to actually contain the ecosystem's manifest before becoming
 // packages, so a stray glob match never produces a phantom package.
 //
-// DetectWorkspaces always returns a non-nil graph (possibly empty) and a nil
-// error; it degrades rather than failing so a non-monorepo project simply yields
-// an empty graph. Timing is recorded at debug level to track the <100ms/50pkg
-// and <1s/500pkg performance targets.
-func DetectWorkspaces(root string) (*WorkspaceGraph, error) {
+// DetectWorkspaces always returns a non-nil graph (possibly empty); it degrades
+// rather than failing so a non-monorepo project simply yields an empty graph.
+// Timing is recorded at debug level to track the <100ms/50pkg and <1s/500pkg
+// performance targets.
+func DetectWorkspaces(root string) *WorkspaceGraph {
 	start := time.Now()
 	resolver := NewGlobResolver()
 	specs := allEcosystems()
@@ -96,7 +96,7 @@ func DetectWorkspaces(root string) (*WorkspaceGraph, error) {
 	graph := &WorkspaceGraph{root: root, packages: packages}
 	slog.Debug("workspace detection complete",
 		"packages", len(packages), "duration", time.Since(start))
-	return graph, nil
+	return graph
 }
 
 // buildPackage validates that the resolved directory relDir contains the

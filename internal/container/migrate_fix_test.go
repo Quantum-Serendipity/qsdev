@@ -330,7 +330,7 @@ func TestRemapPort(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.input, func(t *testing.T) {
 			t.Parallel()
-			got := remapPort(tt.input)
+			got := remapPort(tt.input, nil)
 			if got != tt.want {
 				t.Errorf("remapPort(%q) = %q, want %q", tt.input, got, tt.want)
 			}

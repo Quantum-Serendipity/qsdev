@@ -11,7 +11,7 @@
 
 {{ .ArchitectureNotes }}
 {{ end }}
-{{ if hasAny .BuildCommands }}
+{{ if or (hasAny .BuildCommands) (hasAny .TestCommands) (hasAny .LintCommands) }}
 
 ## Build & Test
 

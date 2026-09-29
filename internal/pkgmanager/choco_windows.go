@@ -27,6 +27,6 @@ func (c *Choco) Available() bool {
 func (c *Choco) NeedsElevation() bool { return false }
 
 func (c *Choco) Install(ctx context.Context, packages ...string) error {
-	args := append([]string{"install", "-y"}, packages...)
-	return c.runner.Run(ctx, "choco", args...)
+	bin, args := c.InstallArgs(packages...)
+	return c.runner.Run(ctx, bin, args...)
 }

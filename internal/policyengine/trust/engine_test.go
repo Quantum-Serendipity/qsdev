@@ -3,13 +3,15 @@ package trust
 import (
 	"os"
 	"path/filepath"
+	"slices"
+	"strings"
 	"testing"
 )
 
 func TestScoreServer(t *testing.T) {
 	t.Parallel()
 
-	engine := NewMcpTrustEngine(filepath.Join(t.TempDir(), "nonexistent.yaml"))
+	engine := mustTrustEngine(t, filepath.Join(t.TempDir(), "nonexistent.yaml"))
 
 	tests := []struct {
 		name        string
@@ -131,7 +133,7 @@ func TestScoreServer(t *testing.T) {
 func TestScoreAll(t *testing.T) {
 	t.Parallel()
 
-	engine := NewMcpTrustEngine(filepath.Join(t.TempDir(), "nonexistent.yaml"))
+	engine := mustTrustEngine(t, filepath.Join(t.TempDir(), "nonexistent.yaml"))
 
 	servers := []McpServerInfo{
 		{Name: "server-a", IsLocalBinary: true, OfflineCapable: true},
@@ -158,21 +160,9 @@ func TestManualOverride(t *testing.T) {
 	dir := t.TempDir()
 	configPath := filepath.Join(dir, "trust.yaml")
 
-	cfg := &TrustConfig{
-		Servers: map[string]TrustServerEntry{
-			"overridden": {
-				Tier:           Tier1Local,
-				Score:          100,
-				ManualOverride: true,
-			},
-		},
-	}
+	writeTrustConfig(t, configPath, "servers:\n  overridden:\n    tier: 1\n    score: 100\n    manual_override: true\n")
 
-	if err := SaveTrustConfig(configPath, cfg); err != nil {
-		t.Fatalf("saving config: %v", err)
-	}
-
-	engine := NewMcpTrustEngine(configPath)
+	engine := mustTrustEngine(t, configPath)
 
 	result := engine.ScoreServer(&McpServerInfo{
 		Name:                    "overridden",
@@ -184,24 +174,11 @@ func TestManualOverride(t *testing.T) {
 	}
 }
 
-func TestLoadSaveTrustConfig(t *testing.T) {
+func TestLoadTrustConfig(t *testing.T) {
 	t.Parallel()
 
-	dir := t.TempDir()
-	path := filepath.Join(dir, "trust.yaml")
-
-	cfg := &TrustConfig{
-		Servers: map[string]TrustServerEntry{
-			"test-server": {
-				Tier:  Tier2Enterprise,
-				Score: 55,
-			},
-		},
-	}
-
-	if err := SaveTrustConfig(path, cfg); err != nil {
-		t.Fatalf("saving: %v", err)
-	}
+	path := filepath.Join(t.TempDir(), "trust.yaml")
+	writeTrustConfig(t, path, "servers:\n  test-server:\n    tier: 2\n    score: 55\n")
 
 	loaded, err := LoadTrustConfig(path)
 	if err != nil {
@@ -274,7 +251,7 @@ func TestNewMcpTrustEngineWithBadPath(t *testing.T) {
 	t.Parallel()
 
 	// Should not panic, should create engine with empty config
-	engine := NewMcpTrustEngine("/nonexistent/path/trust.yaml")
+	engine := mustTrustEngine(t, "/nonexistent/path/trust.yaml")
 	if engine == nil {
 		t.Fatal("engine should not be nil")
 		return
@@ -284,21 +261,174 @@ func TestNewMcpTrustEngineWithBadPath(t *testing.T) {
 	}
 }
 
-func TestSaveTrustConfigCreatesFile(t *testing.T) {
+// writeTrustConfig writes a trust config file with the given YAML content.
+func writeTrustConfig(t *testing.T, path, content string) {
+	t.Helper()
+	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+		t.Fatalf("writing trust config: %v", err)
+	}
+}
+
+func mustTrustEngine(t *testing.T, path string) *McpTrustEngine {
+	t.Helper()
+	engine, err := NewMcpTrustEngine(path)
+	if err != nil {
+		t.Fatalf("NewMcpTrustEngine(%q): %v", path, err)
+	}
+	return engine
+}
+
+// TestNewMcpTrustEngine_ConfigErrors guards F199: a trust config that exists
+// but fails to parse (a YAML error or a misspelled key) used to be swallowed,
+// silently dropping every manual override. It must now be reported, and the
+// engine must fall back to the strictest tier rather than computed tiers.
+func TestNewMcpTrustEngine_ConfigErrors(t *testing.T) {
 	t.Parallel()
 
-	dir := t.TempDir()
-	path := filepath.Join(dir, "new-trust.yaml")
-
-	cfg := &TrustConfig{
-		Servers: map[string]TrustServerEntry{},
+	tests := []struct {
+		name    string
+		content string
+		wantErr string
+	}{
+		{name: "yaml syntax error", content: "servers:\n  local: [unterminated\n", wantErr: "parsing trust config"},
+		{name: "misspelled override key", content: "servers:\n  local:\n    tier: 3\n    manual_overide: true\n", wantErr: "manual_overide"},
+		{name: "unknown top-level key", content: "server:\n  local:\n    tier: 3\n", wantErr: "server"},
 	}
 
-	if err := SaveTrustConfig(path, cfg); err != nil {
-		t.Fatalf("saving: %v", err)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			path := filepath.Join(t.TempDir(), "trust.yaml")
+			if err := os.WriteFile(path, []byte(tt.content), 0o644); err != nil {
+				t.Fatalf("writing config: %v", err)
+			}
+
+			engine, err := NewMcpTrustEngine(path)
+			if err == nil || !strings.Contains(err.Error(), tt.wantErr) {
+				t.Fatalf("NewMcpTrustEngine error = %v, want it to mention %q", err, tt.wantErr)
+			}
+			if engine == nil {
+				t.Fatal("engine must stay usable after a config error")
+			}
+
+			local, _ := KnownServerInfo("man-pages")
+			if got := engine.ScoreServer(&local).Tier; got != Tier3Fallback {
+				t.Errorf("tier after config error = %v, want %v", got, Tier3Fallback)
+			}
+		})
+	}
+}
+
+func TestNewMcpTrustEngine_EmptyAndMissingConfig(t *testing.T) {
+	t.Parallel()
+
+	empty := filepath.Join(t.TempDir(), "trust.yaml")
+	if err := os.WriteFile(empty, nil, 0o644); err != nil {
+		t.Fatalf("writing config: %v", err)
 	}
 
-	if _, err := os.Stat(path); err != nil {
-		t.Fatalf("file should exist: %v", err)
+	for _, path := range []string{"", filepath.Join(t.TempDir(), "missing.yaml"), empty} {
+		engine := mustTrustEngine(t, path)
+		local, _ := KnownServerInfo("man-pages")
+		if got := engine.ScoreServer(&local).Tier; got != Tier1Local {
+			t.Errorf("path %q: tier = %v, want %v (no overrides, computed tier)", path, got, Tier1Local)
+		}
+	}
+}
+
+// TestScoreServerDeterministicCategories guards F197 for trust scoring.
+func TestScoreServerDeterministicCategories(t *testing.T) {
+	t.Parallel()
+
+	engine := mustTrustEngine(t, "")
+	info := McpServerInfo{Name: "s", IsLocalBinary: true, PinnedVersion: true}
+
+	names := func() []string {
+		var out []string
+		for _, c := range engine.ScoreServer(&info).Categories {
+			out = append(out, c.Name)
+		}
+		return out
+	}
+
+	want := names()
+	if len(want) < 2 || !slices.IsSorted(want) {
+		t.Fatalf("categories %v are not in a fixed (sorted) order", want)
+	}
+	for range 50 {
+		if got := names(); !slices.Equal(got, want) {
+			t.Fatalf("category order changed between runs: %v vs %v", got, want)
+		}
+	}
+}
+
+// TestResolveServerInfo guards F189: a known server's trust signals apply only
+// when the configured definition runs the known command, so a server cannot
+// claim a known server's tier by reusing its name.
+func TestResolveServerInfo(t *testing.T) {
+	t.Parallel()
+
+	known, _ := KnownServerInfo("man-pages")
+	engine := mustTrustEngine(t, "")
+
+	tests := []struct {
+		name       string
+		server     string
+		configured *McpServerInfo
+		wantTier   TrustTier
+	}{
+		{
+			name:       "known server with matching command",
+			server:     "man-pages",
+			configured: &McpServerInfo{Command: known.Command, Args: []string{"mcp", "man-pages"}},
+			wantTier:   Tier1Local,
+		},
+		{
+			name:       "known name with a different command",
+			server:     "man-pages",
+			configured: &McpServerInfo{Command: "npx", Args: []string{"-y", "evil-man-pages"}},
+			wantTier:   Tier3Fallback,
+		},
+		{name: "known name not configured", server: "man-pages", wantTier: Tier3Fallback},
+		{
+			name:       "unknown configured server",
+			server:     "custom",
+			configured: &McpServerInfo{Command: "npx"},
+			wantTier:   Tier3Fallback,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			info := ResolveServerInfo(tt.server, tt.configured)
+			if info.Name != tt.server {
+				t.Errorf("Name = %q, want %q", info.Name, tt.server)
+			}
+			if tt.configured != nil && !slices.Equal(info.Args, tt.configured.Args) {
+				t.Errorf("Args = %v, want configured %v", info.Args, tt.configured.Args)
+			}
+			if got := engine.ScoreServer(&info).Tier; got != tt.wantTier {
+				t.Errorf("tier = %v, want %v", got, tt.wantTier)
+			}
+		})
+	}
+}
+
+// TestNewMcpTrustEngineEmptyPath checks an empty config path means "no manual
+// overrides" on every platform, without touching the filesystem: servers are
+// scored from their signals alone.
+func TestNewMcpTrustEngineEmptyPath(t *testing.T) {
+	t.Parallel()
+
+	engine, err := NewMcpTrustEngine("")
+	if err != nil {
+		t.Fatalf("NewMcpTrustEngine(\"\") error = %v, want nil", err)
+	}
+	info, _ := KnownServerInfo("man-pages")
+	if got := engine.ScoreServer(&info).Tier; got != Tier1Local {
+		t.Errorf("tier = %v, want %v (no fallback forced)", got, Tier1Local)
 	}
 }

@@ -3,12 +3,16 @@
 
 title = "gitleaks config"
 
+# Keep Gitleaks' built-in detection rules; this file only adds an allowlist.
+[extend]
+  useDefault = true
+
 [allowlist]
   description = "Allowlisted paths and patterns"
   regexes = []
   paths = [
-    ".devenv/",
-    "testdata/",
-    "node_modules/",
-    "vendor/",
+    '''(^|/)\.devenv/''',
+    '''(^|/)testdata/''',
+    '''(^|/)node_modules/''',
+    '''(^|/)vendor/''',
   ]

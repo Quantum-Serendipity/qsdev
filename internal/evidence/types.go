@@ -11,7 +11,7 @@ import (
 type EvidenceReport struct {
 	SchemaVersion string                 `json:"schemaVersion"`
 	GeneratedAt   time.Time              `json:"generatedAt"`
-	QsdevVersion   string                 `json:"qsdevVersion"`
+	QsdevVersion  string                 `json:"qsdevVersion"`
 	ProjectName   string                 `json:"projectName"`
 	Framework     string                 `json:"framework"`
 	FrameworkVer  string                 `json:"frameworkVersion"`
@@ -49,7 +49,7 @@ type ControlMapping struct {
 	ControlDesc string             `json:"controlDesc"`
 	Category    string             `json:"category"`
 	Status      ControlStatus      `json:"status"`
-	GdevLayers  []LayerEvidence    `json:"qsdevLayers"`
+	Layers      []LayerEvidence    `json:"qsdevLayers"`
 	Artifacts   []EvidenceArtifact `json:"artifacts"`
 	Notes       string             `json:"notes,omitempty"`
 }

@@ -200,7 +200,7 @@ func TestSchemaVersionIsSet(t *testing.T) {
 	if SchemaVersion == "" {
 		t.Error("SchemaVersion should not be empty")
 	}
-	if SchemaVersion != "1.1.0" {
-		t.Errorf("SchemaVersion = %q, want %q", SchemaVersion, "1.1.0")
+	if SchemaVersion != "1.2.0" {
+		t.Errorf("SchemaVersion = %q, want %q", SchemaVersion, "1.2.0")
 	}
 }

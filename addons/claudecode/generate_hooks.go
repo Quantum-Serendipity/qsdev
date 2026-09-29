@@ -57,7 +57,7 @@ func GenerateHookFiles(answers types.WizardAnswers) ([]types.GeneratedFile, erro
 			owner:        "soc2-audit",
 		},
 		{
-			enabled:      answers.LSP.EnforcementTier() != "off",
+			enabled:      lspGuardEnabled(answers),
 			templatePath: "templates/hooks/lsp-first-guard.sh",
 			outputPath:   ".claude/hooks/lsp-first-guard.sh",
 			mode:         fileutil.ModeExecutable,

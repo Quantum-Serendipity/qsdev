@@ -2,6 +2,8 @@ package claudecode_test
 
 import (
 	"bytes"
+	"encoding/json"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -172,8 +174,8 @@ func TestDefaultHookRegistry_PackageGuardRegistered(t *testing.T) {
 	if len(matchers) != 1 {
 		t.Fatalf("expected 1 PreToolUse matcher, got %d", len(matchers))
 	}
-	if matchers[0].Matcher != "Bash" {
-		t.Errorf("matcher = %q, want Bash", matchers[0].Matcher)
+	if matchers[0].Matcher != "Bash|PowerShell|Monitor" {
+		t.Errorf("matcher = %q, want Bash|PowerShell|Monitor", matchers[0].Matcher)
 	}
 	if matchers[0].Hooks[0].Timeout != 30 {
 		t.Errorf("timeout = %d, want 30", matchers[0].Hooks[0].Timeout)
@@ -229,75 +231,6 @@ func TestDefaultHookRegistry_BothDisabled(t *testing.T) {
 	}
 }
 
-func TestHookDeploymentTier_String(t *testing.T) {
-	t.Parallel()
-	tests := []struct {
-		tier claudecode.HookDeploymentTier
-		want string
-	}{
-		{claudecode.ExportTierProject, "project"},
-		{claudecode.ExportTierTeam, "team"},
-		{claudecode.ExportTierOrg, "org"},
-	}
-	for _, tt := range tests {
-		if got := tt.tier.String(); got != tt.want {
-			t.Errorf("Tier(%d).String() = %q, want %q", tt.tier, got, tt.want)
-		}
-	}
-}
-
-func TestHookRegistry_TierFiltering(t *testing.T) {
-	t.Parallel()
-	r := claudecode.ExportNewHookRegistry()
-	r.Register(claudecode.ExportHookDefinition{
-		Owner: "project-hook", Event: "PreToolUse", Matcher: "Bash",
-		Command: "/project", Timeout: 5, Tier: claudecode.ExportTierProject,
-	})
-	r.Register(claudecode.ExportHookDefinition{
-		Owner: "org-hook", Event: "PreToolUse", Matcher: "Bash",
-		Command: "/org", Timeout: 5, Tier: claudecode.ExportTierOrg,
-	})
-
-	answers := types.WizardAnswers{}
-
-	t.Run("all tiers", func(t *testing.T) {
-		m := r.BuildHooksMap(answers)
-		if len(m["PreToolUse"]) != 2 {
-			t.Errorf("all tiers: expected 2 matchers, got %d", len(m["PreToolUse"]))
-		}
-	})
-
-	t.Run("project tier only", func(t *testing.T) {
-		tier := claudecode.ExportTierProject
-		m := r.BuildHooksMapForTier(answers, &tier)
-		if len(m["PreToolUse"]) != 1 {
-			t.Fatalf("project tier: expected 1 matcher, got %d", len(m["PreToolUse"]))
-		}
-		if m["PreToolUse"][0].Hooks[0].Command != "/project" {
-			t.Errorf("wrong command: %s", m["PreToolUse"][0].Hooks[0].Command)
-		}
-	})
-
-	t.Run("org tier only", func(t *testing.T) {
-		tier := claudecode.ExportTierOrg
-		m := r.BuildHooksMapForTier(answers, &tier)
-		if len(m["PreToolUse"]) != 1 {
-			t.Fatalf("org tier: expected 1 matcher, got %d", len(m["PreToolUse"]))
-		}
-		if m["PreToolUse"][0].Hooks[0].Command != "/org" {
-			t.Errorf("wrong command: %s", m["PreToolUse"][0].Hooks[0].Command)
-		}
-	})
-
-	t.Run("team tier empty", func(t *testing.T) {
-		tier := claudecode.ExportTierTeam
-		m := r.BuildHooksMapForTier(answers, &tier)
-		if m != nil {
-			t.Errorf("team tier: expected nil, got %v", m)
-		}
-	})
-}
-
 func TestBuildHookStatuses(t *testing.T) {
 	t.Parallel()
 	r := claudecode.ExportDefaultHookRegistry()
@@ -306,48 +239,48 @@ func TestBuildHookStatuses(t *testing.T) {
 	}
 
 	statuses := claudecode.ExportBuildHookStatuses(r, answers)
-	if len(statuses) != 15 {
-		t.Fatalf("expected 15 statuses, got %d", len(statuses))
+	if len(statuses) != 17 {
+		t.Fatalf("expected 17 statuses, got %d", len(statuses))
 	}
 
-	if statuses[0].Name != "self-protection" || statuses[0].Enabled {
-		t.Errorf("statuses[0]: want self-protection/disabled (no ClaudeCode), got %s/%v", statuses[0].Name, statuses[0].Enabled)
+	if statuses[0].Name != "self-protection" || statuses[0].Configured {
+		t.Errorf("statuses[0]: want self-protection/disabled (no ClaudeCode), got %s/%v", statuses[0].Name, statuses[0].Configured)
 	}
-	if statuses[1].Name != "package-guard" || !statuses[1].Enabled {
-		t.Errorf("statuses[1]: want package-guard/enabled, got %s/%v", statuses[1].Name, statuses[1].Enabled)
+	if statuses[1].Name != "package-guard" || !statuses[1].Configured {
+		t.Errorf("statuses[1]: want package-guard/enabled, got %s/%v", statuses[1].Name, statuses[1].Configured)
 	}
-	if statuses[2].Name != "credential-scan" || statuses[2].Enabled {
-		t.Errorf("statuses[2]: want credential-scan/disabled, got %s/%v", statuses[2].Name, statuses[2].Enabled)
+	if statuses[2].Name != "credential-scan" || statuses[2].Configured {
+		t.Errorf("statuses[2]: want credential-scan/disabled, got %s/%v", statuses[2].Name, statuses[2].Configured)
 	}
-	if statuses[3].Name != "destructive-prevention" || statuses[3].Enabled {
-		t.Errorf("statuses[3]: want destructive-prevention/disabled, got %s/%v", statuses[3].Name, statuses[3].Enabled)
+	if statuses[3].Name != "destructive-prevention" || statuses[3].Configured {
+		t.Errorf("statuses[3]: want destructive-prevention/disabled, got %s/%v", statuses[3].Name, statuses[3].Configured)
 	}
-	if statuses[4].Name != "file-boundary" || statuses[4].Enabled {
-		t.Errorf("statuses[4]: want file-boundary/disabled, got %s/%v", statuses[4].Name, statuses[4].Enabled)
+	if statuses[4].Name != "file-boundary" || statuses[4].Configured {
+		t.Errorf("statuses[4]: want file-boundary/disabled, got %s/%v", statuses[4].Name, statuses[4].Configured)
 	}
-	if statuses[5].Name != "tool-gates" || statuses[5].Enabled {
-		t.Errorf("statuses[5]: want tool-gates/disabled, got %s/%v", statuses[5].Name, statuses[5].Enabled)
+	if statuses[5].Name != "tool-gates" || statuses[5].Configured {
+		t.Errorf("statuses[5]: want tool-gates/disabled, got %s/%v", statuses[5].Name, statuses[5].Configured)
 	}
-	for i := 6; i <= 9; i++ {
-		if statuses[i].Name != "soc2-audit" || statuses[i].Enabled {
-			t.Errorf("statuses[%d]: want soc2-audit/disabled, got %s/%v", i, statuses[i].Name, statuses[i].Enabled)
+	for i := 6; i <= 11; i++ {
+		if statuses[i].Name != "soc2-audit" || statuses[i].Configured {
+			t.Errorf("statuses[%d]: want soc2-audit/disabled, got %s/%v", i, statuses[i].Name, statuses[i].Configured)
 		}
 	}
-	if statuses[10].Name != "semble" || statuses[10].Enabled {
-		t.Errorf("statuses[10]: want semble/disabled, got %s/%v", statuses[10].Name, statuses[10].Enabled)
+	if statuses[12].Name != "semble" || statuses[12].Configured {
+		t.Errorf("statuses[12]: want semble/disabled, got %s/%v", statuses[12].Name, statuses[12].Configured)
 	}
-	if statuses[11].Name != "audit-log" || statuses[11].Enabled {
-		t.Errorf("statuses[11]: want audit-log/disabled, got %s/%v", statuses[11].Name, statuses[11].Enabled)
+	if statuses[13].Name != "audit-log" || statuses[13].Configured {
+		t.Errorf("statuses[13]: want audit-log/disabled, got %s/%v", statuses[13].Name, statuses[13].Configured)
 	}
-	for i := 12; i <= 13; i++ {
-		if statuses[i].Name != "security-enforcement" || statuses[i].Enabled {
-			t.Errorf("statuses[%d]: want security-enforcement/disabled, got %s/%v", i, statuses[i].Name, statuses[i].Enabled)
+	for i := 14; i <= 15; i++ {
+		if statuses[i].Name != "security-enforcement" || statuses[i].Configured {
+			t.Errorf("statuses[%d]: want security-enforcement/disabled, got %s/%v", i, statuses[i].Name, statuses[i].Configured)
 		}
 	}
 	// lsp-guard is registered last and enabled by default (LSP enforcement
 	// defaults to "block" when unset).
-	if statuses[14].Name != "lsp-guard" || !statuses[14].Enabled {
-		t.Errorf("statuses[14]: want lsp-guard/enabled, got %s/%v", statuses[14].Name, statuses[14].Enabled)
+	if statuses[16].Name != "lsp-guard" || !statuses[16].Configured {
+		t.Errorf("statuses[16]: want lsp-guard/enabled, got %s/%v", statuses[16].Name, statuses[16].Configured)
 	}
 }
 
@@ -467,9 +400,176 @@ func TestSecretPatterns_MatchPythonHook(t *testing.T) {
 	}
 	content := string(pyContent)
 
-	for i, goPattern := range claudecode.ExportDefaultSecretPatterns {
+	all := append(append([]string{}, claudecode.ExportDefaultSecretPatterns...), claudecode.ExportConfigSecretPatterns...)
+	for i, goPattern := range all {
 		if !strings.Contains(content, goPattern) {
 			t.Errorf("Go pattern [%d] %q not found in scan-secrets.py (patterns may be out of sync)", i, goPattern)
 		}
+	}
+}
+
+// TestWrapHooksForSandbox_UsesAppName verifies the sandbox wrapper invokes the
+// branded binary: a downstream build whose binary is not "qsdev" must not emit
+// hook commands that fail with command-not-found (a non-blocking hook error,
+// so every guard would fail open).
+func TestWrapHooksForSandbox_UsesAppName(t *testing.T) {
+	t.Parallel()
+	for _, app := range []string{"qsdev", "acme"} {
+		t.Run(app, func(t *testing.T) {
+			t.Parallel()
+			r := claudecode.ExportDefaultHookRegistry()
+			hooks := r.BuildHooksMap(types.WizardAnswers{Hooks: types.HookChoices{SafetyBlock: true, AuditLog: true}})
+			wrapped := claudecode.ExportWrapHooksForSandbox(hooks, r, types.WizardAnswers{}, app)
+			if len(wrapped) == 0 {
+				t.Fatal("expected hooks to wrap")
+			}
+			for event, matchers := range wrapped {
+				for _, m := range matchers {
+					for _, h := range m.Hooks {
+						if !strings.HasPrefix(h.Command, app+" sandbox exec --category ") {
+							t.Errorf("%s hook command %q does not start with %q", event, h.Command, app+" sandbox exec")
+						}
+					}
+				}
+			}
+		})
+	}
+}
+
+// lspGuardCommand returns the lsp-guard PreToolUse command in the settings.json
+// Generate emits, or "" when the hook is absent, along with whether the hook
+// script itself was generated.
+func lspGuardCommand(t *testing.T, answers types.WizardAnswers, cfg claudecode.Config) (string, bool) {
+	t.Helper()
+	files, err := claudecode.NewClaudeCodeGenerator(newTestRegistry(t, goMock()), cfg).Generate(answers)
+	if err != nil {
+		t.Fatalf("Generate: %v", err)
+	}
+	var cmd string
+	var script bool
+	for _, f := range files {
+		switch f.Path {
+		case ".claude/hooks/lsp-first-guard.sh":
+			script = true
+		case ".claude/settings.json":
+			var s claudecode.SettingsJSON
+			if err := json.Unmarshal(f.Content, &s); err != nil {
+				t.Fatalf("unmarshal settings: %v", err)
+			}
+			for _, m := range s.Hooks["PreToolUse"] {
+				if m.Matcher == "Grep" {
+					cmd = m.Hooks[0].Command
+				}
+			}
+		}
+	}
+	return cmd, script
+}
+
+// TestLSPGuard_TierAndEnforcement verifies the lsp-first-guard is only
+// installed at tiers that generate the LSP plugin it redirects to, and that the
+// configured enforcement tier (including the Config override) is baked into the
+// hook command rather than depending on the devenv shell's environment.
+func TestLSPGuard_TierAndEnforcement(t *testing.T) {
+	t.Parallel()
+	cases := []struct {
+		name       string
+		answers    types.WizardAnswers
+		cfg        claudecode.Config
+		wantCmd    string
+		wantScript bool
+	}{
+		{
+			name:    "supply-chain-only has no LSP plugin, so no guard",
+			answers: types.WizardAnswers{Tier: "supply-chain-only", Languages: []types.LanguageChoice{{Name: "go"}}},
+		},
+		{
+			name:       "standard defaults to block",
+			answers:    types.WizardAnswers{Tier: "standard", Languages: []types.LanguageChoice{{Name: "go"}}},
+			wantCmd:    `"${CLAUDE_PROJECT_DIR}"/.claude/hooks/lsp-first-guard.sh block`,
+			wantScript: true,
+		},
+		{
+			name: "answers warn is baked in",
+			answers: types.WizardAnswers{Tier: "standard", Languages: []types.LanguageChoice{{Name: "go"}},
+				LSP: types.LSPSettings{Enforcement: "warn"}},
+			wantCmd:    `"${CLAUDE_PROJECT_DIR}"/.claude/hooks/lsp-first-guard.sh warn`,
+			wantScript: true,
+		},
+		{
+			name:       "config override reaches the command",
+			answers:    types.WizardAnswers{Tier: "standard", Languages: []types.LanguageChoice{{Name: "go"}}},
+			cfg:        claudecode.NewConfig(claudecode.WithLSPEnforcement("warn")),
+			wantCmd:    `"${CLAUDE_PROJECT_DIR}"/.claude/hooks/lsp-first-guard.sh warn`,
+			wantScript: true,
+		},
+		{
+			name: "off removes the guard",
+			answers: types.WizardAnswers{Tier: "full", Languages: []types.LanguageChoice{{Name: "go"}},
+				LSP: types.LSPSettings{Enforcement: "off"}},
+		},
+		{
+			// `sandbox exec --` execs its arguments directly, so the tier must
+			// be a script argument (an env-assignment prefix would be run as
+			// the program name), and the linter category must still resolve.
+			name: "sandbox wrapping keeps tier and category",
+			answers: types.WizardAnswers{Tier: "standard", Languages: []types.LanguageChoice{{Name: "go"}},
+				LSP: types.LSPSettings{Enforcement: "warn"}, Hooks: types.HookChoices{SandboxEnabled: true}},
+			wantCmd:    `qsdev sandbox exec --category linter -- "${CLAUDE_PROJECT_DIR}"/.claude/hooks/lsp-first-guard.sh warn`,
+			wantScript: true,
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			cmd, script := lspGuardCommand(t, tc.answers, tc.cfg)
+			if cmd != tc.wantCmd {
+				t.Errorf("Grep hook command = %q, want %q", cmd, tc.wantCmd)
+			}
+			if script != tc.wantScript {
+				t.Errorf("lsp-first-guard.sh generated = %v, want %v", script, tc.wantScript)
+			}
+		})
+	}
+}
+
+// TestHooksWithoutPolicy covers reporting a hook that is enabled but has no
+// policy to enforce (W046): tool-gates without allow or deny lists allows
+// every tool, so it must not read as an active control.
+func TestHooksWithoutPolicy(t *testing.T) {
+	t.Parallel()
+	gates := types.HookChoices{ToolGates: true}
+	tests := []struct {
+		name    string
+		answers types.WizardAnswers
+		want    []claudecode.HookWithoutPolicy
+	}{
+		{
+			name:    "tool-gates without policy",
+			answers: types.WizardAnswers{Hooks: gates},
+			want:    []claudecode.HookWithoutPolicy{{Name: "tool-gates", PolicyKey: "hooks.tool_gates"}},
+		},
+		{
+			name: "tool-gates with deny list",
+			answers: types.WizardAnswers{Hooks: gates, HookPolicy: types.HooksConfig{
+				ToolGates: types.ToolGatesConfig{Denied: []string{"Bash"}},
+			}},
+		},
+		{
+			name: "tool-gates with allow list",
+			answers: types.WizardAnswers{Hooks: gates, HookPolicy: types.HooksConfig{
+				ToolGates: types.ToolGatesConfig{Allowed: []string{"Read"}},
+			}},
+		},
+		{name: "tool-gates disabled", answers: types.WizardAnswers{}},
+		{name: "hooks without a policy key", answers: types.WizardAnswers{Hooks: types.HookChoices{SafetyBlock: true, FileBoundary: true}}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			if got := claudecode.HooksWithoutPolicy(tt.answers); !reflect.DeepEqual(got, tt.want) {
+				t.Errorf("HooksWithoutPolicy = %#v, want %#v", got, tt.want)
+			}
+		})
 	}
 }

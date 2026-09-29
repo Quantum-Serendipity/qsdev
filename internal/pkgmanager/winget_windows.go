@@ -27,12 +27,8 @@ func (w *Winget) NeedsElevation() bool { return false }
 
 func (w *Winget) Install(ctx context.Context, packages ...string) error {
 	for _, pkg := range packages {
-		err := w.runner.Run(ctx, "winget", "install",
-			"--id", pkg, "-e",
-			"--accept-source-agreements",
-			"--accept-package-agreements",
-		)
-		if err != nil {
+		bin, args := w.InstallArgs(pkg)
+		if err := w.runner.Run(ctx, bin, args...); err != nil {
 			return err
 		}
 	}

@@ -1,7 +1,6 @@
 package branding
 
 import (
-	"regexp"
 	"strings"
 	"sync"
 	"testing"
@@ -351,44 +350,6 @@ func TestGetReturnsCopy(t *testing.T) {
 	}
 }
 
-func TestWorkflowIdentityDefault(t *testing.T) {
-	resetToDefault(t)
-
-	issuer, subjectRegExp := WorkflowIdentity()
-
-	if want := "https://token.actions.githubusercontent.com"; issuer != want {
-		t.Errorf("issuer = %q, want %q", issuer, want)
-	}
-	if want := `^https://github\.com/Quantum-Serendipity/qsdev/\.github/workflows/.+$`; subjectRegExp != want {
-		t.Errorf("subjectRegExp = %q, want %q", subjectRegExp, want)
-	}
-
-	re, err := regexp.Compile(subjectRegExp)
-	if err != nil {
-		t.Fatalf("subjectRegExp does not compile: %v", err)
-	}
-	// Matches a real release-workflow signing subject for this repo.
-	if !re.MatchString("https://github.com/Quantum-Serendipity/qsdev/.github/workflows/release.yml@refs/tags/v1.2.3") {
-		t.Error("subjectRegExp should match this repo's release workflow identity")
-	}
-	// Rejects a different repository (impersonation guard).
-	if re.MatchString("https://github.com/attacker/evil/.github/workflows/release.yml@refs/tags/v1.2.3") {
-		t.Error("subjectRegExp must not match a different repository")
-	}
-}
-
-func TestWorkflowIdentityDerivedFromBranding(t *testing.T) {
-	resetToDefault(t)
-	t.Cleanup(func() { resetToDefault(t) })
-
-	Set(Config{GitHubOwner: "my-org", GitHubRepo: "my-repo"})
-
-	_, subjectRegExp := WorkflowIdentity()
-	if want := `^https://github\.com/my-org/my-repo/\.github/workflows/.+$`; subjectRegExp != want {
-		t.Errorf("subjectRegExp = %q, want %q", subjectRegExp, want)
-	}
-}
-
 func TestReleaseWorkflowIdentityExactPin(t *testing.T) {
 	resetToDefault(t)
 	t.Cleanup(func() { resetToDefault(t) })
@@ -464,4 +425,36 @@ func TestConfigZeroValue(t *testing.T) {
 	if zero.GitHubRepo != "" {
 		t.Errorf("zero Config.GitHubRepo = %q, want empty", zero.GitHubRepo)
 	}
+}
+
+// TestConcurrentSetDoesNotLoseUpdates guards the read-modify-write in Set:
+// concurrent calls setting disjoint fields must all take effect.
+func TestConcurrentSetDoesNotLoseUpdates(t *testing.T) {
+	for range 50 {
+		resetToDefault(t)
+
+		var wg sync.WaitGroup
+		start := make(chan struct{})
+		updates := []Config{
+			{AppName: "a-app"}, {ConfigFile: ".a.yaml"}, {LocalConfig: ".a.local.yaml"},
+			{StateDir: ".a-state"}, {EnvPrefix: "A_"}, {GitHubRepo: "a-repo"},
+		}
+		for _, u := range updates {
+			wg.Go(func() {
+				<-start
+				Set(u)
+			})
+		}
+		close(start)
+		wg.Wait()
+
+		got := Get()
+		want := Default()
+		want.AppName, want.ConfigFile, want.LocalConfig = "a-app", ".a.yaml", ".a.local.yaml"
+		want.StateDir, want.EnvPrefix, want.GitHubRepo = ".a-state", "A_", "a-repo"
+		if got != want {
+			t.Fatalf("lost update: got %+v, want %+v", got, want)
+		}
+	}
+	resetToDefault(t)
 }

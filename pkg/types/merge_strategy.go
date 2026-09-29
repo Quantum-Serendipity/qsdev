@@ -1,6 +1,6 @@
 package types
 
-import "fmt"
+import "github.com/Quantum-Serendipity/qsdev/internal/enumtext"
 
 // MergeStrategy defines how a generated file should be handled
 // when it already exists on disk.
@@ -28,34 +28,26 @@ var mergeStrategyNames = [...]string{
 	ManualMerge:    "manual-merge",
 }
 
-var mergeStrategyFromString = func() map[string]MergeStrategy {
-	m := make(map[string]MergeStrategy, len(mergeStrategyNames))
-	for i, name := range mergeStrategyNames {
-		m[name] = MergeStrategy(i)
-	}
-	return m
-}()
+var mergeStrategyText = enumtext.New[MergeStrategy]("MergeStrategy", "merge strategy", "unknown", mergeStrategyNames[:])
 
-func (m MergeStrategy) String() string {
-	if int(m) >= 0 && int(m) < len(mergeStrategyNames) {
-		return mergeStrategyNames[m]
+// IsHumanEdited reports whether files written with this strategy are expected
+// to be edited by people, so a divergence from the generated content is
+// normal rather than drift. Overwrite, Append, Skip and LibraryManaged files
+// are machine-owned. It is the single classifier every consumer should use,
+// so that one file is never healthy in one report and drifted in another.
+func (m MergeStrategy) IsHumanEdited() bool {
+	switch m {
+	case SectionMarker, ThreeWayMerge, ManualMerge, Merge:
+		return true
+	default:
+		return false
 	}
-	return "unknown"
 }
 
-func (m MergeStrategy) MarshalText() ([]byte, error) {
-	s := m.String()
-	if s == "unknown" {
-		return nil, fmt.Errorf("cannot marshal unknown MergeStrategy value %d", int(m))
-	}
-	return []byte(s), nil
-}
+func (m MergeStrategy) String() string { return mergeStrategyText.String(m) }
+
+func (m MergeStrategy) MarshalText() ([]byte, error) { return mergeStrategyText.MarshalText(m) }
 
 func (m *MergeStrategy) UnmarshalText(text []byte) error {
-	s := string(text)
-	if v, ok := mergeStrategyFromString[s]; ok {
-		*m = v
-		return nil
-	}
-	return fmt.Errorf("unknown merge strategy: %q", s)
+	return mergeStrategyText.UnmarshalText(text, m)
 }

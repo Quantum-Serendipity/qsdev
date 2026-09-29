@@ -12,8 +12,8 @@ import (
 )
 
 // ecosystemSpec ties one workspace ecosystem together: how to parse its root
-// membership configuration, the per-member manifest filename used both for
-// validation and watching, and how to read a member manifest's identity.
+// membership configuration, the per-member manifest filename used to validate
+// resolved members, and how to read a member manifest's identity.
 type ecosystemSpec struct {
 	// id is the ecosystem identity (ecoNpm, ecoPnpm, ...).
 	id string
@@ -21,8 +21,8 @@ type ecosystemSpec struct {
 	configFile string
 	// configAlts are alternate membership-configuration filenames accepted in
 	// addition to configFile (e.g. pnpm's legacy "pnpm-workspace.yml" spelling).
-	// Detection and watching treat the presence of any of them as evidence the
-	// ecosystem is configured; the parser is responsible for reading whichever
+	// Detection treats the presence of any of them as evidence the ecosystem is
+	// configured; the parser is responsible for reading whichever
 	// spelling exists.
 	configAlts []string
 	// manifest is the per-member manifest filename that a resolved directory must

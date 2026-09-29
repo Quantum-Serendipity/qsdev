@@ -29,6 +29,12 @@ func TestRegistryClient(t *testing.T, client aiframework.RegistryClient, fixture
 				t.Errorf("FilterServers kept server %q with unsupported transport %v", s.Name, s.Transport)
 			}
 		}
+		for _, s := range servers {
+			kept := slices.ContainsFunc(filtered, func(f aiframework.MCPServerSpec) bool { return f.Name == s.Name })
+			if slices.Contains(supported, s.Transport) && !kept {
+				t.Errorf("FilterServers dropped compatible server %q", s.Name)
+			}
+		}
 	})
 
 	t.Run("ToolCeilingNonNegative", func(t *testing.T) {

@@ -3,6 +3,7 @@ package render
 import (
 	"bytes"
 	"encoding/json"
+	"regexp"
 	"strings"
 	"testing"
 	"time"
@@ -53,9 +54,14 @@ func TestRenderJSON_EmptyReport(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	// Verify nil slices are serialized as [] not null.
-	if strings.Contains(string(data), ": null") {
-		t.Errorf("found null in JSON output; all slices should be empty arrays:\n%s", string(data))
+	// Verify nil slices are serialized as [] not null. The only nulls allowed
+	// are the dependency scores, which are null when the dependencies were not
+	// scanned (health unknown).
+	nullable := map[string]bool{"score": true, "depHealth": true}
+	for _, m := range regexp.MustCompile(`"(\w+)": null`).FindAllStringSubmatch(string(data), -1) {
+		if !nullable[m[1]] {
+			t.Errorf("found null %q in JSON output; all slices should be empty arrays:\n%s", m[1], string(data))
+		}
 	}
 
 	// Verify SchemaVersion was set.
@@ -222,7 +228,7 @@ func TestRenderJSON_RoundTrip(t *testing.T) {
 		QsdevVersion:  "1.0.0",
 		ProjectName:   "round-trip-test",
 		ProjectPath:   "/tmp/test",
-		Score:         posture.AggregateScore{Total: 82.5, Grade: "B-", Defense: 90, Config: 80, DepHealth: 75},
+		Score:         posture.AggregateScore{Total: 82.5, Grade: "B-", Defense: 90, Config: 80, DepHealth: new(75.0)},
 		Conformance: posture.ConformanceResult{
 			Baseline: posture.ConformanceLevel{
 				Pass:   true,
@@ -249,7 +255,7 @@ func TestRenderJSON_RoundTrip(t *testing.T) {
 			},
 		},
 		Dependencies: posture.DependencyHealth{
-			Score:      75,
+			Score:      new(75.0),
 			Ecosystems: []posture.EcosystemStatus{{Name: "go", Detected: true, LockFile: "valid"}},
 			Totals:     posture.VulnSeverityCounts{High: 2},
 		},

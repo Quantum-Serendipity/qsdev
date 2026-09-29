@@ -17,7 +17,7 @@ var errNilHandler = errors.New("spi: nil final tool handler")
 // FrameworkAdapter is the contract concrete framework adapters implement to
 // contribute framework-specific tools, resources, and prompts to the universal
 // server. Adapters live under internal/mcpserve/adapters/* and delegate to
-// addons; they self-register into the DefaultRegistry from cmd/qsdev/main.go.
+// addons; they self-register into the DefaultRegistry from instance/runtime.go.
 //
 // The interface is intentionally minimal: identity, an applicability check, and
 // three contribution methods. Later tasks implement concrete adapters against
@@ -97,8 +97,8 @@ func matchesClient(a FrameworkAdapter, client ClientInfo) bool {
 
 // AdapterRegistry is a thread-safe collection of FrameworkAdapter
 // implementations, keyed by FrameworkID. It mirrors the pattern used by
-// pkg/ecosystem and internal/mcpserver: embed the generic registry and add a
-// domain-typed Register/All.
+// pkg/ecosystem: embed the generic registry and add a domain-typed
+// Register/All.
 type AdapterRegistry struct {
 	*registry.Registry[FrameworkAdapter]
 }
@@ -151,7 +151,7 @@ var (
 
 // DefaultRegistry returns the package-level singleton AdapterRegistry, lazily
 // initialized on first use. Concrete adapters register into this from
-// cmd/qsdev/main.go; the server consumes it. Explicit registration is preferred
+// instance/runtime.go; the server consumes it. Explicit registration is preferred
 // over init() so wiring order stays visible at the program entry point.
 func DefaultRegistry() *AdapterRegistry {
 	defaultRegistryOnce.Do(func() {

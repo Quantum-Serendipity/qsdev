@@ -118,6 +118,7 @@
         } // pkgs.lib.optionalAttrs pkgs.stdenv.isLinux {
           inherit (sandboxPkgs) ll-restrict;
           seccomp-filter = sandboxPkgs.seccomp-profiles.filter;
+          opengrep = import ./nix/opengrep { inherit pkgs; };
         };
 
         devShells.default = pkgs.mkShell {

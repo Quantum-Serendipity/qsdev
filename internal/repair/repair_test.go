@@ -209,6 +209,7 @@ func TestRepair_DeletedFileRegenerated(t *testing.T) {
 					{
 						Subject:     relPath,
 						Description: "Generated file \".envrc\" has been deleted",
+						FileStatus:  types.Deleted,
 						Severity:    drift.Error,
 					},
 				},

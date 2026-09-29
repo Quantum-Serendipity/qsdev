@@ -2,6 +2,7 @@ package ecosystem
 
 import (
 	"fmt"
+	"slices"
 	"strings"
 
 	"github.com/Quantum-Serendipity/qsdev/pkg/types"
@@ -29,6 +30,11 @@ func DetectionAbsent() DetectionResult {
 	}
 }
 
+// ExtraBuildCache is the ModuleConfig extra naming the shared build cache
+// (for example "sccache"); ToModuleConfigWithInfra fills it from
+// infrastructure.build_cache.
+const ExtraBuildCache = "build_cache"
+
 // ToModuleConfig converts a LanguageChoice from wizard answers into a
 // ModuleConfig suitable for passing to EcosystemModule methods.
 func ToModuleConfig(lang types.LanguageChoice) ModuleConfig {
@@ -39,14 +45,38 @@ func ToModuleConfig(lang types.LanguageChoice) ModuleConfig {
 	}
 }
 
-// ToModuleConfigWithProxy converts a LanguageChoice into a ModuleConfig with
-// the registry proxy URL resolved for the specific ecosystem.
-func ToModuleConfigWithProxy(lang types.LanguageChoice, infra types.InfraConfig) ModuleConfig {
+// ToModuleConfigWithInfra converts a LanguageChoice into a ModuleConfig with
+// the project's infrastructure applied: the registry proxy URL resolved for
+// the specific ecosystem, and infrastructure.build_cache as the "build_cache"
+// extra unless the language sets that extra itself.
+func ToModuleConfigWithInfra(lang types.LanguageChoice, infra types.InfraConfig) ModuleConfig {
 	cfg := ToModuleConfig(lang)
-	proxyKey := ProxyKeyForLanguage(lang.Name, lang.PackageManager)
-	if proxyKey != "" {
-		cfg.RegistryProxy = ResolveProxyURL(infra.RegistryProxy, infra.RegistryProxyOverrides, proxyKey, infra.RegistryProxyPaths)
+	if infra.BuildCache != "" {
+		if cfg.Extras == nil {
+			cfg.Extras = make(map[string]string, 1)
+		}
+		if _, ok := cfg.Extras[ExtraBuildCache]; !ok {
+			cfg.Extras[ExtraBuildCache] = infra.BuildCache
+		}
 	}
+	// Some ecosystems (e.g. Java) record their build tool in
+	// Extras["build_tool"] when it was detected rather than set explicitly;
+	// an explicit PackageManager still wins.
+	proxyKey := ProxyKeyForLanguage(lang.Name, cfg.PM(cfg.Extra("build_tool", "")))
+	if proxyKey != "" {
+		cfg.RegistryProxy = ResolveProxyURL(infra.RegistryProxyBase(), infra.RegistryProxyOverrides, proxyKey, infra.RegistryProxyPaths)
+	}
+	return cfg
+}
+
+// ToGenerationConfig converts a LanguageChoice into the ModuleConfig
+// generation passes to a module: ToModuleConfigWithInfra plus the
+// project-level module settings the answers carry from .qsdev.yaml
+// (java.repository_allowlist, cloud.isolate_cli_config).
+func ToGenerationConfig(lang types.LanguageChoice, answers types.WizardAnswers) ModuleConfig {
+	cfg := ToModuleConfigWithInfra(lang, answers.Infrastructure)
+	cfg.RepositoryAllowlist = slices.Clone(answers.Java.RepositoryAllowlist)
+	cfg.IsolateCLIConfig = answers.Cloud.IsolateCLIConfig
 	return cfg
 }
 

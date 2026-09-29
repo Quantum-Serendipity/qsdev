@@ -1,10 +1,13 @@
 package claudecode_test
 
 import (
+	"io/fs"
+	"regexp"
 	"strings"
 	"testing"
 
 	"github.com/Quantum-Serendipity/qsdev/addons/claudecode"
+	"github.com/Quantum-Serendipity/qsdev/internal/toolreg"
 	"github.com/Quantum-Serendipity/qsdev/pkg/types"
 )
 
@@ -230,6 +233,94 @@ func TestAvailableQsdevOpsSkillNames(t *testing.T) {
 	for _, name := range names {
 		if !expected[name] {
 			t.Errorf("unexpected skill name: %q", name)
+		}
+	}
+}
+
+// TestQsdevOpsManifest_EveryEntryRegisteredAlwaysOn verifies every operation
+// skill in the manifest has an always-on tool in the registry. Without one,
+// MergeInferredTools never sets EnabledTools[name], so deployOperationSkills
+// silently skips the skill (qsdev-add-dep was missing this way).
+func TestQsdevOpsManifest_EveryEntryRegisteredAlwaysOn(t *testing.T) {
+	t.Parallel()
+	reg := toolreg.DefaultRegistry()
+	for _, name := range claudecode.AvailableQsdevOpsSkillNames() {
+		tool, ok := reg.ByName(name)
+		if !ok {
+			t.Errorf("ops skill %q has no registered tool", name)
+			continue
+		}
+		if tool.Default != toolreg.AlwaysOn {
+			t.Errorf("ops skill tool %q default = %v, want AlwaysOn", name, tool.Default)
+		}
+	}
+
+	answers := types.WizardAnswers{Tier: "full"}
+	toolreg.MergeInferredTools(&answers, reg)
+	files, err := claudecode.ExportDeployOperationSkills(answers)
+	if err != nil {
+		t.Fatalf("deployOperationSkills: %v", err)
+	}
+	if got, want := len(files), len(claudecode.AvailableQsdevOpsSkillNames()); got != want {
+		t.Errorf("deployed %d ops skills after MergeInferredTools, want %d", got, want)
+	}
+}
+
+// skillInjectionRE matches a Claude Code skill shell injection: !`command`.
+var skillInjectionRE = regexp.MustCompile("!`([^`]*)`")
+
+// TestSkillInjections_NoFabricatedFallbacks verifies that no skill's shell
+// injection masks a failed command by printing made-up data (e.g.
+// `|| echo '{"available": []}'`), which the agent would present as real,
+// empty state. Failures must surface as an explicit marker instead.
+func TestSkillInjections_NoFabricatedFallbacks(t *testing.T) {
+	t.Parallel()
+	fabricated := regexp.MustCompile(`\|\|\s*echo\s+'[\[{]`)
+	var checked int
+	err := fs.WalkDir(claudecode.ExportTemplateFS, "templates/skills", func(path string, d fs.DirEntry, err error) error {
+		if err != nil || d.IsDir() || !strings.HasSuffix(path, ".md") {
+			return err
+		}
+		content, err := claudecode.ExportTemplateFS.ReadFile(path)
+		if err != nil {
+			return err
+		}
+		for _, m := range skillInjectionRE.FindAllStringSubmatch(string(content), -1) {
+			checked++
+			if fabricated.MatchString(m[1]) {
+				t.Errorf("%s: injection %q fabricates data on failure; emit an explicit error marker", path, m[1])
+			}
+			if strings.HasSuffix(m[1], "\\") {
+				t.Errorf("%s: injection %q ends in a backslash (escaped backtick splits the injection)", path, m[1])
+			}
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if checked == 0 {
+		t.Fatal("no skill shell injections found; the pattern is stale")
+	}
+}
+
+// TestQsdevOpsManifest_UserOnlyMatchesTemplates verifies each operation
+// skill's manifest user_only flag matches its SKILL.md: user-only skills must
+// set disable-model-invocation so the model cannot invoke them on its own.
+func TestQsdevOpsManifest_UserOnlyMatchesTemplates(t *testing.T) {
+	t.Parallel()
+	manifest, err := claudecode.ExportLoadQsdevOpsManifest()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, e := range manifest.Skills {
+		content, err := claudecode.ExportTemplateFS.ReadFile("templates/skills/" + e.Name + "/SKILL.md")
+		if err != nil {
+			t.Fatalf("reading skill %q: %v", e.Name, err)
+		}
+		disabled := strings.Contains(string(content), "\ndisable-model-invocation: true\n")
+		if e.UserOnly != disabled {
+			t.Errorf("skill %q: manifest user_only=%v but disable-model-invocation=%v", e.Name, e.UserOnly, disabled)
 		}
 	}
 }

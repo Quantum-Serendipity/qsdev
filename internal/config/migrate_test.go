@@ -50,33 +50,65 @@ func TestMigrateConfig_VersionTooLow(t *testing.T) {
 	}
 }
 
-func TestNeedsMigration(t *testing.T) {
+// Regression: a boolean needs-migration check returned false for too-new and
+// invalid versions, which `config migrate` reported as "already current". CheckMigration must
+// distinguish current, migratable and unsupported versions.
+func TestCheckMigration(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
-		version int
-		want    bool
+		name       string
+		version    int
+		wantNeeded bool
+		wantErr    string
 	}{
-		{0, false},
-		{types.ConfigVersionCurrent, false},
-		{types.ConfigVersionCurrent + 1, false},
-		// Since ConfigVersionMin == ConfigVersionCurrent == 1, there's
-		// no version that would trigger migration. But if ConfigVersionCurrent
-		// were higher, versions below it would need migration.
+		{"current", types.ConfigVersionCurrent, false, ""},
+		{"newer than supported", types.ConfigVersionCurrent + 4, false, "newer than"},
+		{"zero", 0, false, "too old"},
+		{"negative", -1, false, "too old"},
 	}
-
 	for _, tt := range tests {
-		got := NeedsMigration(tt.version)
-		if got != tt.want {
-			t.Errorf("NeedsMigration(%d) = %v, want %v", tt.version, got, tt.want)
-		}
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			needed, err := CheckMigration(tt.version)
+			if needed != tt.wantNeeded {
+				t.Errorf("CheckMigration(%d) needed = %v, want %v", tt.version, needed, tt.wantNeeded)
+			}
+			if tt.wantErr == "" {
+				if err != nil {
+					t.Errorf("CheckMigration(%d) error = %v, want nil", tt.version, err)
+				}
+				return
+			}
+			if err == nil || !strings.Contains(err.Error(), tt.wantErr) {
+				t.Errorf("CheckMigration(%d) error = %v, want it to contain %q", tt.version, err, tt.wantErr)
+			}
+		})
 	}
 }
 
-func TestNeedsMigration_FutureVersions(t *testing.T) {
-	// NeedsMigration should return false for versions at or above current.
-	if NeedsMigration(types.ConfigVersionCurrent) {
-		t.Error("NeedsMigration should return false for current version")
+// toInt reads the YAML-decoded "version" value; only whole numbers count.
+func TestToInt(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name   string
+		in     any
+		want   int
+		wantOK bool
+	}{
+		{"int", 1, 1, true},
+		{"int64", int64(2), 2, true},
+		{"whole float", float64(3), 3, true},
+		{"fractional float", 1.5, 0, false},
+		{"string", "1", 0, false},
+		{"nil", nil, 0, false},
 	}
-	if NeedsMigration(types.ConfigVersionCurrent + 1) {
-		t.Error("NeedsMigration should return false for future version")
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			got, ok := toInt(tt.in)
+			if got != tt.want || ok != tt.wantOK {
+				t.Errorf("toInt(%v) = (%d, %v), want (%d, %v)", tt.in, got, ok, tt.want, tt.wantOK)
+			}
+		})
 	}
 }

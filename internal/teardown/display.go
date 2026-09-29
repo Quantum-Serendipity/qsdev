@@ -54,7 +54,7 @@ func DisplayResult(result *TeardownResult, w io.Writer) {
 		fmt.Fprintf(w, "  Cleaned %d shared file(s).\n", len(result.Cleaned))
 	}
 	if len(result.Preserved) > 0 {
-		fmt.Fprintf(w, "  Preserved %d modified file(s).\n", len(result.Preserved))
+		fmt.Fprintf(w, "  Preserved %d file(s).\n", len(result.Preserved))
 	}
 	if len(result.DirsRemoved) > 0 {
 		fmt.Fprintf(w, "  Removed %d directory(ies).\n", len(result.DirsRemoved))

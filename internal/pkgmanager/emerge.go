@@ -24,7 +24,12 @@ func (e *Emerge) Available() bool {
 
 func (e *Emerge) NeedsElevation() bool { return true }
 
+// InstallArgs returns the command Install runs, without sudo.
+func (e *Emerge) InstallArgs(packages ...string) (string, []string) {
+	return "emerge", append([]string{"--ask=n"}, packages...)
+}
+
 func (e *Emerge) Install(ctx context.Context, packages ...string) error {
-	args := append([]string{"--ask=n"}, packages...)
-	return e.runner.Run(ctx, "emerge", args...)
+	bin, args := e.InstallArgs(packages...)
+	return e.runner.Run(ctx, bin, args...)
 }

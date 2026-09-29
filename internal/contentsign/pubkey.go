@@ -1,12 +1,17 @@
 package contentsign
 
 import (
+	"errors"
 	"fmt"
+	"io/fs"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"strings"
 
 	"aead.dev/minisign"
+
+	"github.com/Quantum-Serendipity/qsdev/pkg/branding"
 )
 
 // QsdevPublicKey is the embedded organizational Minisign public key used to
@@ -49,22 +54,32 @@ func ParsePublicKey(s string) (PublicKey, error) {
 }
 
 // DefaultTrustedKeysDir returns the user-global directory holding trusted
-// Minisign public keys (*.pub), under ~/.qsdev/keys/.
-func DefaultTrustedKeysDir() string {
-	home, _ := os.UserHomeDir()
-	return filepath.Join(home, ".qsdev", "keys")
+// Minisign public keys (*.pub), ~/.<app>/keys/ (e.g. ~/.qsdev/keys/). It fails
+// when the home directory cannot be determined or is not absolute: a relative
+// fallback would resolve against the working directory, which a cloned
+// repository controls (its own .qsdev/keys would become trusted).
+func DefaultTrustedKeysDir() (string, error) {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return "", fmt.Errorf("locating trusted keys dir: %w", err)
+	}
+	if !filepath.IsAbs(home) {
+		return "", fmt.Errorf("locating trusted keys dir: home directory %q is not absolute", home)
+	}
+	return filepath.Join(home, "."+branding.Get().AppName, "keys"), nil
 }
 
 // LoadTrustedKeys returns the set of trusted public keys: every *.pub file in
-// dir plus the embedded QsdevPublicKey when it is set. A missing directory is
-// not an error (it yields whatever the embedded key provides). When dir is
-// empty, DefaultTrustedKeysDir is used.
+// dir plus the embedded QsdevPublicKey when it is set. The result is never nil
+// (it may be empty), so it can be passed as VerifyOptions.TrustedKeys as an
+// explicit key set.
+//
+// When dir is empty, DefaultTrustedKeysDir is used; a missing default
+// directory, or an undeterminable home directory, contributes no keys. A dir
+// named explicitly must exist: a mistyped --keys path is an error rather than
+// an empty (or silently substituted) trust set.
 func LoadTrustedKeys(dir string) ([]PublicKey, error) {
-	if dir == "" {
-		dir = DefaultTrustedKeysDir()
-	}
-
-	var keys []PublicKey
+	keys := []PublicKey{}
 	if QsdevPublicKey != "" {
 		pk, err := ParsePublicKey(QsdevPublicKey)
 		if err != nil {
@@ -73,9 +88,19 @@ func LoadTrustedKeys(dir string) ([]PublicKey, error) {
 		keys = append(keys, pk)
 	}
 
+	explicit := dir != ""
+	if !explicit {
+		defaultDir, err := DefaultTrustedKeysDir()
+		if err != nil {
+			slog.Debug("no user trusted keys loaded", "error", err)
+			return keys, nil
+		}
+		dir = defaultDir
+	}
+
 	entries, err := os.ReadDir(dir)
 	if err != nil {
-		if os.IsNotExist(err) {
+		if !explicit && errors.Is(err, fs.ErrNotExist) {
 			return keys, nil
 		}
 		return nil, fmt.Errorf("reading trusted keys dir %q: %w", dir, err)

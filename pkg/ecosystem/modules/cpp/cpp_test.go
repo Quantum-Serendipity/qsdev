@@ -50,20 +50,74 @@ func TestDetect_CMakeListsPresent(t *testing.T) {
 	}
 }
 
-func TestDetect_MakefileProbable(t *testing.T) {
-	dir := t.TempDir()
-	if err := os.WriteFile(filepath.Join(dir, "Makefile"), []byte("all:\n\techo hello\n"), 0o644); err != nil {
-		t.Fatal(err)
+// TestDetect_Makefile verifies a Makefile only indicates C/C++ when C/C++
+// sources accompany it. A bare Makefile fronts Go/Python/Node/container
+// projects too, and detecting it as C/C++ enabled clang, cppcheck and
+// cmake build/test tasks for those projects.
+func TestDetect_Makefile(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name      string
+		files     map[string]string
+		wantFound bool
+	}{
+		{"Makefile alone (Go service)", map[string]string{"Makefile": "build:\n\tgo build ./...\n", "go.mod": "module x\n"}, false},
+		{"Makefile with root C source", map[string]string{"Makefile": "all:\n\tcc main.c\n", "main.c": "int main(void){return 0;}\n"}, true},
+		{"Makefile with src/ C++ source", map[string]string{"Makefile": "all:\n", "src/app.cpp": "int main(){}\n"}, true},
+		{"Makefile with include/ header", map[string]string{"Makefile": "all:\n", "include/app.h": "#pragma once\n"}, true},
 	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			dir := t.TempDir()
+			for rel, content := range tt.files {
+				full := filepath.Join(dir, filepath.FromSlash(rel))
+				if err := os.MkdirAll(filepath.Dir(full), 0o755); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.WriteFile(full, []byte(content), 0o644); err != nil {
+					t.Fatal(err)
+				}
+			}
 
-	m := &cpp.Module{}
-	result := m.Detect(dir)
-
-	if !result.Detected {
-		t.Fatal("expected Detected=true when Makefile is present")
+			result := (&cpp.Module{}).Detect(dir)
+			if result.Detected != tt.wantFound {
+				t.Fatalf("Detected = %v, want %v (evidence %v)", result.Detected, tt.wantFound, result.Evidence)
+			}
+			if !tt.wantFound {
+				return
+			}
+			if result.Confidence != ecosystem.ConfidenceProbable {
+				t.Errorf("Confidence = %v, want ConfidenceProbable", result.Confidence)
+			}
+			if got := result.SuggestedConfig.Extras["build_system"]; got != "make" {
+				t.Errorf("build_system = %q, want make", got)
+			}
+		})
 	}
-	if result.Confidence != ecosystem.ConfidenceProbable {
-		t.Errorf("Confidence = %v, want ConfidenceProbable", result.Confidence)
+}
+
+// TestVerificationCommands_ConfigureOnFreshCheckout verifies the build
+// commands configure the build directory first, so the generated
+// qsdev-build task works on a clean clone (no "could not load cache").
+func TestVerificationCommands_ConfigureOnFreshCheckout(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		buildSystem string
+		wantBuild   string
+	}{
+		{"cmake", "cmake -B build && cmake --build build"},
+		{"meson", "(test -d build || meson setup build) && meson compile -C build"},
+		{"make", "make"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.buildSystem, func(t *testing.T) {
+			t.Parallel()
+			vc := (&cpp.Module{}).VerificationCommands(ecosystem.ModuleConfig{Extras: map[string]string{"build_system": tt.buildSystem}})
+			if len(vc.Build) != 1 || vc.Build[0] != tt.wantBuild {
+				t.Errorf("Build = %v, want [%s]", vc.Build, tt.wantBuild)
+			}
+		})
 	}
 }
 

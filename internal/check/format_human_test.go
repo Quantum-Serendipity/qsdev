@@ -163,3 +163,74 @@ func TestFormatHuman_SkippedInSummary(t *testing.T) {
 		t.Error("expected '1 skipped' in summary when there are skipped checks")
 	}
 }
+
+// TestFormatters_RenderEveryCategory guards against a failing result being
+// counted in the summary (and exit code) but omitted from the rendered report
+// because its category is missing from the display order.
+func TestFormatters_RenderEveryCategory(t *testing.T) {
+	t.Parallel()
+
+	categories := []CheckCategory{
+		CategoryBinaryCompat,
+		CategoryConfigIntegrity,
+		CategoryRequiredTools,
+		CategoryFileState,
+		CategorySecurityHarden,
+		CategoryDenyConflicts,
+		CheckCategory("future_category"),
+	}
+
+	formatters := []struct {
+		name   string
+		format func(*CheckReport, *bytes.Buffer) error
+	}{
+		{"human", func(r *CheckReport, b *bytes.Buffer) error { return formatHuman(r, b, false) }},
+		{"junit", func(r *CheckReport, b *bytes.Buffer) error { return formatJUnit(r, b) }},
+	}
+
+	for _, f := range formatters {
+		for _, cat := range categories {
+			t.Run(f.name+"/"+string(cat), func(t *testing.T) {
+				t.Parallel()
+				checks := []CheckResult{{
+					Category: cat,
+					Name:     "result_for_" + string(cat),
+					Status:   StatusFail,
+					Severity: SeverityHigh,
+					Message:  "failure in " + string(cat),
+				}}
+				report := BuildReport(checks, "1.0.0", "test")
+
+				var buf bytes.Buffer
+				if err := f.format(report, &buf); err != nil {
+					t.Fatal(err)
+				}
+				if !strings.Contains(buf.String(), "result_for_"+string(cat)) {
+					t.Errorf("%s output omits %s result:\n%s", f.name, cat, buf.String())
+				}
+			})
+		}
+	}
+}
+
+func TestOrderedCategories(t *testing.T) {
+	t.Parallel()
+
+	results := []CheckResult{
+		{Category: "zeta"},
+		{Category: CategoryDenyConflicts},
+		{Category: CategoryBinaryCompat},
+		{Category: "alpha"},
+		{Category: CategoryBinaryCompat},
+	}
+	got := orderedCategories(results)
+	want := []CheckCategory{CategoryBinaryCompat, CategoryDenyConflicts, "zeta", "alpha"}
+	if len(got) != len(want) {
+		t.Fatalf("got %v, want %v", got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("got %v, want %v", got, want)
+		}
+	}
+}

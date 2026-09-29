@@ -11,17 +11,6 @@ func optionalStringSchema(name, desc string) map[string]any {
 	}
 }
 
-// optionalBoolSchema builds an object schema with a single optional boolean
-// property of the given name and description.
-func optionalBoolSchema(name, desc string) map[string]any {
-	return map[string]any{
-		"type": "object",
-		"properties": map[string]any{
-			name: map[string]any{"type": "boolean", "description": desc},
-		},
-	}
-}
-
 // stringArg extracts an optional string argument, defaulting to "" when absent
 // or of the wrong type.
 func stringArg(args map[string]any, name string) string {

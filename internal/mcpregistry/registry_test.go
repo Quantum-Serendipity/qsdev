@@ -17,7 +17,6 @@ func testDef(name string, cat McpCategory) McpServerDefinition {
 		Args:            []string{"--mode", "test"},
 		Transport:       TransportStdio,
 		ProtocolVersion: "2024-11-05",
-		ComplianceGrade: ComplianceStandard,
 		Source:          SourceBuiltin,
 		InstallMethod:   InstallManual,
 	}
@@ -42,11 +41,10 @@ func TestRegistry_RegisterAndGet(t *testing.T) {
 			Tools:     true,
 			ToolCount: 2,
 		},
-		ComplianceGrade: ComplianceStandard,
-		Source:          SourceCatalog,
-		ToolRegName:     "context7",
-		InstallMethod:   InstallNpmGlobal,
-		PackageName:     "@upstash/context7-mcp",
+		Source:        SourceCatalog,
+		ToolRegName:   "context7",
+		InstallMethod: InstallNpmGlobal,
+		PackageName:   "@upstash/context7-mcp",
 	}
 
 	if err := r.Register(def); err != nil {
@@ -68,9 +66,6 @@ func TestRegistry_RegisterAndGet(t *testing.T) {
 	}
 	if got.Transport != TransportStdio {
 		t.Errorf("Transport = %q, want %q", got.Transport, TransportStdio)
-	}
-	if got.ComplianceGrade != ComplianceStandard {
-		t.Errorf("ComplianceGrade = %v, want %v", got.ComplianceGrade, ComplianceStandard)
 	}
 	if got.Source != SourceCatalog {
 		t.Errorf("Source = %q, want %q", got.Source, SourceCatalog)

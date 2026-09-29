@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"sort"
 
+	"github.com/Quantum-Serendipity/qsdev/internal/posture"
 	"github.com/Quantum-Serendipity/qsdev/pkg/branding"
 )
 
@@ -77,15 +78,35 @@ func alertsForProject(p ProjectSummary, opts AggregateOptions, history *HistoryS
 			Message:  "Dependency scan inconclusive: failed or unresolved-severity vulnerabilities (not confirmed clean)",
 			Action:   "Re-run 'qsdev status --scan' and resolve failed or unresolved-severity findings",
 		})
+	} else if !p.Scanned {
+		// HIGH: dependencies never scanned. Zero VulnTotals then mean
+		// "unknown", so the project must not read clean fleet-wide.
+		alerts = append(alerts, PostureAlert{
+			Project:  p.Name,
+			Severity: SeverityHigh,
+			Message:  "Dependencies not scanned for vulnerabilities (vulnerability status unknown)",
+			Action:   "Generate the posture report with 'qsdev status --scan --json'",
+		})
 	}
 
-	// HIGH: baseline conformance FAIL.
-	if !p.Conformance.Baseline.Pass {
+	// HIGH: baseline conformance FAIL. An unknown baseline (dependencies not
+	// scanned) is covered by the not-scanned alert above.
+	if p.Conformance.Baseline.Verdict() == posture.CheckFail {
 		alerts = append(alerts, PostureAlert{
 			Project:  p.Name,
 			Severity: SeverityHigh,
 			Message:  "Baseline conformance check failed",
 			Action:   "Run 'qsdev status' and fix baseline conformance issues",
+		})
+	}
+
+	// MEDIUM: score below the team threshold.
+	if opts.Threshold > 0 && p.Score.Total < opts.Threshold {
+		alerts = append(alerts, PostureAlert{
+			Project:  p.Name,
+			Severity: SeverityMedium,
+			Message:  fmt.Sprintf("Score %.1f is below the team threshold of %.1f", p.Score.Total, opts.Threshold),
+			Action:   "Run 'qsdev status' and address the lowest-scoring posture areas",
 		})
 	}
 
@@ -130,7 +151,7 @@ func alertsForProject(p ProjectSummary, opts AggregateOptions, history *HistoryS
 		alerts = append(alerts, PostureAlert{
 			Project:  p.Name,
 			Severity: SeverityMedium,
-			Message:  fmt.Sprintf("Last scan is stale (%s)", relativeTime(p.LastScan)),
+			Message:  fmt.Sprintf("Last scan is stale (%s)", lastScanText(p)),
 			Action:   "Re-run 'qsdev status --scan' to refresh posture data",
 		})
 	}

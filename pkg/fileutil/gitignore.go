@@ -2,28 +2,37 @@ package fileutil
 
 import (
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
+
+	"github.com/Quantum-Serendipity/qsdev/pkg/branding"
 )
 
-const gitignoreSectionComment = "# qsdev local configuration"
+// GitignoreSectionComment returns the comment line that heads the section of
+// entries EnsureGitignoreEntry adds, named after the active branding.
+func GitignoreSectionComment() string {
+	return "# " + branding.Get().AppName + " local configuration"
+}
 
 // EnsureGitignoreEntry ensures that entry appears in the .gitignore file at
-// projectRoot. It is idempotent: if the entry already exists, it is a no-op.
-// If .gitignore does not exist, it creates one. The section comment is added
-// only once, even across multiple calls. Uses atomic writes for crash safety.
+// projectRoot. It is idempotent: if the entry, or an equivalent spelling that
+// differs only by a leading or trailing slash (such as /.qsdev.local.yaml or
+// .devinit for .devinit/), already exists, it is a no-op. If .gitignore does
+// not exist, it creates one. The section comment is added only once, even
+// across multiple calls. Uses atomic writes confined to projectRoot.
 func EnsureGitignoreEntry(projectRoot, entry string) error {
 	gitignorePath := filepath.Join(projectRoot, ".gitignore")
 
 	content, err := os.ReadFile(gitignorePath)
 	if err != nil && !errors.Is(err, os.ErrNotExist) {
-		return err
+		return fmt.Errorf("reading %s: %w", gitignorePath, err)
 	}
 
-	lines := strings.Split(string(content), "\n")
-	for _, line := range lines {
-		if strings.TrimSpace(line) == entry {
+	want := normalizeGitignorePattern(entry)
+	for line := range strings.SplitSeq(string(content), "\n") {
+		if normalizeGitignorePattern(line) == want {
 			return nil
 		}
 	}
@@ -35,17 +44,29 @@ func EnsureGitignoreEntry(projectRoot, entry string) error {
 		b.WriteByte('\n')
 	}
 
-	existing := string(content)
-	if !strings.Contains(existing, gitignoreSectionComment) {
+	comment := GitignoreSectionComment()
+	if !strings.Contains(string(content), comment) {
 		if len(content) > 0 {
 			b.WriteByte('\n')
 		}
-		b.WriteString(gitignoreSectionComment)
+		b.WriteString(comment)
 		b.WriteByte('\n')
 	}
 
 	b.WriteString(entry)
 	b.WriteByte('\n')
 
-	return WriteFileAtomic(gitignorePath, []byte(b.String()), ModeReadWrite)
+	if err := WriteFileAtomicInRoot(projectRoot, ".gitignore", []byte(b.String()), ModeReadWrite); err != nil {
+		return fmt.Errorf("writing %s: %w", gitignorePath, err)
+	}
+	return nil
+}
+
+// normalizeGitignorePattern reduces a .gitignore line to a comparable form by
+// trimming whitespace and a leading or trailing slash, so root-anchored and
+// directory-only spellings of the same path compare equal.
+func normalizeGitignorePattern(line string) string {
+	p := strings.TrimSpace(line)
+	p = strings.TrimPrefix(p, "/")
+	return strings.TrimSuffix(p, "/")
 }

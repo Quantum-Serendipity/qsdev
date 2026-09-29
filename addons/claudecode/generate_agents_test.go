@@ -253,18 +253,103 @@ func TestAvailableAgentNames(t *testing.T) {
 	}
 
 	expected := map[string]bool{
-		"security-reviewer":    true,
-		"codebase-explorer":    true,
-		"test-gap-analyzer":    true,
-		"onboarding-guide":     true,
-		"migration-planner":    true,
+		"security-reviewer":     true,
+		"codebase-explorer":     true,
+		"test-gap-analyzer":     true,
+		"onboarding-guide":      true,
+		"migration-planner":     true,
 		"handoff-doc-generator": true,
-		"incident-debugger":    true,
+		"incident-debugger":     true,
 	}
 
 	for _, name := range names {
 		if !expected[name] {
 			t.Errorf("unexpected agent name: %q", name)
+		}
+	}
+}
+
+// subagentFrontMatterKeys is Claude Code's subagent front-matter schema. Skill
+// keys such as allowed-tools are silently ignored in a subagent file, which
+// leaves the agent with every tool instead of the intended restriction.
+var subagentFrontMatterKeys = map[string]bool{
+	"name": true, "description": true, "tools": true, "disallowedTools": true,
+	"model": true, "permissionMode": true, "maxTurns": true, "skills": true,
+	"mcpServers": true, "hooks": true, "memory": true, "background": true,
+	"effort": true, "isolation": true, "color": true, "initialPrompt": true,
+}
+
+// TestAgentTemplates_FrontMatterSchema verifies every shipped subagent uses
+// only subagent front-matter keys and restricts its tools explicitly.
+func TestAgentTemplates_FrontMatterSchema(t *testing.T) {
+	t.Parallel()
+	entries, err := claudecode.ExportTemplateFS.ReadDir("templates/agents")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var checked int
+	for _, e := range entries {
+		if e.IsDir() || !strings.HasSuffix(e.Name(), ".md") {
+			continue
+		}
+		content, err := claudecode.ExportTemplateFS.ReadFile("templates/agents/" + e.Name())
+		if err != nil {
+			t.Fatal(err)
+		}
+		rest, ok := strings.CutPrefix(string(content), "---\n")
+		if !ok {
+			t.Errorf("%s: missing front matter", e.Name())
+			continue
+		}
+		fm, _, _ := strings.Cut(rest, "\n---")
+		checked++
+		keys := make(map[string]bool)
+		for _, line := range strings.Split(fm, "\n") {
+			if line == "" || line[0] == ' ' || line[0] == '-' {
+				continue
+			}
+			key, _, found := strings.Cut(line, ":")
+			if !found {
+				continue
+			}
+			keys[key] = true
+			if !subagentFrontMatterKeys[key] {
+				t.Errorf("%s: front-matter key %q is not a subagent field", e.Name(), key)
+			}
+		}
+		if !keys["tools"] {
+			t.Errorf("%s: no tools restriction; the agent would inherit every tool", e.Name())
+		}
+	}
+	if checked == 0 {
+		t.Fatal("no agent templates found")
+	}
+}
+
+// TestAgentManifest_ReadOnlyMatchesTemplates verifies each agent's manifest
+// read_only flag matches its template: a read-only agent must disallow the
+// file-writing tools, and a writable one must not.
+func TestAgentManifest_ReadOnlyMatchesTemplates(t *testing.T) {
+	t.Parallel()
+	manifest, err := claudecode.ExportLoadAgentManifest()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, a := range manifest.Agents {
+		content, err := claudecode.ExportTemplateFS.ReadFile("templates/agents/" + a.Name + ".md")
+		if err != nil {
+			t.Fatalf("reading agent %q: %v", a.Name, err)
+		}
+		var disallowed string
+		for _, line := range strings.Split(string(content), "\n") {
+			if v, ok := strings.CutPrefix(line, "disallowedTools:"); ok {
+				disallowed = v
+				break
+			}
+		}
+		blocksWrites := strings.Contains(disallowed, "Write") && strings.Contains(disallowed, "Edit")
+		if a.ReadOnly != blocksWrites {
+			t.Errorf("agent %q: manifest read_only=%v but template disallowedTools=%q", a.Name, a.ReadOnly, strings.TrimSpace(disallowed))
 		}
 	}
 }

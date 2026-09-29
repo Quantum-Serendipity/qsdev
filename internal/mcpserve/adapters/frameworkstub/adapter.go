@@ -15,7 +15,7 @@
 //
 // The shared Adapter is stateless beyond its immutable Descriptor. Each framework
 // package's New() singleton is registered into the adapter registry explicitly
-// from cmd/qsdev/main.go, never from the mcpserve server root, so no import cycle
+// from instance/runtime.go, never from the mcpserve server root, so no import cycle
 // is possible. Every handler reads the
 // resolved project root from its *spi.ToolCallContext at call time; the adapter
 // captures no root.
@@ -188,7 +188,7 @@ func (a *Adapter) handleInfo(ctx context.Context, cc *spi.ToolCallContext, _ *sp
 	if cc.ProjectRoot == "" {
 		return toolutil.NotConfigured("no project root resolved for "+a.desc.Label+" info", nil), nil
 	}
-	det := detect.Detect(cc.ProjectRoot)
+	det := detect.Detect(ctx, cc.ProjectRoot)
 	langs := toolutil.DetectedLanguages(det)
 	structured := map[string]any{
 		"framework":         string(a.desc.ID),

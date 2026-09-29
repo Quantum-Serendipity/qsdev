@@ -1,13 +1,15 @@
 package logcmd
 
 import (
-	"bufio"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -18,11 +20,14 @@ import (
 	"github.com/Quantum-Serendipity/qsdev/pkg/branding"
 )
 
+// CommandName is the name of the "logs" command.
+const CommandName = "logs"
+
 // Command returns the "logs" cobra command tree.
 func Command() *cobra.Command {
 	app := branding.Get().AppName
 	cmd := &cobra.Command{
-		Use:   "logs",
+		Use:   CommandName,
 		Short: "Browse and manage " + app + " log files",
 		Long: fmt.Sprintf(`Browse and manage structured log files from %s operations.
 
@@ -47,8 +52,10 @@ Outside a project, global logs are shown.`, app, app, app, app),
 
 	var since string
 	var jsonOut bool
+	var listAll bool
 	list.Flags().StringVar(&since, "since", "", "Show sessions since duration (e.g. 1h, 24h)")
 	list.Flags().BoolVar(&jsonOut, "json", false, "Output as JSON")
+	list.Flags().BoolVar(&listAll, "all", false, fmt.Sprintf("Show all sessions instead of the latest %d", listDefaultLimit))
 
 	show := &cobra.Command{
 		Use:   "show <session-id>",
@@ -90,6 +97,14 @@ Outside a project, global logs are shown.`, app, app, app, app),
 	cmd.AddCommand(list, show, path, clean)
 	return cmd
 }
+
+// listDefaultLimit caps how many sessions `logs list` prints when neither
+// --since nor --all is given.
+const listDefaultLimit = 20
+
+// showOmittedKeys are record keys rendered by `logs show` in its fixed prefix
+// (or repeated on every record), so they are not repeated as attributes.
+var showOmittedKeys = map[string]bool{"time": true, "level": true, "msg": true, "session": true}
 
 type sessionInfo struct {
 	ID       string    `json:"id"`
@@ -140,7 +155,7 @@ func discoverSessions(dir string) ([]sessionInfo, error) {
 		if lines, last, err := readHeadAndTail(path, 3); err == nil {
 			for _, line := range lines {
 				if si.ID == "" {
-					si.ID = jsonField(line, "session")
+					si.ID = recordSessionID(line)
 				}
 				if si.Command == "" {
 					si.Command = jsonField(line, "command")
@@ -181,46 +196,46 @@ func runList(cmd *cobra.Command) error {
 		return fmt.Errorf("reading log directory: %w", err)
 	}
 
-	if len(sessions) == 0 {
-		fmt.Fprintf(cmd.OutOrStdout(), "No log sessions found in %s\n", dir)
-		return nil
+	sinceStr, _ := cmd.Flags().GetString("since")
+	sessions, err = filterSessionsSince(sessions, sinceStr, time.Now())
+	if err != nil {
+		return err
+	}
+
+	// Defense-in-depth: re-scrub the command field before ANY output format in
+	// case a log captured a secret in its argv (F-CAP-29.5-1).
+	red := logging.NewRedactor()
+	for i := range sessions {
+		sessions[i].Command = red.RedactString(sessions[i].Command)
 	}
 
 	jsonOut, _ := cmd.Flags().GetBool("json")
 	if jsonOut {
+		if sessions == nil {
+			sessions = []sessionInfo{}
+		}
 		enc := json.NewEncoder(cmd.OutOrStdout())
 		enc.SetIndent("", "  ")
 		return enc.Encode(sessions)
 	}
 
-	sinceStr, _ := cmd.Flags().GetString("since")
-	var cutoff time.Time
-	if sinceStr != "" {
-		d, err := parseDuration(sinceStr)
-		if err != nil {
-			return fmt.Errorf("invalid --since value: %w", err)
-		}
-		cutoff = time.Now().Add(-d)
+	if len(sessions) == 0 {
+		fmt.Fprintf(cmd.OutOrStdout(), "No log sessions found in %s\n", dir)
+		return nil
 	}
 
-	fmt.Fprintf(cmd.OutOrStdout(), "LOGS (%s)\n", dir)
-	fmt.Fprintf(cmd.OutOrStdout(), "%-10s %-20s %-22s %10s %8s\n",
+	listAll, _ := cmd.Flags().GetBool("all")
+	limit := len(sessions)
+	if sinceStr == "" && !listAll {
+		limit = min(limit, listDefaultLimit)
+	}
+
+	w := cmd.OutOrStdout()
+	fmt.Fprintf(w, "LOGS (%s)\n", dir)
+	fmt.Fprintf(w, "%-10s %-20s %-22s %10s %8s\n",
 		"SESSION", "COMMAND", "STARTED", "DURATION", "SIZE")
 
-	// Defense-in-depth: re-scrub the command field before display in case a log
-	// captured a secret in its argv (F-CAP-29.5-1).
-	red := logging.NewRedactor()
-
-	count := 0
-	for _, s := range sessions {
-		if !cutoff.IsZero() && s.Started.Before(cutoff) {
-			continue
-		}
-		if count >= 20 && sinceStr == "" {
-			fmt.Fprintf(cmd.OutOrStdout(), "... %d more (use --since or logs list --all)\n", len(sessions)-count)
-			break
-		}
-
+	for _, s := range sessions[:limit] {
 		duration := "-"
 		if s.Duration > 0 {
 			duration = formatDuration(s.Duration)
@@ -231,12 +246,34 @@ func runList(cmd *cobra.Command) error {
 			started = s.Started.Format("2006-01-02 15:04:05")
 		}
 
-		fmt.Fprintf(cmd.OutOrStdout(), "%-10s %-20s %-22s %10s %8s\n",
-			s.ID, truncate(red.RedactString(s.Command), 20), started, duration, formatBytes(s.Size))
-		count++
+		fmt.Fprintf(w, "%-10s %-20s %-22s %10s %8s\n",
+			s.ID, truncate(s.Command, 20), started, duration, formatBytes(s.Size))
+	}
+	if more := len(sessions) - limit; more > 0 {
+		fmt.Fprintf(w, "... %d more (use --since or --all)\n", more)
 	}
 
 	return nil
+}
+
+// filterSessionsSince keeps only sessions started within the --since window.
+// An empty since keeps every session.
+func filterSessionsSince(sessions []sessionInfo, since string, now time.Time) ([]sessionInfo, error) {
+	if since == "" {
+		return sessions, nil
+	}
+	d, err := parseDuration(since)
+	if err != nil {
+		return nil, fmt.Errorf("invalid --since value: %w", err)
+	}
+	cutoff := now.Add(-d)
+	kept := make([]sessionInfo, 0, len(sessions))
+	for _, s := range sessions {
+		if !s.Started.Before(cutoff) {
+			kept = append(kept, s)
+		}
+	}
+	return kept, nil
 }
 
 func runShow(cmd *cobra.Command, sessionID string) error {
@@ -254,7 +291,7 @@ func runShow(cmd *cobra.Command, sessionID string) error {
 
 	f, err := os.Open(file)
 	if err != nil {
-		return err
+		return fmt.Errorf("opening session log: %w", err)
 	}
 	defer f.Close()
 
@@ -266,7 +303,7 @@ func runShow(cmd *cobra.Command, sessionID string) error {
 	// secrets, so never emit an unredacted line to the terminal (F-CAP-29.5-1).
 	red := logging.NewRedactor()
 
-	scanner := bufio.NewScanner(f)
+	scanner := logging.NewLineScanner(f)
 	w := cmd.OutOrStdout()
 	for scanner.Scan() {
 		line := scanner.Text()
@@ -283,21 +320,65 @@ func runShow(cmd *cobra.Command, sessionID string) error {
 			continue
 		}
 
-		ts := jsonField(line, "time")
-		lvl := jsonField(line, "level")
-		msg := jsonField(line, "msg")
-
-		if ts != "" {
-			if t, err := time.Parse(time.RFC3339Nano, ts); err == nil {
-				ts = t.Format("15:04:05.000")
-			}
-		}
-
-		prefix := levelPrefix(lvl)
-		fmt.Fprintf(w, "%s %s %s\n", ts, prefix, red.RedactString(msg))
+		fmt.Fprintln(w, formatShowLine(line, red))
 	}
 
 	return scanner.Err()
+}
+
+// formatShowLine renders one JSONL record as "time LVL msg key=value ...".
+// Every attribute beyond time/level/msg is kept (error details are usually in
+// one) and redacted structurally before display. Lines that are not JSON
+// objects are shown redacted as-is.
+func formatShowLine(line string, red *logging.Redactor) string {
+	var rec map[string]any
+	if err := json.Unmarshal([]byte(line), &rec); err != nil {
+		return red.RedactString(line)
+	}
+
+	ts, _ := rec["time"].(string)
+	if t, err := time.Parse(time.RFC3339Nano, ts); err == nil {
+		ts = t.Format("15:04:05.000")
+	}
+	lvl, _ := rec["level"].(string)
+	msg, _ := rec["msg"].(string)
+
+	attrs := make(map[string]any, len(rec))
+	for k, v := range rec {
+		if !showOmittedKeys[k] {
+			attrs[k] = v
+		}
+	}
+	redacted, _ := red.RedactStructured(attrs).(map[string]any)
+	keys := make([]string, 0, len(redacted))
+	for k := range redacted {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+
+	var b strings.Builder
+	fmt.Fprintf(&b, "%s %s %s", ts, levelPrefix(lvl), red.RedactString(msg))
+	for _, k := range keys {
+		fmt.Fprintf(&b, " %s=%s", k, formatAttrValue(redacted[k]))
+	}
+	return b.String()
+}
+
+// formatAttrValue renders a decoded JSON attribute value for `logs show`:
+// strings are quoted only when they contain whitespace or quotes, other values
+// are compact JSON.
+func formatAttrValue(v any) string {
+	if s, ok := v.(string); ok {
+		if s == "" || strings.ContainsAny(s, " \t\n\"") {
+			return strconv.Quote(s)
+		}
+		return s
+	}
+	data, err := json.Marshal(v)
+	if err != nil {
+		return fmt.Sprint(v)
+	}
+	return string(data)
 }
 
 func runPath(cmd *cobra.Command) error {
@@ -322,19 +403,9 @@ func runClean(cmd *cobra.Command) error {
 	}
 
 	if all {
-		entries, err := os.ReadDir(dir)
-		if err != nil {
-			return nil
-		}
-		count := 0
-		for _, e := range entries {
-			if !e.IsDir() && strings.HasSuffix(e.Name(), ".jsonl") {
-				os.Remove(filepath.Join(dir, e.Name()))
-				count++
-			}
-		}
+		count, err := removeLogFiles(dir)
 		fmt.Fprintf(cmd.OutOrStdout(), "Deleted %d log file(s)\n", count)
-		return nil
+		return err
 	}
 
 	d, err := parseDuration(olderThan)
@@ -342,20 +413,120 @@ func runClean(cmd *cobra.Command) error {
 		return fmt.Errorf("invalid --older-than value: %w", err)
 	}
 
-	return logging.CleanOldLogs(dir, d)
+	before, err := countLogFiles(dir)
+	if err != nil {
+		return err
+	}
+	if err := logging.CleanOldLogs(dir, d); err != nil {
+		return fmt.Errorf("cleaning logs older than %s: %w", olderThan, err)
+	}
+	after, err := countLogFiles(dir)
+	if err != nil {
+		return err
+	}
+	fmt.Fprintf(cmd.OutOrStdout(), "Deleted %d log file(s) older than %s\n", before-after, olderThan)
+	return nil
 }
 
-func findSessionFile(dir, sessionID string) (string, error) {
+// logFileNames lists the .jsonl session logs in dir. A missing directory has
+// no logs; any other read failure is returned. A path that is not a directory
+// is checked explicitly: on Windows os.ReadDir of a regular file does not
+// reliably fail, which would report a misconfigured log dir as empty.
+func logFileNames(dir string) ([]string, error) {
+	info, err := os.Stat(dir)
+	if err != nil {
+		if errors.Is(err, fs.ErrNotExist) {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("reading log directory %s: %w", dir, err)
+	}
+	if !info.IsDir() {
+		return nil, fmt.Errorf("reading log directory %s: not a directory", dir)
+	}
 	entries, err := os.ReadDir(dir)
 	if err != nil {
-		return "", err
+		if errors.Is(err, fs.ErrNotExist) {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("reading log directory %s: %w", dir, err)
 	}
+	var names []string
 	for _, e := range entries {
-		if strings.Contains(e.Name(), sessionID) && strings.HasSuffix(e.Name(), ".jsonl") {
+		if !e.IsDir() && strings.HasSuffix(e.Name(), ".jsonl") {
+			names = append(names, e.Name())
+		}
+	}
+	return names, nil
+}
+
+func countLogFiles(dir string) (int, error) {
+	names, err := logFileNames(dir)
+	return len(names), err
+}
+
+// removeLogFiles deletes every session log in dir and returns how many were
+// actually removed, together with any removal failures.
+func removeLogFiles(dir string) (int, error) {
+	names, err := logFileNames(dir)
+	if err != nil {
+		return 0, err
+	}
+	count := 0
+	var errs []error
+	for _, name := range names {
+		if err := os.Remove(filepath.Join(dir, name)); err != nil {
+			errs = append(errs, fmt.Errorf("removing %s: %w", name, err))
+			continue
+		}
+		count++
+	}
+	return count, errors.Join(errs...)
+}
+
+// findSessionFile returns the log file whose name ends in "-<sessionID>.jsonl".
+// The ID must match the filename's final segment exactly, so a short or empty
+// ID never selects an arbitrary file.
+func findSessionFile(dir, sessionID string) (string, error) {
+	if sessionID == "" || strings.ContainsAny(sessionID, `/\`) {
+		return "", fmt.Errorf("invalid session ID %q", sessionID)
+	}
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return "", fmt.Errorf("reading log directory %s: %w", dir, err)
+	}
+	suffix := "-" + sessionID + ".jsonl"
+	for _, e := range entries {
+		if !e.IsDir() && strings.HasSuffix(e.Name(), suffix) {
 			return filepath.Join(dir, e.Name()), nil
 		}
 	}
-	return "", fmt.Errorf("not found")
+	return "", fmt.Errorf("session %q not found in %s", sessionID, dir)
+}
+
+// sessionHeaderLines is how many leading records are searched for the
+// session's command (it is logged by the "command starting" record, right
+// after the "session started" record).
+const sessionHeaderLines = 3
+
+// SessionCommand returns the command path recorded in a session log's opening
+// records (e.g. "qsdev enable semgrep"), or "" when none is recorded.
+func SessionCommand(path string) (string, error) {
+	f, err := os.Open(path)
+	if err != nil {
+		return "", fmt.Errorf("opening session log: %w", err)
+	}
+	defer f.Close()
+
+	scanner := logging.NewLineScanner(f)
+	for i := 0; i < sessionHeaderLines && scanner.Scan(); i++ {
+		if cmd := jsonField(scanner.Text(), "command"); cmd != "" {
+			return cmd, nil
+		}
+	}
+	if err := scanner.Err(); err != nil {
+		return "", fmt.Errorf("reading session log %s: %w", path, err)
+	}
+	return "", nil
 }
 
 func readHeadAndTail(path string, headCount int) (head []string, last string, err error) {
@@ -365,7 +536,7 @@ func readHeadAndTail(path string, headCount int) (head []string, last string, er
 	}
 	defer f.Close()
 
-	scanner := bufio.NewScanner(f)
+	scanner := logging.NewLineScanner(f)
 	for scanner.Scan() {
 		line := scanner.Text()
 		if len(head) < headCount {
@@ -374,6 +545,21 @@ func readHeadAndTail(path string, headCount int) (head []string, last string, er
 		last = line
 	}
 	return head, last, scanner.Err()
+}
+
+// recordSessionID returns the session ID a log record is tagged with. Logs
+// written before the ID moved to logging.SessionAttrKey carry it under the
+// legacy "session" key, which the redacting handler replaced with the
+// redaction marker; such a value is ignored so the caller falls back to the
+// ID in the file name.
+func recordSessionID(line string) string {
+	if id := jsonField(line, logging.SessionAttrKey); id != "" {
+		return id
+	}
+	if id := jsonField(line, "session"); id != logging.RedactionMarker {
+		return id
+	}
+	return ""
 }
 
 func jsonField(line, key string) string {
@@ -444,29 +630,59 @@ func parseDuration(s string) (time.Duration, error) {
 	return time.ParseDuration(s)
 }
 
-// WriteTo writes log entries from the given reader, applying optional level filter,
-// to the writer. Used by the bug report system to extract log excerpts.
+// ExcerptLimits bounds a log excerpt. Zero values mean "no limit".
+type ExcerptLimits struct {
+	// LevelFilter keeps only records with this level (case-insensitive).
+	LevelFilter string
+	// MaxLines caps the number of lines written.
+	MaxLines int
+	// MaxBytes caps the number of bytes written, including newlines.
+	MaxBytes int
+}
+
+// ExcerptResult reports what WriteExcerpt wrote.
+type ExcerptResult struct {
+	Lines int
+	Bytes int
+	// Truncated is true when a qualifying line was left out because a limit
+	// was reached.
+	Truncated bool
+}
+
+// WriteExcerpt copies log records from r to w, re-scrubbing every line and
+// stopping once a line or byte limit would be exceeded. It is the extractor
+// behind the bug report's log excerpt.
 //
 // Entries are re-scrubbed at extraction time as defense-in-depth: a bug report
 // is a shareable artifact, so no excerpt should carry a secret even if write-time
 // redaction missed it or the file was edited by hand (F-CAP-29.5-1).
-func WriteTo(w io.Writer, r io.Reader, levelFilter string, maxLines int) (int, error) {
+func WriteExcerpt(w io.Writer, r io.Reader, lim ExcerptLimits) (ExcerptResult, error) {
+	var res ExcerptResult
 	red := logging.NewRedactor()
-	scanner := bufio.NewScanner(r)
-	count := 0
+	scanner := logging.NewLineScanner(r)
 	for scanner.Scan() {
-		if maxLines > 0 && count >= maxLines {
-			break
-		}
 		line := scanner.Text()
-		if levelFilter != "" {
+		if lim.LevelFilter != "" {
 			lvl := jsonField(line, "level")
-			if !strings.EqualFold(lvl, levelFilter) {
+			if !strings.EqualFold(lvl, lim.LevelFilter) {
 				continue
 			}
 		}
-		fmt.Fprintln(w, red.RedactString(line))
-		count++
+		out := red.RedactString(line) + "\n"
+		if (lim.MaxLines > 0 && res.Lines >= lim.MaxLines) ||
+			(lim.MaxBytes > 0 && res.Bytes+len(out) > lim.MaxBytes) {
+			res.Truncated = true
+			break
+		}
+		n, err := io.WriteString(w, out)
+		res.Bytes += n
+		if err != nil {
+			return res, fmt.Errorf("writing log excerpt: %w", err)
+		}
+		res.Lines++
 	}
-	return count, scanner.Err()
+	if err := scanner.Err(); err != nil {
+		return res, fmt.Errorf("reading log: %w", err)
+	}
+	return res, nil
 }

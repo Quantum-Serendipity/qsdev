@@ -12,8 +12,9 @@ import (
 	"github.com/Quantum-Serendipity/qsdev/pkg/types"
 )
 
-// Compile-time interface compliance check.
+// Compile-time interface compliance checks.
 var _ ecosystem.EcosystemModule = (*Module)(nil)
+var _ ecosystem.DenyRuleProvider = (*Module)(nil)
 
 func init() {
 	ecosystem.MustRegisterModule(&Module{})
@@ -72,12 +73,21 @@ func (m *Module) Detect(projectRoot string) ecosystem.DetectionResult {
 		evidence = append(evidence, "shell.nix found")
 	}
 
-	return ecosystem.DetectionResult{
+	result := ecosystem.DetectionResult{
 		Detected:   true,
 		Confidence: confidence,
 		Evidence:   evidence,
 	}
+	if hasFlakeNix {
+		result.SuggestedConfig.Extras = map[string]string{ExtraFlake: "true"}
+	}
+	return result
 }
+
+// ExtraFlake is the ModuleConfig.Extras key detection sets to "true" when the
+// project root has a flake.nix. The flake CI commands need a flake, so a
+// default.nix or shell.nix project without one gets none.
+const ExtraFlake = "flake"
 
 // DevenvNixFragment returns the Nix code fragment to include in devenv.nix
 // for Nix language support.
@@ -109,10 +119,14 @@ func (m *Module) PreCommitHooks(_ ecosystem.ModuleConfig) []ecosystem.HookConfig
 			NixPackage: "statix",
 		},
 		{
-			ID:            "deadnix",
-			Name:          "deadnix",
-			Description:   "Find dead code in Nix files with deadnix",
-			Entry:         "deadnix --fail",
+			ID:          "deadnix",
+			Name:        "deadnix",
+			Description: "Find dead code in Nix files with deadnix",
+			// --no-lambda-pattern-names: module headers such as devenv.nix's
+			// `{ pkgs, lib, config, ... }:` (and NixOS/callPackage files)
+			// routinely name arguments they do not use; flagging those would
+			// reject qsdev's own generated devenv.nix on every commit.
+			Entry:         "deadnix --fail --no-lambda-pattern-names",
 			Language:      "system",
 			Types:         []string{"nix"},
 			Stages:        []string{"pre-commit"},
@@ -139,12 +153,26 @@ func (m *Module) PreCommitHooks(_ ecosystem.ModuleConfig) []ecosystem.HookConfig
 // Prevents imperative package installations that bypass the declarative model.
 func (m *Module) DenyRules(_ ecosystem.ModuleConfig) []string {
 	return []string{
-		"Bash(nix-env -i *)",
+		// Matches every install spelling: -i, -iA, --install, and flags placed
+		// before the operation.
+		"Bash(nix-env *-i*)",
+		// `nix profile add` is the current name (Nix 2.34+); `install` remains
+		// an alias.
+		"Bash(nix profile add *)",
+		"Bash(nix profile install *)",
+		// Global options may precede the subcommand.
+		"Bash(nix * profile add *)",
+		"Bash(nix * profile install *)",
 	}
 }
 
-// CICommands returns CI pipeline commands for the Nix ecosystem.
-func (m *Module) CICommands(_ ecosystem.ModuleConfig) []ecosystem.CICommand {
+// CICommands returns CI pipeline commands for the Nix ecosystem: the flake
+// checks, for a flake project (ExtraFlake). A default.nix or shell.nix
+// project has no flake to check and no lock file, so it gets none.
+func (m *Module) CICommands(config ecosystem.ModuleConfig) []ecosystem.CICommand {
+	if config.Extra(ExtraFlake, "") != "true" {
+		return nil
+	}
 	return []ecosystem.CICommand{
 		{
 			Name:        "nix-flake-check",
@@ -153,10 +181,13 @@ func (m *Module) CICommands(_ ecosystem.ModuleConfig) []ecosystem.CICommand {
 			Phase:       ecosystem.CIPhaseTest,
 		},
 		{
-			Name:        "nix-flake-lock-drift",
-			Command:     "nix flake lock --update-input nixpkgs && git diff --exit-code flake.lock",
-			Description: "Detect nixpkgs input drift in flake.lock",
-			Phase:       ecosystem.CIPhaseScan,
+			// --no-update-lock-file fails when flake.lock lacks an input
+			// flake.nix declares, instead of silently adding it. Updating
+			// inputs here would fail on every upstream nixpkgs commit.
+			Name:        "nix-flake-lock-check",
+			Command:     "nix flake metadata --no-update-lock-file",
+			Description: "Fail when flake.lock does not lock every input flake.nix declares",
+			Phase:       ecosystem.CIPhaseInstall,
 		},
 	}
 }
@@ -165,10 +196,9 @@ func (m *Module) CICommands(_ ecosystem.ModuleConfig) []ecosystem.CICommand {
 func (m *Module) PackageManagers() []ecosystem.PackageManagerInfo {
 	return []ecosystem.PackageManagerInfo{
 		{
-			Name:             "nix-flake",
-			LockFile:         "flake.lock",
-			InstallCommand:   "nix develop",
-			AgeGatingSupport: false,
+			Name:           "nix-flake",
+			LockFile:       "flake.lock",
+			InstallCommand: "nix develop",
 		},
 	}
 }
@@ -177,4 +207,20 @@ func (m *Module) PackageManagers() []ecosystem.PackageManagerInfo {
 // verification commands at the module level.
 func (m *Module) VerificationCommands(_ ecosystem.ModuleConfig) ecosystem.VerificationCommands {
 	return ecosystem.VerificationCommands{}
+}
+
+// Compile-time check that the Nix module declares its flake manifest.
+var _ ecosystem.ManifestFileProvider = (*Module)(nil)
+
+// ManifestFiles declares flake.nix and its flake.lock so Version-Sentinel
+// coverage reports list Nix inputs as uncovered instead of omitting them. A
+// flake's inputs are only pinned by the committed flake.lock.
+func (m *Module) ManifestFiles(_ ecosystem.ModuleConfig) []ecosystem.ManifestFileInfo {
+	return []ecosystem.ManifestFileInfo{{
+		Path:           "flake.nix",
+		Ecosystem:      "nix",
+		VSSupported:    false,
+		LockFile:       "flake.lock",
+		LockFilePolicy: ecosystem.LockFilePolicyRequired,
+	}}
 }

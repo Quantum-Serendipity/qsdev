@@ -22,6 +22,12 @@ import (
 //go:embed core
 var coreFS embed.FS
 
+// ProjectCoreDir is the project-relative directory into which CoreRuleFiles
+// are delivered when the opengrep tool is enabled. The security-scan task
+// passes it to `opengrep scan --config`, so the generator and the task must
+// agree on it.
+const ProjectCoreDir = ".opengrep/rules/core"
+
 // RuleFile is a single deliverable OpenGrep rule file: its path relative to the
 // core/ directory (POSIX-slash separated) together with its raw YAML content.
 type RuleFile struct {

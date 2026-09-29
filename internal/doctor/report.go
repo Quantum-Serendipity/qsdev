@@ -9,6 +9,7 @@ import (
 
 	"github.com/mattn/go-isatty"
 
+	"github.com/Quantum-Serendipity/qsdev/internal/mcphealth"
 	"github.com/Quantum-Serendipity/qsdev/internal/pkgmanager"
 	"github.com/Quantum-Serendipity/qsdev/internal/sysinfo"
 	"github.com/Quantum-Serendipity/qsdev/pkg/branding"
@@ -16,19 +17,21 @@ import (
 
 // Report is the top-level output of qsdev doctor.
 type Report struct {
-	QsdevVersion       string            `json:"qsdev_version"`
-	Timestamp          string            `json:"timestamp"`
-	System             SystemInfo        `json:"system"`
-	Shell              ShellInfo         `json:"shell"`
-	PackageMgrs        []PkgMgrInfo      `json:"package_managers"`
-	ContainerRuntime   *ContainerSection `json:"container_runtime,omitempty"`
-	SandboxRuntime     *SandboxSection   `json:"sandbox_runtime,omitempty"`
-	MCPServers         *MCPSection       `json:"mcp_servers,omitempty"`
-	CloudProviders     *CloudSection     `json:"cloud_providers,omitempty"`
-	RequiredTools      []ToolEntry       `json:"required_tools"`
-	OptionalTools      []ToolEntry       `json:"optional_tools"`
-	Recommendations    []string          `json:"recommendations,omitempty"`
-	AllRequiredPresent bool              `json:"all_required_present"`
+	QsdevVersion       string              `json:"qsdev_version"`
+	Timestamp          string              `json:"timestamp"`
+	System             SystemInfo          `json:"system"`
+	Shell              ShellInfo           `json:"shell"`
+	PackageMgrs        []PkgMgrInfo        `json:"package_managers"`
+	ContainerRuntime   *ContainerSection   `json:"container_runtime,omitempty"`
+	SandboxRuntime     *SandboxSection     `json:"sandbox_runtime,omitempty"`
+	MCPServers         *MCPSection         `json:"mcp_servers,omitempty"`
+	CloudProviders     *CloudSection       `json:"cloud_providers,omitempty"`
+	ModuleChecks       *ModuleCheckSection `json:"module_checks,omitempty"`
+	ProjectToolchains  []string            `json:"project_toolchains,omitempty"` // see ecosystem.ToolchainChecker
+	RequiredTools      []ToolEntry         `json:"required_tools"`
+	OptionalTools      []ToolEntry         `json:"optional_tools"`
+	Recommendations    []string            `json:"recommendations,omitempty"`
+	AllRequiredPresent bool                `json:"all_required_present"`
 }
 
 // SetContainerSection attaches a container runtime check result to the report.
@@ -41,19 +44,30 @@ func (r *Report) SetSandboxSection(ss *SandboxSection) {
 	r.SandboxRuntime = ss
 }
 
-// MCPSection holds MCP server health check results for the doctor report.
+// MCPSection holds the static validation of the MCP servers the project's
+// .mcp.json configures (see NewMCPSection). No server is started, so it
+// reports configuration problems, not whether a server answers.
 type MCPSection struct {
 	Detected bool            `json:"detected"`
 	Servers  []MCPServerInfo `json:"servers"`
 	Warnings []string        `json:"warnings,omitempty"`
 }
 
-// MCPServerInfo summarises a single MCP server's health status.
+// MCPServerInfo summarises one configured MCP server. Status is "ok",
+// "degraded" (only warnings, such as an unset environment variable) or
+// "misconfigured" (an error, such as a command that is not on PATH).
 type MCPServerInfo struct {
-	Name   string `json:"name"`
-	Status string `json:"status"`
-	Tools  int    `json:"tools"`
-	Detail string `json:"detail,omitempty"`
+	Name      string     `json:"name"`
+	Transport string     `json:"transport"`
+	Status    string     `json:"status"`
+	Issues    []MCPIssue `json:"issues,omitempty"`
+}
+
+// MCPIssue is one configuration problem found in an MCP server entry.
+type MCPIssue struct {
+	Severity    string `json:"severity"`
+	Message     string `json:"message"`
+	Remediation string `json:"remediation,omitempty"`
 }
 
 // SetMCPSection attaches MCP server health check results to the report.
@@ -61,24 +75,42 @@ func (r *Report) SetMCPSection(ms *MCPSection) {
 	r.MCPServers = ms
 }
 
-// CloudSection holds cloud provider CLI check results for the doctor report.
+// CloudSection holds the cloud credential isolation results for the doctor
+// report: one entry per cloud provider the project configures.
 type CloudSection struct {
 	Detected  bool                `json:"detected"`
 	Providers []CloudProviderInfo `json:"providers"`
 	Warnings  []string            `json:"warnings,omitempty"`
 }
 
-// CloudProviderInfo summarises a single cloud provider CLI's status.
+// CloudProviderInfo summarises one cloud provider's credential isolation.
+// Status is "isolated", "degraded" (only the advisory environment layer is
+// missing) or "misconfigured" (a generated layer is missing).
 type CloudProviderInfo struct {
-	Name        string `json:"name"`
-	DisplayName string `json:"display_name"`
-	Status      string `json:"status"`
-	Detail      string `json:"detail,omitempty"`
+	Name        string           `json:"name"`
+	DisplayName string           `json:"display_name"`
+	Status      string           `json:"status"`
+	Detail      string           `json:"detail,omitempty"`
+	Layers      []CloudLayerInfo `json:"layers,omitempty"`
 }
 
-// SetCloudSection attaches cloud provider CLI check results to the report.
+// CloudLayerInfo is the state of one credential isolation layer.
+type CloudLayerInfo struct {
+	Name     string `json:"name"`
+	Active   bool   `json:"active"`
+	Enforced bool   `json:"enforced"`
+	Detail   string `json:"detail,omitempty"`
+}
+
+// SetCloudSection attaches cloud credential isolation results to the report.
 func (r *Report) SetCloudSection(cs *CloudSection) {
 	r.CloudProviders = cs
+}
+
+// SetProjectToolchains attaches the project's toolchain mismatch warnings
+// to the report.
+func (r *Report) SetProjectToolchains(warnings []string) {
+	r.ProjectToolchains = warnings
 }
 
 // SystemInfo captures OS-level details for the report.
@@ -155,7 +187,9 @@ func BuildReport(osInfo *sysinfo.OSInfo, checks []ToolStatus, qsdevVersion strin
 		})
 	}
 
-	mgr := osInfo.PackageManager
+	// Recommend the manager setup actually installs with (Nix when present),
+	// not osInfo.PackageManager, so the advice matches `devenv setup`.
+	pm := pkgmanager.DetectPackageManager(osInfo)
 	family := osInfo.Family
 
 	for _, ts := range checks {
@@ -167,10 +201,8 @@ func BuildReport(osInfo *sysinfo.OSInfo, checks []ToolStatus, qsdevVersion strin
 			Path:      ts.Path,
 		}
 
-		if !ts.Installed {
-			entry.FixCommand = pkgmanager.InstallCommand(ts.Name, family, mgr)
-		} else if ts.MinVersion != "" && !ts.VersionOK {
-			entry.FixCommand = pkgmanager.InstallCommand(ts.Name, family, mgr)
+		if !ts.Installed || (ts.MinVersion != "" && !ts.VersionOK) {
+			entry.FixCommand = fixCommand(pm, family, ts)
 		}
 
 		if ts.Required {
@@ -183,18 +215,41 @@ func BuildReport(osInfo *sysinfo.OSInfo, checks []ToolStatus, qsdevVersion strin
 		}
 	}
 
-	// Build recommendations
+	// Build recommendations. fixCommand never returns "": a tool with no known
+	// package gets explicit guidance rather than an empty "Install X: ".
 	for _, ts := range checks {
-		if !ts.Installed {
-			cmd := pkgmanager.InstallCommand(ts.Name, family, mgr)
+		cmd := fixCommand(pm, family, ts)
+		switch {
+		case !ts.Installed:
 			r.Recommendations = append(r.Recommendations, fmt.Sprintf("Install %s: %s", ts.Name, cmd))
-		} else if ts.MinVersion != "" && !ts.VersionOK {
-			cmd := pkgmanager.InstallCommand(ts.Name, family, mgr)
+		case ts.MinVersion != "" && !ts.VersionOK:
 			r.Recommendations = append(r.Recommendations, fmt.Sprintf("Upgrade %s to >= %s: %s", ts.Name, ts.MinVersion, cmd))
 		}
 	}
 
 	return r
+}
+
+// fixCommand returns the remediation for a missing or outdated tool. On a Nix
+// host it never suggests an imperative profile install, which the generated
+// security rules and deny list forbid: required prerequisites point at
+// `devenv setup`, and other tools at `devenv add-package <attr>`, which pins
+// them in the project's devenv.nix. A tool with no known package for the
+// manager gets an explicit note instead of an empty command.
+func fixCommand(pm pkgmanager.PackageManager, family string, ts ToolStatus) string {
+	app := branding.Get().AppName
+	if _, isNix := pm.(*pkgmanager.Nix); isNix {
+		if ts.Required {
+			return app + " devenv setup"
+		}
+		if pkg, ok := pkgmanager.PackageFor(pm, family, ts.Name); ok {
+			return fmt.Sprintf("%s devenv add-package %s", app, pkg)
+		}
+	}
+	if cmd := pkgmanager.InstallCommand(pm, family, ts.Name); cmd != "" {
+		return cmd
+	}
+	return fmt.Sprintf("no %s package is known for %s; install it from its official distribution", pm.Name(), ts.Name)
 }
 
 // UseColor returns true if color output should be used for the given
@@ -278,29 +333,26 @@ func FormatReport(w io.Writer, r *Report, useColor bool) {
 
 	// MCP Servers
 	if r.MCPServers != nil && r.MCPServers.Detected {
-		fmt.Fprintln(w, "MCP Servers")
-		for _, srv := range r.MCPServers.Servers {
-			sym := okSym
-			switch srv.Status {
-			case "degraded":
-				sym = warnSym
-			case "unreachable", "misconfigured":
-				sym = failSym
-			}
-			fmt.Fprintf(w, "  %-20s %s %s (tools: %d)\n", srv.Name, sym, srv.Status, srv.Tools)
-			if srv.Detail != "" {
-				fmt.Fprintf(w, "    %s\n", srv.Detail)
-			}
-		}
-		for _, warn := range r.MCPServers.Warnings {
-			fmt.Fprintf(w, "  %s %s\n", warnSym, warn)
-		}
-		fmt.Fprintln(w)
+		formatMCPSection(w, r.MCPServers, okSym, warnSym, failSym)
 	}
 
 	// Cloud Providers
 	if r.CloudProviders != nil && r.CloudProviders.Detected {
 		formatCloudSection(w, r.CloudProviders, okSym, warnSym, failSym)
+	}
+
+	// Ecosystem module checks
+	if r.ModuleChecks != nil && r.ModuleChecks.Detected {
+		formatModuleCheckSection(w, r.ModuleChecks, okSym, warnSym)
+	}
+
+	// Project Toolchains
+	if len(r.ProjectToolchains) > 0 {
+		fmt.Fprintln(w, "Project Toolchains")
+		for _, warn := range r.ProjectToolchains {
+			fmt.Fprintf(w, "  %s %s\n", warnSym, warn)
+		}
+		fmt.Fprintln(w)
 	}
 
 	// Required Tools
@@ -408,8 +460,36 @@ func formatSandboxSection(w io.Writer, ss *SandboxSection, okSym, warnSym, _ str
 	fmt.Fprintln(w)
 }
 
+func formatMCPSection(w io.Writer, ms *MCPSection, okSym, warnSym, failSym string) {
+	fmt.Fprintln(w, "MCP Servers (configuration only; no server was started)")
+	for _, srv := range ms.Servers {
+		sym := okSym
+		switch srv.Status {
+		case MCPStatusDegraded:
+			sym = warnSym
+		case MCPStatusMisconfigured:
+			sym = failSym
+		}
+		fmt.Fprintf(w, "  %-20s %s %s (%s)\n", displayMCPServerName(srv.Name), sym, srv.Status, srv.Transport)
+		for _, is := range srv.Issues {
+			isym := warnSym
+			if is.Severity == mcphealth.SeverityError {
+				isym = failSym
+			}
+			fmt.Fprintf(w, "    %s %s\n", isym, is.Message)
+			if is.Remediation != "" {
+				fmt.Fprintf(w, "      fix: %s\n", is.Remediation)
+			}
+		}
+	}
+	for _, warn := range ms.Warnings {
+		fmt.Fprintf(w, "  %s %s\n", warnSym, warn)
+	}
+	fmt.Fprintln(w)
+}
+
 func formatCloudSection(w io.Writer, cs *CloudSection, okSym, warnSym, failSym string) {
-	fmt.Fprintln(w, "Cloud Providers")
+	fmt.Fprintln(w, "Cloud Credential Isolation")
 	for _, p := range cs.Providers {
 		sym := okSym
 		switch p.Status {
@@ -421,6 +501,16 @@ func formatCloudSection(w io.Writer, cs *CloudSection, okSym, warnSym, failSym s
 		fmt.Fprintf(w, "  %-20s %s %s\n", p.DisplayName, sym, p.Status)
 		if p.Detail != "" {
 			fmt.Fprintf(w, "    %s\n", p.Detail)
+		}
+		for _, l := range p.Layers {
+			lsym := okSym
+			if !l.Active {
+				lsym = warnSym
+				if l.Enforced {
+					lsym = failSym
+				}
+			}
+			fmt.Fprintf(w, "    %s %s: %s\n", lsym, l.Name, l.Detail)
 		}
 	}
 	for _, warn := range cs.Warnings {

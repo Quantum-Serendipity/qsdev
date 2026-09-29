@@ -3,9 +3,11 @@ package azure_test
 import (
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
+	"github.com/Quantum-Serendipity/qsdev/pkg/denyutil"
 	"github.com/Quantum-Serendipity/qsdev/pkg/ecosystem"
 	"github.com/Quantum-Serendipity/qsdev/pkg/ecosystem/modules/azure"
 )
@@ -150,26 +152,21 @@ func TestDenyRules_AllPresent(t *testing.T) {
 	m := newModule()
 	rules := m.DenyRules(ecosystem.ModuleConfig{})
 
-	if len(rules) != 4 {
-		t.Fatalf("expected 4 deny rules, got %d: %v", len(rules), rules)
+	if len(rules) != 33 {
+		t.Fatalf("expected 33 deny rules, got %d: %v", len(rules), rules)
 	}
 
-	expected := []string{
+	denied := []string{
 		"az account get-access-token",
-		"az ad sp credential",
-		"cat ~/.azure/",
-		"az login --service-principal",
+		"az ad sp credential reset --id x",
+		"cat ~/.azure/msal_token_cache.json",
+		"cat .qsdev/cloud/azure/msal_token_cache.json",
+		"cat ./.qsdev/cloud/azure/msal_token_cache.json",
+		"az login --service-principal -u id -p x --tenant t",
 	}
-	for _, want := range expected {
-		found := false
-		for _, rule := range rules {
-			if strings.Contains(rule, want) {
-				found = true
-				break
-			}
-		}
-		if !found {
-			t.Errorf("expected deny rule containing %q, got %v", want, rules)
+	for _, cmd := range denied {
+		if !slices.ContainsFunc(rules, func(r string) bool { return denyutil.MatchesBashRule(r, cmd) }) {
+			t.Errorf("no deny rule blocks %q, got %v", cmd, rules)
 		}
 	}
 }
@@ -181,11 +178,12 @@ func TestReadDenyRules_AllPresent(t *testing.T) {
 	m := newModule()
 	paths := m.ReadDenyRules(ecosystem.ModuleConfig{})
 
-	if len(paths) != 4 {
-		t.Fatalf("expected 4 read-deny paths, got %d: %v", len(paths), paths)
+	if len(paths) != 5 {
+		t.Fatalf("expected 5 read-deny paths, got %d: %v", len(paths), paths)
 	}
 
 	expected := []string{
+		".qsdev/cloud/azure/**",
 		"accessTokens.json",
 		"msal_token_cache.json",
 		"service_principal_entries.json",
@@ -219,6 +217,25 @@ func TestDevenvNix_ContainsSubscription(t *testing.T) {
 	}
 	if !strings.Contains(fragment, "ARM_TENANT_ID") {
 		t.Errorf("expected fragment to contain ARM_TENANT_ID, got:\n%s", fragment)
+	}
+}
+
+// TestDevenvNix_NoLiveEnvAssignments guards against exporting placeholder
+// values: a fake ARM_SUBSCRIPTION_ID fails Terraform azurerm, and a generated
+// env.X definition collides with the user's own from devenv.local.nix or --env.
+func TestDevenvNix_NoLiveEnvAssignments(t *testing.T) {
+	t.Parallel()
+	fragment, err := newModule().DevenvNixFragment(ecosystem.ModuleConfig{})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	for line := range strings.SplitSeq(strings.TrimRight(fragment, "\n"), "\n") {
+		if !strings.HasPrefix(line, "  #") {
+			t.Errorf("fragment line is live Nix, want comment only: %q", line)
+		}
+	}
+	if strings.Contains(fragment, "PLACEHOLDER") {
+		t.Errorf("fragment contains a placeholder value:\n%s", fragment)
 	}
 }
 
@@ -277,4 +294,35 @@ func containsEvidence(evidence []string, substr string) bool {
 		}
 	}
 	return false
+}
+
+// TestDevenvNix_IsolateCLIConfig checks cloud.isolate_cli_config (W135): the
+// fragment then points AZURE_CONFIG_DIR, which holds az's login, tokens and
+// active subscription, at the project's gitignored .qsdev/ directory; without
+// it the fragment stays comment-only.
+func TestDevenvNix_IsolateCLIConfig(t *testing.T) {
+	t.Parallel()
+	const line = `  env.AZURE_CONFIG_DIR = lib.mkDefault "${config.devenv.root}/.qsdev/cloud/azure";`
+	tests := []struct {
+		name    string
+		isolate bool
+	}{
+		{"off", false},
+		{"on", true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			fragment, err := newModule().DevenvNixFragment(ecosystem.ModuleConfig{IsolateCLIConfig: tt.isolate})
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if got := strings.Contains(fragment, line+"\n"); got != tt.isolate {
+				t.Errorf("fragment contains %q = %v, want %v:\n%s", line, got, tt.isolate, fragment)
+			}
+			if !strings.Contains(fragment, "ARM_SUBSCRIPTION_ID") {
+				t.Errorf("fragment lost the ARM_SUBSCRIPTION_ID guidance:\n%s", fragment)
+			}
+		})
+	}
 }

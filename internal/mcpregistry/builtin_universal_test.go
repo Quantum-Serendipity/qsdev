@@ -29,8 +29,11 @@ func TestRegistryIntegration(t *testing.T) {
 	if def.Source != SourceBuiltin {
 		t.Errorf("Source = %q, want %q", def.Source, SourceBuiltin)
 	}
-	if def.ComplianceGrade != ComplianceVerified {
-		t.Errorf("ComplianceGrade = %q, want %q", def.ComplianceGrade, ComplianceVerified)
+	// Provenance of the bare "qsdev" command is verified against the running
+	// executable (F259), which in a test is the test binary, so resolve it
+	// through a fake that sees qsdev on PATH as the running executable.
+	if got := gradeServer(def, fakeProvenance(t, "/opt/qsdev/bin/qsdev")).Level; got < ComplianceVerified {
+		t.Errorf("GradeServer level = %s, want at least %s", got, ComplianceVerified)
 	}
 	if def.Command != "qsdev" {
 		t.Errorf("Command = %q, want %q", def.Command, "qsdev")

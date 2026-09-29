@@ -8,8 +8,9 @@ import (
 
 func TestCheckRequiredTools_NoneDisabled(t *testing.T) {
 	ctx := CheckContext{
-		QsdevConfig: &types.QsdevConfig{},
-		ToolNames:  []string{"safety-block", "pre-commit"},
+		QsdevConfig:       &types.QsdevConfig{},
+		ToolNames:         []string{"safety-block", "pre-commit"},
+		AlwaysOnToolNames: []string{"safety-block", "pre-commit"},
 	}
 
 	results := CheckRequiredTools(ctx)
@@ -39,7 +40,8 @@ func TestCheckRequiredTools_ToolDisabled(t *testing.T) {
 				Disabled: []string{"safety-block"},
 			},
 		},
-		ToolNames: []string{"safety-block", "pre-commit"},
+		ToolNames:         []string{"safety-block", "pre-commit"},
+		AlwaysOnToolNames: []string{"safety-block", "pre-commit"},
 	}
 
 	results := CheckRequiredTools(ctx)
@@ -56,9 +58,52 @@ func TestCheckRequiredTools_ToolDisabled(t *testing.T) {
 	}
 }
 
+// TestCheckRequiredTools_OnlyAlwaysOnToolsAreRequired verifies that disabling
+// an opt-in or detected tool is legitimate and does not fail the check, while
+// disabling an always-on tool still does.
+func TestCheckRequiredTools_OnlyAlwaysOnToolsAreRequired(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name     string
+		disabled []string
+		wantFail []string
+	}{
+		{name: "opt-in tool disabled", disabled: []string{"semgrep"}},
+		{name: "always-on tool disabled", disabled: []string{"safety-block"}, wantFail: []string{"tool_not_disabled_safety-block"}},
+		{name: "mixed", disabled: []string{"semgrep", "safety-block"}, wantFail: []string{"tool_not_disabled_safety-block"}},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			ctx := CheckContext{
+				QsdevConfig:       &types.QsdevConfig{Tools: types.ToolsConfig{Disabled: tt.disabled}},
+				ToolNames:         []string{"safety-block", "semgrep"},
+				AlwaysOnToolNames: []string{"safety-block"},
+			}
+
+			var failed []string
+			for _, r := range CheckRequiredTools(ctx) {
+				if r.Status == StatusFail {
+					failed = append(failed, r.Name)
+				}
+			}
+			if len(failed) != len(tt.wantFail) {
+				t.Fatalf("failed = %v, want %v", failed, tt.wantFail)
+			}
+			for i := range failed {
+				if failed[i] != tt.wantFail[i] {
+					t.Fatalf("failed = %v, want %v", failed, tt.wantFail)
+				}
+			}
+		})
+	}
+}
+
 func TestCheckRequiredTools_NoConfig(t *testing.T) {
 	ctx := CheckContext{
-		ToolNames: []string{"safety-block"},
+		AlwaysOnToolNames: []string{"safety-block"},
 	}
 
 	results := CheckRequiredTools(ctx)
@@ -73,8 +118,8 @@ func TestCheckRequiredTools_NoConfig(t *testing.T) {
 
 func TestCheckRequiredTools_NoTools(t *testing.T) {
 	ctx := CheckContext{
-		QsdevConfig: &types.QsdevConfig{},
-		ToolNames:  nil,
+		QsdevConfig:       &types.QsdevConfig{},
+		AlwaysOnToolNames: nil,
 	}
 
 	results := CheckRequiredTools(ctx)

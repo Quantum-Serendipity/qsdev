@@ -1,5 +1,7 @@
 package drift
 
+import "github.com/Quantum-Serendipity/qsdev/pkg/types"
+
 // Report summarizes configuration drift findings across categories.
 type Report struct {
 	Categories    []Category       `json:"categories"`
@@ -33,4 +35,8 @@ type Finding struct {
 	Actual      string   `json:"actual,omitempty"`
 	Remediation string   `json:"remediation,omitempty"`
 	AutoFixable bool     `json:"autoFixable"`
+	// FileStatus is the typed state of the generated file for File
+	// Modification findings (modified, deleted, unknown). Consumers must
+	// switch on it rather than parse Description.
+	FileStatus types.ModificationStatus `json:"fileStatus,omitempty"`
 }

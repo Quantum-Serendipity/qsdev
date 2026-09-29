@@ -19,7 +19,6 @@ func newModule() *scala.Module {
 
 func TestInterfaceCompliance(t *testing.T) {
 	var _ ecosystem.EcosystemModule = (*scala.Module)(nil)
-	var _ ecosystem.PackageProvider = (*scala.Module)(nil)
 }
 
 // --- Basic metadata ---
@@ -173,48 +172,16 @@ func TestDevenvNixFragment_Mill(t *testing.T) {
 	if err != nil {
 		t.Fatalf("DevenvNixFragment() error: %v", err)
 	}
-	// Mill packages are now provided via DevenvPackages, not the fragment.
-	if strings.Contains(frag, "packages") {
-		t.Errorf("Mill fragment should not contain packages block:\n%s", frag)
+	// Mill comes from devenv's languages.scala.mill (built against the
+	// project JDK), not a bare pkgs.mill.
+	if strings.Contains(frag, "packages") || !strings.Contains(frag, "mill.enable = true;") {
+		t.Errorf("Mill fragment should enable languages.scala.mill and add no packages:\n%s", frag)
 	}
 	if !strings.Contains(frag, "jdk17") {
 		t.Errorf("fragment missing jdk17:\n%s", frag)
 	}
 	if !strings.Contains(frag, "languages.scala") {
 		t.Errorf("fragment missing languages.scala:\n%s", frag)
-	}
-}
-
-// --- DevenvPackages tests ---
-
-func TestDevenvPackages_Sbt(t *testing.T) {
-	t.Parallel()
-	m := newModule()
-	pkgs := m.DevenvPackages(ecosystem.ModuleConfig{
-		Extras: map[string]string{"build_tool": "sbt"},
-	})
-	if pkgs != nil {
-		t.Errorf("DevenvPackages(sbt) = %v, want nil", pkgs)
-	}
-}
-
-func TestDevenvPackages_Mill(t *testing.T) {
-	t.Parallel()
-	m := newModule()
-	pkgs := m.DevenvPackages(ecosystem.ModuleConfig{
-		Extras: map[string]string{"build_tool": "mill"},
-	})
-	if len(pkgs) != 1 || pkgs[0] != "mill" {
-		t.Errorf("DevenvPackages(mill) = %v, want [mill]", pkgs)
-	}
-}
-
-func TestDevenvPackages_Default(t *testing.T) {
-	t.Parallel()
-	m := newModule()
-	pkgs := m.DevenvPackages(ecosystem.ModuleConfig{})
-	if pkgs != nil {
-		t.Errorf("DevenvPackages(default) = %v, want nil", pkgs)
 	}
 }
 
@@ -299,10 +266,9 @@ func TestWizardFields(t *testing.T) {
 	for _, f := range fields {
 		keys[f.Key] = true
 	}
-	if !keys["scala_build_tool"] {
-		t.Error("missing wizard field scala_build_tool")
-	}
-	if !keys["scala_jdk_version"] {
-		t.Error("missing wizard field scala_jdk_version")
+	for _, key := range []string{"build_tool", "jdk_version"} {
+		if !keys[key] {
+			t.Errorf("missing wizard field %s", key)
+		}
 	}
 }

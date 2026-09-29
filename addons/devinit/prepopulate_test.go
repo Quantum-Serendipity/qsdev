@@ -1,9 +1,12 @@
 package devinit_test
 
 import (
+	"reflect"
 	"testing"
 
 	"github.com/Quantum-Serendipity/qsdev/addons/devinit"
+	"github.com/Quantum-Serendipity/qsdev/internal/catalog"
+	"github.com/Quantum-Serendipity/qsdev/pkg/ecosystem"
 	"github.com/Quantum-Serendipity/qsdev/pkg/types"
 )
 
@@ -418,6 +421,32 @@ func TestPreSelectedLanguages_AllTier1(t *testing.T) {
 	}
 }
 
+// TestMapDetectionToDefaults_EveryDetectedModulePreselected guards against a
+// hard-coded ecosystem list drifting from the registry: every registered
+// module that detection reports (including the aws/gcp/azure cloud modules)
+// must be pre-selected exactly once.
+func TestMapDetectionToDefaults_EveryDetectedModulePreselected(t *testing.T) {
+	t.Parallel()
+	for _, mod := range ecosystem.DefaultRegistry().All() {
+		name := mod.Name()
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			detected := types.DetectedProject{Ecosystems: map[string]bool{name: true}}
+			answers := devinit.ExportMapDetectionToDefaults(detected, "/tmp/project")
+
+			count := 0
+			for _, lc := range answers.Languages {
+				if lc.Name == name {
+					count++
+				}
+			}
+			if count != 1 {
+				t.Errorf("module %q pre-selected %d times, want 1; languages = %v", name, count, answers.Languages)
+			}
+		})
+	}
+}
+
 func TestExtractRepoName(t *testing.T) {
 	tests := []struct {
 		name string
@@ -429,6 +458,7 @@ func TestExtractRepoName(t *testing.T) {
 		{"SSH with .git", "git@github.com:org/repo.git", "repo"},
 		{"SSH without .git", "git@github.com:org/repo", "repo"},
 		{"HTTPS trailing slash", "https://github.com/org/repo/", "repo"},
+		{"HTTPS .git with trailing slash", "https://github.com/org/repo.git/", "repo"},
 		{"HTTPS deep path", "https://gitlab.com/group/subgroup/repo.git", "repo"},
 		{"SSH deep path", "git@gitlab.com:group/subgroup/repo.git", "repo"},
 		{"Empty string", "", ""},
@@ -440,6 +470,45 @@ func TestExtractRepoName(t *testing.T) {
 			got := devinit.ExportExtractRepoName(tt.url)
 			if got != tt.want {
 				t.Errorf("extractRepoName(%q) = %q, want %q", tt.url, got, tt.want)
+			}
+		})
+	}
+}
+
+// TestMapDetectionToDefaults_ParityWithFillDefaults asserts the wizard's
+// pre-populated languages match what the quick/--yes path (FillDefaults)
+// generates, including module-suggested extras.
+func TestMapDetectionToDefaults_ParityWithFillDefaults(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name     string
+		detected types.DetectedProject
+	}{
+		{"maven", types.DetectedProject{HasPomXML: true}},
+		{"polyglot tier-2", types.DetectedProject{
+			HasGoMod: true, GoVersion: "1.24",
+			Ecosystems: map[string]bool{"go": true, "php": true, "cpp": true, "gcp": true, "helm": true},
+			Suggested: map[string]types.LanguageChoice{
+				"cpp": {Extras: []string{"build_system=meson"}},
+				"php": {Version: "8.3"},
+			},
+		}},
+		{"container with runtime", types.DetectedProject{
+			HasDockerfile: true, ContainerRuntime: "podman", OSFamily: "nixos",
+			Ecosystems: map[string]bool{"container": true},
+		}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			wizard := devinit.ExportMapDetectionToDefaults(tt.detected, "/tmp/p").Languages
+
+			var quick types.WizardAnswers
+			quick.FillDefaults(tt.detected, catalog.MustDefault())
+
+			if !reflect.DeepEqual(wizard, quick.Languages) {
+				t.Errorf("wizard defaults %+v != FillDefaults %+v", wizard, quick.Languages)
 			}
 		})
 	}

@@ -3,7 +3,7 @@ package claudecode
 import (
 	"slices"
 
-	"github.com/Quantum-Serendipity/qsdev/pkg/types"
+	"github.com/Quantum-Serendipity/qsdev/internal/validation"
 )
 
 // ExportMCPServerConfig re-exports MCPServerConfig for convenience in tests.
@@ -27,11 +27,11 @@ var ExportLoadAnswers = loadAnswers
 // Parameters: projectRoot, preset string, skills, mcpServers []string, yes, noSafetyBlock bool
 var ExportBuildClaudeAnswersFromFlags = buildClaudeAnswersFromFlags
 
-// ExportValidPermissionPresets exposes validPermissionPresets for external tests.
-var ExportValidPermissionPresets = validPermissionPresets
+// ExportValidPermissionPresets exposes the permission presets init accepts for external tests.
+var ExportValidPermissionPresets = validation.PermissionPresets()
 
-// ExportValidHookPresets exposes validHookPresets for external tests.
-var ExportValidHookPresets = validHookPresets
+// ExportValidHookPresets exposes the hook presets add-hook accepts for external tests.
+var ExportValidHookPresets = validation.HookPresets()
 
 // ExportClaudeCmd exposes claudeCmd for external tests.
 var ExportClaudeCmd = claudeCmd
@@ -48,11 +48,6 @@ var ExportVerifyDocSet = verifyDocSet
 // ExportDocVerifyResult re-exports docVerifyResult for external tests.
 type ExportDocVerifyResult = docVerifyResult
 
-// ExportHookPresetToChoices exposes hookPresetToChoices for external tests.
-var ExportHookPresetToChoices = func(name string, hooks *types.HookChoices) {
-	hookPresetToChoices(name, hooks)
-}
-
 // ExportAnswersPath exposes answersPath for external tests.
 var ExportAnswersPath = func(projectRoot string) string {
 	return answersPath(projectRoot)
@@ -63,8 +58,6 @@ var (
 	ExportComputeSkillLibraryVersion = ComputeSkillLibraryVersion
 	ExportCompareVersions            = CompareVersions
 	ExportBuildUpdateSummary         = BuildUpdateSummary
-	ExportIsLibrarySkill             = IsLibrarySkill
-	ExportIsLibraryRule              = IsLibraryRule
 )
 
 type ExportVersionDiff = VersionDiff
@@ -94,14 +87,11 @@ type ExportHookStatus = HookStatus
 // ExportDefaultSecretPatterns exposes DefaultSecretPatterns for external tests.
 var ExportDefaultSecretPatterns = DefaultSecretPatterns
 
+// ExportConfigSecretPatterns exposes ConfigSecretPatterns for external tests.
+var ExportConfigSecretPatterns = ConfigSecretPatterns
+
 // ExportPlaceholderIndicators exposes PlaceholderIndicators for external tests.
 var ExportPlaceholderIndicators = PlaceholderIndicators
-
-const (
-	ExportTierProject = TierProject
-	ExportTierTeam    = TierTeam
-	ExportTierOrg     = TierOrg
-)
 
 var (
 	ExportNewHookRegistry     = NewHookRegistry
@@ -110,4 +100,10 @@ var (
 	ExportHooksCmd            = hooksCmd
 	ExportTemplateFS          = templateFS
 	ExportGenerateHookFiles   = GenerateHookFiles
+	ExportWrapHooksForSandbox = wrapHooksForSandbox
 )
+
+var ExportIsTemplateTestFixture = isTemplateTestFixture
+
+// ExportClaudeSpec exposes claudeSpec for external tests.
+var ExportClaudeSpec = claudeSpec

@@ -3,9 +3,11 @@ package ansible_test
 import (
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
+	"github.com/Quantum-Serendipity/qsdev/pkg/denyutil"
 	"github.com/Quantum-Serendipity/qsdev/pkg/ecosystem"
 	"github.com/Quantum-Serendipity/qsdev/pkg/ecosystem/modules/ansible"
 )
@@ -119,21 +121,40 @@ func TestDevenvNixFragment(t *testing.T) {
 	}
 }
 
+// TestDenyRules covers W126 with Claude Code's own matching semantics.
 func TestDenyRules(t *testing.T) {
-	m := &ansible.Module{}
-	rules := m.DenyRules(ecosystem.ModuleConfig{})
-
-	if len(rules) != 2 {
-		t.Fatalf("DenyRules() returned %d rules, want 2", len(rules))
+	t.Parallel()
+	rules := (&ansible.Module{}).DenyRules(ecosystem.ModuleConfig{})
+	matches := func(cmd string) bool {
+		return slices.ContainsFunc(rules, func(r string) bool { return denyutil.MatchesBashRule(r, cmd) })
 	}
-
-	expected := []string{
-		"Bash(ansible-galaxy install *)",
-		"Bash(ansible-galaxy collection install *)",
+	denied := []string{
+		"ansible-galaxy install -r requirements.yml",
+		"ansible-galaxy -vvv install geerlingguy.docker",
+		"ansible-galaxy collection install community.general",
+		"ansible-galaxy role install evil.role",
+		"ansible-galaxy collection download community.general",
+		"ansible-vault view group_vars/all/vault.yml",
+		"ansible-vault decrypt secrets.yml",
+		"ansible-vault --vault-id prod@prompt view vault.yml",
+		"ansible-vault edit vault.yml",
+		"env EDITOR=cat ansible-vault edit vault.yml",
+		"env ansible-galaxy collection install community.general",
 	}
-	for i, rule := range rules {
-		if rule != expected[i] {
-			t.Errorf("rules[%d] = %q, want %q", i, rule, expected[i])
+	allowed := []string{
+		"ansible-galaxy collection list",
+		"ansible-galaxy role init myrole",
+		"ansible-vault encrypt secrets.yml",
+		"ansible-vault create new.yml",
+	}
+	for _, cmd := range denied {
+		if !matches(cmd) {
+			t.Errorf("no deny rule blocks %q", cmd)
+		}
+	}
+	for _, cmd := range allowed {
+		if matches(cmd) {
+			t.Errorf("deny rules over-block %q", cmd)
 		}
 	}
 }
@@ -151,24 +172,100 @@ func TestPreCommitHooks(t *testing.T) {
 	}
 }
 
+// TestSecurityConfigs covers W127: no inert config file is generated;
+// Ansible reads only one config file, so a side file is never loaded.
 func TestSecurityConfigs(t *testing.T) {
-	m := &ansible.Module{}
-	configs := m.SecurityConfigs(ecosystem.ModuleConfig{})
-
-	if len(configs) != 1 {
-		t.Fatalf("SecurityConfigs() returned %d files, want 1", len(configs))
-	}
-	if configs[0].Path != ".ansible-security.cfg" {
-		t.Errorf("SecurityConfigs()[0].Path = %q, want %q", configs[0].Path, ".ansible-security.cfg")
+	t.Parallel()
+	if configs := (&ansible.Module{}).SecurityConfigs(ecosystem.ModuleConfig{}); len(configs) != 0 {
+		t.Errorf("SecurityConfigs() = %v, want none", configs)
 	}
 }
 
-func TestCICommands(t *testing.T) {
-	m := &ansible.Module{}
-	cmds := m.CICommands(ecosystem.ModuleConfig{})
+// TestGalaxySignatureEnforcement covers W127: with a keyring configured the
+// devenv environment and CI enforce collection signatures with "+1" (a bare
+// 1 accepts unsigned collections); without one nothing is claimed.
+func TestGalaxySignatureEnforcement(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name         string
+		keyring      string
+		wantErr      bool
+		wantFragment []string
+		wantCI       string
+	}{
+		{name: "not configured", wantCI: "ansible-galaxy install -r requirements.yml"},
+		{
+			name:    "keyring configured",
+			keyring: "~/.ansible/hub-keyring.gpg",
+			wantFragment: []string{
+				`env.ANSIBLE_GALAXY_GPG_KEYRING = "~/.ansible/hub-keyring.gpg";`,
+				`env.ANSIBLE_GALAXY_REQUIRED_VALID_SIGNATURE_COUNT = "+1";`,
+			},
+			wantCI: "ANSIBLE_GALAXY_GPG_KEYRING=~/.ansible/hub-keyring.gpg ANSIBLE_GALAXY_REQUIRED_VALID_SIGNATURE_COUNT=+1 ansible-galaxy install -r requirements.yml",
+		},
+		{
+			name:    "unsafe keyring rejected",
+			keyring: "k.gpg; curl evil",
+			wantErr: true,
+			wantCI:  "ansible-galaxy install -r requirements.yml",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			m := &ansible.Module{}
+			cfg := ecosystem.ModuleConfig{Extras: map[string]string{}}
+			if tt.keyring != "" {
+				cfg.Extras[ansible.ExtraGalaxyKeyring] = tt.keyring
+			}
+			fragment, err := m.DevenvNixFragment(cfg)
+			if (err != nil) != tt.wantErr {
+				t.Fatalf("DevenvNixFragment() error = %v, wantErr %v", err, tt.wantErr)
+			}
+			if len(tt.wantFragment) == 0 && fragment != "" {
+				t.Errorf("DevenvNixFragment() = %q, want empty", fragment)
+			}
+			for _, want := range tt.wantFragment {
+				if !strings.Contains(fragment, want) {
+					t.Errorf("fragment %q missing %q", fragment, want)
+				}
+			}
+			cmds := m.CICommands(cfg)
+			if len(cmds) != 2 {
+				t.Fatalf("CICommands() returned %d commands, want 2", len(cmds))
+			}
+			if cmds[0].Command != tt.wantCI {
+				t.Errorf("galaxy-install = %q, want %q", cmds[0].Command, tt.wantCI)
+			}
+		})
+	}
+}
 
-	if len(cmds) != 2 {
-		t.Fatalf("CICommands() returned %d commands, want 2", len(cmds))
+// TestDetect_RequirementsLocations covers W129: the conventional
+// collections/ and roles/ requirements files are detected.
+func TestDetect_RequirementsLocations(t *testing.T) {
+	t.Parallel()
+	for _, rel := range []string{"requirements.yml", "collections/requirements.yml", "roles/requirements.yml"} {
+		t.Run(rel, func(t *testing.T) {
+			t.Parallel()
+			dir := t.TempDir()
+			full := filepath.Join(dir, filepath.FromSlash(rel))
+			if err := os.MkdirAll(filepath.Dir(full), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(full, []byte("collections: []\n"), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			m := &ansible.Module{}
+			result := m.Detect(dir)
+			if !result.Detected || !slices.Contains(result.Evidence, rel+" found") {
+				t.Errorf("Detect(%s) = %+v, want detected with evidence", rel, result)
+			}
+			// CI installs from the file that exists, not a missing root one.
+			if got, want := m.CICommands(result.SuggestedConfig)[0].Command, "ansible-galaxy install -r "+rel; got != want {
+				t.Errorf("galaxy-install = %q, want %q", got, want)
+			}
+		})
 	}
 }
 
@@ -180,5 +277,40 @@ func TestRegistration(t *testing.T) {
 	}
 	if mod.Name() != "ansible" {
 		t.Errorf("registered module Name() = %q, want %q", mod.Name(), "ansible")
+	}
+}
+
+// TestCICommands_MultipleRequirementsFiles checks that every recorded
+// requirements file is installed and that an unknown recorded value is never
+// embedded in the CI command.
+func TestCICommands_MultipleRequirementsFiles(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name, files, want string
+	}{
+		{"both", "collections/requirements.yml,roles/requirements.yml",
+			"ansible-galaxy install -r collections/requirements.yml && ansible-galaxy install -r roles/requirements.yml"},
+		{"unknown value ignored", "x.yml; curl evil", "ansible-galaxy install -r requirements.yml"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			cfg := ecosystem.ModuleConfig{Extras: map[string]string{ansible.ExtraRequirementsFiles: tt.files}}
+			if got := (&ansible.Module{}).CICommands(cfg)[0].Command; got != tt.want {
+				t.Errorf("galaxy-install = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
+// TestReadDenyRules covers W132: conventional vault password files are
+// read-denied.
+func TestReadDenyRules(t *testing.T) {
+	t.Parallel()
+	rules := (&ansible.Module{}).ReadDenyRules(ecosystem.ModuleConfig{})
+	for _, want := range []string{"**/.vault_pass*", "**/vault_pass*"} {
+		if !slices.Contains(rules, want) {
+			t.Errorf("ReadDenyRules missing %q: %v", want, rules)
+		}
 	}
 }

@@ -29,11 +29,9 @@ var envRedactor = sync.OnceValue(logging.NewRedactor)
 // envInfo probes the development environment: PATH composition, listening TCP
 // ports, the qsdev-managed tool catalog, and a filtered view of the process
 // environment. It never emits the values of sensitive environment variables.
-type envInfo struct {
-	projectRoot string
-}
+type envInfo struct{}
 
-func newEnvInfo(projectRoot string) *envInfo { return &envInfo{projectRoot: projectRoot} }
+func newEnvInfo() *envInfo { return &envInfo{} }
 
 // isSensitiveEnv reports whether the named variable's value must be withheld. It
 // composes three shared secrets predicates, all owned by the internal/secrets

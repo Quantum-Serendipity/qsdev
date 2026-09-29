@@ -6,10 +6,13 @@ import (
 	"github.com/Quantum-Serendipity/qsdev/internal/logging"
 )
 
+// commandName is the name of the "report" command.
+const commandName = "report"
+
 // Command returns the "report" cobra command tree.
 func Command() *cobra.Command {
 	cmd := &cobra.Command{
-		Use:   "report",
+		Use:   commandName,
 		Short: "Generate reports and file bug reports",
 	}
 

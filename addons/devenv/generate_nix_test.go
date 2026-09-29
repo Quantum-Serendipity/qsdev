@@ -1,11 +1,17 @@
 package devenv_test
 
 import (
+	"maps"
+	"os"
 	"os/exec"
+	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
 	"github.com/Quantum-Serendipity/qsdev/addons/devenv"
+	"github.com/Quantum-Serendipity/qsdev/internal/catalog"
+	"github.com/Quantum-Serendipity/qsdev/internal/validation"
 	"github.com/Quantum-Serendipity/qsdev/pkg/ecosystem"
 	"github.com/Quantum-Serendipity/qsdev/pkg/types"
 )
@@ -37,8 +43,8 @@ func goMock() *ecosystem.MockModule {
   env.GONOSUMDB = "";`,
 		PreCommitHooksVal: []ecosystem.HookConfig{
 			{ID: "gofmt", Name: "gofmt", Description: "Format Go source code", Entry: "gofmt -l -w", Language: "system", Types: []string{"go"}, Stages: []string{"pre-commit"}, PassFilenames: true, BuiltIn: true},
-			{ID: "govet", Name: "govet", Description: "Run go vet", Entry: "go vet ./...", Language: "system", Types: []string{"go"}, Stages: []string{"pre-commit"}, BuiltIn: true},
-			{ID: "staticcheck", Name: "staticcheck", Description: "Run staticcheck", Entry: "staticcheck ./...", Language: "system", Types: []string{"go"}, Stages: []string{"pre-commit"}, BuiltIn: false, NixPackage: "go-tools"},
+			{ID: "govet", Name: "govet", Description: "Run go vet", Entry: "go vet ./...", Language: "system", Types: []string{"go"}, Stages: []string{"pre-commit"}, BuiltIn: true, Excludes: []string{`(^|/)testdata/`}},
+			{ID: "staticcheck", Name: "staticcheck", Description: "Run staticcheck", Entry: "staticcheck ./...", Language: "system", Types: []string{"go"}, Stages: []string{"pre-commit"}, BuiltIn: false, NixPackage: "go-tools", Excludes: []string{`(^|/)vendor/`}},
 		},
 	}
 }
@@ -76,7 +82,7 @@ func TestGenerateDevenvNix_SingleLanguage(t *testing.T) {
 	content := string(got.Content)
 
 	// Verify Go language block is present.
-	requireContains(t, content, "languages.go")
+	requireNixAttr(t, nixAttrs(t, got.Content), "languages.go.enable")
 	requireContains(t, content, `enable = true`)
 
 	// Verify security defaults.
@@ -115,9 +121,10 @@ func TestGenerateDevenvNix_MultiLanguage(t *testing.T) {
 
 	// Both language fragments appear.
 	requireContains(t, content, "# Go")
-	requireContains(t, content, "languages.go")
 	requireContains(t, content, "# Python")
-	requireContains(t, content, "languages.python")
+	attrs := nixAttrs(t, got.Content)
+	requireNixAttr(t, attrs, "languages.go.enable")
+	requireNixAttr(t, attrs, "languages.python.enable")
 }
 
 func TestGenerateDevenvNix_WithServices(t *testing.T) {
@@ -150,12 +157,13 @@ func TestGenerateDevenvNix_WithServices(t *testing.T) {
 
 	content := string(got.Content)
 
-	requireContains(t, content, "services.postgres")
+	attrs := nixAttrs(t, got.Content)
+	requireNixAttr(t, attrs, "services.postgres.enable")
 	requireContains(t, content, "enable = true")
 	requireContains(t, content, "postgresql_16")
 	requireContains(t, content, `"myapp"`)
 
-	requireContains(t, content, "services.redis")
+	requireNixAttr(t, attrs, "services.redis.enable")
 	requireContains(t, content, "port = 6380")
 }
 
@@ -228,7 +236,10 @@ func TestGenerateDevenvNix_HookComposition(t *testing.T) {
 
 	// Built-in hooks from Go module.
 	requireContains(t, content, "gofmt.enable = true")
-	requireContains(t, content, "govet.enable = true")
+	// Hook excludes render for built-in hooks (whose entry git-hooks.nix
+	// owns) and for custom hooks alike.
+	requireContains(t, content, "    govet = {\n      enable = true;\n      excludes = [ \"(^|/)testdata/\" ];\n    };")
+	requireContains(t, content, `excludes = [ "(^|/)vendor/" ];`)
 
 	// Built-in hooks from Python module.
 	requireContains(t, content, "ruff.enable = true")
@@ -316,14 +327,59 @@ func TestGenerateDevenvNix_EnterShellEscaping(t *testing.T) {
 	requireContains(t, content, `''${DEVENV_SECURITY_HARDENED:-}`)
 }
 
+// TestGenerateDevenvNix_NixInstantiateParse checks that the devenv.nix
+// generated for each ecosystem module, with every service and catalog tool
+// enabled, is syntactically valid Nix. devenv.nix is a function of
+// { pkgs, lib, config, ... }, so raw expressions that reference pkgs are in
+// scope for `nix-instantiate --parse`, which also rejects references to
+// undefined variables.
 func TestGenerateDevenvNix_NixInstantiateParse(t *testing.T) {
-	// Specialized hooks use raw Nix expressions (e.g. ${pkgs.writeShellScript ...})
-	// that require function arguments in scope. nix-instantiate --parse cannot
-	// validate these in isolation, so this test is skipped.
-	t.Skip("skipping nix-instantiate parse: generated Nix now contains raw expressions requiring function arguments (pkgs)")
-	_, err := exec.LookPath("nix-instantiate")
+	nixInstantiate, err := exec.LookPath("nix-instantiate")
 	if err != nil {
 		t.Skip("nix-instantiate not available, skipping syntax validation")
+	}
+
+	cat, err := catalog.Default()
+	if err != nil {
+		t.Fatalf("loading catalog: %v", err)
+	}
+	enabledTools := make(map[string]bool)
+	for name := range cat.Tools() {
+		enabledTools[name] = true
+	}
+	var services []types.ServiceChoice
+	for _, name := range validation.Services() {
+		services = append(services, types.ServiceChoice{Name: name})
+	}
+
+	reg := ecosystem.DefaultRegistry()
+	for _, lang := range reg.Names() {
+		t.Run(lang, func(t *testing.T) {
+			t.Parallel()
+			answers := types.WizardAnswers{
+				ProjectName:   "parse-check",
+				Direnv:        true,
+				Languages:     []types.LanguageChoice{{Name: lang}},
+				Services:      services,
+				ExtraPackages: []string{"jq", "python3Packages.requests"},
+				EnvVars:       map[string]string{"EDITOR": "vim"},
+				Overlays:      []string{"./nix/overlay.nix"},
+				EnabledTools:  enabledTools,
+			}
+			got, err := devenv.GenerateDevenvNix(answers, reg)
+			if err != nil {
+				t.Fatalf("GenerateDevenvNix: %v", err)
+			}
+
+			path := filepath.Join(t.TempDir(), "devenv.nix")
+			if err := os.WriteFile(path, got.Content, 0o644); err != nil {
+				t.Fatalf("writing devenv.nix: %v", err)
+			}
+			out, err := exec.Command(nixInstantiate, "--parse", path).CombinedOutput()
+			if err != nil {
+				t.Fatalf("nix-instantiate --parse rejected generated devenv.nix: %v\n%s", err, out)
+			}
+		})
 	}
 }
 
@@ -370,6 +426,33 @@ func TestGenerateDevenvNix_HookDeduplication(t *testing.T) {
 	}
 }
 
+func TestGenerateDevenvNix_ModuleHookMatchingSecurityHookRenderedOnce(t *testing.T) {
+	t.Parallel()
+	mod := &ecosystem.MockModule{
+		NameVal:              "shelly",
+		DisplayNameVal:       "Shelly",
+		TierVal:              1,
+		DevenvNixFragmentVal: "  # shelly fragment",
+		PreCommitHooksVal: []ecosystem.HookConfig{
+			{ID: "shellcheck", Name: "shellcheck", Entry: "shellcheck", Language: "system", BuiltIn: true},
+			{ID: "statix", Name: "statix", Entry: "statix check", Language: "system", NixPackage: "statix"},
+		},
+	}
+	reg := newTestRegistry(t, mod)
+	answers := types.WizardAnswers{Languages: []types.LanguageChoice{{Name: "shelly"}}}
+
+	got, err := devenv.GenerateDevenvNix(answers, reg)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	content := string(got.Content)
+	for _, id := range []string{"shellcheck", "statix"} {
+		if n := strings.Count(content, "    "+id+".enable = true;") + strings.Count(content, "    "+id+" = {"); n != 1 {
+			t.Errorf("hook %q defined %d times in devenv.nix, want exactly 1", id, n)
+		}
+	}
+}
+
 func TestBuildDevenvNixData_LanguageFragmentErrorPropagates(t *testing.T) {
 	mod := &ecosystem.MockModule{
 		NameVal:              "broken",
@@ -401,9 +484,214 @@ type brokenError struct{}
 func (e *brokenError) Error() string { return "module is broken" }
 
 // requireContains asserts that s contains the substring sub.
+// nixAttrs returns the flattened attribute paths devenv.nix defines.
+func nixAttrs(t *testing.T, content []byte) map[string]string {
+	t.Helper()
+	attrs, err := devenv.NixModuleAttrs(string(content))
+	if err != nil {
+		t.Fatalf("NixModuleAttrs: %v\n%s", err, content)
+	}
+	return attrs
+}
+
+// hasNixAttr reports whether path, or an attribute below it, is defined.
+func hasNixAttr(attrs map[string]string, path string) bool {
+	if _, ok := attrs[path]; ok {
+		return true
+	}
+	for k := range attrs {
+		if strings.HasPrefix(k, path+".") {
+			return true
+		}
+	}
+	return false
+}
+
+func requireNixAttr(t *testing.T, attrs map[string]string, path string) {
+	t.Helper()
+	if !hasNixAttr(attrs, path) {
+		t.Errorf("devenv.nix does not define %s; defined: %v", path, slices.Sorted(maps.Keys(attrs)))
+	}
+}
+
 func requireContains(t *testing.T, s, sub string) {
 	t.Helper()
 	if !strings.Contains(s, sub) {
 		t.Errorf("output does not contain %q\n\nFull output:\n%s", sub, s)
+	}
+}
+
+// TestGenerateDevenvNix_BuiltInHookOptions verifies W063/W141: built-in
+// hooks carry their file-type limits and settings into devenv.nix instead of
+// rendering as a bare `.enable = true` that runs git-hooks.nix's defaults
+// (prettier on every text file, eslint on .js only, nixpkgs binaries).
+func TestGenerateDevenvNix_BuiltInHookOptions(t *testing.T) {
+	t.Parallel()
+	answers := types.WizardAnswers{
+		Languages: []types.LanguageChoice{{
+			Name:           "javascript",
+			PackageManager: "npm",
+			Extras:         []string{"prettier=node_modules", "eslint=node_modules"},
+		}},
+	}
+	got, err := devenv.GenerateDevenvNix(answers, ecosystem.DefaultRegistry())
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	content := string(got.Content)
+
+	requireContains(t, content, `    prettier = {
+      enable = true;
+      types_or = [ "javascript" "jsx" "ts" "tsx" "css" "scss" "less" ];
+      settings.binPath = "./node_modules/.bin/prettier";
+    };`)
+	requireContains(t, content, `    eslint = {
+      enable = true;
+      settings = {
+        binPath = "./node_modules/.bin/eslint";
+        extensions = "\\.(c|m)?[jt]sx?$";
+      };
+    };`)
+	if strings.Contains(content, "prettier.enable = true") {
+		t.Errorf("prettier rendered without its type limits:\n%s", content)
+	}
+}
+
+// TestGenerateDevenvNix_BuiltInHookWithoutProjectToolIsOff verifies that a
+// JavaScript project using neither ESLint nor Prettier gets neither hook, so
+// commits are not blocked by tools the project never adopted (W063).
+func TestGenerateDevenvNix_BuiltInHookWithoutProjectToolIsOff(t *testing.T) {
+	t.Parallel()
+	answers := types.WizardAnswers{
+		Languages: []types.LanguageChoice{{Name: "javascript", PackageManager: "npm"}},
+	}
+	got, err := devenv.GenerateDevenvNix(answers, ecosystem.DefaultRegistry())
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	for _, id := range []string{"prettier", "eslint"} {
+		if strings.Contains(string(got.Content), "    "+id+" = {") || strings.Contains(string(got.Content), id+".enable") {
+			t.Errorf("%s hook enabled for a project that does not use it", id)
+		}
+	}
+}
+
+// TestGenerateDevenvNix_BuiltInHookRejectsBadSettingKey guards the unquoted
+// `settings.<key>` rendering against keys that are not Nix attribute names.
+func TestGenerateDevenvNix_BuiltInHookRejectsBadSettingKey(t *testing.T) {
+	t.Parallel()
+	mock := goMock()
+	mock.PreCommitHooksVal = []ecosystem.HookConfig{{
+		ID: "gofmt", BuiltIn: true, Settings: map[string]string{`x"; evil = "`: "v"},
+	}}
+	answers := types.WizardAnswers{Languages: []types.LanguageChoice{{Name: "go"}}}
+	if _, err := devenv.GenerateDevenvNix(answers, newTestRegistry(t, mock)); err == nil {
+		t.Fatal("expected an error for an invalid hook setting key")
+	}
+}
+
+// TestGenerateDevenvNix_JVMCombinationsParse renders the JVM modules
+// together. Java, Scala and Clojure all configure languages.java, and their
+// fragments share one devenv.nix attribute set, where a leaf defined twice
+// (languages.java.enable, jdk.package) is a Nix parse error that left
+// `qsdev init` without a devenv.nix for any Java+Scala repository.
+func TestGenerateDevenvNix_JVMCombinationsParse(t *testing.T) {
+	nixInstantiate, err := exec.LookPath("nix-instantiate")
+	if err != nil {
+		t.Skip("nix-instantiate not available, skipping syntax validation")
+	}
+
+	java := types.LanguageChoice{Name: "java", Version: "17", Extras: []string{"build_tool=both", "kotlin=true"}}
+	scalaSbt := types.LanguageChoice{Name: "scala", Extras: []string{"build_tool=sbt", "jdk_version=21"}}
+	scalaMill := types.LanguageChoice{Name: "scala", Extras: []string{"build_tool=mill", "jdk_version=25"}}
+	lein := types.LanguageChoice{Name: "clojure", Extras: []string{"build_tool=leiningen"}}
+
+	tests := []struct {
+		name  string
+		langs []types.LanguageChoice
+		want  []string
+	}{
+		{
+			name:  "java+scala",
+			langs: []types.LanguageChoice{java, scalaSbt},
+			want: []string{
+				"    java = {\n      # Java/Kotlin (JVM)\n      enable = true;\n      jdk.package = pkgs.jdk17;",
+				"imports = [ { languages.java.jdk.package = lib.mkDefault pkgs.jdk21; } ];",
+				`pkgs.writeShellScript "scalafmt"`,
+			},
+		},
+		{
+			name:  "java+scala mill+leiningen",
+			langs: []types.LanguageChoice{java, scalaMill, lein},
+			want: []string{
+				"    scala = {\n      enable = true;\n      mill.enable = true;",
+				"(pkgs.leiningen.override { jdk = config.languages.java.jdk.package; })",
+			},
+		},
+		{name: "scala+leiningen", langs: []types.LanguageChoice{scalaSbt, lein}},
+	}
+	reg := ecosystem.DefaultRegistry()
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			got, err := devenv.GenerateDevenvNix(types.WizardAnswers{ProjectName: "jvm", Languages: tt.langs}, reg)
+			if err != nil {
+				t.Fatalf("GenerateDevenvNix: %v", err)
+			}
+			content := string(got.Content)
+			for _, w := range tt.want {
+				requireContains(t, content, w)
+			}
+			if n := strings.Count(content, "languages.java.enable"); n > 1 {
+				t.Errorf("languages.java.enable defined %d times", n)
+			}
+
+			path := filepath.Join(t.TempDir(), "devenv.nix")
+			if err := os.WriteFile(path, got.Content, 0o644); err != nil {
+				t.Fatalf("writing devenv.nix: %v", err)
+			}
+			out, err := exec.Command(nixInstantiate, "--parse", path).CombinedOutput()
+			if err != nil {
+				t.Fatalf("nix-instantiate --parse rejected generated devenv.nix: %v\n%s\n%s", err, out, content)
+			}
+		})
+	}
+}
+
+// TestGenerateDevenvNix_JavaScriptSubproject verifies W064: a JavaScript
+// project detected in a subdirectory sets languages.javascript.directory
+// (absolute, so the node_modules/.bin PATH entry does not depend on the
+// shell's working directory) and runs the eslint hook from that directory.
+func TestGenerateDevenvNix_JavaScriptSubproject(t *testing.T) {
+	t.Parallel()
+	answers := types.WizardAnswers{
+		Languages: []types.LanguageChoice{{
+			Name:           "javascript",
+			PackageManager: "npm",
+			Extras:         []string{"directory=frontend", "eslint=node_modules"},
+		}},
+	}
+	got, err := devenv.GenerateDevenvNix(answers, ecosystem.DefaultRegistry())
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	content := string(got.Content)
+	requireContains(t, content, `    directory = "${config.devenv.root}/frontend";`)
+	requireContains(t, content, `files = "^frontend/.*\\.(c|m)?[jt]sx?$";`)
+	requireContains(t, content, `exec ./node_modules/.bin/eslint --fix "''${files[@]}"`)
+	if strings.Contains(content, "binPath") {
+		t.Errorf("subproject eslint hook still uses the root-relative built-in binPath:\n%s", content)
+	}
+
+	nixInstantiate, err := exec.LookPath("nix-instantiate")
+	if err != nil {
+		t.Skip("nix-instantiate not available, skipping syntax validation")
+	}
+	path := filepath.Join(t.TempDir(), "devenv.nix")
+	if err := os.WriteFile(path, got.Content, 0o644); err != nil {
+		t.Fatalf("writing devenv.nix: %v", err)
+	}
+	if out, err := exec.Command(nixInstantiate, "--parse", path).CombinedOutput(); err != nil {
+		t.Fatalf("nix-instantiate --parse rejected generated devenv.nix: %v\n%s\n%s", err, out, content)
 	}
 }

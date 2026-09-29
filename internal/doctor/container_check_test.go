@@ -2,6 +2,7 @@ package doctor
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"strings"
@@ -114,6 +115,10 @@ func newPodmanRootlessCleanProber() *doctorMockProber {
 	}
 }
 
+// testProjectRoot is the project the container checks evaluate; NFS mounts in
+// the fixtures that should count are placed at or above it.
+const testProjectRoot = "/data/project"
+
 func defaultOSInfo() *sysinfo.OSInfo {
 	return &sysinfo.OSInfo{
 		OS:     "linux",
@@ -148,7 +153,7 @@ func TestRunContainerCheck_NoRuntime(t *testing.T) {
 		outputResults:   map[string]mockOutputResult{},
 	}
 
-	cs := RunContainerCheck(ctx, prober, defaultOSInfo())
+	cs := RunContainerCheck(ctx, prober, defaultOSInfo(), testProjectRoot)
 	if cs != nil {
 		t.Errorf("expected nil ContainerSection when no runtime detected, got %+v", cs)
 	}
@@ -159,7 +164,7 @@ func TestRunContainerCheck_PodmanRootlessClean(t *testing.T) {
 	ctx := context.Background()
 	prober := newPodmanRootlessCleanProber()
 
-	cs := RunContainerCheck(ctx, prober, defaultOSInfo())
+	cs := RunContainerCheck(ctx, prober, defaultOSInfo(), testProjectRoot)
 	if cs == nil {
 		t.Fatal("expected non-nil ContainerSection")
 		return
@@ -194,7 +199,7 @@ func TestRunContainerCheck_PodmanRootlessGPU(t *testing.T) {
 	prober := newPodmanRootlessCleanProber()
 	prober.globResults["/dev/nvidia*"] = []string{"/dev/nvidia0", "/dev/nvidiactl"}
 
-	cs := RunContainerCheck(ctx, prober, defaultOSInfo())
+	cs := RunContainerCheck(ctx, prober, defaultOSInfo(), testProjectRoot)
 	if cs == nil {
 		t.Fatal("expected non-nil ContainerSection")
 		return
@@ -222,7 +227,7 @@ func TestRunContainerCheck_PodmanRootlessNFS(t *testing.T) {
 	prober := newPodmanRootlessCleanProber()
 	prober.files["/proc/mounts"] = []byte("server:/export /mnt/nfs nfs4 rw,relatime 0 0\n")
 
-	cs := RunContainerCheck(ctx, prober, defaultOSInfo())
+	cs := RunContainerCheck(ctx, prober, defaultOSInfo(), "/mnt/nfs/project")
 	if cs == nil {
 		t.Fatal("expected non-nil ContainerSection")
 		return
@@ -248,7 +253,7 @@ func TestRunContainerCheck_PodmanRootlessBothGPUNFS(t *testing.T) {
 	prober.globResults["/dev/nvidia*"] = []string{"/dev/nvidia0"}
 	prober.files["/proc/mounts"] = []byte("server:/vol /data nfs rw 0 0\n")
 
-	cs := RunContainerCheck(ctx, prober, defaultOSInfo())
+	cs := RunContainerCheck(ctx, prober, defaultOSInfo(), testProjectRoot)
 	if cs == nil {
 		t.Fatal("expected non-nil ContainerSection")
 		return
@@ -273,7 +278,7 @@ func TestRunContainerCheck_PodmanRootlessNoSubuid(t *testing.T) {
 	prober := newPodmanRootlessCleanProber()
 	prober.files["/etc/subuid"] = []byte("otheruser:100000:65536\n")
 
-	cs := RunContainerCheck(ctx, prober, defaultOSInfo())
+	cs := RunContainerCheck(ctx, prober, defaultOSInfo(), testProjectRoot)
 	if cs == nil {
 		t.Fatal("expected non-nil ContainerSection")
 		return
@@ -301,7 +306,7 @@ func TestRunContainerCheck_PodmanRootlessNoSubuidNixOS(t *testing.T) {
 	prober := newPodmanRootlessCleanProber()
 	prober.files["/etc/subuid"] = []byte("otheruser:100000:65536\n")
 
-	cs := RunContainerCheck(ctx, prober, nixosOSInfo())
+	cs := RunContainerCheck(ctx, prober, nixosOSInfo(), testProjectRoot)
 	if cs == nil {
 		t.Fatal("expected non-nil ContainerSection")
 		return
@@ -344,7 +349,7 @@ func TestRunContainerCheck_DockerRuntime(t *testing.T) {
 		env:         map[string]string{},
 	}
 
-	cs := RunContainerCheck(ctx, prober, defaultOSInfo())
+	cs := RunContainerCheck(ctx, prober, defaultOSInfo(), testProjectRoot)
 	if cs == nil {
 		t.Fatal("expected non-nil ContainerSection")
 		return
@@ -394,7 +399,7 @@ func TestRunContainerCheck_PodmanRootful(t *testing.T) {
 		env:  map[string]string{},
 	}
 
-	cs := RunContainerCheck(ctx, prober, defaultOSInfo())
+	cs := RunContainerCheck(ctx, prober, defaultOSInfo(), testProjectRoot)
 	if cs == nil {
 		t.Fatal("expected non-nil ContainerSection")
 		return
@@ -438,7 +443,7 @@ func TestRunContainerCheck_CgroupsV1(t *testing.T) {
 	// Remove cgroupsv2 indicator.
 	prober.fileInfos = map[string]bool{}
 
-	cs := RunContainerCheck(ctx, prober, defaultOSInfo())
+	cs := RunContainerCheck(ctx, prober, defaultOSInfo(), testProjectRoot)
 	if cs == nil {
 		t.Fatal("expected non-nil ContainerSection")
 		return
@@ -454,5 +459,50 @@ func TestRunContainerCheck_CgroupsV1(t *testing.T) {
 	}
 	if !strings.Contains(cgroups.Summary, "v1") {
 		t.Errorf("Cgroups summary = %q, expected v1 mention", cgroups.Summary)
+	}
+}
+
+// TestRunContainerCheck_UnrelatedNFSMountNoRootfulAdvice is the regression for
+// any NFS mount on the host (e.g. a NAS automount) steering the user to a
+// rootful runtime for a project on local disk.
+func TestRunContainerCheck_UnrelatedNFSMountNoRootfulAdvice(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	prober := newPodmanRootlessCleanProber()
+	prober.files["/proc/mounts"] = []byte("nas:/media /mnt/media nfs4 rw,relatime 0 0\n")
+
+	cs := RunContainerCheck(ctx, prober, defaultOSInfo(), "/home/dev/project")
+	if cs == nil {
+		t.Fatal("expected non-nil ContainerSection")
+		return
+	}
+	if nfs := findItem(cs, "NFS"); nfs == nil || nfs.Status != "ok" {
+		t.Errorf("expected NFS ok for an unrelated mount, got %+v", nfs)
+	}
+	if len(cs.Warnings) != 0 || len(cs.Recommendations) != 0 {
+		t.Errorf("expected no rootful advice, got warnings=%v recommendations=%v", cs.Warnings, cs.Recommendations)
+	}
+}
+
+// TestRunContainerCheck_BrokenPodmanIsWarned is the regression for a podman
+// whose `podman info` fails being reported as a healthy rootless runtime.
+func TestRunContainerCheck_BrokenPodmanIsWarned(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	prober := newPodmanRootlessCleanProber()
+	prober.outputResults["podman info --format {{.Host.Security.Rootless}}"] = mockOutputResult{
+		err: errors.New("cannot find UID/GID mappings"),
+	}
+
+	cs := RunContainerCheck(ctx, prober, defaultOSInfo(), testProjectRoot)
+	if cs == nil {
+		t.Fatal("expected a section reporting the unusable podman, got nil")
+		return
+	}
+	if cs.Rootless || cs.RuntimeName == "podman-rootless" {
+		t.Errorf("broken podman reported as rootless runtime: %+v", cs)
+	}
+	if len(cs.Warnings) == 0 || !strings.Contains(cs.Warnings[0], "podman info") {
+		t.Errorf("expected a podman info warning, got %v", cs.Warnings)
 	}
 }

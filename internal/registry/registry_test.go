@@ -240,7 +240,7 @@ func TestModify_Found(t *testing.T) {
 	r := New[*box]()
 	_ = r.Register("k", &box{val: 1})
 
-	ok := r.Modify("k", func(b *box) { b.val = 42 })
+	ok := r.Modify("k", func(b *box) *box { b.val = 42; return b })
 	if !ok {
 		t.Fatal("Modify returned false for existing key")
 	}
@@ -253,9 +253,29 @@ func TestModify_Found(t *testing.T) {
 func TestModify_NotFound(t *testing.T) {
 	t.Parallel()
 	r := New[int]()
-	ok := r.Modify("missing", func(_ int) {})
+	ok := r.Modify("missing", func(v int) int { return v })
 	if ok {
 		t.Error("Modify returned true for missing key")
+	}
+}
+
+// TestModify_ValueType pins F481: mutations of a value-type item must be
+// stored, not silently dropped on a copy.
+func TestModify_ValueType(t *testing.T) {
+	t.Parallel()
+	type profile struct{ name string }
+	r := New[profile]()
+	_ = r.Register("x", profile{name: "old"})
+
+	ok := r.Modify("x", func(p profile) profile {
+		p.name = "new"
+		return p
+	})
+	if !ok {
+		t.Fatal("Modify returned false for existing key")
+	}
+	if got, _ := r.Get("x"); got.name != "new" {
+		t.Errorf("name = %q, want %q (value-type mutation was lost)", got.name, "new")
 	}
 }
 

@@ -12,6 +12,9 @@ type PolicyEvaluator interface {
 	Evaluate(ctx *policy.EvalContext) policy.PolicyDecision
 	FilePathDenyRules() []policy.DenyRule
 	CurrentRules() []policy.CompiledRule
+	// ConsumeCommandTokens redeems the one-shot command-tier bypass tokens an
+	// allowed decision for ctx relied on; an error means the call must block.
+	ConsumeCommandTokens(ctx *policy.EvalContext, ruleIDs []string) error
 }
 
 type PackageRiskScorer interface {

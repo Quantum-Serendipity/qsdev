@@ -1,10 +1,9 @@
 package sandbox
 
 import (
-	"bytes"
 	"context"
+	"fmt"
 	"os/exec"
-	"time"
 )
 
 // runUnsandboxed executes a hook command directly without any sandbox isolation.
@@ -13,41 +12,22 @@ func runUnsandboxed(ctx context.Context, cfg *SandboxConfig) (*SandboxResult, er
 		return &SandboxResult{ExitCode: 0, Tier: TierUnsandboxed}, nil
 	}
 
-	start := time.Now()
-
 	cmd := exec.CommandContext(ctx, cfg.HookCommand[0], cfg.HookCommand[1:]...)
+	cfg.Attach(cmd)
 
-	var stdout, stderr bytes.Buffer
-	cmd.Stdout = &stdout
-	cmd.Stderr = &stderr
-
+	// A caller-supplied environment replaces the inherited one entirely. EnvList
+	// never returns nil, so an empty map stays empty instead of inheriting.
 	if cfg.Environment != nil {
-		for k, v := range cfg.Environment {
-			cmd.Env = append(cmd.Env, k+"="+v)
-		}
+		cmd.Env = EnvList(cfg.Environment)
 	}
 
 	if cfg.ProjectDir != "" {
 		cmd.Dir = cfg.ProjectDir
 	}
 
-	err := cmd.Run()
-	duration := time.Since(start)
-
-	exitCode := 0
+	result, err := RunCommand(ctx, cmd, TierUnsandboxed)
 	if err != nil {
-		if exitErr, ok := err.(*exec.ExitError); ok {
-			exitCode = exitErr.ExitCode()
-		} else {
-			return nil, err
-		}
+		return nil, fmt.Errorf("running hook: %w", err)
 	}
-
-	return &SandboxResult{
-		ExitCode: exitCode,
-		Stdout:   stdout.Bytes(),
-		Stderr:   stderr.Bytes(),
-		Duration: duration,
-		Tier:     TierUnsandboxed,
-	}, nil
+	return result, nil
 }

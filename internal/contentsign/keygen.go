@@ -4,7 +4,9 @@ import (
 	"crypto/rand"
 	"errors"
 	"fmt"
+	"io/fs"
 	"os"
+	"path/filepath"
 
 	"aead.dev/minisign"
 
@@ -17,7 +19,8 @@ import (
 // non-empty it is encrypted (scrypt + Blake2b) before writing, otherwise it is
 // stored in Minisign's unencrypted secret-key format. The public key is written
 // to pubPath with 0o644 permissions. Existing files are never overwritten;
-// either path already existing is an error.
+// either path already existing is an error, and the check is atomic with file
+// creation. If the public key cannot be written, the secret key is removed.
 //
 // It returns the generated public key.
 func GenerateKeyPair(pubPath, secPath, password string) (PublicKey, error) {
@@ -42,11 +45,22 @@ func GenerateKeyPair(pubPath, secPath, password string) (PublicKey, error) {
 		return PublicKey{}, fmt.Errorf("marshaling public key: %w", err)
 	}
 
-	if err := fileutil.WriteFileAtomic(secPath, secBytes, fileutil.ModePrivate); err != nil {
-		return PublicKey{}, fmt.Errorf("writing secret key %q: %w", secPath, err)
+	if err := os.MkdirAll(filepath.Dir(secPath), secretKeyDirMode); err != nil {
+		return PublicKey{}, fmt.Errorf("creating secret key directory: %w", err)
 	}
-	if err := fileutil.WriteFileAtomic(pubPath, pubBytes, fileutil.ModeReadWrite); err != nil {
-		return PublicKey{}, fmt.Errorf("writing public key %q: %w", pubPath, err)
+	if err := os.MkdirAll(filepath.Dir(pubPath), fileutil.ModeDirDefault); err != nil {
+		return PublicKey{}, fmt.Errorf("creating public key directory: %w", err)
+	}
+	if err := writeNewFile(secPath, secBytes, fileutil.ModePrivate); err != nil {
+		return PublicKey{}, fmt.Errorf("writing secret key: %w", err)
+	}
+	if err := writeNewFile(pubPath, pubBytes, fileutil.ModeReadWrite); err != nil {
+		// Do not leave a secret key behind without its public half: it would
+		// be unusable yet block every retry with "refusing to overwrite".
+		if rmErr := os.Remove(secPath); rmErr != nil {
+			return PublicKey{}, fmt.Errorf("writing public key: %w", errors.Join(err, rmErr))
+		}
+		return PublicKey{}, fmt.Errorf("writing public key: %w", err)
 	}
 
 	return PublicKey{inner: pub}, nil
@@ -66,6 +80,46 @@ func marshalSecretKey(priv minisign.PrivateKey, password string) ([]byte, error)
 		return nil, fmt.Errorf("marshaling secret key: %w", err)
 	}
 	return b, nil
+}
+
+// secretKeyDirMode is the mode for a secret key's parent directory when key
+// generation has to create it.
+const secretKeyDirMode os.FileMode = 0o700
+
+// writeNewFile creates path with perm and writes data to it, failing if path
+// already exists in any form (including a dangling symlink). O_EXCL makes the
+// existence check and the creation one atomic step, so a file that appears
+// after an earlier check is never clobbered. The data is synced before
+// returning, and a partially written file is removed on failure.
+func writeNewFile(path string, data []byte, perm os.FileMode) (retErr error) {
+	f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, perm) //nolint:gosec // key output path chosen by the operator.
+	if err != nil {
+		if errors.Is(err, fs.ErrExist) {
+			return fmt.Errorf("refusing to overwrite existing key file %q", path)
+		}
+		return fmt.Errorf("creating %q: %w", path, err)
+	}
+	defer func() {
+		if retErr != nil {
+			_ = f.Close()
+			_ = os.Remove(path)
+		}
+	}()
+
+	// Apply perm exactly: OpenFile's mode is filtered by the umask.
+	if err := f.Chmod(perm); err != nil {
+		return fmt.Errorf("setting mode on %q: %w", path, err)
+	}
+	if _, err := f.Write(data); err != nil {
+		return fmt.Errorf("writing %q: %w", path, err)
+	}
+	if err := f.Sync(); err != nil {
+		return fmt.Errorf("syncing %q: %w", path, err)
+	}
+	if err := f.Close(); err != nil {
+		return fmt.Errorf("closing %q: %w", path, err)
+	}
+	return nil
 }
 
 // refuseExisting returns an error if path already exists, so key generation

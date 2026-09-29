@@ -41,6 +41,24 @@ type WizardAnswers struct {
 	Infrastructure     InfraConfig       `yaml:"infrastructure"              json:"infrastructure"`
 	Overlays           []string          `yaml:"overlays,omitempty"          json:"overlays,omitempty"`
 	LSP                LSPSettings       `yaml:"lsp"                         json:"lsp"`
+	// MCPPolicy is the committed client MCP policy; the Claude Code generator
+	// drops every server it does not permit. It is refreshed from .qsdev.yaml
+	// by init, join and update, never chosen interactively.
+	MCPPolicy MCPPolicy `yaml:"mcp_policy,omitempty" json:"mcp_policy,omitempty"`
+	// BranchPattern is the committed git.branch_pattern the branch-naming
+	// pre-push hook enforces ("" selects the built-in default). Like
+	// MCPPolicy it is refreshed from .qsdev.yaml by init, join and update.
+	BranchPattern string `yaml:"branch_pattern,omitempty" json:"branch_pattern,omitempty"`
+	// HookPolicy is the committed .qsdev.yaml `hooks` block that configures
+	// the generated hooks. Like MCPPolicy it is refreshed from .qsdev.yaml by
+	// init, join and update, never chosen interactively.
+	HookPolicy HooksConfig `yaml:"hook_policy,omitempty" json:"hook_policy,omitempty"`
+	// Java is the committed .qsdev.yaml java block. Like MCPPolicy it is
+	// refreshed from .qsdev.yaml by init, join and update.
+	Java JavaConfig `yaml:"java,omitempty" json:"java,omitempty"`
+	// Cloud is the committed .qsdev.yaml cloud block, refreshed from
+	// .qsdev.yaml by init, join and update like Java.
+	Cloud CloudConfig `yaml:"cloud,omitempty" json:"cloud,omitempty"`
 }
 
 // AgentToolsAnswers holds AI agent tool selections from the wizard.
@@ -114,6 +132,18 @@ type DetectedProject struct {
 	// presence here without requiring struct changes.
 	Ecosystems map[string]bool `yaml:"ecosystems" json:"ecosystems"`
 
+	// Suggested holds each detected module's suggested configuration
+	// (Version, PackageManager and module Extras as "key=value"), keyed by
+	// module name. It carries what detection learned (Java build tool, uv,
+	// OpenTofu, .NET SDK, TypeScript, ...) into LanguageChoice entries; see
+	// WithSuggested.
+	Suggested map[string]LanguageChoice `yaml:"suggested,omitempty" json:"suggested,omitempty"`
+
+	// ProbableEcosystems marks ecosystems detected only from weak, generic
+	// indicators (probable confidence). FillDefaults does not auto-enable
+	// such tier 2+ ecosystems; they remain available as explicit choices.
+	ProbableEcosystems map[string]bool `yaml:"probable_ecosystems,omitempty" json:"probable_ecosystems,omitempty"`
+
 	HasDevenvNix      bool `yaml:"has_devenv_nix"      json:"has_devenv_nix"`
 	HasDevenvYaml     bool `yaml:"has_devenv_yaml"     json:"has_devenv_yaml"`
 	HasClaudeDir      bool `yaml:"has_claude_dir"      json:"has_claude_dir"`
@@ -122,15 +152,18 @@ type DetectedProject struct {
 	HasEnvrc          bool `yaml:"has_envrc"           json:"has_envrc"`
 	HasMcpJson        bool `yaml:"has_mcp_json"        json:"has_mcp_json"`
 
-	IsGitRepo   bool   `yaml:"is_git_repo"   json:"is_git_repo"`
-	HasGitHooks bool   `yaml:"has_git_hooks" json:"has_git_hooks"`
-	RemoteURL   string `yaml:"remote_url"    json:"remote_url"`
+	IsGitRepo   bool `yaml:"is_git_repo"   json:"is_git_repo"`
+	HasGitHooks bool `yaml:"has_git_hooks" json:"has_git_hooks"`
+	// RemoteURL is the origin remote with any embedded credentials removed
+	// (see RedactURLCredentials); it is persisted to the answers file.
+	RemoteURL string `yaml:"remote_url" json:"remote_url"`
 }
 
 // NewDetectedProject returns a DetectedProject with all maps initialized.
 func NewDetectedProject() DetectedProject {
 	return DetectedProject{
 		Ecosystems: make(map[string]bool),
+		Suggested:  make(map[string]LanguageChoice),
 	}
 }
 
@@ -160,6 +193,11 @@ type GeneratedFile struct {
 	Strategy       MergeStrategy `yaml:"strategy"        json:"strategy"`
 	SkipValidation bool          `yaml:"skip_validation" json:"skip_validation"`
 	Owner          string        `yaml:"owner,omitempty" json:"owner,omitempty"`
+	// BaseContent, when non-nil, is the generator's own output for a file
+	// whose Content holds the merged bytes written to disk. State recording
+	// keeps it as the three-way merge base instead of Content. Generators
+	// leave it nil.
+	BaseContent []byte `yaml:"-" json:"-"`
 }
 
 // McpServerState tracks the lifecycle state of an installed MCP server.
@@ -224,6 +262,7 @@ type DefaultsProvider interface {
 	DefaultSembleEnabled() bool
 	DefaultSembleMode() string
 	DefaultMCPServers() []string
+	DefaultTier() string
 	TierCompliance(tier string) string
 	TierEnabledTools(tier string) []string
 }
@@ -238,105 +277,56 @@ func (a *WizardAnswers) FillDefaults(detected DetectedProject, defaults Defaults
 	a.Detected = detected
 	// Fill languages from detection if none set.
 	if len(a.Languages) == 0 {
-		if detected.HasGoMod {
-			a.Languages = append(a.Languages, LanguageChoice{Name: "go", Version: detected.GoVersion})
-		}
-		if detected.HasPackageJSON {
-			a.Languages = append(a.Languages, LanguageChoice{Name: "javascript", Version: detected.NodeVersion, PackageManager: detected.PackageManager})
-		}
-		if detected.HasPyProject {
-			a.Languages = append(a.Languages, LanguageChoice{Name: "python", Version: detected.PythonVersion})
-		}
-		if detected.HasCargoToml {
-			a.Languages = append(a.Languages, LanguageChoice{Name: "rust"})
-		}
-		if detected.HasPomXML || detected.HasBuildGradle {
-			a.Languages = append(a.Languages, LanguageChoice{Name: "java"})
-		}
-		if detected.HasCsproj {
-			a.Languages = append(a.Languages, LanguageChoice{Name: "dotnet"})
-		}
-		if detected.HasDockerfile {
-			lc := LanguageChoice{Name: "container"}
-			if detected.ContainerRuntime != "" {
-				lc.Extras = append(lc.Extras, "container_runtime="+detected.ContainerRuntime)
-			}
-			if detected.OSFamily != "" {
-				lc.Extras = append(lc.Extras, "os_family="+detected.OSFamily)
-			}
-			a.Languages = append(a.Languages, lc)
-		}
-		if detected.HasTerraform {
-			a.Languages = append(a.Languages, LanguageChoice{Name: "terraform"})
-		}
-
-		// Tier 2+ ecosystems: add any detected ecosystem not covered above.
-		tier1Names := map[string]bool{
-			"go": true, "javascript": true, "python": true,
-			"rust": true, "java": true, "dotnet": true,
-			"container": true, "terraform": true,
-			"node": true, "docker": true,
-		}
-		for name := range detected.Ecosystems {
-			if tier1Names[name] {
-				continue
-			}
-			a.Languages = append(a.Languages, LanguageChoice{Name: name})
-		}
-
-		// Cloud co-detection: when cloud + K8s/Helm co-occur, set extras for auth plugins.
-		hasK8s := detected.Ecosystems["helm"] || detected.Ecosystems["container"]
-		if hasK8s {
-			for i := range a.Languages {
-				switch a.Languages[i].Name {
-				case "gcp", "azure":
-					a.Languages[i].Extras = appendUnique(a.Languages[i].Extras, "k8s=true")
-				}
-			}
-		}
+		a.Languages = detected.LanguageChoices()
 	}
 
-	// Merge detected versions into existing language entries that lack one.
+	// Merge detected configuration into language entries: versions from the
+	// dedicated fields, then every module's suggested version, package
+	// manager and extras for whatever the entry does not already set.
 	for i := range a.Languages {
-		if a.Languages[i].Version != "" {
-			continue
-		}
-		switch a.Languages[i].Name {
-		case "go":
-			a.Languages[i].Version = detected.GoVersion
-		case "javascript":
-			a.Languages[i].Version = detected.NodeVersion
-			if a.Languages[i].PackageManager == "" {
-				a.Languages[i].PackageManager = detected.PackageManager
+		if a.Languages[i].Version == "" {
+			switch a.Languages[i].Name {
+			case "go":
+				a.Languages[i].Version = detected.GoVersion
+			case "javascript":
+				a.Languages[i].Version = detected.NodeVersion
+				if a.Languages[i].PackageManager == "" {
+					a.Languages[i].PackageManager = detected.PackageManager
+				}
+			case "python":
+				a.Languages[i].Version = detected.PythonVersion
 			}
-		case "python":
-			a.Languages[i].Version = detected.PythonVersion
 		}
+		a.Languages[i] = detected.WithSuggested(a.Languages[i])
 	}
 
-	// Default permission level — only when Tier is not explicitly set.
-	// When Tier is set, the tier determines the permission preset; filling
-	// in "standard" here would mask the tier's intent.
+	// The tier is resolved before any permission default, so a create without
+	// --tier is exactly a create with --tier <default>: the tier's preset
+	// applies and no permission level is recorded that the tier did not imply.
+	a.resolveTier(defaults)
+
+	// Only a provider without a default tier leaves the tier unset; the
+	// standard preset then applies. Filling it whenever a tier is set would
+	// mask the tier's own preset.
 	if a.ClaudeCode && a.PermissionLevel == "" && a.Tier == "" {
 		a.PermissionLevel = "standard"
 	}
 
-	// Self-protection is always on when Claude is enabled.
-	if a.ClaudeCode {
-		a.Hooks.SelfProtection = true
-	}
+	a.ApplyClaudeHookDefaults()
 
-	// Default hooks when Claude is enabled.
-	if a.ClaudeCode && !a.Hooks.SafetyBlock && !a.Hooks.AutoFormat && !a.Hooks.PreCommit && !a.Hooks.AuditLog {
-		a.Hooks.SafetyBlock = true
-	}
+	// Tier-derived posture applies to every tier, including supply-chain-only,
+	// so the recorded compliance level always matches the selected tier.
+	a.deriveFromTier(defaults)
 
-	if a.Tier == "supply-chain-only" || (a.Tier == "" && a.PermissionLevel == "supply-chain-only") {
+	if a.Tier == supplyChainOnly {
 		return
 	}
 
-	// Default agent tools when Claude is enabled — only if user hasn't configured any.
-	if a.ClaudeCode && !a.AgentTools.PostmortemEnabled && !a.AgentTools.VersionSentinel && !a.AgentTools.SembleEnabled {
+	// Default agent tools when Claude is enabled — only when no source set
+	// them at all. Every configuring source (flags, wizard, saved answers)
+	// also records a mode or window, so an all-false selection is an explicit
+	// opt-out and must survive; only the zero value means "unconfigured".
+	if a.ClaudeCode && a.AgentTools == (AgentToolsAnswers{}) {
 		a.AgentTools.PostmortemEnabled = defaults.DefaultPostmortem()
 		a.AgentTools.VersionSentinel = defaults.DefaultVersionSentinel()
 		a.AgentTools.SembleEnabled = defaults.DefaultSembleEnabled()
@@ -354,16 +344,75 @@ func (a *WizardAnswers) FillDefaults(detected DetectedProject, defaults Defaults
 	if a.ClaudeCode && len(a.MCPServers) == 0 {
 		a.MCPServers = append(a.MCPServers, defaults.DefaultMCPServers()...)
 	}
+}
 
-	// Derive ComplianceLevel from Tier when not explicitly set.
-	if a.ComplianceLevel == "" && a.Tier != "" {
-		if level := defaults.TierCompliance(a.Tier); level != "" {
-			a.ComplianceLevel = level
+// SembleMCPServer is the MCP server provided by the semble agent tool.
+const SembleMCPServer = "semble"
+
+// ConfiguredMCPServers returns the MCP servers to configure: MCPServers, with
+// the semble server present exactly when the semble agent tool is enabled in a
+// mode that uses its MCP server. AgentTools.SembleEnabled is semble's single
+// source of truth, so a stale MCPServers entry (e.g. from an older default
+// server list) cannot keep launching a server the answers record as disabled,
+// and enabling semble always provisions its server.
+func (a *WizardAnswers) ConfiguredMCPServers() []string {
+	servers := make([]string, 0, len(a.MCPServers))
+	for _, s := range a.MCPServers {
+		if s != SembleMCPServer {
+			servers = append(servers, s)
 		}
 	}
+	if a.AgentTools.SembleEnabled {
+		switch a.AgentTools.SembleMode {
+		case "", "mcp", "both":
+			servers = append(servers, SembleMCPServer)
+		}
+	}
+	return servers
+}
 
-	// Derive EnabledTools from Tier when not explicitly set.
-	if a.EnabledTools == nil && a.Tier != "" {
+// ApplyClaudeHookDefaults enforces the hook invariants every Claude Code
+// configuration must carry, whichever path produced the answers: the
+// self-protection hook is always on, and the package-guard safety block is
+// enabled when no other primary hook was chosen. It is a no-op when Claude
+// Code is disabled.
+func (a *WizardAnswers) ApplyClaudeHookDefaults() {
+	if !a.ClaudeCode {
+		return
+	}
+	a.Hooks.SelfProtection = true
+	if !a.Hooks.SafetyBlock && !a.Hooks.AutoFormat && !a.Hooks.PreCommit && !a.Hooks.AuditLog {
+		a.Hooks.SafetyBlock = true
+	}
+}
+
+// supplyChainOnly names both the lowest tier and its permission preset.
+const supplyChainOnly = "supply-chain-only"
+
+// resolveTier settles the tier once, so it is always persisted and no reader
+// has to infer it: an unset tier becomes the supply-chain-only tier when that
+// permission level was chosen, else the catalog's default tier.
+func (a *WizardAnswers) resolveTier(defaults DefaultsProvider) {
+	if a.Tier != "" {
+		return
+	}
+	if a.PermissionLevel == supplyChainOnly {
+		a.Tier = supplyChainOnly
+		return
+	}
+	a.Tier = defaults.DefaultTier()
+}
+
+// deriveFromTier fills ComplianceLevel and EnabledTools from the selected
+// Tier when they are not explicitly set.
+func (a *WizardAnswers) deriveFromTier(defaults DefaultsProvider) {
+	if a.Tier == "" {
+		return
+	}
+	if a.ComplianceLevel == "" {
+		a.ComplianceLevel = defaults.TierCompliance(a.Tier)
+	}
+	if a.EnabledTools == nil {
 		if tools := defaults.TierEnabledTools(a.Tier); len(tools) > 0 {
 			a.EnabledTools = make(map[string]bool, len(tools))
 			for _, t := range tools {
@@ -371,7 +420,6 @@ func (a *WizardAnswers) FillDefaults(detected DetectedProject, defaults Defaults
 			}
 		}
 	}
-
 }
 
 // appendUnique appends val to slice only if it is not already present.

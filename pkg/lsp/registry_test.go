@@ -165,6 +165,21 @@ func TestValidateRejectsBadConfigs(t *testing.T) {
 			c.NixPackage = ""
 			c.Devenv = DevenvEnable
 		}},
+		{name: "empty command", mutate: func(c *LSPServerConfig) { c.Command = "" }},
+		{name: "extension without dot", mutate: func(c *LSPServerConfig) { c.Extensions = []string{"go"} }},
+		{name: "bare dot extension", mutate: func(c *LSPServerConfig) { c.Extensions = []string{"."} }},
+		{name: "enable without devenv attr", mutate: func(c *LSPServerConfig) { c.DevenvLSPAttr = "" }},
+		{name: "override without devenv attr", mutate: func(c *LSPServerConfig) {
+			c.DevenvLSPAttr = ""
+			c.Devenv = DevenvEnableOverridePackage
+		}},
+		{name: "disable without devenv attr", mutate: func(c *LSPServerConfig) {
+			c.DevenvLSPAttr = ""
+			c.Devenv = DevenvDisable
+		}},
+		{name: "package list with unused devenv attr", mutate: func(c *LSPServerConfig) { c.Devenv = DevenvPackageList }},
+		{name: "duplicate language id", mutate: func(c *LSPServerConfig) { c.LanguageID = "python" }},
+		{name: "default-on extension collision", mutate: func(c *LSPServerConfig) { c.Extensions = []string{".go", ".py"} }},
 	}
 
 	for _, tt := range tests {
@@ -199,5 +214,42 @@ func TestValidateAllowsSDKBundledEmptyPackage(t *testing.T) {
 	}
 	if err := r.Validate(); err != nil {
 		t.Errorf("Validate() = %v, want nil for SDK-bundled server", err)
+	}
+}
+
+func TestValidateServersRejectsDuplicateEcosystem(t *testing.T) {
+	t.Parallel()
+	servers := defaultServers()
+	dup := *servers[0]
+	dup.LanguageID = "unique-language-id"
+	dup.Extensions = []string{".unique-ext"}
+	if err := validateServers(append(servers, &dup)); err == nil {
+		t.Fatal("validateServers() = nil, want duplicate EcosystemName error")
+	}
+}
+
+func TestValidateAllowsDefaultOffExtensionOverlap(t *testing.T) {
+	t.Parallel()
+	servers := defaultServers()
+	extra := &LSPServerConfig{
+		EcosystemName: "optin", Command: "optin-ls", LanguageID: "optin",
+		Extensions: []string{".go"}, NixPackage: "optin-ls",
+		Devenv: DevenvPackageList, SandboxCategory: "A",
+	}
+	if err := validateServers(append(servers, extra)); err != nil {
+		t.Errorf("validateServers() = %v, want nil for a default-off server sharing an extension", err)
+	}
+}
+
+// TestNoDefaultOnServerClaimsGenericYAML guards against routing every YAML
+// file in a repository to a specialised server (helm_ls, ansible).
+func TestNoDefaultOnServerClaimsGenericYAML(t *testing.T) {
+	t.Parallel()
+	for _, cfg := range NewRegistry().DefaultOn() {
+		for _, ext := range cfg.Extensions {
+			if ext == ".yaml" || ext == ".yml" {
+				t.Errorf("default-on server %q claims generic %s files", cfg.EcosystemName, ext)
+			}
+		}
 	}
 }

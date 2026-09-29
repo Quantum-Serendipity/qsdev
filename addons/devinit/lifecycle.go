@@ -1,8 +1,11 @@
 package devinit
 
 import (
+	"bytes"
+	"context"
 	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"sort"
@@ -12,14 +15,42 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/Quantum-Serendipity/qsdev/internal/cmdutil"
+	qsdevconfig "github.com/Quantum-Serendipity/qsdev/internal/config"
+	"github.com/Quantum-Serendipity/qsdev/internal/detect"
 	"github.com/Quantum-Serendipity/qsdev/internal/state"
 	"github.com/Quantum-Serendipity/qsdev/internal/surgery"
 	"github.com/Quantum-Serendipity/qsdev/internal/tier"
 	"github.com/Quantum-Serendipity/qsdev/internal/toolreg"
+	"github.com/Quantum-Serendipity/qsdev/internal/update"
 	"github.com/Quantum-Serendipity/qsdev/pkg/branding"
 	"github.com/Quantum-Serendipity/qsdev/pkg/fileutil"
+	"github.com/Quantum-Serendipity/qsdev/pkg/generate"
 	"github.com/Quantum-Serendipity/qsdev/pkg/types"
 )
+
+// Enable and disable never edit shared files (CLAUDE.md, devenv.nix,
+// .mcp.json, settings.json) by hand-written surgery. They regenerate them
+// through the same generators and update planner that init/update use, so
+// every command renders a tool's contribution from one source, in each file's
+// own format, with the file's merge strategy and recorded state preserved.
+
+// toolChange is the file work one enable or disable performs, computed in full
+// before anything is written so a refusal leaves the project untouched.
+type toolChange struct {
+	// exclusive holds the tool's own files to write (enable only).
+	exclusive []types.GeneratedFile
+	// shared is the update plan for the shared files the tool contributes to.
+	shared UpdatePlan
+	// notices explains shared files left untouched.
+	notices []string
+}
+
+// toolChangeResult reports what applying a toolChange did.
+type toolChangeResult struct {
+	written   []types.GeneratedFile
+	notices   []string
+	nixResult *update.NixUpdateResult
+}
 
 // runEnable enables a tool: validates prerequisites, generates files, and
 // updates persisted answers and state.
@@ -29,7 +60,7 @@ func runEnable(cmd *cobra.Command, toolName string, opts enableOptions) error {
 		return err
 	}
 
-	answers, tool, err := loadToolForEnable(projectRoot, toolName)
+	answers, tool, err := loadToolForEnable(cmdContext(cmd), projectRoot, toolName)
 	if err != nil {
 		return err
 	}
@@ -57,47 +88,51 @@ func runEnable(cmd *cobra.Command, toolName string, opts enableOptions) error {
 		return nil
 	}
 
-	writtenFiles, err := writeToolFiles(tool, toolName, projectRoot, answers)
+	stateFile := filepath.Join(projectRoot, stateFilePath())
+	existingState, err := state.LoadStateFromFile(stateFile)
+	if err != nil {
+		return fmt.Errorf("loading state: %w", err)
+	}
+
+	change, err := planToolEnable(tool, toolName, projectRoot, answers, existingState, opts.Force)
+	if err != nil {
+		return err
+	}
+	result, err := applyToolChange(projectRoot, change, existingState)
 	if err != nil {
 		return err
 	}
 
-	stateFile := filepath.Join(projectRoot, stateFilePath())
-	if err := saveEnableState(stateFile, toolName, writtenFiles); err != nil {
+	if err := saveToolState(projectRoot, existingState, toolName, true); err != nil {
 		return err
 	}
-
-	// Save updated answers.
 	if err := saveAnswers(projectRoot, answers); err != nil {
 		return fmt.Errorf("saving answers: %w", err)
 	}
+	if err := qsdevconfig.SyncProjectConfig(projectRoot, answers); err != nil {
+		return err
+	}
 
 	fmt.Fprintf(cmd.OutOrStdout(), "Enabled %q.\n", tool.DisplayName)
-	if len(writtenFiles) > 0 {
-		printWrittenFiles(cmd, writtenFiles, "wrote")
-	} else {
+	switch {
+	case len(result.written) > 0:
+		printWrittenFiles(cmd, result.written, "wrote")
+	case len(result.notices) == 0:
 		fmt.Fprintf(cmd.OutOrStdout(), "  No files generated (tool enabled but no output needed for current project configuration).\n")
 	}
+	printChangeNotices(cmd, result)
 	return nil
 }
 
 // loadToolForEnable loads saved answers, infers enabled tools, and looks up
 // the named tool in the registry.
-func loadToolForEnable(projectRoot, toolName string) (types.WizardAnswers, *toolreg.Tool, error) {
-	registry := toolreg.DefaultRegistry()
-
-	// Load saved answers (empty if no prior init).
-	answers, err := loadAnswersOrEmpty(projectRoot)
+func loadToolForEnable(ctx context.Context, projectRoot, toolName string) (types.WizardAnswers, *toolreg.Tool, error) {
+	answers, err := loadLifecycleAnswers(ctx, projectRoot)
 	if err != nil {
-		return types.WizardAnswers{}, nil, fmt.Errorf("loading answers: %w", err)
+		return types.WizardAnswers{}, nil, err
 	}
-	answers.ProjectRoot = projectRoot
 
-	// Migrate legacy projects that lack EnabledTools.
-	toolreg.InferEnabledTools(&answers, registry)
-
-	// Look up the tool.
-	tool, ok := registry.ByName(toolName)
+	tool, ok := toolreg.DefaultRegistry().ByName(toolName)
 	if !ok {
 		return types.WizardAnswers{}, nil, fmt.Errorf("unknown tool %q; use '%s list' to see available tools", toolName, branding.Get().AppName)
 	}
@@ -105,101 +140,371 @@ func loadToolForEnable(projectRoot, toolName string) (types.WizardAnswers, *tool
 	return answers, tool, nil
 }
 
-// writeToolFiles generates and writes both exclusive and shared files for a
-// tool enable operation.
-func writeToolFiles(tool *toolreg.Tool, toolName, projectRoot string, answers types.WizardAnswers) ([]types.GeneratedFile, error) {
-	// Generate and write exclusive files.
-	var writtenFiles []types.GeneratedFile
+// loadLifecycleAnswers loads saved answers (empty if no prior init) and
+// refreshes them exactly as update does — current detection plus inferred
+// tools — so the shared files enable/disable regenerate match what the next
+// update would produce.
+func loadLifecycleAnswers(ctx context.Context, projectRoot string) (types.WizardAnswers, error) {
+	answers, err := loadAnswersOrEmpty(projectRoot)
+	if err != nil {
+		return types.WizardAnswers{}, fmt.Errorf("loading answers: %w", err)
+	}
+	answers.ProjectRoot = projectRoot
+	answers.Detected = detect.Detect(ctx, projectRoot)
+	toolreg.MergeInferredTools(&answers, toolreg.DefaultRegistry())
+	return answers, nil
+}
+
+// lifecycleAccumulatorMode mirrors update's generator selection: a
+// claude-only project never has its devenv files regenerated.
+func lifecycleAccumulatorMode(answers types.WizardAnswers) generationScope {
+	return generationScope{ClaudeOnly: answers.ClaudeCode && answers.MergeMode == mergeModeClaudeOnly}
+}
+
+// generateToolFiles renders the tool's exclusive files (its GenerateFunc plus
+// any file the generators emit under its exclusive paths) and the current
+// content of every shared file it contributes to, from the given answers.
+func generateToolFiles(tool *toolreg.Tool, toolName string, answers types.WizardAnswers) (exclusive, shared []types.GeneratedFile, err error) {
+	have := make(map[string]bool)
 	if tool.GenerateFunc != nil {
 		generated, err := tool.GenerateFunc(answers)
 		if err != nil {
-			return nil, fmt.Errorf("generating files for %q: %w", toolName, err)
-		}
-		// Honesty guard: a tool that declares exclusive files but produced none
-		// is being suppressed (typically by a tier gate in its GenerateFunc).
-		// Refuse loudly here — before writing the CLAUDE.md advertisement or any
-		// shared section — instead of reporting a false success with the tool's
-		// SKILL.md silently omitted (BL-P1-9).
-		if len(generated) == 0 && len(tool.ExclusiveFiles()) > 0 {
-			return nil, unsatisfiedTierError(toolName, answers)
+			return nil, nil, fmt.Errorf("generating files for %q: %w", toolName, err)
 		}
 		for _, f := range generated {
-			absPath := filepath.Join(projectRoot, f.Path)
-			mode := f.Mode
-			if mode == 0 {
-				mode = fileutil.ModeReadWrite
-			}
-			if err := fileutil.WriteFileAtomic(absPath, f.Content, mode); err != nil {
-				return nil, fmt.Errorf("writing %s: %w", f.Path, err)
-			}
 			f.Owner = toolName
-			writtenFiles = append(writtenFiles, f)
+			exclusive = append(exclusive, f)
+			have[f.Path] = true
 		}
 	}
 
-	// Process shared files: insert sections.
+	acc, err := runAccumulator(answers, lifecycleAccumulatorMode(answers))
+	if err != nil {
+		return nil, nil, fmt.Errorf("generating files: %w", err)
+	}
+	sharedPaths := make(map[string]bool)
 	for _, sf := range tool.SharedFiles() {
-		contentFunc, ok := tool.SharedContent[sf.SectionID]
-		if !ok {
+		sharedPaths[sf.Path] = true
+	}
+	for _, f := range acc.allFiles {
+		switch {
+		case sharedPaths[f.Path]:
+			shared = append(shared, f)
+		case !have[f.Path] && tool.OwnsExclusively(f.Path):
+			f.Owner = toolName
+			exclusive = append(exclusive, f)
+			have[f.Path] = true
+		}
+	}
+	return exclusive, shared, nil
+}
+
+// planToolEnable computes every file an enable writes and refuses — before
+// anything is written — when the tool would produce nothing, when a write
+// would leave the project, or when it would overwrite a file qsdev did not
+// generate (unless force).
+func planToolEnable(
+	tool *toolreg.Tool, toolName, projectRoot string,
+	answers types.WizardAnswers, existingState types.GeneratedState, force bool,
+) (toolChange, error) {
+	exclusive, shared, err := generateToolFiles(tool, toolName, answers)
+	if err != nil {
+		return toolChange{}, err
+	}
+
+	// Honesty guard: a tool whose own generator produced none of its files,
+	// or that produced nothing at all, is being suppressed (by a tier gate, or
+	// because the project gives it nothing to do). Refuse loudly instead of
+	// reporting a false success that advertises the tool in CLAUDE.md while
+	// its files are missing (BL-P1-9). Declared exclusive files may be
+	// conditional (e.g. semble's sub-agent only exists in sub-agent mode), so
+	// tools without a generator of their own are judged on all their output.
+	generatorProducedNothing := tool.GenerateFunc != nil && len(tool.ExclusiveFiles()) > 0 && len(exclusive) == 0
+	producedNothing := len(tool.OwnedFiles) > 0 && len(exclusive) == 0 && len(shared) == 0
+	switch {
+	case generatorProducedNothing:
+		return toolChange{}, noToolOutputError(toolName, tool.ExclusiveFiles(), answers)
+	case producedNothing:
+		return toolChange{}, noToolOutputError(toolName, tool.OwnedFiles, answers)
+	}
+
+	modStatus := state.CheckModified(existingState, projectRoot)
+	exclusive, kept, err := keepUserOwnedFiles(projectRoot, toolName, exclusive, modStatus)
+	if err != nil {
+		return toolChange{}, err
+	}
+	if err := checkExclusiveWrites(projectRoot, exclusive, modStatus, force); err != nil {
+		return toolChange{}, err
+	}
+
+	change := toolChange{exclusive: exclusive}
+	change.shared, change.notices, err = planSharedFiles(tool, projectRoot, shared, modStatus, existingState, false)
+	if err != nil {
+		return toolChange{}, err
+	}
+	change.notices = append(kept, change.notices...)
+	return change, nil
+}
+
+// keepUserOwnedFiles honours the Skip (skip-if-exists) strategy for a tool's
+// exclusive files: an existing file the user owns — one qsdev did not
+// generate, or generated and the user has since edited — is left untouched
+// and dropped from the write set, so it is never overwritten (not even with
+// --force) and its current content is never recorded as qsdev output, which
+// keeps a file qsdev never generated out of disable's reach. A
+// missing file, one already holding the generated content, and unmodified
+// qsdev output stay in the set. Paths that fail containment also stay, so
+// checkExclusiveWrites refuses them before anything on disk is inspected.
+func keepUserOwnedFiles(
+	projectRoot, toolName string, files []types.GeneratedFile, modStatus map[string]state.FileStatus,
+) (write []types.GeneratedFile, notices []string, err error) {
+	app := branding.Get().AppName
+	write = make([]types.GeneratedFile, 0, len(files))
+	for _, f := range files {
+		if f.Strategy != types.Skip || generate.ValidateDestination(projectRoot, f.Path) != nil {
+			write = append(write, f)
 			continue
 		}
-		content, err := contentFunc(answers)
+		foreign, err := isForeignFile(projectRoot, f, modStatus)
 		if err != nil {
-			return nil, fmt.Errorf("generating shared content for %s section %q: %w", sf.Path, sf.SectionID, err)
+			return nil, nil, err
 		}
-		updated, err := applySurgery(projectRoot, sf.Path, sf.SectionID, content, true)
-		if err != nil {
-			return nil, fmt.Errorf("inserting section %q into %s: %w", sf.SectionID, sf.Path, err)
+		if !foreign {
+			write = append(write, f)
+			continue
 		}
-		absPath := filepath.Join(projectRoot, sf.Path)
-		if err := fileutil.WriteFileAtomic(absPath, updated, fileutil.ModeReadWrite); err != nil {
-			return nil, fmt.Errorf("writing %s: %w", sf.Path, err)
-		}
-		writtenFiles = append(writtenFiles, types.GeneratedFile{
-			Path:    sf.Path,
-			Content: updated,
-			Mode:    fileutil.ModeReadWrite,
-			Owner:   toolName,
-		})
+		notices = append(notices, fmt.Sprintf(
+			"%s: kept your existing file (not generated by %s, or edited since); delete it and re-run '%s enable %s' to use the generated version",
+			f.Path, app, app, toolName))
 	}
-
-	return writtenFiles, nil
+	return write, notices, nil
 }
 
-// unsatisfiedTierError builds an actionable error for a tool whose generation
-// was suppressed (it declares exclusive files but produced none) at the current
-// tier. This keeps enable honest: a loud, fixable error instead of a false
-// success that leaves the tool's configuration files silently missing.
-func unsatisfiedTierError(toolName string, answers types.WizardAnswers) error {
+// noToolOutputError builds an actionable error for a tool that produced none
+// of its files. It only blames the tier when a higher tier exists: at full
+// tier the cause is the project configuration, and "raise the tier" advice
+// would send the user in a loop.
+func noToolOutputError(toolName string, missing []toolreg.FileOwnership, answers types.WizardAnswers) error {
 	app := branding.Get().AppName
 	t := tier.Resolve(answers.Tier, answers.PermissionLevel, answers.MCPServers)
+	declared := make([]string, 0, len(missing))
+	for _, f := range missing {
+		declared = append(declared, f.Path)
+	}
+	files := strings.Join(declared, ", ")
+	if t < tier.Full {
+		return fmt.Errorf(
+			"tool %q generated none of its files (%s) at the %q tier: it may require a higher tier to produce them. "+
+				"Raise the tier (preview with '%s') and re-run '%s enable %s'",
+			toolName, files, t.String(), tier.PreviewCommand(app, tier.Full.String()), app, toolName)
+	}
 	return fmt.Errorf(
-		"tool %q generated no configuration files at the %q tier: it requires a higher tier to produce its files. "+
-			"Raise the tier (e.g. run '%s init --tier full') and re-run '%s enable %s'",
-		toolName, t.String(), app, app, toolName)
+		"tool %q generated none of its files (%s) for the current project configuration (tier %q), so it was not enabled; "+
+			"it has nothing to configure in this project yet (for example, no declared services or inputs it depends on)",
+		toolName, files, t.String())
 }
 
-// saveEnableState loads the current state file, records newly written files,
-// marks the tool as enabled, and persists the updated state.
-func saveEnableState(stateFile, toolName string, writtenFiles []types.GeneratedFile) error {
-	existingState, err := state.LoadStateFromFile(stateFile)
-	if err != nil {
-		return fmt.Errorf("loading state: %w", err)
-	}
-	for _, f := range writtenFiles {
-		fs := types.FileState{
-			Hash:  state.ComputeHash(f.Content),
-			Mode:  f.Mode,
-			Owner: toolName,
+// checkExclusiveWrites validates every exclusive destination before any
+// write. Paths must stay inside the project (never overridable), and an
+// existing file is only replaced when qsdev generated it and it is unmodified,
+// when it already has the new content, or when force is set.
+func checkExclusiveWrites(projectRoot string, files []types.GeneratedFile, modStatus map[string]state.FileStatus, force bool) error {
+	var unsafe, foreignPaths []string
+	for _, f := range files {
+		if err := generate.ValidateDestination(projectRoot, f.Path); err != nil {
+			unsafe = append(unsafe, err.Error())
+			continue
 		}
-		existingState.Files[f.Path] = fs
+		foreign, err := isForeignFile(projectRoot, f, modStatus)
+		if err != nil {
+			return err
+		}
+		if foreign && !force {
+			foreignPaths = append(foreignPaths, f.Path)
+		}
 	}
-	if existingState.EnabledTools == nil {
-		existingState.EnabledTools = make(map[string]bool)
+	if len(unsafe) > 0 {
+		return fmt.Errorf("refusing to write outside the project:\n  %s", strings.Join(unsafe, "\n  "))
 	}
-	existingState.EnabledTools[toolName] = true
-	existingState.LastRun = time.Now().UTC()
-	if err := state.SaveStateToFile(stateFile, existingState); err != nil {
+	if len(foreignPaths) > 0 {
+		return fmt.Errorf(
+			"refusing to overwrite existing files that %s did not generate (or that were modified since):\n  %s\n"+
+				"Move them aside, or re-run with --force to overwrite them",
+			branding.Get().AppName, strings.Join(foreignPaths, "\n  "))
+	}
+	return nil
+}
+
+// isForeignFile reports whether f's destination holds a file qsdev does not
+// own: it exists, differs from the generated content, and is not unmodified
+// qsdev output. The caller must have validated the destination.
+func isForeignFile(projectRoot string, f types.GeneratedFile, modStatus map[string]state.FileStatus) (bool, error) {
+	existing, err := os.ReadFile(filepath.Join(projectRoot, f.Path))
+	switch {
+	case errors.Is(err, fs.ErrNotExist):
+		return false, nil
+	case err != nil:
+		return false, fmt.Errorf("checking %s: %w", f.Path, err)
+	case bytes.Equal(existing, f.Content):
+		return false, nil
+	}
+	st, tracked := modStatus[f.Path]
+	return !tracked || st.Status != types.Unmodified, nil
+}
+
+// planSharedFiles plans the regenerated shared files with update's planner,
+// so each file keeps its merge strategy (section markers for CLAUDE.md,
+// three-way merge for .mcp.json/settings.json, sidecar for a modified
+// devenv.nix). Files the user owns are never clobbered: an existing file qsdev
+// does not track is merged or skipped, never created over. When removing
+// (disable), files are never newly created.
+func planSharedFiles(
+	tool *toolreg.Tool, projectRoot string, shared []types.GeneratedFile,
+	modStatus map[string]state.FileStatus, existingState types.GeneratedState, removing bool,
+) (UpdatePlan, []string, error) {
+	var notices []string
+	produced := make(map[string]bool, len(shared))
+	for _, f := range shared {
+		produced[f.Path] = true
+		if err := generate.ValidateDestination(projectRoot, f.Path); err != nil {
+			return UpdatePlan{}, nil, fmt.Errorf("refusing to write outside the project: %w", err)
+		}
+	}
+
+	plan := buildUpdatePlan(shared, modStatus, existingState, projectRoot, UpdateOptions{})
+	kept := plan.Files[:0]
+	for _, fp := range plan.Files {
+		// buildUpdatePlan already merges an existing untracked file with a
+		// mergeable strategy and skips anything else; a manual-merge file
+		// (devenv.nix) gets a sidecar instead so the tool's contribution is
+		// still offered to the user.
+		if fp.Status == types.New && fp.Action == UpdateActionSkip && fp.Strategy == types.ManualMerge &&
+			fileutil.FileExists(projectRoot, fp.Path) {
+			untrackedExisting(&fp)
+		}
+		if removing && fp.Action == UpdateActionCreate {
+			continue
+		}
+		if fp.Action == UpdateActionSkip {
+			notices = append(notices, fmt.Sprintf("%s: not updated (%s)", fp.Path, fp.Reason))
+		}
+		kept = append(kept, fp)
+	}
+	plan.Files = kept
+
+	if !removing {
+		for _, sf := range tool.SharedFiles() {
+			if !produced[sf.Path] {
+				notices = append(notices, fmt.Sprintf("%s: not generated for this project configuration; its %q section was not written", sf.Path, sf.SectionID))
+			}
+		}
+	}
+	return plan, dedupeStrings(notices), nil
+}
+
+// untrackedExisting re-plans a "create" for a file that already exists but
+// is not in qsdev's state: merge it by strategy, or leave it alone.
+func untrackedExisting(fp *FileUpdatePlan) {
+	fp.Status = types.Modified
+	switch fp.Strategy {
+	case types.SectionMarker, types.ThreeWayMerge:
+		fp.Action = UpdateActionMerge
+		fp.Reason = "exists but untracked, merge"
+	case types.ManualMerge:
+		fp.Action = UpdateActionSidecar
+		fp.Reason = "exists but untracked, manual merge required"
+	default:
+		fp.Action = UpdateActionSkip
+		fp.Reason = "exists but was not generated by " + branding.Get().AppName
+	}
+}
+
+// applyToolChange writes the planned files and records them in state,
+// preserving each shared file's merge strategy and recording the generated
+// base (not the merged result) for three-way-merged files.
+func applyToolChange(projectRoot string, change toolChange, st types.GeneratedState) (toolChangeResult, error) {
+	var result toolChangeResult
+	if err := validateToolChange(change); err != nil {
+		return result, err
+	}
+	for _, f := range change.exclusive {
+		if f.Mode == 0 {
+			f.Mode = fileutil.ModeReadWrite
+		}
+		if err := generate.WriteGeneratedFile(projectRoot, f); err != nil {
+			return result, err
+		}
+		result.written = append(result.written, f)
+	}
+
+	outcome, err := executeUpdatePlan(change.shared, projectRoot, UpdateOptions{})
+	if err != nil {
+		return result, fmt.Errorf("updating shared files: %w", err)
+	}
+	sharedWritten := outcome.written
+	result.nixResult = outcome.nixResult
+	result.notices = append(result.notices, change.notices...)
+
+	writtenPaths := make(map[string]bool, len(sharedWritten))
+	for _, f := range sharedWritten {
+		writtenPaths[f.Path] = true
+	}
+	for _, fp := range change.shared.Files {
+		if fp.Action == UpdateActionMerge && !writtenPaths[fp.Path] {
+			result.notices = append(result.notices, fmt.Sprintf("%s: merge failed; not updated (re-run after resolving, or run '%s update')", fp.Path, branding.Get().AppName))
+		}
+	}
+	for _, f := range outcome.failures {
+		if errors.Is(f.Err, generate.ErrInvalidContent) {
+			result.notices = append(result.notices, fmt.Sprintf("%s: not updated: %v", f.Path, f.Err))
+		}
+	}
+	result.written = append(result.written, sharedWritten...)
+
+	recorded := state.RecordFiles(result.written)
+	for _, fp := range change.shared.Files {
+		if fp.Action == UpdateActionMerge && fp.Strategy == types.ThreeWayMerge {
+			if entry, ok := recorded.Files[fp.Path]; ok {
+				entry.BaseContent = fp.NewContent
+				recorded.Files[fp.Path] = entry
+			}
+		}
+	}
+	for path, entry := range recorded.Files {
+		st.Files[path] = entry
+	}
+	return result, nil
+}
+
+// validateToolChange checks every file the change would write with generated
+// content before anything is written, so a tool change is refused as a whole
+// rather than leaving a file WriteFiles would reject. Merged content is
+// validated when it is written (see executeUpdatePlan).
+func validateToolChange(change toolChange) error {
+	var errs []error
+	for _, f := range change.exclusive {
+		if !f.SkipValidation {
+			errs = append(errs, generate.ValidateContent(f.Path, f.Content))
+		}
+	}
+	for _, fp := range change.shared.Files {
+		switch fp.Action {
+		case UpdateActionCreate, UpdateActionRegenerate, UpdateActionSidecar:
+			errs = append(errs, generate.ValidateContent(fp.Path, fp.NewContent))
+		}
+	}
+	return errors.Join(errs...)
+}
+
+// saveToolState records the tool's enabled flag and persists the state and
+// the committed manifest.
+func saveToolState(projectRoot string, st types.GeneratedState, toolName string, enabled bool) error {
+	if st.EnabledTools == nil {
+		st.EnabledTools = make(map[string]bool)
+	}
+	st.EnabledTools[toolName] = enabled
+	st.LastRun = time.Now().UTC()
+	if err := state.SaveInitState(projectRoot, st); err != nil {
 		return fmt.Errorf("saving state: %w", err)
 	}
 	return nil
@@ -215,13 +520,10 @@ func runDisable(cmd *cobra.Command, toolName string, opts disableOptions) error 
 
 	registry := toolreg.DefaultRegistry()
 
-	answers, err := loadAnswersOrEmpty(projectRoot)
+	answers, err := loadLifecycleAnswers(cmdContext(cmd), projectRoot)
 	if err != nil {
-		return fmt.Errorf("loading answers: %w", err)
+		return err
 	}
-	answers.ProjectRoot = projectRoot
-
-	toolreg.InferEnabledTools(&answers, registry)
 
 	tool, ok := registry.ByName(toolName)
 	if !ok {
@@ -244,27 +546,16 @@ func runDisable(cmd *cobra.Command, toolName string, opts disableOptions) error 
 		}
 	}
 
-	// Load state and check for user modifications on owned files.
 	stateFile := filepath.Join(projectRoot, stateFilePath())
 	existingState, err := state.LoadStateFromFile(stateFile)
 	if err != nil {
 		return fmt.Errorf("loading state: %w", err)
 	}
 
-	if !opts.Force {
-		modStatus := state.CheckModified(existingState, projectRoot)
-		var modified []string
-		for _, ef := range tool.ExclusiveFiles() {
-			if fs, ok := modStatus[ef.Path]; ok && fs.Status == types.Modified {
-				modified = append(modified, ef.Path)
-			}
-		}
-		if len(modified) > 0 {
-			return fmt.Errorf(
-				"the following files have been modified by the user:\n  %s\nUse --force to remove them anyway",
-				strings.Join(modified, "\n  "),
-			)
-		}
+	// Plan everything (and run the modification check) before deleting.
+	removal, err := planExclusiveRemoval(registry, tool, toolName, projectRoot, existingState, opts.Force)
+	if err != nil {
+		return err
 	}
 
 	// Call the tool's disable function to update answers.
@@ -273,73 +564,286 @@ func runDisable(cmd *cobra.Command, toolName string, opts disableOptions) error 
 	}
 	answers.EnabledTools[toolName] = false
 
-	if err := removeToolFiles(tool, projectRoot, existingState); err != nil {
+	change, err := planToolDisable(tool, toolName, projectRoot, answers, existingState)
+	if err != nil {
 		return err
 	}
 
-	if err := saveDisableState(stateFile, toolName, existingState); err != nil {
+	removed, err := removal.apply(projectRoot, existingState)
+	if err != nil {
 		return err
 	}
+	result, err := applyToolChange(projectRoot, change, existingState)
+	if err != nil {
+		return err
+	}
+	result.notices = append(removal.notices, result.notices...)
+	result.notices = append(result.notices, removeStaleSections(tool, projectRoot, change, existingState)...)
 
-	// Save updated answers.
+	if err := saveToolState(projectRoot, existingState, toolName, false); err != nil {
+		return err
+	}
 	if err := saveAnswers(projectRoot, answers); err != nil {
 		return fmt.Errorf("saving answers: %w", err)
 	}
+	if err := qsdevconfig.SyncProjectConfig(projectRoot, answers); err != nil {
+		return err
+	}
 
 	fmt.Fprintf(cmd.OutOrStdout(), "Disabled %q.\n", tool.DisplayName)
+	if len(removed) > 0 {
+		fmt.Fprintln(cmd.OutOrStdout(), "Files removed:")
+		for _, p := range removed {
+			fmt.Fprintf(cmd.OutOrStdout(), "  %s\n", p)
+		}
+	}
+	printWrittenFiles(cmd, result.written, "updated")
+	printChangeNotices(cmd, result)
 	return nil
 }
 
-// removeToolFiles removes exclusive files from disk and removes shared file
-// sections owned by the tool. It mutates existingState in place to reflect
-// the removals.
-func removeToolFiles(tool *toolreg.Tool, projectRoot string, existingState types.GeneratedState) error {
-	// Remove exclusive files.
-	for _, ef := range tool.ExclusiveFiles() {
-		absPath := filepath.Join(projectRoot, ef.Path)
-		if err := os.Remove(absPath); err != nil && !os.IsNotExist(err) {
-			return fmt.Errorf("removing %s: %w", ef.Path, err)
+// planToolDisable regenerates the tool's shared files with the tool disabled.
+func planToolDisable(
+	tool *toolreg.Tool, toolName, projectRoot string,
+	answers types.WizardAnswers, existingState types.GeneratedState,
+) (toolChange, error) {
+	_, shared, err := generateToolFiles(tool, toolName, answers)
+	if err != nil {
+		return toolChange{}, err
+	}
+	modStatus := state.CheckModified(existingState, projectRoot)
+	plan, notices, err := planSharedFiles(tool, projectRoot, shared, modStatus, existingState, true)
+	if err != nil {
+		return toolChange{}, err
+	}
+	return toolChange{shared: plan, notices: notices}, nil
+}
+
+// exclusiveRemoval is the validated set of tool files a disable deletes.
+type exclusiveRemoval struct {
+	files   []string // files to delete (project-relative)
+	dirs    []string // declared exclusive directories to prune when empty
+	notices []string
+}
+
+// planExclusiveRemoval collects the tool's exclusive files — declared paths,
+// every tracked file beneath a declared directory (e.g. the opengrep rule
+// library under .opengrep/rules/core), and tracked files recorded as owned by
+// the tool — and refuses, before anything is deleted, when any was modified by
+// the user (unless force). Files qsdev never recorded are always left in place,
+// whatever force says. Files that are shared with other tools are never
+// candidates, whatever owner an older state recorded for them.
+func planExclusiveRemoval(
+	registry *toolreg.Registry, tool *toolreg.Tool, toolName, projectRoot string,
+	st types.GeneratedState, force bool,
+) (exclusiveRemoval, error) {
+	sharedAnywhere := make(map[string]bool)
+	for _, t := range registry.All() {
+		for _, sf := range t.SharedFiles() {
+			sharedAnywhere[sf.Path] = true
 		}
-		delete(existingState.Files, ef.Path)
 	}
 
-	// Process shared files: remove sections.
-	for _, sf := range tool.SharedFiles() {
-		updated, err := applySurgery(projectRoot, sf.Path, sf.SectionID, nil, false)
-		if err != nil {
-			return fmt.Errorf("removing section %q from %s: %w", sf.SectionID, sf.Path, err)
+	candidates := make(map[string]bool)
+	for _, ef := range tool.ExclusiveFiles() {
+		candidates[ef.Path] = true
+	}
+	for p, entry := range st.Files {
+		if !sharedAnywhere[p] && (tool.OwnsExclusively(p) || entry.Owner == toolName) {
+			candidates[p] = true
 		}
-		// applySurgery returns nil when the file doesn't exist — nothing to do.
-		if updated == nil {
+	}
+	paths := make([]string, 0, len(candidates))
+	for p := range candidates {
+		paths = append(paths, p)
+	}
+	sort.Strings(paths)
+
+	modStatus := state.CheckModified(st, projectRoot)
+	var r exclusiveRemoval
+	var modified []string
+	for _, p := range paths {
+		if err := generate.ValidateDestination(projectRoot, p); err != nil {
+			return exclusiveRemoval{}, fmt.Errorf("refusing to remove a path outside the project: %w", err)
+		}
+		info, err := os.Lstat(filepath.Join(projectRoot, p))
+		switch {
+		case errors.Is(err, fs.ErrNotExist):
+			delete(st.Files, p) // already gone; forget it
+			continue
+		case err != nil:
+			return exclusiveRemoval{}, fmt.Errorf("checking %s: %w", p, err)
+		case info.IsDir():
+			r.dirs = append(r.dirs, p)
 			continue
 		}
-		absPath := filepath.Join(projectRoot, sf.Path)
-		if err := fileutil.WriteFileAtomic(absPath, updated, fileutil.ModeReadWrite); err != nil {
-			return fmt.Errorf("writing %s: %w", sf.Path, err)
+		status, tracked := modStatus[p]
+		switch {
+		case !tracked:
+			// Only files qsdev created are removed; --force never deletes a
+			// file the user owns (e.g. a PR template kept at enable).
+			r.notices = append(r.notices, fmt.Sprintf("%s: left in place (not generated by %s)", p, branding.Get().AppName))
+			continue
+		case tracked && status.Status != types.Unmodified && !force:
+			modified = append(modified, p)
 		}
-		// Update the state hash for the shared file.
-		existingState.Files[sf.Path] = types.FileState{
-			Hash:  state.ComputeHash(updated),
-			Mode:  fileutil.ModeReadWrite,
-			Owner: existingState.Files[sf.Path].Owner,
+		r.files = append(r.files, p)
+		if sidecar, ok := manualMergeSidecar(projectRoot, p, st.Files[p]); ok {
+			r.files = append(r.files, sidecar)
 		}
 	}
-
-	return nil
+	if len(modified) > 0 {
+		return exclusiveRemoval{}, fmt.Errorf(
+			"the following files have been modified by the user:\n  %s\nUse --force to remove them anyway",
+			strings.Join(modified, "\n  "))
+	}
+	return r, nil
 }
 
-// saveDisableState marks the tool as disabled in the state, updates the
-// timestamp, and persists the state to disk.
-func saveDisableState(stateFile, toolName string, existingState types.GeneratedState) error {
-	if existingState.EnabledTools == nil {
-		existingState.EnabledTools = make(map[string]bool)
+// manualMergeSidecar returns the sidecar (relPath + generate.SidecarSuffix)
+// that an update wrote beside a user-edited manual-merge file, so removing
+// the file does not leave qsdev's regenerated copy behind. The sidecar is
+// always qsdev output, so it needs no modification check of its own.
+func manualMergeSidecar(projectRoot, relPath string, entry types.FileState) (string, bool) {
+	if entry.Strategy != types.ManualMerge {
+		return "", false
 	}
-	existingState.EnabledTools[toolName] = false
-	existingState.LastRun = time.Now().UTC()
-	if err := state.SaveStateToFile(stateFile, existingState); err != nil {
-		return fmt.Errorf("saving state: %w", err)
+	sidecar := relPath + generate.SidecarSuffix
+	info, err := os.Lstat(filepath.Join(projectRoot, sidecar))
+	if err != nil || !info.Mode().IsRegular() {
+		return "", false
 	}
-	return nil
+	return sidecar, true
+}
+
+// apply deletes the planned files, forgets them in state, and prunes the
+// directories they leave empty (never the project root itself).
+func (r exclusiveRemoval) apply(projectRoot string, st types.GeneratedState) ([]string, error) {
+	var removed []string
+	pruneFrom := append([]string(nil), r.dirs...)
+	for _, p := range r.files {
+		if err := os.Remove(filepath.Join(projectRoot, p)); err != nil && !errors.Is(err, fs.ErrNotExist) {
+			return removed, fmt.Errorf("removing %s: %w", p, err)
+		}
+		delete(st.Files, p)
+		removed = append(removed, p)
+		pruneFrom = append(pruneFrom, filepath.Dir(p))
+	}
+	// Deepest first, so a parent is only tried after its children.
+	sort.Slice(pruneFrom, func(i, j int) bool { return len(pruneFrom[i]) > len(pruneFrom[j]) })
+	for _, dir := range pruneFrom {
+		pruneEmptyDirs(projectRoot, dir)
+	}
+	return removed, nil
+}
+
+// pruneEmptyDirs removes dir and then each parent while they are empty,
+// stopping at the project root.
+func pruneEmptyDirs(projectRoot, dir string) {
+	for dir != "." && dir != "" && dir != string(filepath.Separator) {
+		if err := os.Remove(filepath.Join(projectRoot, dir)); err != nil {
+			return // not empty (or already gone): stop climbing
+		}
+		dir = filepath.Dir(dir)
+	}
+}
+
+// removeStaleSections handles a disable whose shared file the generators no
+// longer produce at all (e.g. .mcp.json once no MCP server remains at the
+// standard tier): the tool's entry is removed in place from the qsdev-tracked
+// file so it does not linger. Untracked files are never edited.
+func removeStaleSections(tool *toolreg.Tool, projectRoot string, change toolChange, st types.GeneratedState) []string {
+	planned := make(map[string]bool, len(change.shared.Files))
+	for _, fp := range change.shared.Files {
+		planned[fp.Path] = true
+	}
+	var notices []string
+	for _, sf := range tool.SharedFiles() {
+		entry, tracked := st.Files[sf.Path]
+		if planned[sf.Path] || !tracked {
+			continue
+		}
+		updated, err := removeSectionInPlace(projectRoot, sf.Path, sf.SectionID)
+		switch {
+		case err != nil:
+			notices = append(notices, fmt.Sprintf("%s: could not remove the %q section: %v", sf.Path, sf.SectionID, err))
+			continue
+		case updated == nil:
+			continue
+		}
+		if err := generate.ValidateDestination(projectRoot, sf.Path); err != nil {
+			notices = append(notices, fmt.Sprintf("%s: not updated: %v", sf.Path, err))
+			continue
+		}
+		if err := generate.WriteGeneratedFile(projectRoot, types.GeneratedFile{Path: sf.Path, Content: updated}); err != nil {
+			notices = append(notices, fmt.Sprintf("%s: could not write: %v", sf.Path, err))
+			continue
+		}
+		// Keep the recorded strategy, base and owner; only the content changed.
+		entry.Hash = state.ComputeHash(updated)
+		st.Files[sf.Path] = entry
+	}
+	return notices
+}
+
+// removeSectionInPlace removes a tool's entry from a shared file on disk. It
+// returns nil when the file is absent, unchanged, or of a format that has no
+// addressable per-tool section.
+func removeSectionInPlace(projectRoot, relPath, sectionID string) ([]byte, error) {
+	existing, err := os.ReadFile(filepath.Join(projectRoot, relPath))
+	if errors.Is(err, fs.ErrNotExist) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("reading %s: %w", relPath, err)
+	}
+
+	var updated []byte
+	switch base, ext := filepath.Base(relPath), filepath.Ext(relPath); {
+	case base == ".mcp.json":
+		// MCP servers are keyed by name; the section ID is the server name.
+		updated, err = surgery.JSONRemoveMCPServer(existing, sectionID)
+	case ext == ".md":
+		updated, err = surgery.MarkdownRemoveSection(existing, sectionID)
+	case ext == ".nix":
+		updated, err = surgery.NixRemoveSection(existing, sectionID)
+	default:
+		return nil, nil
+	}
+	if err != nil || bytes.Equal(updated, existing) {
+		return nil, err
+	}
+	return updated, nil
+}
+
+// printChangeNotices reports shared files left untouched and any devenv.nix
+// sidecar, so a partial result is never presented as complete.
+func printChangeNotices(cmd *cobra.Command, result toolChangeResult) {
+	if result.nixResult != nil && result.nixResult.Action == update.NixSidecarCreated {
+		fmt.Fprintln(cmd.OutOrStdout())
+		fmt.Fprintln(cmd.OutOrStdout(), result.nixResult.DiffOutput)
+		fmt.Fprintln(cmd.OutOrStdout(), result.nixResult.Message)
+	}
+	if len(result.notices) == 0 {
+		return
+	}
+	fmt.Fprintln(cmd.ErrOrStderr(), "Notes:")
+	for _, n := range dedupeStrings(result.notices) {
+		fmt.Fprintf(cmd.ErrOrStderr(), "  %s\n", n)
+	}
+}
+
+// dedupeStrings returns items without duplicates, preserving order.
+func dedupeStrings(items []string) []string {
+	seen := make(map[string]bool, len(items))
+	out := items[:0:0]
+	for _, s := range items {
+		if !seen[s] {
+			seen[s] = true
+			out = append(out, s)
+		}
+	}
+	return out
 }
 
 // runList prints all registered tools grouped by category.
@@ -428,89 +932,6 @@ func printToolGroup(cmd *cobra.Command, cat toolreg.ToolCategory, tools []*toolr
 			}
 		}
 		fmt.Fprintf(cmd.OutOrStdout(), "  %-25s  %-15s  %s%s\n", t.Name, "("+defaultStr+")", stateStr, t.Description)
-	}
-}
-
-// applySurgery reads a file from disk and applies the appropriate insert or
-// remove operation based on the file extension/name, then returns the updated
-// content. The caller is responsible for writing the result back to disk.
-func applySurgery(projectRoot, relPath, sectionID string, content []byte, insert bool) ([]byte, error) {
-	absPath := filepath.Join(projectRoot, relPath)
-	existing, err := os.ReadFile(absPath)
-	if err != nil {
-		if os.IsNotExist(err) && insert {
-			// For insert into a non-existent file, we need a minimal scaffold.
-			existing = scaffoldForPath(relPath)
-		} else if os.IsNotExist(err) && !insert {
-			// Nothing to remove from a file that doesn't exist.
-			return nil, nil
-		} else {
-			return nil, fmt.Errorf("reading %s: %w", relPath, err)
-		}
-	}
-
-	base := filepath.Base(relPath)
-	ext := filepath.Ext(relPath)
-
-	switch {
-	case base == ".mcp.json":
-		// MCP JSON uses server-name based add/remove, not section markers.
-		// The sectionID is used as the server name.
-		if insert {
-			return surgery.JSONAddMCPServer(existing, sectionID, content)
-		}
-		return surgery.JSONRemoveMCPServer(existing, sectionID)
-
-	case strings.HasSuffix(base, "settings.json"):
-		// settings.json uses SettingsAdditions/SettingsRemovals.
-		// For the lifecycle system, shared content for settings.json is the
-		// raw JSON of the full file. This path is typically not used because
-		// settings.json tools provide their own EnableFunc/DisableFunc logic.
-		// Fall through to the generic case.
-		if insert {
-			return surgery.MarkdownInsertSection(existing, sectionID, content)
-		}
-		return surgery.MarkdownRemoveSection(existing, sectionID)
-
-	case ext == ".md":
-		if insert {
-			return surgery.MarkdownInsertSection(existing, sectionID, content)
-		}
-		return surgery.MarkdownRemoveSection(existing, sectionID)
-
-	case ext == ".nix":
-		if insert {
-			return surgery.NixInsertSection(existing, sectionID, content)
-		}
-		return surgery.NixRemoveSection(existing, sectionID)
-
-	default:
-		// For unrecognized file types, use markdown-style HTML comment markers.
-		// This works for most text files and is the safest default.
-		if insert {
-			return surgery.MarkdownInsertSection(existing, sectionID, content)
-		}
-		return surgery.MarkdownRemoveSection(existing, sectionID)
-	}
-}
-
-// scaffoldForPath returns minimal file content for a new shared file so that
-// surgery insert operations have valid insertion points.
-func scaffoldForPath(relPath string) []byte {
-	ext := filepath.Ext(relPath)
-	base := filepath.Base(relPath)
-
-	switch {
-	case base == ".mcp.json":
-		return []byte("{}\n")
-	case strings.HasSuffix(base, "settings.json"):
-		return []byte("{}\n")
-	case ext == ".md":
-		return []byte("<!-- END GENERATED SECTION -->\n")
-	case ext == ".nix":
-		return []byte("{\n}\n")
-	default:
-		return []byte("<!-- END GENERATED SECTION -->\n")
 	}
 }
 

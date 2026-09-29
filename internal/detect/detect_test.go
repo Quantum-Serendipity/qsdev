@@ -19,7 +19,7 @@ func TestDetect_GoProject(t *testing.T) {
 	url = git@github.com:example/app.git
 `)
 
-	dp := Detect(dir)
+	dp := Detect(t.Context(), dir, hostFakes()...)
 
 	if !dp.HasGoMod {
 		t.Error("expected HasGoMod=true")
@@ -54,7 +54,7 @@ func TestDetect_NodeTypeScriptProject(t *testing.T) {
 	writeFile(t, filepath.Join(dir, "pnpm-lock.yaml"), "lockfileVersion: '9.0'")
 	writeFile(t, filepath.Join(dir, "tsconfig.json"), "{}")
 
-	dp := Detect(dir)
+	dp := Detect(t.Context(), dir, hostFakes()...)
 
 	if !dp.HasPackageJSON {
 		t.Error("expected HasPackageJSON=true")
@@ -98,7 +98,7 @@ func TestDetect_MultiLanguageProject(t *testing.T) {
 	writeFile(t, filepath.Join(dir, "devenv.nix"), "{}")
 	writeFile(t, filepath.Join(dir, ".envrc"), "use devenv")
 
-	dp := Detect(dir)
+	dp := Detect(t.Context(), dir, hostFakes()...)
 
 	// Languages
 	if !dp.HasGoMod || dp.GoVersion != "1.23" {
@@ -140,7 +140,7 @@ func TestDetect_MultiLanguageProject(t *testing.T) {
 func TestDetect_EmptyDirectory(t *testing.T) {
 	dir := t.TempDir()
 
-	dp := Detect(dir)
+	dp := Detect(t.Context(), dir, hostFakes()...)
 
 	if dp.HasGoMod || dp.HasPackageJSON || dp.HasCargoToml || dp.HasPyProject ||
 		dp.HasPomXML || dp.HasBuildGradle || dp.HasCsproj || dp.HasDockerfile ||
@@ -164,7 +164,7 @@ func TestDetect_JavaProject(t *testing.T) {
 	writeFile(t, filepath.Join(dir, "pom.xml"), "<project></project>")
 	writeFile(t, filepath.Join(dir, "build.gradle.kts"), "plugins { java }")
 
-	dp := Detect(dir)
+	dp := Detect(t.Context(), dir, hostFakes()...)
 
 	if !dp.HasPomXML {
 		t.Error("expected HasPomXML=true")
@@ -181,7 +181,7 @@ func TestDetect_DotNetProject(t *testing.T) {
 	dir := t.TempDir()
 	writeFile(t, filepath.Join(dir, "MyApp.csproj"), "<Project/>")
 
-	dp := Detect(dir)
+	dp := Detect(t.Context(), dir, hostFakes()...)
 
 	if !dp.HasCsproj {
 		t.Error("expected HasCsproj=true")
@@ -219,7 +219,7 @@ func TestDetect_FullEnvironmentState(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	dp := Detect(dir)
+	dp := Detect(t.Context(), dir, hostFakes()...)
 
 	if !dp.HasDevenvNix {
 		t.Error("expected HasDevenvNix=true")
@@ -278,7 +278,7 @@ func BenchmarkDetect(b *testing.B) {
 
 	b.ResetTimer()
 	for range b.N {
-		dp := Detect(dir)
+		dp := Detect(b.Context(), dir, hostFakes()...)
 		if !dp.HasGoMod {
 			b.Fatal("detection failed during benchmark")
 		}
@@ -289,5 +289,13 @@ func writeFileB(b *testing.B, path, content string) {
 	b.Helper()
 	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
 		b.Fatal(err)
+	}
+}
+
+// writeFile is a test helper that creates a file with the given content.
+func writeFile(t *testing.T, path, content string) {
+	t.Helper()
+	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+		t.Fatal(err)
 	}
 }

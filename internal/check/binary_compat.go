@@ -5,10 +5,8 @@ import (
 
 	"github.com/Quantum-Serendipity/qsdev/internal/config"
 	"github.com/Quantum-Serendipity/qsdev/pkg/branding"
+	"github.com/Quantum-Serendipity/qsdev/pkg/types"
 )
-
-// supportedSchemaVersions lists the schema versions this binary understands.
-var supportedSchemaVersions = []string{"1"}
 
 // CheckBinaryCompatibility verifies that the qsdev binary version satisfies
 // the constraint in .qsdev.yaml and that the config schema version is supported.
@@ -20,7 +18,7 @@ func CheckBinaryCompatibility(ctx CheckContext) []CheckResult {
 				Name:     branding.Get().AppName + "_version_constraint",
 				Status:   StatusSkip,
 				Severity: SeverityInfo,
-				Message:  "No " + branding.Get().ConfigFile + " found",
+				Message:  configUnavailableMessage(ctx, "binary compatibility checks"),
 			},
 		}
 	}
@@ -77,31 +75,15 @@ func checkVersionConstraint(ctx CheckContext) []CheckResult {
 
 func checkSchemaVersion(ctx CheckContext) []CheckResult {
 	sv := ctx.QsdevConfig.Version
-	if sv == 0 {
+	if sv >= types.ConfigVersionMin && sv <= types.ConfigVersionMax {
 		return []CheckResult{
 			{
-				Category:    CategoryBinaryCompat,
-				Name:        "config_schema_version",
-				Status:      StatusWarn,
-				Severity:    SeverityMedium,
-				Message:     "No version specified in " + branding.Get().ConfigFile,
-				Remediation: "Add 'version: 1' to " + branding.Get().ConfigFile,
+				Category: CategoryBinaryCompat,
+				Name:     "config_schema_version",
+				Status:   StatusPass,
+				Severity: SeverityInfo,
+				Message:  fmt.Sprintf("Schema version %d is supported", sv),
 			},
-		}
-	}
-
-	svStr := fmt.Sprintf("%d", sv)
-	for _, supported := range supportedSchemaVersions {
-		if svStr == supported {
-			return []CheckResult{
-				{
-					Category: CategoryBinaryCompat,
-					Name:     "config_schema_version",
-					Status:   StatusPass,
-					Severity: SeverityInfo,
-					Message:  "Schema version " + svStr + " is supported",
-				},
-			}
 		}
 	}
 
@@ -111,8 +93,8 @@ func checkSchemaVersion(ctx CheckContext) []CheckResult {
 			Name:        "config_schema_version",
 			Status:      StatusFail,
 			Severity:    SeverityCritical,
-			Message:     fmt.Sprintf("Schema version %d is not supported by this binary", sv),
-			Remediation: "Update " + branding.Get().AppName + " or change schema_version to a supported version",
+			Message:     fmt.Sprintf("Schema version %d is not supported by this binary (supported: %d-%d)", sv, types.ConfigVersionMin, types.ConfigVersionMax),
+			Remediation: "Update " + branding.Get().AppName + " or set 'version' to a supported schema version",
 		},
 	}
 }

@@ -13,12 +13,13 @@ import (
 type CheckCategory string
 
 const (
-	CategoryBinaryCompat    CheckCategory = "binary_compatibility"
-	CategoryConfigIntegrity CheckCategory = "config_integrity"
-	CategoryRequiredTools   CheckCategory = "required_tools"
-	CategoryFileState       CheckCategory = "generated_file_state"
-	CategorySecurityHarden  CheckCategory = "security_hardening"
-	CategoryDenyConflicts   CheckCategory = "deny_rule_conflicts"
+	CategoryBinaryCompat      CheckCategory = "binary_compatibility"
+	CategoryConfigIntegrity   CheckCategory = "config_integrity"
+	CategoryRequiredTools     CheckCategory = "required_tools"
+	CategoryFileState         CheckCategory = "generated_file_state"
+	CategorySecurityHarden    CheckCategory = "security_hardening"
+	CategoryDenyConflicts     CheckCategory = "deny_rule_conflicts"
+	CategoryCustomConformance CheckCategory = "custom_conformance"
 )
 
 // categoryDisplayName returns a human-friendly label.
@@ -36,6 +37,8 @@ func categoryDisplayName(c CheckCategory) string {
 		return "Security Hardening"
 	case CategoryDenyConflicts:
 		return "Deny Rule Conflicts"
+	case CategoryCustomConformance:
+		return "Custom Conformance"
 	default:
 		return string(c)
 	}
@@ -157,13 +160,64 @@ type CheckContext struct {
 	ProjectRoot          string
 	BinaryVersion        string
 	QsdevConfig          *types.QsdevConfig
-	ToolNames            []string
-	ProfileNames         []string
+	ConfigErr            error    // why QsdevConfig is nil: not found vs. failed to parse
+	ToolNames            []string // every registered tool, for config name validation
+	AlwaysOnToolNames    []string // tools that must never appear in tools.disabled
+	MCPToolNames         []string // tools the MCP server can mount, for validating mcp.disabled_tools
+	ProfileNames         []string // project-type profiles, for validating `profile`
 	RequiredDenyRules    []string
 	StateFile            string
 	DenyRules            []string
 	SkillOps             []SkillOps
 	ExpectedConflictKeys map[string]string
+	// ExpectedClaudeSettings is the .claude/settings.json the generator
+	// produces for the project's saved answers (nil when unknown); its hook
+	// registrations and bypass setting must still be in force on disk.
+	ExpectedClaudeSettings []byte
+	// ManifestFile is the committed manifest of machine-owned generated files
+	// (state.ManifestFile under the project root). Unlike StateFile it exists
+	// on a clean CI checkout, so it is what CI verifies generated files
+	// against. Empty disables the manifest check.
+	ManifestFile string
+	// CustomConformance is the project's own conformance policy
+	// (.qsdev-policy.yaml) as evaluated against a posture assessment by the
+	// command layer; nil when the project has no custom policy.
+	CustomConformance *CustomConformance
+	// DeclaredEnv holds the environment variables the project's devenv
+	// modules (devenv.nix, devenv.local.nix) declare, read by the command
+	// layer; the cloud isolation check judges environment separation from
+	// it. DeclaredEnvErr records a module that could not be read or parsed.
+	DeclaredEnv    map[string]string
+	DeclaredEnvErr error
+	// ProbeTool runs a tool's version probe for the toolchain requirement
+	// checks; nil skips them.
+	ProbeTool ToolProber
+	// HooksWithoutPolicy lists the hooks the saved answers enable without
+	// the policy they enforce (e.g. tool-gates with no allow or deny list).
+	HooksWithoutPolicy []HookWithoutPolicy
+}
+
+// CustomConformance carries the evaluated requirements of a project's custom
+// conformance policy. It mirrors posture's custom conformance level so this
+// package does not depend on the posture assessment.
+type CustomConformance struct {
+	// PolicyFile is the policy file's path relative to the project root.
+	PolicyFile   string
+	Requirements []PolicyRequirement
+}
+
+// PolicyRequirement is the outcome of one custom conformance requirement.
+type PolicyRequirement struct {
+	Name   string
+	Pass   bool
+	Reason string
+}
+
+// HookWithoutPolicy names an enabled Claude Code hook that has no policy to
+// enforce, and the .qsdev.yaml key that would give it one.
+type HookWithoutPolicy struct {
+	Name      string
+	PolicyKey string
 }
 
 // CheckFailedError signals that checks failed at the given audit level.

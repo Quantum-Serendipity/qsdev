@@ -16,7 +16,7 @@ func TestDetectCapabilities_GPUPresent(t *testing.T) {
 	}
 	info := &RuntimeInfo{Active: RuntimePodmanRootless, Rootless: true}
 
-	caps, err := DetectCapabilities(ctx, prober, info)
+	caps, err := DetectCapabilities(ctx, prober, info, "/mnt/nfs/project")
 	if err != nil {
 		t.Fatalf("DetectCapabilities() error = %v", err)
 	}
@@ -34,7 +34,7 @@ func TestDetectCapabilities_GPUAbsent(t *testing.T) {
 	}
 	info := &RuntimeInfo{Active: RuntimeDocker}
 
-	caps, err := DetectCapabilities(ctx, prober, info)
+	caps, err := DetectCapabilities(ctx, prober, info, "/mnt/nfs/project")
 	if err != nil {
 		t.Fatalf("DetectCapabilities() error = %v", err)
 	}
@@ -54,7 +54,7 @@ func TestDetectCapabilities_NFSPresent(t *testing.T) {
 	}
 	info := &RuntimeInfo{Active: RuntimeDocker}
 
-	caps, err := DetectCapabilities(ctx, prober, info)
+	caps, err := DetectCapabilities(ctx, prober, info, "/mnt/nfs/project")
 	if err != nil {
 		t.Fatalf("DetectCapabilities() error = %v", err)
 	}
@@ -74,7 +74,7 @@ func TestDetectCapabilities_NFSAbsent(t *testing.T) {
 	}
 	info := &RuntimeInfo{Active: RuntimeDocker}
 
-	caps, err := DetectCapabilities(ctx, prober, info)
+	caps, err := DetectCapabilities(ctx, prober, info, "/mnt/nfs/project")
 	if err != nil {
 		t.Fatalf("DetectCapabilities() error = %v", err)
 	}
@@ -94,7 +94,7 @@ func TestDetectCapabilities_SubUidConfigured(t *testing.T) {
 	}
 	info := &RuntimeInfo{Active: RuntimeDocker}
 
-	caps, err := DetectCapabilities(ctx, prober, info)
+	caps, err := DetectCapabilities(ctx, prober, info, "/mnt/nfs/project")
 	if err != nil {
 		t.Fatalf("DetectCapabilities() error = %v", err)
 	}
@@ -114,7 +114,7 @@ func TestDetectCapabilities_SubUidMissing(t *testing.T) {
 	}
 	info := &RuntimeInfo{Active: RuntimeDocker}
 
-	caps, err := DetectCapabilities(ctx, prober, info)
+	caps, err := DetectCapabilities(ctx, prober, info, "/mnt/nfs/project")
 	if err != nil {
 		t.Fatalf("DetectCapabilities() error = %v", err)
 	}
@@ -134,7 +134,7 @@ func TestDetectCapabilities_CgroupsV2(t *testing.T) {
 	}
 	info := &RuntimeInfo{Active: RuntimeDocker}
 
-	caps, err := DetectCapabilities(ctx, prober, info)
+	caps, err := DetectCapabilities(ctx, prober, info, "/mnt/nfs/project")
 	if err != nil {
 		t.Fatalf("DetectCapabilities() error = %v", err)
 	}
@@ -152,7 +152,7 @@ func TestDetectCapabilities_CgroupsV1(t *testing.T) {
 	}
 	info := &RuntimeInfo{Active: RuntimeDocker}
 
-	caps, err := DetectCapabilities(ctx, prober, info)
+	caps, err := DetectCapabilities(ctx, prober, info, "/mnt/nfs/project")
 	if err != nil {
 		t.Fatalf("DetectCapabilities() error = %v", err)
 	}
@@ -166,7 +166,7 @@ func TestDetectCapabilities_NilInfo(t *testing.T) {
 	ctx := context.Background()
 	prober := &mockProber{}
 
-	caps, err := DetectCapabilities(ctx, prober, nil)
+	caps, err := DetectCapabilities(ctx, prober, nil, "/mnt/nfs/project")
 	if err == nil {
 		t.Fatal("DetectCapabilities() expected error for nil RuntimeInfo")
 	}
@@ -183,7 +183,7 @@ func TestDetectCapabilities_AllPresent(t *testing.T) {
 			"/dev/nvidia*": {"/dev/nvidia0"},
 		},
 		files: map[string][]byte{
-			"/proc/mounts": []byte("server:/vol /data nfs rw 0 0\n"),
+			"/proc/mounts": []byte("server:/vol /mnt/nfs nfs rw 0 0\n"),
 			"/etc/subuid":  []byte("testuser:100000:65536\n"),
 			"/proc/sys/net/ipv4/ip_unprivileged_port_start": []byte("80\n"),
 		},
@@ -194,7 +194,7 @@ func TestDetectCapabilities_AllPresent(t *testing.T) {
 	}
 	info := &RuntimeInfo{Active: RuntimePodmanRootless, Rootless: true}
 
-	caps, err := DetectCapabilities(ctx, prober, info)
+	caps, err := DetectCapabilities(ctx, prober, info, "/mnt/nfs/project")
 	if err != nil {
 		t.Fatalf("DetectCapabilities() error = %v", err)
 	}
@@ -232,7 +232,7 @@ func TestDetectCapabilities_NonePresent(t *testing.T) {
 	}
 	info := &RuntimeInfo{Active: RuntimeDocker}
 
-	caps, err := DetectCapabilities(ctx, prober, info)
+	caps, err := DetectCapabilities(ctx, prober, info, "/mnt/nfs/project")
 	if err != nil {
 		t.Fatalf("DetectCapabilities() error = %v", err)
 	}
@@ -295,7 +295,7 @@ func TestDetectCapabilities_RootlessSupported(t *testing.T) {
 			ctx := context.Background()
 			prober := &mockProber{user: "testuser"}
 
-			caps, err := DetectCapabilities(ctx, prober, tt.info)
+			caps, err := DetectCapabilities(ctx, prober, tt.info, "/mnt/nfs/project")
 			if err != nil {
 				t.Fatalf("DetectCapabilities() error = %v", err)
 			}
@@ -330,7 +330,7 @@ func TestDetectCapabilities_PrivilegedPorts(t *testing.T) {
 			}
 			info := &RuntimeInfo{Active: RuntimeDocker}
 
-			caps, err := DetectCapabilities(ctx, prober, info)
+			caps, err := DetectCapabilities(ctx, prober, info, "/mnt/nfs/project")
 			if err != nil {
 				t.Fatalf("DetectCapabilities() error = %v", err)
 			}
@@ -352,7 +352,7 @@ func TestDetectCapabilities_EmptyUser(t *testing.T) {
 	}
 	info := &RuntimeInfo{Active: RuntimeDocker}
 
-	caps, err := DetectCapabilities(ctx, prober, info)
+	caps, err := DetectCapabilities(ctx, prober, info, "/mnt/nfs/project")
 	if err != nil {
 		t.Fatalf("DetectCapabilities() error = %v", err)
 	}
@@ -373,11 +373,60 @@ func TestDetectCapabilities_NFSv3(t *testing.T) {
 	}
 	info := &RuntimeInfo{Active: RuntimeDocker}
 
-	caps, err := DetectCapabilities(ctx, prober, info)
+	caps, err := DetectCapabilities(ctx, prober, info, "/mnt/nfs/project")
 	if err != nil {
 		t.Fatalf("DetectCapabilities() error = %v", err)
 	}
 	if !caps.NFSMounts {
 		t.Error("NFSMounts = false, want true for nfs (v3) mount")
+	}
+}
+
+// TestDetectCapabilities_NFSScopedToProject is the regression for any NFS
+// mount on the host setting NFSMounts, which made doctor recommend a rootful
+// runtime for projects on local disk.
+func TestDetectCapabilities_NFSScopedToProject(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name        string
+		mounts      string
+		projectRoot string
+		want        bool
+	}{
+		{"unrelated NAS mount", "nas:/media /mnt/media nfs4 rw 0 0\n", "/home/dev/project", false},
+		{"project below the mount", "srv:/home /home nfs4 rw 0 0\n", "/home/dev/project", true},
+		{"mount is the project", "srv:/p /work/p nfs rw 0 0\n", "/work/p", true},
+		{"mount inside the project", "srv:/cache /work/p/cache nfs rw 0 0\n", "/work/p", true},
+		{"sibling with a shared prefix", "srv:/p /work/p2 nfs rw 0 0\n", "/work/p", false},
+		{"escaped space in mount point", `srv:/p /work/my\040project nfs4 rw 0 0` + "\n", "/work/my project/src", true},
+		{"non-nfs mount over the project", "/dev/sda1 /home ext4 rw 0 0\n", "/home/dev/project", false},
+		{"no project root", "srv:/home /home nfs4 rw 0 0\n", "", false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			prober := &mockProber{files: map[string][]byte{"/proc/mounts": []byte(tt.mounts)}}
+			caps, err := DetectCapabilities(context.Background(), prober, &RuntimeInfo{Active: RuntimePodmanRootless}, tt.projectRoot)
+			if err != nil {
+				t.Fatalf("DetectCapabilities() error = %v", err)
+			}
+			if caps.NFSMounts != tt.want {
+				t.Errorf("NFSMounts = %v, want %v", caps.NFSMounts, tt.want)
+			}
+		})
+	}
+}
+
+func TestDetectCapabilities_AMDGPU(t *testing.T) {
+	t.Parallel()
+	prober := &mockProber{fileInfos: map[string]bool{"/dev/kfd": true}}
+
+	caps, err := DetectCapabilities(context.Background(), prober, &RuntimeInfo{Active: RuntimeDocker}, "/work/p")
+	if err != nil {
+		t.Fatalf("DetectCapabilities() error = %v", err)
+	}
+	if !caps.GPUPassthrough {
+		t.Error("GPUPassthrough = false, want true for an AMD ROCm device (/dev/kfd)")
 	}
 }

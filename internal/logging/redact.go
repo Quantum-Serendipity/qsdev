@@ -2,6 +2,7 @@ package logging
 
 import (
 	"encoding/json"
+	"fmt"
 	"log/slog"
 	"net/url"
 	"reflect"
@@ -11,7 +12,10 @@ import (
 	"github.com/Quantum-Serendipity/qsdev/internal/secrets"
 )
 
-const redacted = "[REDACTED]"
+// RedactionMarker is the text that replaces every redacted secret.
+const RedactionMarker = "[REDACTED]"
+
+const redacted = RedactionMarker
 
 // nameValueTrimCutset is the whitespace RE2's \s matches; redactNamedValues trims
 // it from the tail of a captured value so the separator run before the next
@@ -22,10 +26,23 @@ const nameValueTrimCutset = "\t\n\f\r "
 // so the per-map-node redaction walk does not re-box the string on every call.
 var redactedReflectVal = reflect.ValueOf(redacted)
 
+// privateKeyBlockPattern matches a whole PEM/PGP private-key block — header,
+// base64 body and footer — so the key material is redacted, not just the BEGIN
+// line. (?s) lets the body span real newlines, and the lazy body equally spans
+// the literal "\n" escapes of a JSON-encoded key. A block with no END marker (a
+// truncated excerpt) is redacted through the end of the input: fail closed.
+const privateKeyBlockPattern = `(?s)-----BEGIN [A-Z0-9 ]*PRIVATE KEY(?: BLOCK)?-----.*?(?:-----END [A-Z0-9 ]*PRIVATE KEY(?: BLOCK)?-----|\z)`
+
+var (
+	privateKeyBeginRe = regexp.MustCompile(`-----BEGIN [A-Z0-9 ]*PRIVATE KEY(?: BLOCK)?-----`)
+	privateKeyEndRe   = regexp.MustCompile(`-----END [A-Z0-9 ]*PRIVATE KEY(?: BLOCK)?-----`)
+)
+
 // Redactor scrubs secret values from log attributes.
 type Redactor struct {
 	valuePatterns []*regexp.Regexp
 	urlCredRe     *regexp.Regexp
+	urlTokenRe    *regexp.Regexp
 	nameValRe     *regexp.Regexp
 	keyBoundaryRe *regexp.Regexp
 }
@@ -35,14 +52,20 @@ func NewRedactor() *Redactor {
 	return &Redactor{
 		valuePatterns: compileValuePatterns(),
 		urlCredRe:     regexp.MustCompile(`://[^:@\s]+:[^:@\s]+@`),
+		// Token-only userinfo (https://TOKEN@host/...), the form git hosts use
+		// for PATs and CI job tokens. Requiring a scheme:// keeps the scp-style
+		// git@host:path form (which has no scheme) untouched.
+		urlTokenRe: regexp.MustCompile(`([A-Za-z][A-Za-z0-9+.-]*://)[^/@\s:]+@`),
 		// Matches "NAME=value" and "NAME: value" pairs so a sensitive credential
 		// NAME (e.g. DATABASE_PASSWORD) redacts its value even when the value
-		// itself matches no credential-shape pattern. Group 2 anchors the value's
-		// START only (its first whitespace-delimited token); the value's true END
-		// — which extends across internal spaces to the next key or end-of-line —
-		// is computed in redactNamedValues because RE2 (Go's regexp) has no
-		// lookahead to stop the capture at the next key boundary.
-		nameValRe: regexp.MustCompile(`([A-Za-z_][A-Za-z0-9_]*)\s*[:=]\s*(\S+)`),
+		// itself matches no credential-shape pattern. The NAME may be wrapped in
+		// plain or backslash-escaped quotes, so JSON ("NAME":"value") and JSON
+		// embedded in a JSON string (\"NAME\":\"value\") are covered too.
+		// Groups: 1 opening quote, 2 NAME, 3 closing quote, 4 separator. The
+		// match ends where the value starts and consumes none of it, because
+		// the value may itself begin a pair ("error: token=abc"); the value's
+		// end is computed in redactNamedValues (RE2 has no lookahead).
+		nameValRe: regexp.MustCompile(`(\\?")?([A-Za-z_][A-Za-z0-9_]*)(\\?")?\s*([:=])\s*`),
 		// Marks the next "NAME=" / "NAME:" key boundary that terminates a value:
 		// a NAME (optionally spaced from its separator) that is preceded by
 		// whitespace. The leading \s requirement means an intra-value token such
@@ -61,7 +84,7 @@ func compileValuePatterns() []*regexp.Regexp {
 		`sk_(live|test)_[A-Za-z0-9]{24,}`,
 		`npm_[A-Za-z0-9]{36,}`,
 		`eyJ[A-Za-z0-9_-]{10,}\.eyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]+`,
-		`-----BEGIN\s+(?:RSA |EC |DSA |OPENSSH )?PRIVATE KEY-----`,
+		privateKeyBlockPattern,
 		`AccountKey=[A-Za-z0-9+/=]{44,}`,
 		`AIza[A-Za-z0-9_-]{35}`,
 		`mongodb(?:\+srv)?://[^:]+:[^@\s]+@[^\s]+`,
@@ -76,8 +99,13 @@ func compileValuePatterns() []*regexp.Regexp {
 	return compiled
 }
 
-// RedactAttr scrubs secret values from a single slog.Attr.
+// RedactAttr scrubs secret values from a single slog.Attr. LogValuers are
+// resolved first so a lazily-computed value is scrubbed too. Besides strings,
+// it scrubs KindAny values — errors (the ubiquitous "error", err attribute),
+// argv slices, maps and structs — which a JSON or text handler would otherwise
+// serialize verbatim.
 func (r *Redactor) RedactAttr(a slog.Attr) slog.Attr {
+	a.Value = a.Value.Resolve()
 	if a.Value.Kind() == slog.KindGroup {
 		attrs := a.Value.Group()
 		scrubbed := make([]slog.Attr, len(attrs))
@@ -91,21 +119,54 @@ func (r *Redactor) RedactAttr(a slog.Attr) slog.Attr {
 		return slog.String(a.Key, redacted)
 	}
 
-	if a.Value.Kind() == slog.KindString {
+	switch a.Value.Kind() {
+	case slog.KindString:
 		scrubbed := r.RedactString(a.Value.String())
 		if scrubbed != a.Value.String() {
 			return slog.String(a.Key, scrubbed)
 		}
+	case slog.KindAny:
+		return slog.Attr{Key: a.Key, Value: r.redactAnyValue(a.Value.Any())}
 	}
 
 	return a
 }
 
+// redactAnyValue scrubs a KindAny attribute value. An error is flattened to its
+// redacted message (which is how the handlers render it anyway); a Stringer
+// whose rendering carries a secret (e.g. a *url.URL with userinfo, printed via
+// String() by the text handler) is replaced by its redacted rendering; any
+// other value is walked by RedactStructured so nested map keys, struct fields
+// and argv slices are scrubbed.
+func (r *Redactor) redactAnyValue(v any) slog.Value {
+	if isNilPointer(v) {
+		return slog.AnyValue(v)
+	}
+	if err, ok := v.(error); ok {
+		return slog.StringValue(r.RedactString(err.Error()))
+	}
+	if st, ok := v.(fmt.Stringer); ok {
+		str := st.String()
+		if red := r.RedactString(str); red != str {
+			return slog.StringValue(red)
+		}
+	}
+	return slog.AnyValue(r.RedactStructured(v))
+}
+
+// isNilPointer reports whether v is a typed nil pointer, whose Error/String
+// methods may panic on a nil receiver.
+func isNilPointer(v any) bool {
+	rv := reflect.ValueOf(v)
+	return rv.Kind() == reflect.Pointer && rv.IsNil()
+}
+
 // RedactString scrubs secret patterns from a string value. It runs the
-// value-shape passes (AKIA…, ghp_…, JWT, PEM, …) and URL-userinfo stripping,
-// then a NAME=value pass that redacts the value of any sensitive credential
-// variable — closing the leak where a keyword-less secret (DATABASE_PASSWORD=…,
-// BW_SESSION=…) has no recognizable value shape.
+// value-shape passes (AKIA…, ghp_…, JWT, PEM blocks, …) and URL-userinfo
+// stripping, then a NAME=value pass that redacts the value of any sensitive
+// credential variable — closing the leak where a keyword-less secret
+// (DATABASE_PASSWORD=…, BW_SESSION=…, {"api_token":"…"}) has no recognizable
+// value shape.
 func (r *Redactor) RedactString(s string) string {
 	for _, p := range r.valuePatterns {
 		s = p.ReplaceAllString(s, redacted)
@@ -113,6 +174,7 @@ func (r *Redactor) RedactString(s string) string {
 	if r.urlCredRe.MatchString(s) {
 		s = r.redactURLCredentials(s)
 	}
+	s = r.urlTokenRe.ReplaceAllString(s, "${1}"+redacted+"@")
 	return r.redactNamedValues(s)
 }
 
@@ -135,27 +197,37 @@ func (r *Redactor) redactNamedValues(s string) string {
 	b.Grow(len(s))
 	last := 0
 	for _, m := range matches {
-		// m holds pair offsets: match (m[0:2]), group 1 NAME (m[2:4]),
-		// group 2 value-start token (m[4:6]).
+		// m holds pair offsets: match (m[0:2]), group 1 opening quote (m[2:4]),
+		// group 2 NAME (m[4:6]), group 3 closing quote (m[6:8]), group 4
+		// separator (m[8:10]); the value starts where the match ends.
 		if m[0] < last {
 			// This pair begins inside a value already redacted for an earlier
 			// sensitive NAME (e.g. an "a=b" token nested in a redacted value);
 			// skip it so we neither double-write nor leak part of that value.
 			continue
 		}
-		if !secrets.IsSensitiveName(s[m[2]:m[3]]) {
+		if !secrets.IsSensitiveName(s[m[4]:m[5]]) {
 			continue
 		}
-		valStart := m[4]
-		valEnd := r.valueEnd(s, valStart)
-		if valEnd <= valStart {
+		valStart := m[1]
+		if valStart == len(s) {
+			continue
+		}
+		from, to, replacement := valStart, r.valueEnd(s, valStart), redacted
+		if m[6] >= 0 && s[m[8]] == ':' {
+			// A quoted key followed by ':' is a JSON member: redact its value
+			// JSON-aware so the rest of the document (and its later members)
+			// keeps its shape. The closing quote's length gives the escape depth.
+			from, to, replacement = jsonValueSpan(s, valStart, m[7]-m[6]-1)
+		}
+		if to <= from {
 			continue
 		}
 		// Keep everything through "NAME<sep>" and redact the whole value —
 		// internal spaces included — up to the computed end.
-		b.WriteString(s[last:valStart])
-		b.WriteString(redacted)
-		last = valEnd
+		b.WriteString(s[last:from])
+		b.WriteString(replacement)
+		last = to
 	}
 	if last == 0 {
 		return s
@@ -170,11 +242,8 @@ func (r *Redactor) redactNamedValues(s string) string {
 // is redacted independently rather than swallowed. Trailing whitespace before
 // that boundary is excluded so the separator run is preserved verbatim.
 func (r *Redactor) valueEnd(s string, valStart int) int {
-	end := len(s)
-	// A value never spans a newline (RE2's \S, like the value token, excludes it).
-	if nl := strings.IndexByte(s[valStart:], '\n'); nl >= 0 {
-		end = valStart + nl
-	}
+	// A value never spans a newline.
+	end := lineEnd(s, valStart)
 	// Stop before the next key-like token on the same line.
 	if loc := r.keyBoundaryRe.FindStringIndex(s[valStart:end]); loc != nil {
 		end = valStart + loc[0]
@@ -183,13 +252,27 @@ func (r *Redactor) valueEnd(s string, valStart int) int {
 	return valStart + len(trimmed)
 }
 
+// lineEnd returns the offset of the first newline at or after from, or len(s).
+func lineEnd(s string, from int) int {
+	if nl := strings.IndexByte(s[from:], '\n'); nl >= 0 {
+		return from + nl
+	}
+	return len(s)
+}
+
 func (r *Redactor) redactURLCredentials(s string) string {
 	u, err := url.Parse(s)
 	if err != nil || u.User == nil {
 		return r.urlCredRe.ReplaceAllString(s, "://"+redacted+":"+redacted+"@")
 	}
-	u.User = url.UserPassword(redacted, redacted)
-	return u.String()
+	// Re-insert the marker after serialising: url.URL.String would
+	// percent-encode the brackets of an in-place "[REDACTED]" userinfo.
+	u.User = nil
+	out := u.String()
+	if i := strings.Index(out, "://"); i >= 0 {
+		return out[:i+3] + redacted + ":" + redacted + "@" + out[i+3:]
+	}
+	return out
 }
 
 // isKeyDenied checks whether an attribute key indicates a secret value. It
@@ -335,7 +418,10 @@ func (r *Redactor) redactMap(rv reflect.Value) (reflect.Value, bool) {
 	return out, true
 }
 
-// redactSeq walks a slice or array, redacting each element copy-on-write.
+// redactSeq walks a slice or array, redacting each element copy-on-write. A
+// string element that follows a sensitive flag (argv such as
+// ["--password", "hunter2"]) is redacted whole, since the flag names the
+// secret but the value carries no NAME=value shape of its own.
 func (r *Redactor) redactSeq(rv reflect.Value) (reflect.Value, bool) {
 	if rv.Kind() == reflect.Slice && rv.IsNil() {
 		return rv, false
@@ -343,8 +429,18 @@ func (r *Redactor) redactSeq(rv reflect.Value) (reflect.Value, bool) {
 	n := rv.Len()
 	var out reflect.Value
 	changed := false
+	afterSensitiveFlag := false
 	for i := 0; i < n; i++ {
-		nv, ch := r.redactReflect(rv.Index(i))
+		elem := rv.Index(i)
+		str, isString := stringElem(elem)
+		var nv reflect.Value
+		var ch bool
+		if afterSensitiveFlag && isString && !strings.HasPrefix(str, "-") {
+			nv, ch = redactedReflectVal, true
+		} else {
+			nv, ch = r.redactReflect(elem)
+		}
+		afterSensitiveFlag = isString && isSensitiveFlag(str)
 		if !ch {
 			continue
 		}
@@ -363,6 +459,28 @@ func (r *Redactor) redactSeq(rv reflect.Value) (reflect.Value, bool) {
 		return rv, false
 	}
 	return out, true
+}
+
+// stringElem returns the string held by a sequence element, unwrapping an
+// interface slot, and whether the element is a string at all.
+func stringElem(v reflect.Value) (string, bool) {
+	if v.Kind() == reflect.Interface && !v.IsNil() {
+		v = v.Elem()
+	}
+	if v.Kind() != reflect.String {
+		return "", false
+	}
+	return v.String(), true
+}
+
+// isSensitiveFlag reports whether arg is a command-line flag ("-x", "--name")
+// without an inline value whose name denotes a credential, e.g. --password or
+// --api-key. A "--name=value" argument is handled by the NAME=value pass.
+func isSensitiveFlag(arg string) bool {
+	if !strings.HasPrefix(arg, "-") || strings.Contains(arg, "=") {
+		return false
+	}
+	return secrets.IsSensitiveName(strings.TrimLeft(arg, "-"))
 }
 
 // redactStruct walks the exported fields of an all-exported struct, redacting

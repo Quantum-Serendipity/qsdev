@@ -7,6 +7,7 @@ package installer
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -20,17 +21,24 @@ type ToolSpec struct {
 	DisplayName   string   // human-readable name, e.g. "devenv", "Claude Code"
 	Binary        string   // executable name on PATH, e.g. "devenv", "claude"
 	VersionFlag   string   // flag to print version, e.g. "--version"
-	InstallCmd    []string // full install command, e.g. {"nix","profile","install","nixpkgs#devenv"}
+	InstallCmd    []string // full install command, e.g. {"npm","install","-g","--ignore-scripts","pkg@1.2.3"}
 	ManagerBinary string   // package-manager binary, e.g. "nix", "npm"
 	ManagerName   string   // human-readable manager name, e.g. "Nix", "npm"
 	FallbackURL   string   // URL to install the package manager itself
 	DirectURL     string   // URL for direct/manual tool installation
 }
 
+// ErrNotFoundAfterInstall marks an install command that exited successfully
+// but left the tool's binary unresolvable on PATH, typically because the
+// package manager's bin directory (~/.nix-profile/bin, npm's global prefix)
+// is not on PATH in this shell.
+var ErrNotFoundAfterInstall = errors.New("tool not found on PATH after install")
+
 // Install checks if the tool described by spec is already installed.
-// If not, it attempts to install via the configured package manager.
-// When the package manager is unavailable it prints fallback instructions
-// and returns an error.
+// If not, it attempts to install via the configured package manager and
+// then detects the binary again, failing with [ErrNotFoundAfterInstall]
+// when it still cannot be resolved. When the package manager is unavailable
+// it prints fallback instructions and returns an error.
 func Install(ctx context.Context, spec ToolSpec) error {
 	info := toolcheck.Detect(ctx, spec.Binary, spec.VersionFlag)
 	if info.Found {
@@ -47,7 +55,12 @@ func Install(ctx context.Context, spec ToolSpec) error {
 		if err := cmd.Run(); err != nil {
 			return fmt.Errorf("installing %s: %w", spec.DisplayName, err)
 		}
-		fmt.Printf("%s installed successfully.\n", spec.DisplayName)
+		info = toolcheck.Detect(ctx, spec.Binary, spec.VersionFlag)
+		if !info.Found {
+			return fmt.Errorf("installing %s: %w: %q ran but %s is not on PATH; add the %s bin directory to PATH (or open a new shell) and re-run",
+				spec.DisplayName, ErrNotFoundAfterInstall, cmdStr, spec.Binary, spec.ManagerName)
+		}
+		fmt.Printf("%s installed successfully: %s (%s)\n", spec.DisplayName, info.Version, info.Path)
 		return nil
 	}
 

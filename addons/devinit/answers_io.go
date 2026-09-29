@@ -1,34 +1,18 @@
 package devinit
 
 import (
-	"errors"
-	"os"
-	"path/filepath"
-
-	"gopkg.in/yaml.v3"
-
+	"github.com/Quantum-Serendipity/qsdev/internal/answers"
 	"github.com/Quantum-Serendipity/qsdev/pkg/types"
 )
 
-// loadAnswersOrEmpty reads saved wizard answers from
-// .devinit/.qsdev-init-answers.yaml. Unlike loadAnswers (used by init/update),
-// it returns a zero-value WizardAnswers instead of an error when the file does
-// not exist — lifecycle commands need to work on projects that haven't run
-// `qsdev init` yet.
+// loadAnswersOrEmpty reads the saved primary wizard answers. Unlike
+// loadAnswers (used by init/update), it returns a zero-value WizardAnswers
+// instead of an error when the file does not exist — lifecycle commands need
+// to work on projects that haven't run `qsdev init` yet. A present but
+// unreadable or corrupt file is still an error, wrapped with its path.
+//
+// It delegates to answers.LoadPrimary so the answers path and parsing have a
+// single implementation.
 func loadAnswersOrEmpty(projectRoot string) (types.WizardAnswers, error) {
-	path := filepath.Join(projectRoot, answersDirectory(), answersFile())
-
-	data, err := os.ReadFile(path)
-	if err != nil {
-		if errors.Is(err, os.ErrNotExist) {
-			return types.WizardAnswers{}, nil
-		}
-		return types.WizardAnswers{}, err
-	}
-
-	var a types.WizardAnswers
-	if err := yaml.Unmarshal(data, &a); err != nil {
-		return types.WizardAnswers{}, err
-	}
-	return a, nil
+	return answers.LoadPrimary(projectRoot)
 }

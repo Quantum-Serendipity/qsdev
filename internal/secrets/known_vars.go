@@ -101,6 +101,12 @@ var SensitiveKeyPatterns = []string{
 var credentialRootSubstrings = []string{
 	"auth",
 	"private",
+	// Two-word credential names that are unambiguous even when written with no
+	// separator and no case change (CLIENTSECRET, ACCESSTOKEN, refreshtoken),
+	// which neither the token boundary nor camelCase splitting can see.
+	"clientsecret",
+	"accesstoken",
+	"refreshtoken",
 }
 
 // EnvCredentialRootSubstrings are additional credential-word roots matched as a
@@ -201,10 +207,13 @@ func IsSensitiveName(name string) bool {
 // value-scrubbing (and thus preserving the host of) such connection vars.
 func MatchesSensitiveKeyPattern(name string) bool {
 	lower := strings.ToLower(name)
-	normalized := strings.ReplaceAll(lower, "-", "_")
-	// When the name contains no hyphen, normalized is identical to lower, so
-	// scanning it again per pattern would be pure duplicate work. This predicate
-	// is hot (per slog attribute key and per NAME=value token), so skip it.
+	// normalized separates camelCase/PascalCase words and turns hyphens into
+	// underscores, so accessToken, ClientSecret, APIKey and api-key expose their
+	// credential word at a token boundary (access_token, client_secret, api_key).
+	normalized := strings.ReplaceAll(strings.ToLower(splitCaseWords(name)), "-", "_")
+	// When the name has no hyphen or case transition, normalized is identical to
+	// lower, so scanning it again per pattern would be pure duplicate work. This
+	// predicate is hot (per slog attribute key and per NAME=value token), so skip it.
 	normalizedDiffers := normalized != lower
 	for _, pat := range SensitiveKeyPatterns {
 		if matchesTokenBoundary(lower, pat) {
@@ -255,6 +264,41 @@ func matchesTokenBoundary(s, pattern string) bool {
 		from = idx + 1
 	}
 }
+
+// splitCaseWords inserts an underscore at each camelCase word boundary: before
+// an uppercase letter that follows a lowercase letter or digit (accessToken ->
+// access_Token), and before the last capital of an acronym that starts a new
+// word (APIKey -> API_Key). All-lowercase, all-uppercase and already-separated
+// names are returned unchanged, so SCREAMING_SNAKE env vars keep their meaning.
+func splitCaseWords(s string) string {
+	var b strings.Builder
+	for i := 0; i < len(s); i++ {
+		c := s[i]
+		if i > 0 && isUpper(c) {
+			prev := s[i-1]
+			endsWord := isLower(prev) || isDigit(prev)
+			endsAcronym := isUpper(prev) && i+1 < len(s) && isLower(s[i+1])
+			if endsWord || endsAcronym {
+				if b.Len() == 0 {
+					b.Grow(len(s) + 4)
+					b.WriteString(s[:i])
+				}
+				b.WriteByte('_')
+			}
+		}
+		if b.Len() > 0 {
+			b.WriteByte(c)
+		}
+	}
+	if b.Len() == 0 {
+		return s
+	}
+	return b.String()
+}
+
+func isUpper(c byte) bool { return c >= 'A' && c <= 'Z' }
+func isLower(c byte) bool { return c >= 'a' && c <= 'z' }
+func isDigit(c byte) bool { return c >= '0' && c <= '9' }
 
 func isAlphaNum(c byte) bool {
 	return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9')

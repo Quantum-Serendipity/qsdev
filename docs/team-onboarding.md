@@ -53,13 +53,13 @@ qsdev init --profile go-web --infra-profile enterprise \
 
 ### Compliance Levels
 
-Each security tier maps to a compliance level that controls age-gating thresholds, required hooks, and SBOM policy:
+Each security tier maps to a compliance level that selects the generated pre-commit hooks. The compliance level does not select the age gate yet: at every level, the generated package-manager settings gate installs for at least 72 hours (3 days) where the package manager supports an age gate (npm and pnpm use 3 days; yarn, bun and uv use 7 days). The Renovate or Dependabot window comes from the infrastructure profile instead: 3 days for `consulting-default`, 7 days for `enterprise`, none for `startup-github`. Per-level windows are planned. Per-level SBOM policies and the strict-level license-compliance hook are planned and not generated yet.
 
-| Level | Age Gate | Required Hooks | SBOM Policy |
-|-------|---------|----------------|-------------|
-| `baseline` | 72 hours | ripsecrets, gitleaks | Off |
-| `enhanced` | 168 hours (1 week) | ripsecrets, gitleaks, semgrep | On release |
-| `strict` | 336 hours (2 weeks) | ripsecrets, gitleaks, semgrep, license-compliance | Every build |
+| Level | Age Gate | Generated Hooks | Planned |
+|-------|---------|-----------------|---------|
+| `baseline` | at least 72 hours (3 days) | ripsecrets, gitleaks | none |
+| `enhanced` | at least 72 hours (3 days) | ripsecrets, gitleaks, semgrep | SBOM policy: on release |
+| `strict` | at least 72 hours (3 days) | ripsecrets, gitleaks, semgrep | license-compliance hook; SBOM policy: every build |
 
 ### Container Runtime
 
@@ -167,14 +167,14 @@ Hook presets control Claude Code runtime behavior:
 | `safety-block` | Installs `package-guard.py` as a PreToolUse hook; intercepts package install commands sent through Bash, PowerShell or Monitor in real-time |
 | `credential-scan` | Scans Write/Edit operations for credentials before they reach disk |
 | `destructive-prevention` | Blocks destructive shell commands sent through Bash, PowerShell or Monitor (rm -rf, git push --force, etc.) |
-| `file-boundary` | Prevents Write/Edit/Read/Grep/Glob operations outside the project tree (reads of dependency caches such as the Go module cache and /nix/store, and of `.qsdev.yaml` `hooks.file_boundary.extra_read_paths`, are allowed). Shell commands are out of its scope; use the sandbox to confine them |
+| `file-boundary` | Prevents Write/Edit/Read/Grep/Glob operations outside the project tree (reads of dependency caches such as the Go module cache and /nix/store, and of `.qsdev.yaml` `hooks.file_boundary.extra_read_paths`, are allowed). Shell commands are out of its scope |
 | `tool-gates` | Blocks the tools listed in `.qsdev.yaml` `hooks.tool_gates.denied`, and every tool outside `hooks.tool_gates.allowed` when that list is set, on all tool invocations. With neither list set it has no policy and allows every tool; `qsdev claude hooks list` and `qsdev check` report it as "no policy" |
 | `soc2-audit` | Logs session start/end (with the end reason), tool invocations, failed and denied tool calls, and checkpoints for SOC 2 compliance (metadata-only audit trail with monthly rotation) |
 | `auto-format` | Runs formatters after file writes |
 | `pre-commit` | Runs pre-commit checks before git operations |
 | `audit-log` | Logs all tool invocations for compliance auditing (simpler alternative to soc2-audit) |
 
-All hooks run inside the sandbox when available (see `qsdev sandbox status`).
+The hook sandbox is experimental and not yet enableable from the CLI (planned opt-in `--claude-hooks sandbox`, Linux/Nix builds); no generated hook is wrapped in it today. `qsdev sandbox status` shows what isolation this machine could provide.
 
 ```bash
 # At init time
@@ -217,7 +217,7 @@ qsdev mcp health               # Health check all configured servers
 
 ## Managing Security Policies
 
-qsdev generates YAML security policies in `.qsdev/policy/`. These define fine-grained rules for what the AI agent can and cannot do, beyond the static deny/ask rules in `.claude/settings.json`.
+The policy engine reads YAML security policies from `.qsdev/policy.yaml` in the project and from `~/.qsdev/policy.yaml`. These define fine-grained rules for what the AI agent can and cannot do, beyond the static deny/ask rules in `.claude/settings.json`. The policy engine (`qsdev enforce`) exists but no tier or preset enables it yet; it is planned for the full tier. qsdev does not generate a policy file yet, so you write it yourself.
 
 ### Inspecting Policies
 
@@ -239,7 +239,7 @@ qsdev session list                       # Show active bypasses
 qsdev session clear                      # Remove all bypasses
 ```
 
-Rules with `bypass_tier: enforce_always` (all 18 self-protection rules) cannot be bypassed. Rules with `bypass_tier: session` are lifted for the named session until the grant expires (default 8h). Rules with `bypass_tier: command` get a one-shot token that the next matching tool call spends.
+Rules with `bypass_tier: enforce_always` cannot be lifted with `qsdev session allow`, and neither can the 18 self-protection rules. Rules with `bypass_tier: session` are lifted for the named session until the grant expires (default 8h). Rules with `bypass_tier: command` get a one-shot token that the next matching tool call spends.
 
 ## Cloud Ecosystem Coverage
 

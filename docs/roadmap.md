@@ -11,7 +11,7 @@ Features delivered since MVP:
 - **Fragment-based orchestration** (P15) — Modules produce typed Fragment objects with 5 compose modes (replace, append, section, merge-JSON, merge-YAML); an orchestrator merges fragments with priority ordering and security floor enforcement
 - **Managed hook policies** (P16) — Declarative hook registry with 3-tier deployment hierarchy (project, team, org), credential scanning, destructive operation prevention, SOC 2 audit logging, and dependency oversight hooks
 - **Container runtime modernization** (P17) — Docker ecosystem module renamed to "container" with runtime-agnostic support for Docker and Podman rootless; `qsdev container detect` and `qsdev container migrate` for Docker-to-Podman migration analysis
-- **Hook execution sandboxing** (P18) — Bubblewrap-based sandbox with Landlock filesystem restriction and seccomp-BPF syscall filtering; 5 degradation tiers from full isolation to unsandboxed; `qsdev sandbox exec` and `qsdev sandbox status` commands
+- **Hook execution sandboxing** (P18, experimental) — Bubblewrap-based sandbox with Landlock filesystem restriction and seccomp-BPF syscall filtering; 5 degradation tiers from full isolation to unsandboxed; `qsdev sandbox exec` and `qsdev sandbox status` commands. Not yet wired: no CLI option wraps generated hooks in it (planned opt-in `--claude-hooks sandbox`, Linux/Nix builds)
 - **Multi-framework shared primitives** (P19) — 7 Go interfaces (DetectionAdapter, ConfigRenderer, HookDeployer, etc.) abstracting all AI framework addons for future multi-framework support
 - **OpenGrep custom rule library** (P20) — 96 taint-focused security rules covering 7 frameworks (Next.js, FastAPI, Gin, NestJS, SvelteKit, Prisma, Drizzle) across TypeScript, Python, and Go
 - **Wizard & orchestration refinements** (P21) — `--theme` flag (charm, dracula, catppuccin, base16, default), `--quiet` flag, terminal detection guard, AI tools form consolidation
@@ -23,12 +23,12 @@ Features delivered since MVP:
 - **Cloud CLI detection** (P24) — AWS, GCP, and Azure ecosystem modules with auto-detection from project files (CDK, SAM, Terraform providers, cloud CLI configs); 3-layer credential isolation (environment separation, credential file masking, agent deny rules)
 - **Service template expansion** (P25) — Kafka (KRaft/ZooKeeper), MinIO, Mailpit, Keycloak, and NATS service templates with configurable ports, auto-exported environment variables, and localhost-only binding; 12 total services
 - **MCP registry & documentation pipeline** (P26) — MCP server registry with 5-level compliance grading; `qsdev mcp grade/install/update/remove/health` lifecycle commands; `qsdev docs` pipeline with DevDocs and ZIM offline documentation; 4 documentation MCP servers; lookup-docs skill with 5-source priority routing
-- **Security pattern library & policy engine** (P27) — YAML-based policy engine with 10 condition types, 4 action types, and 3-tier bypass model; 28-probe package risk scoring with A-F grades; 9-probe MCP trust scoring; `qsdev policy check/list/show` and `qsdev session allow/clear/list` commands; SARIF 2.1.0 output
-- **Agent self-protection** (P28) — 18 Tier 1 enforce-always rules across config protection, MCP integrity, binary integrity, and bypass prevention; evasion detection for base64-to-shell, hex encoding, hardlinks, and /proc tricks; path canonicalization; runs as first PreToolUse hook with fail-closed semantics
+- **Security pattern library & policy engine** (P27) — YAML-based policy engine with 10 condition types, 4 action types, and 3-tier bypass model; 28-probe package risk scoring library with A-F grades; 9-probe MCP trust scoring; `qsdev policy check/list/show` and `qsdev session allow/clear/list` commands; SARIF 2.1.0 output. Not yet wired: no tier or preset enables the policy engine (planned: full tier), and nothing calls the risk scorer, so package risk scoring is not yet available
+- **Agent self-protection** (P28) — 18 Tier 1 enforce-always rules across config protection, MCP integrity, binary integrity, and bypass prevention; evasion detection for base64-to-shell, hex encoding, hardlinks, and /proc tricks; path canonicalization; runs as first PreToolUse hook, fail-closed within its deadline: an evaluation error blocks the call, but a hook that times out or cannot start lets it through (see [Known Limitations](security-architecture.md#self-protection))
 
 ## Security & Supply Chain
 
-Deepening the 14-layer defense stack.
+Deepening the defense stack.
 
 - **Interactive bypass system** — Configuration-guard rules with `qsdev hook bypass-next` for authorized overrides, shadow-mode calibration for safe rule rollout, circuit breaker pattern
 - **Consolidated security binary** — Single `qsdev-hook` binary replacing Python hook scripts, with <50ms PreToolUse execution and advanced evasion detection (base64, shell expansion, indirect writes)

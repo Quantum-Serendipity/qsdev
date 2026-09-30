@@ -92,7 +92,6 @@ golangci-lint run
 - **Socket.dev MCP** provides supply chain security analysis of dependencies.
 <!-- /qsdev:socket-dev-mcp -->
 <!-- qsdev:version-sentinel -->
-- **Version-Sentinel** guards dependency changes in: .
 - Version-Sentinel does NOT cover: go.mod. Review these manually.
 <!-- /qsdev:version-sentinel -->
 - Prefer vendored or pinned dependencies.

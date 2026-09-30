@@ -23,7 +23,7 @@ We will acknowledge receipt within 48 hours and provide a resolution timeline wi
 
 ## Security Practices
 
-- Releases are built with [SLSA Level 3](https://slsa.dev/) provenance
+- Releases carry [SLSA](https://slsa.dev/) Build L2 provenance (GitHub artifact attestations)
 - All release artifacts are signed with Cosign (Sigstore)
 - Dependencies are monitored with Dependabot and govulncheck
 - Code is scanned with CodeQL on every PR

@@ -1,7 +1,9 @@
 package check
 
 import (
+	"encoding/json"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -122,7 +124,11 @@ func TestCheckClaudeSettingsPosture(t *testing.T) {
 				writeTestFile(t, dir, ".claude/hooks/package-guard.py", "#!/usr/bin/env python3\n")
 			}
 
-			results := CheckClaudeSettingsPosture(CheckContext{ProjectRoot: dir, ExpectedClaudeSettings: []byte(tt.expected)})
+			results := CheckClaudeSettingsPosture(CheckContext{
+				ProjectRoot:            dir,
+				ExpectedClaudeSettings: []byte(tt.expected),
+				LookPath:               lookPathFound,
+			})
 			var failed []string
 			for _, r := range results {
 				if r.Status == StatusFail {
@@ -176,6 +182,7 @@ func TestCheckClaudeSettingsPosture_HooksWithoutPolicy(t *testing.T) {
 				ProjectRoot:            dir,
 				ExpectedClaudeSettings: []byte(generatedSettings),
 				HooksWithoutPolicy:     tt.hooks,
+				LookPath:               lookPathFound,
 			})
 			var warned []string
 			for _, r := range results {
@@ -194,6 +201,88 @@ func TestCheckClaudeSettingsPosture_HooksWithoutPolicy(t *testing.T) {
 			}
 		})
 	}
+}
+
+// TestCheckHookPrograms guards U18-V04: a hook whose bare command word does
+// not resolve on PATH exits 127, which Claude Code treats as a non-blocking
+// error, so the guard silently stops applying.
+func TestCheckHookPrograms(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name     string
+		command  string
+		event    string
+		wantSev  CheckSeverity // empty: no finding
+		wantProg string
+	}{
+		{name: "unresolvable self-protection", command: "nonexistent-bin selfprotect", event: "PreToolUse", wantSev: SeverityCritical, wantProg: "nonexistent-bin"},
+		{name: "unresolvable other hook", command: "nonexistent-bin --flag", event: "PostToolUse", wantSev: SeverityHigh, wantProg: "nonexistent-bin"},
+		{name: "unresolvable after assignment", command: "FOO=1 nonexistent-bin selfprotect", event: "PreToolUse", wantSev: SeverityCritical, wantProg: "nonexistent-bin"},
+		{name: "resolvable", command: "sh -c true", event: "PreToolUse"},
+		{name: "project script path", command: `"${CLAUDE_PROJECT_DIR}"/.claude/hooks/x.py`, event: "PreToolUse"},
+		{name: "variable command word", command: "$QSDEV_BIN selfprotect", event: "PreToolUse"},
+		{name: "absolute path", command: "/nonexistent/qsdev selfprotect", event: "PreToolUse"},
+		{name: "relative path", command: "./bin/qsdev selfprotect", event: "PreToolUse"},
+		{name: "unparseable", command: "qsdev 'selfprotect", event: "PreToolUse"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			cmd, err := json.Marshal(tt.command)
+			if err != nil {
+				t.Fatal(err)
+			}
+			actual, err := parseSettingsPosture([]byte(`{"hooks": {"` + tt.event + `": [{"matcher": "*", "hooks": [{"type": "command", "command": ` + string(cmd) + `}]}]}}`))
+			if err != nil {
+				t.Fatal(err)
+			}
+			results := checkHookPrograms(actual, lookPathFound)
+			if tt.wantSev == "" {
+				if len(results) != 0 {
+					t.Fatalf("unexpected findings: %+v", results)
+				}
+				return
+			}
+			if len(results) != 1 {
+				t.Fatalf("got %d findings, want 1: %+v", len(results), results)
+			}
+			r := results[0]
+			if r.Name != "claude_hook_unresolvable" || r.Status != StatusFail || r.Severity != tt.wantSev {
+				t.Errorf("finding = %s/%s/%s, want claude_hook_unresolvable/fail/%s", r.Name, r.Status, r.Severity, tt.wantSev)
+			}
+			if !strings.Contains(r.Message, tt.wantProg) || r.Metadata["program"] != tt.wantProg {
+				t.Errorf("finding %q (metadata %v) does not name %s", r.Message, r.Metadata, tt.wantProg)
+			}
+			if !ShouldFail(results, AuditLevelHigh) {
+				t.Error("finding does not fail the check at --audit-level high")
+			}
+		})
+	}
+}
+
+// TestCheckClaudeSettingsPosture_UnresolvableHook runs the probe through the
+// posture check with the real PATH lookup.
+func TestCheckClaudeSettingsPosture_UnresolvableHook(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	writeTestFile(t, dir, ClaudeSettingsRelPath,
+		`{"hooks": {"PreToolUse": [{"matcher": "*", "hooks": [{"type": "command", "command": "qsdev-nonexistent-bin-u18 selfprotect"}]}]}}`)
+	var names []string
+	for _, r := range CheckClaudeSettingsPosture(CheckContext{ProjectRoot: dir}) {
+		names = append(names, r.Name)
+	}
+	if !slices.Contains(names, "claude_hook_unresolvable") {
+		t.Errorf("results %v do not report claude_hook_unresolvable", names)
+	}
+}
+
+// lookPathFound resolves every name except "nonexistent-bin", so tests do
+// not depend on the programs installed on PATH.
+func lookPathFound(file string) (string, error) {
+	if file == "nonexistent-bin" {
+		return "", exec.ErrNotFound
+	}
+	return filepath.Join("/usr/bin", file), nil
 }
 
 func writeTestFile(t *testing.T, dir, rel, content string) {

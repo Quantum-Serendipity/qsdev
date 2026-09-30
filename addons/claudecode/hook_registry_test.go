@@ -13,10 +13,12 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	"mvdan.cc/sh/v3/syntax"
 
 	claudecode "github.com/Quantum-Serendipity/qsdev/addons/claudecode"
+	"github.com/Quantum-Serendipity/qsdev/internal/selfprotect/hookio"
 	"github.com/Quantum-Serendipity/qsdev/pkg/types"
 )
 
@@ -880,4 +882,26 @@ func TestHookRegistry_FailClosedTimeouts(t *testing.T) {
 			t.Errorf("%s: _HOOK_DEADLINE_S = %d, want 0 < deadline <= timeout-2 (%d)", script, deadline, timeout-2)
 		}
 	}
+}
+
+// TestSelfprotectHookTimeoutCoversDeadline verifies Claude Code's timeout for
+// the self-protection hook leaves room for the hook's own evaluation deadline
+// plus process start-up: if Claude Code's timeout fired first it would allow
+// the call instead of receiving the hook's fail-closed deny.
+func TestSelfprotectHookTimeoutCoversDeadline(t *testing.T) {
+	t.Parallel()
+
+	for _, def := range claudecode.ExportDefaultHookRegistry().Definitions() {
+		if def.Owner != "self-protection" {
+			continue
+		}
+		if def.Timeout < 10 {
+			t.Errorf("self-protection Timeout = %ds, want at least 10s", def.Timeout)
+		}
+		if got, need := time.Duration(def.Timeout)*time.Second, hookio.EvalDeadline+2*time.Second; got < need {
+			t.Errorf("self-protection Timeout = %v, want at least EvalDeadline+2s = %v", got, need)
+		}
+		return
+	}
+	t.Fatal("no self-protection hook registered")
 }

@@ -2,7 +2,9 @@ package devinit
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"time"
@@ -15,8 +17,6 @@ import (
 	"github.com/Quantum-Serendipity/qsdev/internal/selfprotect/hookio"
 	"github.com/Quantum-Serendipity/qsdev/internal/selfprotect/rules"
 )
-
-const selfprotectTimeout = 5 * time.Second
 
 func selfprotectCmd() *cobra.Command {
 	cmd := &cobra.Command{
@@ -38,21 +38,46 @@ func selfprotectCmd() *cobra.Command {
 var errSelfprotectDeny = &ExitError{Code: 2}
 
 // runSelfprotect evaluates the self-protection rules for the hook payload on
-// stdin. Every deny path, including malformed input and a panic, writes its
-// reason to stderr and returns errSelfprotectDeny; an allowed call returns nil.
-func runSelfprotect(cmd *cobra.Command) (err error) {
-	stderr := cmd.ErrOrStderr()
-	defer func() {
-		if r := recover(); r != nil {
-			hookio.WriteError(stderr, fmt.Sprintf("%v", r))
-			err = errSelfprotectDeny
-		}
-	}()
+// stdin within hookio.EvalDeadline.
+func runSelfprotect(cmd *cobra.Command) error {
+	return runSelfprotectWith(cmd, hookio.EvalDeadline, evaluateSelfprotect)
+}
 
-	ctx, cancel := context.WithTimeout(context.Background(), selfprotectTimeout)
+// selfprotectEvaluator reads a hook payload from stdin and evaluates it,
+// writing any deny reason to w and returning errSelfprotectDeny, or nil to
+// allow the call.
+type selfprotectEvaluator func(ctx context.Context, stdin io.Reader, w io.Writer) error
+
+// runSelfprotectWith runs evaluate under one deadline covering both the stdin
+// read and the evaluation. Every deny path, including malformed input, a
+// panic and an overrun deadline, writes its reason to stderr and returns
+// errSelfprotectDeny; an allowed call returns nil.
+func runSelfprotectWith(cmd *cobra.Command, deadline time.Duration, evaluate selfprotectEvaluator) error {
+	stderr := cmd.ErrOrStderr()
+	parent := cmd.Context()
+	if parent == nil {
+		parent = context.Background()
+	}
+	ctx, cancel := context.WithTimeout(parent, deadline)
 	defer cancel()
 
-	call, err := hookio.ParseToolCall(ctx, cmd.InOrStdin())
+	stdin := cmd.InOrStdin()
+	timedOut, err := hookio.RunWithDeadline(ctx, func(ctx context.Context, w io.Writer) error {
+		return evaluate(ctx, stdin, w)
+	}, stderr)
+	switch {
+	case timedOut, errors.Is(err, errSelfprotectDeny):
+		return errSelfprotectDeny
+	case err != nil:
+		hookio.WriteError(stderr, err.Error())
+		return errSelfprotectDeny
+	}
+	return nil
+}
+
+// evaluateSelfprotect is the production selfprotectEvaluator.
+func evaluateSelfprotect(ctx context.Context, stdin io.Reader, stderr io.Writer) error {
+	call, err := hookio.ParseToolCall(ctx, stdin)
 	if err != nil {
 		hookio.WriteError(stderr, err.Error())
 		return errSelfprotectDeny
@@ -75,6 +100,13 @@ func runSelfprotect(cmd *cobra.Command) (err error) {
 	// Parse the Bash command once here (memoized on evalCtx); the rules below
 	// reuse the same parse via ctx.ParsedCommands().
 	cmds, parseErr := evalCtx.ParsedCommands()
+	// Over the cap the rules below could outlast the deadline. This must be a
+	// deny, not a parse error: a parse error makes rules fall back to
+	// substring tests rather than deny.
+	if len(cmds) > hookio.MaxSimpleCommands {
+		hookio.WriteDeny(stderr, "SP-LIMIT", fmt.Sprintf("command has %d simple commands, more than the %d evaluated; split it up or write it to a script with the Write tool", len(cmds), hookio.MaxSimpleCommands))
+		return errSelfprotectDeny
+	}
 	if blocked, category, reason := evasion.CheckParsed(call.ToolName, input.Command, input.FilePath, cmds, parseErr); blocked {
 		hookio.WriteEvasionDeny(stderr, category, reason)
 		return errSelfprotectDeny

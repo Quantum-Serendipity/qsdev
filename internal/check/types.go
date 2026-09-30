@@ -195,6 +195,9 @@ type CheckContext struct {
 	// HooksWithoutPolicy lists the hooks the saved answers enable without
 	// the policy they enforce (e.g. tool-gates with no allow or deny list).
 	HooksWithoutPolicy []HookWithoutPolicy
+	// LookPath resolves a hook's bare command word on PATH; nil uses
+	// toolcheck.LookPath.
+	LookPath func(file string) (string, error)
 }
 
 // CustomConformance carries the evaluated requirements of a project's custom

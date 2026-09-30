@@ -259,17 +259,28 @@ const maxBraceVariants = 64
 // alternative; a sequence (`{a..z}`) is replaced with `*` so the glob check
 // covers every value it can produce. ok is false when the expansion exceeds
 // maxBraceVariants.
+//
+// Each call scans s in linear time. Every outermost sequence is replaced at once
+// (replacing a sequence commutes with expanding any other group), and a word
+// with more than maxBraceVariants comma groups fails closed up front: each
+// group adds at least one variant, so the recursion depth stays bounded by the
+// cap however many groups a hostile word holds.
 func expandBraces(s string) ([]string, bool) {
-	open, closing, alts, seq := findBraceGroup(s)
-	if open < 0 {
+	groups := braceGroups(s)
+	if slices.ContainsFunc(groups, func(g braceGroup) bool { return g.seq }) {
+		s = replaceSequences(s, groups)
+		groups = braceGroups(s)
+	}
+	if len(groups) == 0 {
 		return []string{s}, true
 	}
-	prefix, suffix := s[:open], s[closing+1:]
-	if seq {
-		return expandBraces(prefix + "*" + suffix)
+	if len(groups) > maxBraceVariants {
+		return nil, false
 	}
+	g := groups[0]
+	prefix, suffix := s[:g.open], s[g.closing+1:]
 	var out []string
-	for _, alt := range alts {
+	for _, alt := range g.alternatives(s) {
 		vs, ok := expandBraces(prefix + alt + suffix)
 		if !ok {
 			return nil, false
@@ -282,41 +293,86 @@ func expandBraces(s string) ([]string, bool) {
 	return out, true
 }
 
-// findBraceGroup finds the first expandable brace group in s: a `{...}` with a
-// top-level comma (returned as alts) or a `..` sequence (seq). It returns
-// open == -1 when s has none.
-func findBraceGroup(s string) (open, closing int, alts []string, seq bool) {
+// braceGroup is one expandable `{...}` of a word.
+type braceGroup struct {
+	open, closing int
+	// commas are the offsets of the group's top-level commas; empty for a
+	// sequence.
+	commas []int
+	seq    bool
+}
+
+// alternatives returns the comma-separated alternatives of g within s.
+func (g braceGroup) alternatives(s string) []string {
+	alts := make([]string, 0, len(g.commas)+1)
+	start := g.open + 1
+	for _, c := range g.commas {
+		alts = append(alts, s[start:c])
+		start = c + 1
+	}
+	return append(alts, s[start:g.closing])
+}
+
+// braceGroups returns every expandable brace group of s ordered by its opening
+// brace, in one pass: a stack pairs each `{` with its `}` and collects the
+// commas at its top level. A group with such a comma is a comma list;
+// otherwise a `..` anywhere inside makes it a sequence. Unmatched `{` never
+// enclose a matched group, so they are simply left on the stack.
+func braceGroups(s string) []braceGroup {
+	type frame struct {
+		open   int
+		commas []int
+	}
+	var (
+		stack   []frame
+		groups  []braceGroup
+		lastDot = -1 // start of the latest ".." seen
+	)
 	for i := 0; i < len(s); i++ {
-		if s[i] != '{' {
-			continue
-		}
-		depth, start := 0, i+1
-		var parts []string
-		for j := i; j < len(s); j++ {
-			switch s[j] {
-			case '{':
-				depth++
-			case ',':
-				if depth == 1 {
-					parts = append(parts, s[start:j])
-					start = j + 1
-				}
-			case '}':
-				depth--
-				if depth != 0 {
-					continue
-				}
-				if len(parts) > 0 {
-					return i, j, append(parts, s[start:j]), false
-				}
-				if strings.Contains(s[i+1:j], "..") {
-					return i, j, nil, true
-				}
-				j = len(s) // not expandable; look for a later group
+		switch s[i] {
+		case '.':
+			if i+1 < len(s) && s[i+1] == '.' {
+				lastDot = i
+			}
+		case '{':
+			stack = append(stack, frame{open: i})
+		case ',':
+			if n := len(stack); n > 0 {
+				stack[n-1].commas = append(stack[n-1].commas, i)
+			}
+		case '}':
+			n := len(stack)
+			if n == 0 {
+				continue
+			}
+			f := stack[n-1]
+			stack = stack[:n-1]
+			if len(f.commas) > 0 || lastDot > f.open {
+				groups = append(groups, braceGroup{open: f.open, closing: i, commas: f.commas, seq: len(f.commas) == 0})
 			}
 		}
 	}
-	return -1, -1, nil, false
+	// Groups were collected in closing order.
+	slices.SortFunc(groups, func(a, b braceGroup) int { return a.open - b.open })
+	return groups
+}
+
+// replaceSequences replaces each outermost sequence among groups (the brace
+// groups of s) with `*`.
+func replaceSequences(s string, groups []braceGroup) string {
+	var b strings.Builder
+	b.Grow(len(s))
+	pos := 0
+	for _, g := range groups {
+		if !g.seq || g.open < pos {
+			continue // a comma list, or inside a sequence already replaced
+		}
+		b.WriteString(s[pos:g.open])
+		b.WriteByte('*')
+		pos = g.closing + 1
+	}
+	b.WriteString(s[pos:])
+	return b.String()
 }
 
 // isRelativePath reports whether p is a relative path that the shell resolves

@@ -2,11 +2,16 @@ package canon
 
 import (
 	"errors"
+	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"sync"
+	"syscall"
 	"testing"
+	"time"
 )
 
 func TestExpandTilde(t *testing.T) {
@@ -512,5 +517,179 @@ func resetProtectedPaths(t *testing.T) {
 	t.Helper()
 	if err := ensureInit(); err != nil {
 		t.Fatalf("initializing protected paths: %v", err)
+	}
+}
+
+// resolveMissingReference is the original resolveMissing, which joined every
+// component after the first missing one onto the accumulated path (each Join
+// re-cleaning the whole string, O(depth^2)). It is the oracle for
+// TestResolveMissing_EquivalentSemantics.
+func resolveMissingReference(p string) (string, error) {
+	start, err := absWithoutClean(p)
+	if err != nil {
+		return "", err
+	}
+	vol := filepath.VolumeName(start)
+	resolved := vol + string(filepath.Separator)
+	pending := splitPath(start[len(vol):])
+	missing := false
+	hops := 0
+	for len(pending) > 0 {
+		comp := pending[0]
+		pending = pending[1:]
+		switch comp {
+		case ".":
+			continue
+		case "..":
+			resolved = filepath.Dir(resolved)
+			missing = false
+			continue
+		}
+		next := filepath.Join(resolved, comp)
+		if missing {
+			resolved = next
+			continue
+		}
+		info, err := os.Lstat(next)
+		switch {
+		case errors.Is(err, fs.ErrNotExist) || errors.Is(err, syscall.ENOTDIR):
+			missing = true
+			resolved = filepath.Join(normalizeExisting(resolved), comp)
+			continue
+		case err != nil:
+			return "", err
+		case info.Mode()&fs.ModeSymlink == 0:
+			resolved = next
+			continue
+		}
+		hops++
+		if hops > maxSymlinkHops {
+			return "", errTooManySymlinks
+		}
+		target, err := os.Readlink(next)
+		if err != nil {
+			return "", err
+		}
+		if isRooted(target) {
+			targetVol := filepath.VolumeName(target)
+			target = target[len(targetVol):]
+			if targetVol == "" {
+				targetVol = vol
+			}
+			resolved = targetVol + string(filepath.Separator)
+		}
+		pending = append(splitPath(target), pending...)
+	}
+	return filepath.Clean(resolved), nil
+}
+
+// TestResolveMissing_EquivalentSemantics checks the single-Join missing tail
+// against the original per-component algorithm, including resuming symlink
+// resolution after a "..", which pops the tail back into existing directories.
+func TestResolveMissing_EquivalentSemantics(t *testing.T) {
+	t.Parallel()
+	dir, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	real := filepath.Join(dir, "real")
+	if err := os.MkdirAll(filepath.Join(real, "sub"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "file"), nil, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	symlinks := runtime.GOOS != "windows"
+	if symlinks {
+		for name, target := range map[string]string{
+			"lnk":      real,
+			"rel":      "real/sub",
+			"dangling": filepath.Join(dir, "gone", "target"),
+		} {
+			if err := os.Symlink(target, filepath.Join(dir, name)); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+
+	sep := string(filepath.Separator)
+	deep := strings.Repeat("m"+sep, 50)
+	tests := []struct {
+		name    string
+		rel     string
+		symlink bool
+	}{
+		{name: "missing leaf", rel: "missing"},
+		{name: "missing tail", rel: "missing/a/b/c"},
+		{name: "dot components in tail", rel: "missing/./a/./b"},
+		{name: "dotdot inside tail", rel: "missing/a/../b"},
+		{name: "dotdot pops the tail", rel: "missing/../real/x"},
+		{name: "dotdot past the tail", rel: "missing/../../x"},
+		{name: "dotdot past the root", rel: strings.Repeat("../", 80) + "missing/x"},
+		{name: "missing below a file", rel: "file/x/y"},
+		{name: "file then dotdot", rel: "file/x/../../real/sub/y"},
+		{name: "deep tail popped back", rel: deep + strings.Repeat("../", 50) + "real/x"},
+		{name: "resume through symlink", rel: "missing/../lnk/x", symlink: true},
+		{name: "resume through relative symlink", rel: "missing/a/../../rel/y", symlink: true},
+		{name: "symlink dotdot", rel: "lnk/../x", symlink: true},
+		{name: "dangling symlink", rel: "dangling/x", symlink: true},
+		{name: "dangling symlink dotdot", rel: "dangling/../../lnk/z", symlink: true},
+		{name: "symlink after missing is not followed", rel: "missing/lnk/x", symlink: true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			if tt.symlink && !symlinks {
+				t.Skip("symlinks require elevated privileges on Windows")
+			}
+			p := dir + sep + filepath.FromSlash(tt.rel)
+			got, err := resolveMissing(p)
+			want, wantErr := resolveMissingReference(p)
+			if (err != nil) != (wantErr != nil) || got != want {
+				t.Errorf("resolveMissing(%q) = (%q, %v), want (%q, %v)", tt.rel, got, err, want, wantErr)
+			}
+		})
+	}
+}
+
+// TestResolveMissing_DeepMissingTail pins the U18-04 fix: a long missing tail
+// (what a chain of cd into nonexistent directories builds) canonicalizes in
+// linear time.
+func TestResolveMissing_DeepMissingTail(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	resolvedDir, err := filepath.EvalSymlinks(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, depth := range []int{4000, 16000} {
+		t.Run(fmt.Sprint(depth), func(t *testing.T) {
+			tail := strings.Repeat("a"+string(filepath.Separator), depth) + "x"
+			start := time.Now()
+			got, err := Canonicalize(filepath.Join(dir, tail))
+			took := time.Since(start)
+			if err != nil {
+				t.Fatalf("Canonicalize: %v", err)
+			}
+			if want := filepath.Join(resolvedDir, tail); got != want {
+				t.Errorf("Canonicalize = %.80q..., want %.80q...", got, want)
+			}
+			if took > 100*time.Millisecond {
+				t.Errorf("Canonicalize of a %d-component missing tail took %v, want under 100ms", depth, took)
+			}
+		})
+	}
+}
+
+func BenchmarkResolveMissing_DeepTail(b *testing.B) {
+	for _, depth := range []int{500, 2000, 8000} {
+		p := filepath.Join(b.TempDir(), strings.Repeat("a"+string(filepath.Separator), depth)+"x")
+		b.Run(fmt.Sprint(depth), func(b *testing.B) {
+			for b.Loop() {
+				if _, err := resolveMissing(p); err != nil {
+					b.Fatal(err)
+				}
+			}
+		})
 	}
 }

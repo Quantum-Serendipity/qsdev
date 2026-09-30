@@ -276,7 +276,9 @@ var errTooManySymlinks = errors.New("too many levels of symbolic links")
 // before it has been resolved. Unlike a lexical Clean, this sees that
 // <dir>/lnk/../x is <lnk target's parent>/x and that a dangling symlink names
 // its target, exactly as a write through the path would. Once a component is
-// missing nothing below it exists, so the rest of the path is appended as-is.
+// missing nothing below it exists, so the rest of the path is collected into a
+// missing tail (a ".." pops it) and joined once at the end: joining component
+// by component re-cleans the whole path each time, O(depth^2).
 func resolveMissing(p string) (string, error) {
 	start, err := absWithoutClean(p)
 	if err != nil {
@@ -286,35 +288,39 @@ func resolveMissing(p string) (string, error) {
 	vol := filepath.VolumeName(start)
 	resolved := vol + string(filepath.Separator)
 	pending := splitPath(start[len(vol):])
-	missing := false
+	// missing holds the components from the first missing one on; resolved
+	// is the existing directory they hang below.
+	var missing []string
 	hops := 0
 
 	for len(pending) > 0 {
 		comp := pending[0]
 		pending = pending[1:]
-		switch comp {
-		case ".":
+		switch {
+		case comp == ".":
 			continue
-		case "..":
-			resolved = filepath.Dir(resolved)
+		case comp == ".." && len(missing) > 0:
 			// A kernel walk fails at the missing component, so the path only
 			// reaches a file when the consumer cleans it lexically first
-			// (<dir>/missing/../lnk/x -> <dir>/lnk/x); resume resolving so a
-			// symlink after the ".." is still followed.
-			missing = false
+			// (<dir>/missing/../lnk/x -> <dir>/lnk/x); once the tail is
+			// popped empty, resume resolving so a symlink after the ".." is
+			// still followed.
+			missing = missing[:len(missing)-1]
+			continue
+		case comp == "..":
+			resolved = filepath.Dir(resolved)
+			continue
+		case len(missing) > 0:
+			missing = append(missing, comp)
 			continue
 		}
 
 		next := filepath.Join(resolved, comp)
-		if missing {
-			resolved = next
-			continue
-		}
 		info, err := os.Lstat(next)
 		switch {
 		case errors.Is(err, fs.ErrNotExist) || errors.Is(err, syscall.ENOTDIR):
-			missing = true
-			resolved = filepath.Join(normalizeExisting(resolved), comp)
+			resolved = normalizeExisting(resolved)
+			missing = append(missing, comp)
 			continue
 		case err != nil:
 			return "", fmt.Errorf("canonicalizing path %q: %w", p, err)
@@ -343,7 +349,7 @@ func resolveMissing(p string) (string, error) {
 		}
 		pending = append(splitPath(target), pending...)
 	}
-	return filepath.Clean(resolved), nil
+	return filepath.Join(append([]string{resolved}, missing...)...), nil
 }
 
 // normalizeExisting returns the platform's canonical spelling of dir, an

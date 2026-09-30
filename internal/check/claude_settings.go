@@ -8,6 +8,10 @@ import (
 	"path/filepath"
 	"regexp"
 	"slices"
+	"strings"
+
+	"github.com/Quantum-Serendipity/qsdev/internal/selfprotect/cmdscan"
+	"github.com/Quantum-Serendipity/qsdev/internal/toolcheck"
 )
 
 // bypassPermissionsMode is the Claude Code permission mode that skips every
@@ -17,6 +21,10 @@ const bypassPermissionsMode = "bypassPermissions"
 // preToolUseEvent is the hook event the guard hooks (self-protection,
 // package guard) are registered under.
 const preToolUseEvent = "PreToolUse"
+
+// selfprotectSubcommand is the subcommand the self-protection hook runs; a
+// hook whose program does not resolve is critical when it is this one.
+const selfprotectSubcommand = "selfprotect"
 
 // hookScriptRe matches a project hook script referenced by a hook command,
 // e.g. "${CLAUDE_PROJECT_DIR}"/.claude/hooks/package-guard.py.
@@ -166,6 +174,11 @@ func CheckClaudeSettingsPosture(ctx CheckContext) []CheckResult {
 		results = append(results, checkHookEnv(actual, *expected)...)
 	}
 	results = append(results, checkHookScripts(ctx.ProjectRoot, actual)...)
+	lookPath := ctx.LookPath
+	if lookPath == nil {
+		lookPath = toolcheck.LookPath
+	}
+	results = append(results, checkHookPrograms(actual, lookPath)...)
 	results = append(results, checkHooksWithoutPolicy(ctx.HooksWithoutPolicy)...)
 
 	if len(results) == 0 {
@@ -272,6 +285,58 @@ func checkHookScripts(projectRoot string, actual claudeSettingsPosture) []CheckR
 		}
 	}
 	return results
+}
+
+// checkHookPrograms reports registered hook commands whose program is a bare
+// name that does not resolve on PATH: the shell exits 127, which Claude Code
+// treats as a non-blocking error, so the hook fails open. Paths and command
+// words built from an expansion are skipped (project scripts are covered by
+// checkHookScripts); the program is only looked up, never run.
+func checkHookPrograms(actual claudeSettingsPosture, lookPath func(string) (string, error)) []CheckResult {
+	var results []CheckResult
+	for _, event := range slices.Sorted(maps.Keys(actual.Hooks)) {
+		for _, m := range actual.Hooks[event] {
+			for _, h := range m.Hooks {
+				program, args, ok := hookProgram(h.Command)
+				if !ok {
+					continue
+				}
+				if _, err := lookPath(program); err == nil {
+					continue
+				}
+				severity := SeverityHigh
+				if len(args) > 0 && args[0] == selfprotectSubcommand {
+					severity = SeverityCritical
+				}
+				r := postureResult("claude_hook_unresolvable", StatusFail, severity,
+					fmt.Sprintf("%s hook %q runs %s, which is not on PATH: the hook exits 127 and Claude Code does not block on it", event, h.Command, program),
+					fmt.Sprintf("Install %s on PATH or run 'qsdev init --update' to regenerate the hook", program))
+				r.Metadata = map[string]string{"event": event, "program": program}
+				results = append(results, r)
+			}
+		}
+	}
+	return results
+}
+
+// hookProgram returns the command word and arguments of a hook command's
+// first simple command when that word is a bare program name resolved on
+// PATH; ok is false for paths, expansions and unparseable commands.
+func hookProgram(command string) (program string, args []string, ok bool) {
+	cmds, err := cmdscan.Parse(command)
+	if err != nil {
+		return "", nil, false
+	}
+	for _, c := range cmds {
+		if c.Name == "" {
+			continue
+		}
+		if c.HasExpansion || strings.ContainsAny(c.Name, `/\$`) {
+			return "", nil, false
+		}
+		return c.Name, c.Args, true
+	}
+	return "", nil, false
 }
 
 func postureResult(name string, status CheckStatus, severity CheckSeverity, message, remediation string) CheckResult {

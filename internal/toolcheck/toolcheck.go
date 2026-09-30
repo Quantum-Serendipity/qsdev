@@ -32,10 +32,15 @@ type Info struct {
 	Output string
 }
 
+// LookPath resolves name on PATH without running it.
+func LookPath(name string) (string, error) {
+	return exec.LookPath(name)
+}
+
 // Detect checks whether the named tool exists on PATH and, if so,
 // runs it with versionArg to capture its version output.
 func Detect(ctx context.Context, name, versionArg string) Info {
-	path, err := exec.LookPath(name)
+	path, err := LookPath(name)
 	if err != nil {
 		return Info{}
 	}

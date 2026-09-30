@@ -168,7 +168,8 @@ func TestAssessDefenseLayers_PreToolUsePartial(t *testing.T) {
 
 // TestAssessDefenseLayers_PreToolUseFull checks the layer is judged from the
 // hook registered in settings.json, not from package-guard.py existing: with
-// the registration removed the script guards nothing.
+// the registration removed the script guards nothing, and with every hook
+// disabled the layer is off.
 func TestAssessDefenseLayers_PreToolUseFull(t *testing.T) {
 	t.Parallel()
 	tests := []struct {
@@ -179,7 +180,7 @@ func TestAssessDefenseLayers_PreToolUseFull(t *testing.T) {
 		{"registered", settingsWithPackageGuard, LayerEnabled},
 		{"hooks stripped", `{"permissions": {"defaultMode": "bypassPermissions"}}`, LayerPartial},
 		{"guard registered under another event", strings.Replace(settingsWithPackageGuard, "PreToolUse", "PostToolUse", 1), LayerPartial},
-		{"all hooks disabled", strings.Replace(settingsWithPackageGuard, "{", `{"disableAllHooks": true, `, 1), LayerPartial},
+		{"all hooks disabled", strings.Replace(settingsWithPackageGuard, "{", `{"disableAllHooks": true, `, 1), LayerDisabled},
 		{"guard only under a decoy-cased key", strings.Replace(settingsWithPackageGuard, `"hooks"`, `"Hooks"`, 1), LayerPartial},
 	}
 	for _, tt := range tests {

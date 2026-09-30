@@ -8,6 +8,8 @@ import (
 	"slices"
 	"strings"
 	"testing"
+
+	"github.com/Quantum-Serendipity/qsdev/internal/claudesettings"
 )
 
 // generatedSettings mirrors the settings.json qsdev generates at the standard
@@ -29,8 +31,10 @@ func TestCheckClaudeSettingsPosture(t *testing.T) {
 		name     string
 		actual   string
 		expected string
+		local    string // .claude/settings.local.json; absent when empty
 		noScript bool
 		wantFail []string // failing result names, sorted
+		wantWarn []string // warning result names, sorted
 	}{
 		{name: "intact", actual: generatedSettings, expected: generatedSettings},
 		{
@@ -114,6 +118,60 @@ func TestCheckClaudeSettingsPosture(t *testing.T) {
 			expected: generatedSettings,
 			wantFail: []string{"claude_settings_parse"},
 		},
+		{
+			name:     "no local file unchanged",
+			actual:   withEnv(`{"TOOL_GATES_DENIED": "WebFetch"}`),
+			expected: withEnv(`{"TOOL_GATES_DENIED": "WebFetch"}`),
+		},
+		{
+			name:     "local disableAllHooks",
+			actual:   generatedSettings,
+			expected: generatedSettings,
+			local:    `{"disableAllHooks": true}`,
+			wantFail: []string{"claude_settings_local_override"},
+		},
+		{
+			name:     "local bypassPermissions",
+			actual:   generatedSettings,
+			expected: generatedSettings,
+			local:    `{"permissions": {"defaultMode": "bypassPermissions"}}`,
+			wantFail: []string{"claude_settings_local_override"},
+		},
+		{
+			name:     "local env policy override warns",
+			actual:   withEnv(`{"TOOL_GATES_DENIED": "WebFetch"}`),
+			expected: withEnv(`{"TOOL_GATES_DENIED": "WebFetch"}`),
+			local:    `{"env": {"TOOL_GATES_DENIED": "", "MY_VAR": "x"}}`,
+			wantWarn: []string{"claude_settings_local_override"},
+		},
+		{
+			name:     "local disableBypassPermissionsMode changed warns",
+			actual:   generatedSettings,
+			expected: generatedSettings,
+			local:    `{"permissions": {"disableBypassPermissionsMode": "allow"}}`,
+			wantWarn: []string{"claude_settings_local_override"},
+		},
+		{
+			name:     "local additions that do not weaken pass",
+			actual:   withEnv(`{"TOOL_GATES_DENIED": "WebFetch"}`),
+			expected: withEnv(`{"TOOL_GATES_DENIED": "WebFetch"}`),
+			local: `{"disableAllHooks": false, "env": {"TOOL_GATES_DENIED": "WebFetch", "MY_VAR": "x"},
+  "permissions": {"defaultMode": "acceptEdits", "disableBypassPermissionsMode": "disable", "deny": ["Read(./.env)"]}}`,
+		},
+		{
+			// The decoy-key rule applies to the local file too.
+			name:     "local decoy keys ignored",
+			actual:   generatedSettings,
+			expected: generatedSettings,
+			local:    `{"DisableAllHooks": true, "Permissions": {"defaultMode": "bypassPermissions"}}`,
+		},
+		{
+			name:     "local parse error",
+			actual:   generatedSettings,
+			expected: generatedSettings,
+			local:    `{"disableAllHooks": `,
+			wantFail: []string{"claude_settings_parse"},
+		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -123,24 +181,47 @@ func TestCheckClaudeSettingsPosture(t *testing.T) {
 			if !tt.noScript {
 				writeTestFile(t, dir, ".claude/hooks/package-guard.py", "#!/usr/bin/env python3\n")
 			}
+			if tt.local != "" {
+				writeTestFile(t, dir, claudesettings.LocalRelPath, tt.local)
+			}
 
 			results := CheckClaudeSettingsPosture(CheckContext{
 				ProjectRoot:            dir,
 				ExpectedClaudeSettings: []byte(tt.expected),
 				LookPath:               lookPathFound,
 			})
-			var failed []string
+			var failed, warned []string
+			passed := false
 			for _, r := range results {
-				if r.Status == StatusFail {
+				switch r.Status {
+				case StatusFail:
 					if r.Severity != SeverityHigh {
 						t.Errorf("%s severity = %s, want high", r.Name, r.Severity)
 					}
 					failed = append(failed, r.Name)
+				case StatusWarn:
+					if r.Severity != SeverityMedium {
+						t.Errorf("%s severity = %s, want medium", r.Name, r.Severity)
+					}
+					warned = append(warned, r.Name)
+				case StatusPass:
+					passed = r.Name == "claude_settings_posture"
+				}
+				if tt.local != "" && (r.Name == "claude_settings_local_override" || r.Name == "claude_settings_parse") &&
+					r.FilePath != claudesettings.LocalRelPath {
+					t.Errorf("%s FilePath = %q, want %q", r.Name, r.FilePath, claudesettings.LocalRelPath)
 				}
 			}
 			slices.Sort(failed)
+			slices.Sort(warned)
 			if !slices.Equal(failed, tt.wantFail) {
 				t.Errorf("failed checks = %v, want %v\n%+v", failed, tt.wantFail, results)
+			}
+			if !slices.Equal(warned, tt.wantWarn) {
+				t.Errorf("warned checks = %v, want %v\n%+v", warned, tt.wantWarn, results)
+			}
+			if wantPass := len(tt.wantFail)+len(tt.wantWarn) == 0; passed != wantPass {
+				t.Errorf("claude_settings_posture pass = %v, want %v\n%+v", passed, wantPass, results)
 			}
 			if len(tt.wantFail) > 0 && !ShouldFail(results, AuditLevelLow) {
 				t.Error("results do not fail the check at --audit-level low")
@@ -232,7 +313,7 @@ func TestCheckHookPrograms(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			actual, err := parseSettingsPosture([]byte(`{"hooks": {"` + tt.event + `": [{"matcher": "*", "hooks": [{"type": "command", "command": ` + string(cmd) + `}]}]}}`))
+			actual, err := claudesettings.Parse([]byte(`{"hooks": {"` + tt.event + `": [{"matcher": "*", "hooks": [{"type": "command", "command": ` + string(cmd) + `}]}]}}`))
 			if err != nil {
 				t.Fatal(err)
 			}

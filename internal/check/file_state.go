@@ -10,6 +10,7 @@ import (
 	"slices"
 	"strings"
 
+	"github.com/Quantum-Serendipity/qsdev/internal/claudesettings"
 	"github.com/Quantum-Serendipity/qsdev/internal/state"
 	"github.com/Quantum-Serendipity/qsdev/pkg/generate"
 	"github.com/Quantum-Serendipity/qsdev/pkg/types"
@@ -297,7 +298,7 @@ func checkGeneratedSyntax(projectRoot string, statuses map[string]state.FileStat
 
 // ClaudeSettingsRelPath is the project-relative, slash-separated path of the
 // Claude Code settings file that carries the deny rules.
-const ClaudeSettingsRelPath = ".claude/settings.json"
+const ClaudeSettingsRelPath = claudesettings.ProjectRelPath
 
 func checkDenyRules(ctx CheckContext) []CheckResult {
 	if len(ctx.RequiredDenyRules) == 0 {
@@ -310,7 +311,7 @@ func checkDenyRules(ctx CheckContext) []CheckResult {
 		return []CheckResult{settingsUnavailableResult(ctx, err)}
 	}
 
-	settings, err := parseSettingsPosture(data)
+	settings, err := claudesettings.Parse(data)
 	if err != nil {
 		return []CheckResult{
 			{
@@ -318,9 +319,9 @@ func checkDenyRules(ctx CheckContext) []CheckResult {
 				Name:        "deny_rules_present",
 				Status:      StatusFail,
 				Severity:    SeverityMedium,
-				Message:     fmt.Sprintf("Could not parse .claude/settings.json: %v", err),
+				Message:     fmt.Sprintf("Could not parse %s: %v", ClaudeSettingsRelPath, err),
 				FilePath:    ClaudeSettingsRelPath,
-				Remediation: "Fix JSON syntax in .claude/settings.json",
+				Remediation: "Fix JSON syntax in " + ClaudeSettingsRelPath,
 			},
 		}
 	}

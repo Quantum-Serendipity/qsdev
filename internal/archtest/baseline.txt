@@ -123,13 +123,12 @@ literal-marker	internal/selfprotect/gatedodge	1
 literal-marker	internal/selfprotect/rules	12
 literal-settings-json	addons/claudecode	3
 literal-settings-json	addons/devinit	1
-literal-settings-json	internal/check	2
 literal-settings-json	internal/cloudisolation	1
 literal-settings-json	internal/mcpserve/adapters/claudecode	4
 literal-settings-json	internal/mcpserve/tools/status	1
 literal-settings-json	internal/merge	1
 literal-settings-json	internal/policyengine/trust	1
-literal-settings-json	internal/posture	2
+literal-settings-json	internal/posture	1
 literal-settings-json	internal/posture/render	1
 literal-settings-json	internal/selfprotect/canon	2
 literal-settings-json	internal/selfprotect/rules	3

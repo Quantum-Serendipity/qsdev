@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/Quantum-Serendipity/qsdev/internal/catalog"
@@ -220,6 +221,101 @@ func TestAssessDefenseLayers_CountsAreTierRelative(t *testing.T) {
 			}
 			if tt.tier == 1 && cov.Score != 100 {
 				t.Errorf("tier 1 score = %.1f, want 100 (all in-scope layers enabled)", cov.Score)
+			}
+		})
+	}
+}
+
+// TestPackageGuardRegistered_UsesSharedReader pins that the pretooluse-hooks
+// layer is judged from the effective Claude settings, the committed file
+// overlaid by settings.local.json, as Claude Code runs them (U04-09).
+func TestPackageGuardRegistered_UsesSharedReader(t *testing.T) {
+	t.Parallel()
+	const localPath = ".claude/settings.local.json"
+	tests := []struct {
+		name       string
+		files      map[string]string
+		noProject  bool
+		want       LayerStatus
+		wantReason string
+	}{
+		{
+			name: "local disableAllHooks",
+			files: map[string]string{
+				".claude/settings.json": settingsWithPackageGuard,
+				localPath:               `{"disableAllHooks": true}`,
+			},
+			want:       LayerDisabled,
+			wantReason: localPath,
+		},
+		{
+			name: "project disableAllHooks",
+			files: map[string]string{
+				".claude/settings.json": strings.Replace(settingsWithPackageGuard, "{", `{"disableAllHooks": true, `, 1),
+			},
+			want:       LayerDisabled,
+			wantReason: ".claude/settings.json",
+		},
+		{
+			name: "registered only in the local file",
+			files: map[string]string{
+				".claude/settings.json": `{"permissions": {"deny": []}}`,
+				localPath:               settingsWithPackageGuard,
+			},
+			want: LayerEnabled,
+		},
+		{
+			name: "decoy key in the local file",
+			files: map[string]string{
+				".claude/settings.json": settingsWithPackageGuard,
+				localPath:               `{"DisableAllHooks": true}`,
+			},
+			want: LayerEnabled,
+		},
+		{
+			name: "guard only under a decoy-cased key",
+			files: map[string]string{
+				".claude/settings.json": strings.Replace(settingsWithPackageGuard, `"hooks"`, `"Hooks"`, 1),
+			},
+			want: LayerPartial,
+		},
+		{
+			name: "script path is a substring only",
+			files: map[string]string{
+				".claude/settings.json": strings.Replace(settingsWithPackageGuard, "package-guard.py", "package-guard.py.bak", 1),
+			},
+			want: LayerPartial,
+		},
+		{
+			name: "unparseable local file",
+			files: map[string]string{
+				".claude/settings.json": settingsWithPackageGuard,
+				localPath:               `{"hooks": `,
+			},
+			want:       LayerPartial,
+			wantReason: localPath,
+		},
+		{
+			name:      "ProjectPath empty",
+			files:     map[string]string{".claude/settings.json": settingsWithPackageGuard},
+			noProject: true,
+			want:      LayerPartial,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			tt.files[".claude/hooks/package-guard.py"] = ""
+			dir, genState := writeProjectFiles(t, tt.files)
+			if tt.noProject {
+				dir = ""
+			}
+			got := layerByName(t, AssessDefenseLayers(dir, map[string]bool{"attach-guard": true}, types.DetectedProject{}, genState, 3), "pretooluse-hooks")
+			if got.Status != tt.want {
+				t.Errorf("status = %q (%s), want %q", got.Status, got.Reason, tt.want)
+			}
+			if !strings.Contains(got.Reason, tt.wantReason) {
+				t.Errorf("reason = %q, want it to contain %q", got.Reason, tt.wantReason)
 			}
 		})
 	}

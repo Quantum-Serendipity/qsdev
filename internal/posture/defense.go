@@ -1,14 +1,15 @@
 package posture
 
 import (
-	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
 	"regexp"
 	"slices"
 	"strings"
+	"sync"
 
+	"github.com/Quantum-Serendipity/qsdev/internal/claudesettings"
 	"github.com/Quantum-Serendipity/qsdev/pkg/ecosystem"
 	"github.com/Quantum-Serendipity/qsdev/pkg/types"
 )
@@ -30,7 +31,6 @@ func init() {
 // Artifacts whose presence or content the defense layers inspect.
 const (
 	packageGuardPath    = ".claude/hooks/package-guard.py"
-	claudeSettingsPath  = ".claude/settings.json"
 	preCommitConfigPath = ".pre-commit-config.yaml"
 	devenvNixPath       = "devenv.nix"
 	grypeConfigPath     = ".grype.yaml"
@@ -88,6 +88,17 @@ type assessmentInput struct {
 	Detected     types.DetectedProject
 	// GenState lists the generated files that are present on disk.
 	GenState types.GeneratedState
+	// claudeSettings returns the effective Claude settings of ProjectPath,
+	// read once on first use; nil reads as an empty view.
+	claudeSettings func() (claudesettings.Effective, error)
+}
+
+// settings returns the effective Claude settings of the project.
+func (in assessmentInput) settings() (claudesettings.Effective, error) {
+	if in.claudeSettings == nil {
+		return claudesettings.Read("")
+	}
+	return in.claudeSettings()
 }
 
 // has reports whether the generated file at rel is present.
@@ -184,39 +195,6 @@ func (in assessmentInput) ageUngatedLanguages() []string {
 	return out
 }
 
-// packageGuardRegistered reports whether .claude/settings.json registers
-// package-guard.py as a PreToolUse hook and does not disable all hooks. The script on disk does nothing
-// unless Claude Code is told to run it.
-func (in assessmentInput) packageGuardRegistered() bool {
-	data := in.content(claudeSettingsPath)
-	if data == nil {
-		return false
-	}
-	// Keys are read exactly, as Claude Code reads them (encoding/json would
-	// also accept a decoy "Hooks" key), and hooks switched off wholesale
-	// guard nothing.
-	var settings map[string]any
-	if err := json.Unmarshal(data, &settings); err != nil {
-		return false
-	}
-	if off, _ := settings["disableAllHooks"].(bool); off {
-		return false
-	}
-	events, _ := settings["hooks"].(map[string]any)
-	matchers, _ := events["PreToolUse"].([]any)
-	for _, m := range matchers {
-		mm, _ := m.(map[string]any)
-		hooks, _ := mm["hooks"].([]any)
-		for _, h := range hooks {
-			hm, _ := h.(map[string]any)
-			if cmd, _ := hm["command"].(string); strings.Contains(cmd, packageGuardPath) {
-				return true
-			}
-		}
-	}
-	return false
-}
-
 // layerSpec defines one defense layer's metadata and assessment logic.
 type layerSpec struct {
 	Name    string
@@ -234,12 +212,22 @@ var layerTable = []layerSpec{
 		Assess: func(input assessmentInput) (LayerStatus, int, string) {
 			attachGuardEnabled := input.EnabledTools["attach-guard"]
 			hasPackageGuard := input.has(packageGuardPath)
+			// Judged from the effective settings Claude Code runs with (the
+			// committed file overlaid by the local one): hooks switched off
+			// wholesale guard nothing, and neither does a script nothing runs.
+			settings, err := input.settings()
+			if err == nil && settings.DisableAllHooks {
+				return LayerDisabled, 0, fmt.Sprintf("hooks disabled (%s in %s)",
+					claudesettings.KeyDisableAllHooks, strings.Join(settings.Sources[claudesettings.KeyDisableAllHooks], ", "))
+			}
 
 			if attachGuardEnabled && hasPackageGuard {
-				// Judged from the hook actually registered in settings.json:
-				// a script nothing runs guards nothing.
-				if !input.packageGuardRegistered() {
-					return LayerPartial, 5, "package-guard.py present but not run as a PreToolUse hook (not registered in " + claudeSettingsPath + ", or hooks are disabled)"
+				if err != nil {
+					return LayerPartial, 5, fmt.Sprintf("package-guard.py present but Claude settings unreadable: %v", err)
+				}
+				if !settings.RunsScript(claudesettings.EventPreToolUse, packageGuardPath) {
+					return LayerPartial, 5, "package-guard.py present but not registered as a PreToolUse hook in " +
+						claudesettings.ProjectRelPath + " or " + claudesettings.LocalRelPath
 				}
 				return LayerEnabled, 0, "attach-guard enabled and package-guard.py registered as a PreToolUse hook"
 			}
@@ -466,6 +454,9 @@ func AssessDefenseLayers(projectPath string, enabledTools map[string]bool, detec
 		EnabledTools: enabledTools,
 		Detected:     detected,
 		GenState:     genState,
+		claudeSettings: sync.OnceValues(func() (claudesettings.Effective, error) {
+			return claudesettings.Read(projectPath)
+		}),
 	}
 
 	layers := make([]DefenseLayer, len(layerTable))

@@ -50,6 +50,9 @@ func runRepairCommand(cmd *cobra.Command, opts repair.RepairOptions) error {
 	if err != nil {
 		return err
 	}
+	if err := requireJoined(projectRoot); err != nil {
+		return err
+	}
 
 	// Load answers.
 	answers, err := loadAnswersOrEmpty(projectRoot)

@@ -2,7 +2,6 @@ package devinit
 
 import (
 	"fmt"
-	"os"
 	"path/filepath"
 	"strings"
 
@@ -62,19 +61,23 @@ type ModeDetectionResult struct {
 //  5. Files drifted (modified or deleted) -> ModeRepair
 //  6. All matches -> ModeJoin with AlreadySetUp=true
 func DetectOnboardingMode(projectRoot string) (*ModeDetectionResult, error) {
-	// 1. Check config file exists.
+	// 1-2. Config file and init state file presence (the fresh-clone predicate).
 	cfgFile := branding.Get().ConfigFile
-	cfgPath := filepath.Join(projectRoot, cfgFile)
-	if _, err := os.Stat(cfgPath); os.IsNotExist(err) {
+	hasConfig, err := state.ConfigExists(projectRoot)
+	if err != nil {
+		return nil, fmt.Errorf("detecting onboarding mode: %w", err)
+	}
+	if !hasConfig {
 		return &ModeDetectionResult{
 			Mode:        ModeCreate,
 			Explanation: fmt.Sprintf("No %s found. Starting fresh project setup.", cfgFile),
 		}, nil
 	}
-
-	// 2. Check state file exists.
-	stateFile := filepath.Join(projectRoot, stateFilePath())
-	if _, err := os.Stat(stateFile); os.IsNotExist(err) {
+	needsJoin, err := state.NeedsJoin(projectRoot)
+	if err != nil {
+		return nil, fmt.Errorf("detecting onboarding mode: %w", err)
+	}
+	if needsJoin {
 		return &ModeDetectionResult{
 			Mode:        ModeJoin,
 			Explanation: fmt.Sprintf("Found %s but no local state. Setting up as new team member.", cfgFile),
@@ -82,6 +85,7 @@ func DetectOnboardingMode(projectRoot string) (*ModeDetectionResult, error) {
 	}
 
 	// 3. Load state.
+	stateFile := filepath.Join(projectRoot, stateFilePath())
 	existingState, err := state.LoadStateFromFile(stateFile)
 	if err != nil {
 		return &ModeDetectionResult{

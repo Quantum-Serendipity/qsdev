@@ -2,6 +2,7 @@ package devinit
 
 import (
 	"bytes"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -203,9 +204,10 @@ func TestRunFullUpdate_AllStages(t *testing.T) {
 			wantInOutput: []string{"Config regeneration: not a qsdev project", "Devenv inputs: not a qsdev project"},
 		},
 		{
-			// A teammate's clone has the shared config but no local answers;
-			// it is still a project, so the real error must surface.
-			name: "project config without answers is still a project",
+			// A teammate's clone has the shared config but no local state;
+			// it is still a project, and both project stages must refuse
+			// with the join hint rather than regenerate or bump devenv.lock.
+			name: "project config without local state asks to join",
 			setup: func(t *testing.T, dir string) {
 				t.Helper()
 				if err := os.WriteFile(filepath.Join(dir, branding.Get().ConfigFile), []byte("version: 1\n"), 0o644); err != nil {
@@ -213,7 +215,7 @@ func TestRunFullUpdate_AllStages(t *testing.T) {
 				}
 			},
 			wantErr:      true,
-			wantInOutput: []string{"✗ Config regeneration", "no saved answers"},
+			wantInOutput: []string{"✗ Config regeneration", "✗ Devenv inputs", "init --yes"},
 		},
 		{
 			name: "inside a project a config failure fails the run",
@@ -489,5 +491,67 @@ func TestUpdateCmd_HasExpectedFlags(t *testing.T) {
 		if cmd.Flags().Lookup(name) == nil {
 			t.Errorf("expected flag --%s to be registered", name)
 		}
+	}
+}
+
+// codedErr is a stage error that carries a process exit code.
+type codedErr struct{ code int }
+
+func (e codedErr) Error() string { return fmt.Sprintf("coded %d", e.code) }
+func (e codedErr) ExitCode() int { return e.code }
+
+func TestPrintStageSummary_PropagatesStageExitCode(t *testing.T) {
+	t.Parallel()
+	plain := errors.New("plain failure")
+	tests := []struct {
+		name     string
+		results  []StageResult
+		wantErr  bool
+		wantCode int // 0: the error must not carry an exit code
+	}{
+		{name: "all succeeded", results: []StageResult{{Name: "a", Status: StageSuccess}}},
+		{
+			name:    "failure without exit code",
+			results: []StageResult{{Name: "a", Status: StageFailed, Err: plain}},
+			wantErr: true,
+		},
+		{
+			name:     "coded failure",
+			results:  []StageResult{{Name: "a", Status: StageFailed, Err: fmt.Errorf("wrapped: %w", codedErr{3})}},
+			wantErr:  true,
+			wantCode: 3,
+		},
+		{
+			name: "first coded failure wins",
+			results: []StageResult{
+				{Name: "a", Status: StageFailed, Err: plain},
+				{Name: "b", Status: StageFailed, Err: codedErr{3}},
+				{Name: "c", Status: StageFailed, Err: codedErr{4}},
+			},
+			wantErr:  true,
+			wantCode: 3,
+		},
+		{
+			name:    "coded error on a skipped stage is ignored",
+			results: []StageResult{{Name: "a", Status: StageSkipped, Err: codedErr{3}}},
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			cmd, _ := newTestCmd()
+			err := printStageSummary(cmd, tc.results)
+			if (err != nil) != tc.wantErr {
+				t.Fatalf("err = %v, wantErr %v", err, tc.wantErr)
+			}
+			var coded interface{ ExitCode() int }
+			hasCode := errors.As(err, &coded)
+			switch {
+			case tc.wantCode == 0 && hasCode:
+				t.Errorf("err %v carries exit code %d, want none", err, coded.ExitCode())
+			case tc.wantCode != 0 && (!hasCode || coded.ExitCode() != tc.wantCode):
+				t.Errorf("err %v does not carry exit code %d", err, tc.wantCode)
+			}
+		})
 	}
 }

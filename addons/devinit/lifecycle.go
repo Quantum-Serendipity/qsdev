@@ -59,6 +59,9 @@ func runEnable(cmd *cobra.Command, toolName string, opts enableOptions) error {
 	if err != nil {
 		return err
 	}
+	if err := requireJoined(projectRoot); err != nil {
+		return err
+	}
 
 	answers, tool, err := loadToolForEnable(cmdContext(cmd), projectRoot, toolName)
 	if err != nil {
@@ -515,6 +518,9 @@ func saveToolState(projectRoot string, st types.GeneratedState, toolName string,
 func runDisable(cmd *cobra.Command, toolName string, opts disableOptions) error {
 	projectRoot, err := cmdutil.ProjectRoot()
 	if err != nil {
+		return err
+	}
+	if err := requireJoined(projectRoot); err != nil {
 		return err
 	}
 

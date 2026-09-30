@@ -246,11 +246,23 @@ func runProjectStages(
 		return StageResult{Name: name, Status: StageSkipped, Message: fmt.Sprintf("not a %s project", branding.Get().AppName)}
 	}
 
+	// An un-joined clone must not regenerate configs or bump devenv.lock;
+	// both stages fail with the join hint instead.
+	var joinErr error
+	if !notProject {
+		joinErr = projectJoinError()
+	}
+	failNotJoined := func(name string) StageResult {
+		return StageResult{Name: name, Status: StageFailed, Message: joinErr.Error(), Err: joinErr}
+	}
+
 	if runConfigs {
 		progress.next("Regenerating project configs...")
 		switch {
 		case notProject:
 			results = append(results, skipNotProject(stageConfigRegen))
+		case joinErr != nil:
+			results = append(results, failNotJoined(stageConfigRegen))
 		case binaryReplaced:
 			// This process still carries the old binary's templates; let the
 			// freshly installed binary regenerate the configs.
@@ -262,9 +274,12 @@ func runProjectStages(
 
 	if runDeps {
 		progress.next("Updating devenv inputs...")
-		if notProject {
+		switch {
+		case notProject:
 			results = append(results, skipNotProject(stageDevenvInputs))
-		} else {
+		case joinErr != nil:
+			results = append(results, failNotJoined(stageDevenvInputs))
+		default:
 			results = append(results, runDevenvInputStage(cmd, opts))
 		}
 	}
@@ -272,19 +287,46 @@ func runProjectStages(
 	return results
 }
 
+// projectJoinError returns the join refusal when the working directory is an
+// un-joined clone. An unresolvable project root yields nil so the stages run
+// and report that error themselves.
+func projectJoinError() error {
+	projectRoot, err := cmdutil.ProjectRoot()
+	if err != nil {
+		return nil
+	}
+	return requireJoined(projectRoot)
+}
+
+// stagesFailedError reports failed update stages with the exit code of the
+// first failed stage whose error carries one (gdev's ExitCodeErr contract).
+type stagesFailedError struct{ code int }
+
+func (*stagesFailedError) Error() string { return errStagesFailed.Error() }
+
+// ExitCode satisfies gdev's ExitCodeErr interface.
+func (e *stagesFailedError) ExitCode() int { return e.code }
+
+func (*stagesFailedError) Unwrap() error { return errStagesFailed }
+
+var errStagesFailed = errors.New("one or more update stages failed")
+
 // printStageSummary prints the per-stage summary and returns an error if any
-// stage failed.
+// stage failed, carrying the exit code of the first coded stage failure.
 func printStageSummary(cmd *cobra.Command, results []StageResult) error {
 	w := cmd.OutOrStdout()
 	fmt.Fprintln(w)
 	fmt.Fprintln(w, "Update Summary:")
-	var hadFailure bool
+	failed, code := false, 0
 	for _, r := range results {
 		indicator := "  ✓"
 		switch r.Status {
 		case StageFailed:
 			indicator = "  ✗"
-			hadFailure = true
+			failed = true
+			if code == 0 {
+				code = stageExitCode(r.Err)
+			}
 		case StageSkipped:
 			indicator = "  -"
 		}
@@ -295,10 +337,23 @@ func printStageSummary(cmd *cobra.Command, results []StageResult) error {
 		fmt.Fprintf(w, "%s %s: %s\n", indicator, r.Name, msg)
 	}
 
-	if hadFailure {
-		return fmt.Errorf("one or more update stages failed")
+	switch {
+	case !failed:
+		return nil
+	case code != 0:
+		return &stagesFailedError{code: code}
+	default:
+		return errStagesFailed
 	}
-	return nil
+}
+
+// stageExitCode returns the exit code carried by a stage error, or 0.
+func stageExitCode(err error) int {
+	var ec interface{ ExitCode() int }
+	if errors.As(err, &ec) {
+		return ec.ExitCode()
+	}
+	return 0
 }
 
 // inQsdevProject reports whether the working directory is a qsdev project:

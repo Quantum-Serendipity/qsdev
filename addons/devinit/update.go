@@ -113,6 +113,9 @@ func runUpdate(cmd *cobra.Command, opts UpdateOptions) error {
 	if err != nil {
 		return err
 	}
+	if err := requireJoined(projectRoot); err != nil {
+		return err
+	}
 
 	// 1. Load answers, refresh detection, infer tools.
 	answers, err := loadAndRefreshForUpdate(cmd.Context(), cmd.ErrOrStderr(), projectRoot)

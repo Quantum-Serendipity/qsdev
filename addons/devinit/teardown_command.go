@@ -62,6 +62,9 @@ func runTeardown(cmd *cobra.Command, quick, compliance, force, archive, dryRun b
 	if err != nil {
 		return err
 	}
+	if err := requireJoined(projectRoot); err != nil {
+		return err
+	}
 
 	profile := teardown.ProfileDefault
 	if quick {

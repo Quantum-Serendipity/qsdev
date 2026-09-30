@@ -2,15 +2,15 @@ package status
 
 import (
 	"context"
-	"fmt"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
-	"sync"
 	"testing"
 	"time"
 
 	"github.com/Quantum-Serendipity/qsdev/internal/detect"
+	"github.com/Quantum-Serendipity/qsdev/internal/doctor"
 	"github.com/Quantum-Serendipity/qsdev/internal/mcphealth"
 	"github.com/Quantum-Serendipity/qsdev/internal/mcpserve/spi"
 	"github.com/Quantum-Serendipity/qsdev/internal/state"
@@ -241,119 +241,69 @@ func TestDevenvDoctorSingleCheck(t *testing.T) {
 	}
 }
 
-// TestCheckMCPProbesConcurrently (R20) verifies the MCP probes run concurrently
-// rather than serially. Each fake probe blocks until every probe has started; if
-// checkMCP probed sequentially the first probe would wait forever for the others
-// to start, deadlocking and tripping the test timeout. No timing assertion is
-// made, so the test is deterministic.
-func TestCheckMCPProbesConcurrently(t *testing.T) {
+// TestSummarizeMCP verifies how the static MCP findings map onto the doctor's
+// check: a broken .mcp.json fails, misconfigured or degraded servers and
+// section warnings (such as an unloadable catalog, F279) warn, and every
+// result points at `qsdev mcp status` for liveness.
+func TestSummarizeMCP(t *testing.T) {
 	t.Parallel()
-	const n = 5 // below mcpProbeConcurrency so all probes may start at once
-	servers := make([]mcphealth.ServerConfig, n)
-	for i := range servers {
-		servers[i] = mcphealth.ServerConfig{Name: fmt.Sprintf("srv-%02d", i), Command: "/opt/srv/bin/server"}
-	}
 
-	var entered sync.WaitGroup
-	entered.Add(n)
-	proceed := make(chan struct{})
-
-	doc := newDoctorChecker(t.TempDir())
-	doc.mcpServers = func() ([]mcphealth.ServerConfig, error) { return servers, nil }
-	doc.probeMCP = func(ctx context.Context, _ mcphealth.ServerConfig) *mcphealth.ServerHealth {
-		entered.Done()
-		select {
-		case <-proceed:
-		case <-ctx.Done():
-		}
-		return &mcphealth.ServerHealth{Status: mcphealth.StatusHealthy}
-	}
-
-	go func() {
-		entered.Wait() // unblocks only once every probe is running
-		close(proceed)
-	}()
-
-	res := doc.checkMCP(context.Background())
-	if res.Status != checkPass {
-		t.Errorf("status = %q, want %q (all healthy)", res.Status, checkPass)
-	}
-	if !strings.Contains(res.Detail, fmt.Sprintf("%d healthy, 0 unhealthy of %d probed", n, n)) {
-		t.Errorf("detail = %q, want %d healthy/0 unhealthy", res.Detail, n)
-	}
-}
-
-// TestCheckMCPCountsHealth (R20) verifies the concurrent probe aggregation
-// counts healthy vs. unhealthy correctly and warns when any server is unhealthy,
-// regardless of the order probes complete.
-func TestCheckMCPCountsHealth(t *testing.T) {
-	t.Parallel()
-	servers := []mcphealth.ServerConfig{
-		{Name: "charlie", Command: "charlie-mcp"}, {Name: "alpha", Command: "alpha-mcp"},
-		{Name: "delta", Command: "delta-mcp"}, {Name: "bravo", Command: "bravo-mcp"},
-	}
-	unhealthy := map[string]bool{"bravo": true, "delta": true}
-
-	doc := newDoctorChecker(t.TempDir())
-	doc.mcpServers = func() ([]mcphealth.ServerConfig, error) { return servers, nil }
-	doc.probeMCP = func(_ context.Context, cfg mcphealth.ServerConfig) *mcphealth.ServerHealth {
-		st := mcphealth.StatusHealthy
-		if unhealthy[cfg.Name] {
-			st = mcphealth.StatusUnreachable
-		}
-		return &mcphealth.ServerHealth{Status: st}
-	}
-
-	res := doc.checkMCP(context.Background())
-	if res.Status != checkWarn {
-		t.Errorf("status = %q, want %q", res.Status, checkWarn)
-	}
-	if !strings.Contains(res.Detail, "2 healthy, 2 unhealthy of 4 probed") {
-		t.Errorf("detail = %q, want 2 healthy/2 unhealthy/4", res.Detail)
-	}
-}
-
-// TestCheckMCPNoServers verifies the empty-registry fast path stays a pass.
-func TestCheckMCPNoServers(t *testing.T) {
-	t.Parallel()
-	doc := newDoctorChecker(t.TempDir())
-	doc.mcpServers = func() ([]mcphealth.ServerConfig, error) { return nil, nil }
-	res := doc.checkMCP(context.Background())
-	if res.Status != checkPass {
-		t.Errorf("status = %q, want %q for no servers", res.Status, checkPass)
-	}
-}
-
-// TestCheckMCPCatalogLoadFailureWarns is the F279 regression: when the MCP
-// catalog fails to load, its servers silently vanish from the registry. The
-// doctor must warn about that instead of passing over the smaller set.
-func TestCheckMCPCatalogLoadFailureWarns(t *testing.T) {
-	t.Parallel()
+	ok := doctor.MCPServerInfo{Name: "good", Status: doctor.MCPStatusOK}
+	broken := doctor.MCPServerInfo{Name: "broken", Status: doctor.MCPStatusMisconfigured, Issues: []doctor.MCPIssue{
+		{Severity: mcphealth.SeverityError, Message: "command \"missing-mcp\" not found on PATH"},
+		{Severity: mcphealth.SeverityWarning, Message: "second issue"},
+	}}
+	noenv := doctor.MCPServerInfo{Name: "noenv", Status: doctor.MCPStatusDegraded, Issues: []doctor.MCPIssue{
+		{Severity: mcphealth.SeverityWarning, Message: "required environment variable \"TOKEN\" is not set"},
+	}}
+	escape := doctor.MCPServerInfo{Name: "evil\u001b[2K", Status: doctor.MCPStatusMisconfigured, Issues: []doctor.MCPIssue{
+		{Severity: mcphealth.SeverityError, Message: "bad"},
+	}}
 
 	tests := []struct {
-		name    string
-		servers []mcphealth.ServerConfig
+		name       string
+		ms         *doctor.MCPSection
+		err        error
+		wantStatus string
+		want       []string
+		notWant    []string
 	}{
-		{name: "no servers left"},
-		{name: "only built-in servers left", servers: []mcphealth.ServerConfig{{Name: "builtin"}}},
+		{name: "unreadable .mcp.json", err: errors.New("parsing .mcp.json: bad"), wantStatus: checkFail,
+			want: []string{"parsing .mcp.json: bad", "fix the JSON in .mcp.json"}},
+		{name: "nothing configured", wantStatus: checkPass, want: []string{"no MCP servers configured"}},
+		{name: "no servers", ms: &doctor.MCPSection{Detected: true}, wantStatus: checkPass, want: []string{"no MCP servers configured"}},
+		{name: "all valid", ms: &doctor.MCPSection{Servers: []doctor.MCPServerInfo{ok, ok}}, wantStatus: checkPass,
+			want: []string{"2 configured; 0 misconfigured, 0 degraded", "liveness: run `qsdev mcp status`"}},
+		{name: "problems", ms: &doctor.MCPSection{Servers: []doctor.MCPServerInfo{ok, broken, noenv}}, wantStatus: checkWarn,
+			want: []string{
+				"3 configured; 1 misconfigured, 1 degraded",
+				`broken (command "missing-mcp" not found on PATH)`,
+				`noenv (required environment variable "TOKEN" is not set)`,
+				"liveness: run `qsdev mcp status` (starts trusted definitions only)",
+			},
+			notWant: []string{"good", "second issue"}},
+		{name: "catalog warning", ms: &doctor.MCPSection{Servers: []doctor.MCPServerInfo{ok}, Warnings: []string{"catalog: bad yaml"}},
+			wantStatus: checkWarn, want: []string{"1 configured; 0 misconfigured, 0 degraded", "catalog: bad yaml"}},
+		{name: "name escaped", ms: &doctor.MCPSection{Servers: []doctor.MCPServerInfo{escape}}, wantStatus: checkWarn,
+			want: []string{`"evil\x1b[2K" (bad)`}, notWant: []string{"\u001b"}},
 	}
-
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
-			doc := newDoctorChecker(t.TempDir())
-			doc.mcpServers = func() ([]mcphealth.ServerConfig, error) { return tt.servers, nil }
-			doc.probeMCP = func(context.Context, mcphealth.ServerConfig) *mcphealth.ServerHealth {
-				return &mcphealth.ServerHealth{Status: mcphealth.StatusHealthy}
+			res := summarizeMCP(tt.ms, tt.err)
+			if res.Name != "mcp" || res.Status != tt.wantStatus {
+				t.Errorf("summarizeMCP() = %+v, want status %q", res, tt.wantStatus)
 			}
-			doc.mcpCatalogErr = func() error { return fmt.Errorf("loading MCP server catalog: bad yaml") }
-
-			res := doc.checkMCP(context.Background())
-			if res.Status != checkWarn {
-				t.Errorf("status = %q, want %q", res.Status, checkWarn)
+			got := res.Detail + "\n" + res.Remediation
+			for _, w := range tt.want {
+				if !strings.Contains(got, w) {
+					t.Errorf("result %q does not contain %q", got, w)
+				}
 			}
-			if !strings.Contains(res.Detail, "bad yaml") {
-				t.Errorf("detail = %q, want it to carry the catalog error", res.Detail)
+			for _, w := range tt.notWant {
+				if strings.Contains(got, w) {
+					t.Errorf("result %q contains %q", got, w)
+				}
 			}
 		})
 	}

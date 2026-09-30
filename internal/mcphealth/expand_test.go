@@ -47,16 +47,18 @@ func TestExpandVars(t *testing.T) {
 }
 
 // TestExpandConfig is the F275 regression: Claude Code expands variables in
-// command, args, url and headers, not only env, so the probe must too.
+// command, args, url and headers, not only env, so the probe must too (url and
+// headers only for a trusted definition, which sets ExpandEnv).
 func TestExpandConfig(t *testing.T) {
 	t.Parallel()
 
 	lookup := fakeLookup(map[string]string{"BIN": "server", "DB": "postgres://x", "TOKEN": "s3cret"})
 	in := ServerConfig{
-		Command: "${BIN}",
-		Args:    []string{"--db", "${DB}", "--mode=${MODE:-ro}"},
-		URL:     "https://${HOST:-example.com}/mcp",
-		Headers: map[string]string{"Authorization": "Bearer ${TOKEN}"},
+		Command:   "${BIN}",
+		Args:      []string{"--db", "${DB}", "--mode=${MODE:-ro}"},
+		URL:       "https://${HOST:-example.com}/mcp",
+		Headers:   map[string]string{"Authorization": "Bearer ${TOKEN}"},
+		ExpandEnv: true,
 	}
 	origArgs := slices.Clone(in.Args)
 
@@ -95,7 +97,7 @@ func TestBuildProcessEnv_ExpandsDefaults(t *testing.T) {
 }
 
 // TestCheckServer_HTTPSendsHeaders verifies configured headers (with variables
-// expanded) reach an HTTP server, so servers that need an Authorization header
+// expanded, as for a trusted definition) reach an HTTP server, so servers that need an Authorization header
 // are not reported unreachable.
 func TestCheckServer_HTTPSendsHeaders(t *testing.T) {
 	t.Setenv("QSDEV_TEST_MCP_TOKEN", "tok")
@@ -115,11 +117,37 @@ func TestCheckServer_HTTPSendsHeaders(t *testing.T) {
 	defer cancel()
 
 	h := CheckServer(ctx, ServerConfig{
-		Name:    "auth",
-		URL:     srv.URL,
-		Headers: map[string]string{"Authorization": "Bearer ${QSDEV_TEST_MCP_TOKEN}"},
+		Name:      "auth",
+		URL:       srv.URL,
+		Headers:   map[string]string{"Authorization": "Bearer ${QSDEV_TEST_MCP_TOKEN}"},
+		ExpandEnv: true,
 	})
 	if h.Status != StatusHealthy {
 		t.Errorf("status = %q, want healthy (error=%q)", h.Status, h.Error)
+	}
+}
+
+// TestExpandConfig_RemoteFieldsNeedExpandEnv checks that without ExpandEnv the
+// url and header values stay literal while the stdio fields, which disclose
+// nothing the child does not already inherit, are still expanded.
+func TestExpandConfig_RemoteFieldsNeedExpandEnv(t *testing.T) {
+	t.Parallel()
+
+	lookup := fakeLookup(map[string]string{"BIN": "server", "TOKEN": "s3cret"})
+	got := expandConfig(ServerConfig{
+		Command: "${BIN}",
+		Args:    []string{"${TOKEN}"},
+		URL:     "https://example.com/mcp?t=${TOKEN}",
+		Headers: map[string]string{"Authorization": "Bearer ${TOKEN}"},
+	}, lookup)
+
+	if got.Command != "server" || !slices.Equal(got.Args, []string{"s3cret"}) {
+		t.Errorf("stdio fields not expanded: command=%q args=%q", got.Command, got.Args)
+	}
+	if got.URL != "https://example.com/mcp?t=${TOKEN}" {
+		t.Errorf("URL = %q, want it unexpanded", got.URL)
+	}
+	if got.Headers["Authorization"] != "Bearer ${TOKEN}" {
+		t.Errorf("Authorization header = %q, want it unexpanded", got.Headers["Authorization"])
 	}
 }

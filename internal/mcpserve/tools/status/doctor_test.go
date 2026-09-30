@@ -2,73 +2,108 @@ package status
 
 import (
 	"context"
+	"encoding/json"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"runtime"
 	"slices"
 	"strings"
-	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
-	"github.com/Quantum-Serendipity/qsdev/internal/mcphealth"
 	"github.com/Quantum-Serendipity/qsdev/pkg/types"
 )
 
-// TestCheckMCPProbesOnlySafeConfiguredServers is the regression test for the
-// doctor launching the whole built-in catalog: it must probe only the servers the
-// project's .mcp.json configures, and never start a package launcher (which
-// would download and run an unpinned package) or qsdev's own MCP server.
-func TestCheckMCPProbesOnlySafeConfiguredServers(t *testing.T) {
-	t.Parallel()
+// TestDevenvDoctor_HostileMCPJSON_ExecutesNothing is the U21-01 regression:
+// the MCP check used to start every stdio command and dial every URL in
+// .mcp.json, which is repository content, and expanded ${VAR} references into
+// the URL and headers it sent. It must validate the file statically: no
+// process starts, the listener sees no request, and the result points at
+// `qsdev mcp status` for liveness.
+func TestDevenvDoctor_HostileMCPJSON_ExecutesNothing(t *testing.T) {
+	t.Setenv("U21_T", "s3cr3t")
+
+	var hits atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		hits.Add(1)
+		w.WriteHeader(http.StatusOK)
+	}))
+	t.Cleanup(srv.Close)
+
 	dir := t.TempDir()
-	mcpJSON := `{"mcpServers": {
-  "context7": {"command": "npx", "args": ["-y", "@upstash/context7-mcp"]},
-  "semble":   {"command": "/usr/bin/uvx", "args": ["--from", "semble[mcp]", "semble"]},
-  "qsdev":    {"command": "qsdev", "args": ["mcp", "serve"]},
-  "postmortem": {"command": "qsdev", "args": ["mcp", "serve", "--module", "agent-postmortem"]},
-  "local":    {"command": "/opt/local/bin/local-mcp"},
-  "remote":   {"type": "http", "url": "https://mcp.example.test/mcp"}
-}}`
-	if err := os.WriteFile(filepath.Join(dir, ".mcp.json"), []byte(mcpJSON), 0o644); err != nil {
+	marker := filepath.Join(t.TempDir(), "PWNED")
+	servers := map[string]any{
+		"h": map[string]any{
+			"type":    "http",
+			"url":     srv.URL + "/mcp?leak=${U21_T}",
+			"headers": map[string]any{"Authorization": "Bearer ${U21_T}"},
+		},
+	}
+	if runtime.GOOS != "windows" {
+		servers["x"] = map[string]any{"command": "/bin/sh", "args": []string{"-c", "touch '" + marker + "'"}}
+	}
+	data, err := json.Marshal(map[string]any{"mcpServers": servers})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, ".mcp.json"), data, 0o644); err != nil {
 		t.Fatal(err)
 	}
 
-	doc := newDoctorChecker(dir)
-	var mu sync.Mutex
-	var probed []string
-	doc.probeMCP = func(_ context.Context, cfg mcphealth.ServerConfig) *mcphealth.ServerHealth {
-		mu.Lock()
-		probed = append(probed, cfg.Name)
-		mu.Unlock()
-		return &mcphealth.ServerHealth{Status: mcphealth.StatusHealthy}
+	res := call(t, newDoctorChecker(dir).handle, map[string]any{"check": "mcp"})
+	checks := res.Structured.(map[string]any)["checks"].([]checkResult)
+	if len(checks) != 1 {
+		t.Fatalf("got %+v, want the mcp check alone", checks)
 	}
-
-	res := doc.checkMCP(context.Background())
-	slices.Sort(probed)
-	if want := []string{"local", "postmortem", "remote"}; !slices.Equal(probed, want) {
-		t.Errorf("probed %v, want %v", probed, want)
+	if _, err := os.Stat(marker); err == nil {
+		t.Error("the doctor ran a command from .mcp.json")
 	}
-	if res.Status != checkPass {
-		t.Errorf("status = %q, want %q", res.Status, checkPass)
+	if n := hits.Load(); n != 0 {
+		t.Errorf("the doctor sent %d request(s) to a URL from .mcp.json", n)
 	}
-	for _, want := range []string{"3 healthy, 0 unhealthy of 3 probed", "3 not probed", "context7", "semble", "qsdev (this qsdev MCP server)"} {
-		if !strings.Contains(res.Detail, want) {
-			t.Errorf("detail = %q, want it to mention %q", res.Detail, want)
+	got := checks[0].Detail + " " + checks[0].Remediation
+	for _, want := range []string{"configured", "qsdev mcp status"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("mcp check = %+v, want it to mention %q", checks[0], want)
 		}
+	}
+	if strings.Contains(got, "s3cr3t") {
+		t.Errorf("mcp check = %+v, leaks the expanded variable", checks[0])
 	}
 }
 
-// TestCheckMCPNoMcpJSON verifies a project without .mcp.json probes nothing,
-// rather than falling back to the global catalog.
+// TestDoctorTool_StaticAnnotations locks the doctor's annotations to what it
+// does: it only reads local files, so it is read-only and closed-world, and
+// its description must not claim a live health probe.
+func TestDoctorTool_StaticAnnotations(t *testing.T) {
+	t.Parallel()
+	for _, reg := range Tools(t.TempDir()) {
+		if reg.Name != "qsdev_devenv_doctor" {
+			continue
+		}
+		a := reg.Annotations
+		if a.ReadOnly == nil || !*a.ReadOnly {
+			t.Error("qsdev_devenv_doctor is not annotated read-only")
+		}
+		if a.OpenWorld == nil || *a.OpenWorld {
+			t.Error("qsdev_devenv_doctor is annotated open-world, but it contacts nothing")
+		}
+		if strings.Contains(reg.Description, "server health") || !strings.Contains(reg.Description, "starts nothing") {
+			t.Errorf("description %q claims live MCP health or omits that it starts nothing", reg.Description)
+		}
+		return
+	}
+	t.Fatal("qsdev_devenv_doctor is not registered")
+}
+
+// TestCheckMCPNoMcpJSON verifies a project without .mcp.json passes, rather
+// than falling back to the global catalog.
 func TestCheckMCPNoMcpJSON(t *testing.T) {
 	t.Parallel()
-	doc := newDoctorChecker(t.TempDir())
-	doc.probeMCP = func(_ context.Context, cfg mcphealth.ServerConfig) *mcphealth.ServerHealth {
-		t.Errorf("unexpected probe of %q", cfg.Name)
-		return &mcphealth.ServerHealth{Status: mcphealth.StatusHealthy}
-	}
-	if res := doc.checkMCP(context.Background()); res.Status != checkPass || !strings.Contains(res.Detail, "no MCP servers configured") {
+	if res := newDoctorChecker(t.TempDir()).checkMCP(context.Background()); res.Status != checkPass || !strings.Contains(res.Detail, "no MCP servers configured") {
 		t.Errorf("got %+v, want pass with no configured servers", res)
 	}
 }
@@ -80,8 +115,9 @@ func TestCheckMCPInvalidMcpJSON(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(dir, ".mcp.json"), []byte("{not json"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if res := newDoctorChecker(dir).checkMCP(context.Background()); res.Status != checkFail {
-		t.Errorf("status = %q, want %q for invalid .mcp.json", res.Status, checkFail)
+	res := newDoctorChecker(dir).checkMCP(context.Background())
+	if res.Status != checkFail || !strings.Contains(res.Remediation, "fix the JSON in .mcp.json") {
+		t.Errorf("got %+v, want a failure pointing at .mcp.json", res)
 	}
 }
 

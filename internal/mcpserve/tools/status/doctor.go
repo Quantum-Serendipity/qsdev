@@ -10,10 +10,8 @@ import (
 	"strings"
 	"time"
 
-	"golang.org/x/sync/errgroup"
-
 	"github.com/Quantum-Serendipity/qsdev/internal/config"
-	"github.com/Quantum-Serendipity/qsdev/internal/mcphealth"
+	"github.com/Quantum-Serendipity/qsdev/internal/doctor"
 	"github.com/Quantum-Serendipity/qsdev/internal/mcpregistry"
 	"github.com/Quantum-Serendipity/qsdev/internal/mcpserve/spi"
 	"github.com/Quantum-Serendipity/qsdev/internal/mcpserve/tools/toolutil"
@@ -26,15 +24,6 @@ import (
 
 // doctorTimeout bounds the whole parallel diagnostic run.
 const doctorTimeout = 5 * time.Second
-
-// mcpProbeTimeout bounds each individual MCP server health probe so a single
-// slow server cannot consume the doctor's overall budget.
-const mcpProbeTimeout = 1500 * time.Millisecond
-
-// mcpProbeConcurrency bounds how many MCP server probes run at once. Probing
-// concurrently keeps checkMCP near max(probe) rather than sum(probe); the cap
-// avoids spawning an unbounded number of subprocesses for large registries.
-const mcpProbeConcurrency = 8
 
 const (
 	checkPass = "pass"
@@ -52,7 +41,7 @@ type checkResult struct {
 
 // doctorChecker runs the integrity diagnostics for the project (distinct from the
 // system-prerequisite doctor): config validity, state integrity, tool
-// availability, Nix installation, MCP server health, hook deployment, and
+// availability, Nix installation, MCP config validity, hook deployment, and
 // permission consistency.
 type doctorChecker struct {
 	projectRoot string
@@ -60,36 +49,10 @@ type doctorChecker struct {
 	// timeout bounds the whole run; handle returns once it elapses even if a
 	// check ignores its context. Overridable so tests need not wait 5s.
 	timeout time.Duration
-
-	// mcpServers lists the MCP server configs the doctor probes. Injectable so
-	// tests can supply fakes without touching the project's .mcp.json.
-	mcpServers func() ([]mcphealth.ServerConfig, error)
-	// probeMCP performs one server health probe. Injectable for testing.
-	probeMCP func(ctx context.Context, cfg mcphealth.ServerConfig) *mcphealth.ServerHealth
-	// mcpCatalogErr reports why catalog-defined MCP servers are missing from
-	// mcpServers, or nil. Injectable for testing.
-	mcpCatalogErr func() error
 }
 
 func newDoctorChecker(projectRoot string) *doctorChecker {
-	d := &doctorChecker{
-		projectRoot: projectRoot,
-		timeout:     doctorTimeout,
-		probeMCP:    mcphealth.CheckServer,
-		mcpCatalogErr: func() error {
-			return mcpregistry.DefaultRegistry().CatalogErr()
-		},
-	}
-	d.mcpServers = d.configuredMCPServers
-	return d
-}
-
-// configuredMCPServers materializes the servers the project's .mcp.json
-// configures as probe configs. Only the project's own servers are probed — not
-// the whole built-in catalog — so the doctor reports on what this project
-// actually runs (see mcpregistry.ConfiguredServers).
-func (d *doctorChecker) configuredMCPServers() ([]mcphealth.ServerConfig, error) {
-	return mcpregistry.ConfiguredServers(d.projectRoot, mcpregistry.DefaultRegistry())
+	return &doctorChecker{projectRoot: projectRoot, timeout: doctorTimeout}
 }
 
 // namedCheck pairs a check's stable name with its implementation.
@@ -285,71 +248,58 @@ func (d *doctorChecker) checkNix(_ context.Context) checkResult {
 	return checkResult{"nix", checkPass, "nix installed and store accessible", ""}
 }
 
-// checkMCP probes the health of each MCP server the project configures,
-// concurrently and each within a bounded per-probe deadline, so several slow
-// servers cannot serialize past the doctor's overall budget. Servers that are
-// unsafe to start from a diagnostic (see mcpregistry.ProbeSkipReason) are listed as not
-// probed rather than launched.
-func (d *doctorChecker) checkMCP(ctx context.Context) checkResult {
-	servers, err := d.mcpServers()
+// mcpLivenessHint ends every MCP check result: the check is static, so
+// whether a server actually starts is left to `qsdev mcp status`.
+const mcpLivenessHint = "liveness: run `qsdev mcp status` (starts trusted definitions only)"
+
+// checkMCP validates the project's .mcp.json statically (see
+// doctor.MCPFindings). It starts no server and dials no URL: .mcp.json is
+// repository content and may name any command or endpoint.
+func (d *doctorChecker) checkMCP(_ context.Context) checkResult {
+	return summarizeMCP(doctor.MCPFindings(d.projectRoot, mcpregistry.DefaultRegistry()))
+}
+
+// summarizeMCP maps the static MCP findings onto the check's result. Any
+// misconfigured or degraded server, or a section warning such as a catalog
+// that failed to load, makes it a warning rather than a clean pass.
+func summarizeMCP(ms *doctor.MCPSection, err error) checkResult {
 	if err != nil {
-		return checkResult{"mcp", checkFail, err.Error(), "fix the JSON in .mcp.json"}
+		return checkResult{"mcp", checkFail, err.Error(), "fix the JSON in .mcp.json; " + mcpLivenessHint}
 	}
-	catalogErr := d.mcpCatalogErr()
-	if len(servers) == 0 && catalogErr == nil {
-		return checkResult{"mcp", checkPass, "no MCP servers configured", ""}
+	if ms == nil || len(ms.Servers) == 0 {
+		return checkResult{"mcp", checkPass, "no MCP servers configured", mcpLivenessHint}
 	}
 
-	var probe []mcphealth.ServerConfig
-	var skipped []string
-	for _, cfg := range servers {
-		if reason := mcpregistry.ProbeSkipReason(cfg); reason != "" {
-			skipped = append(skipped, fmt.Sprintf("%s (%s)", cfg.Name, reason))
+	misconfigured, degraded := 0, 0
+	var problems []string
+	for _, srv := range ms.Servers {
+		switch srv.Status {
+		case doctor.MCPStatusMisconfigured:
+			misconfigured++
+		case doctor.MCPStatusDegraded:
+			degraded++
+		default:
 			continue
 		}
-		probe = append(probe, cfg)
-	}
-
-	healthyFlags := make([]bool, len(probe))
-	g, gctx := errgroup.WithContext(ctx)
-	g.SetLimit(mcpProbeConcurrency)
-	for i, cfg := range probe {
-		g.Go(func() error {
-			probeCtx, cancel := context.WithTimeout(gctx, mcpProbeTimeout)
-			defer cancel()
-			healthyFlags[i] = d.probeMCP(probeCtx, cfg).Status == mcphealth.StatusHealthy
-			return nil
-		})
-	}
-	// Every probe returns nil, so Wait only surfaces context cancellation; the
-	// flags are fully populated for all completed probes regardless.
-	_ = g.Wait()
-
-	healthy := 0
-	for _, ok := range healthyFlags {
-		if ok {
-			healthy++
+		problem := srv.DisplayName()
+		if len(srv.Issues) > 0 {
+			problem += " (" + srv.Issues[0].Message + ")"
 		}
+		problems = append(problems, problem)
 	}
-	unhealthy := len(probe) - healthy
+
+	detail := fmt.Sprintf("%d configured; %d misconfigured, %d degraded", len(ms.Servers), misconfigured, degraded)
+	if len(problems) > 0 {
+		detail += ": " + strings.Join(problems, ", ")
+	}
+	if len(ms.Warnings) > 0 {
+		detail += "; " + strings.Join(ms.Warnings, "; ")
+	}
 	status := checkPass
-	if unhealthy > 0 {
+	if len(problems) > 0 || len(ms.Warnings) > 0 {
 		status = checkWarn
 	}
-	detail := fmt.Sprintf("%d healthy, %d unhealthy of %d probed server(s)", healthy, unhealthy, len(probe))
-	if len(skipped) > 0 {
-		detail += fmt.Sprintf("; %d not probed: %s", len(skipped), strings.Join(skipped, ", "))
-	}
-	remediation := "investigate unhealthy servers with `qsdev mcp status`"
-	if catalogErr != nil {
-		// A broken catalog silently drops its server definitions (and the
-		// required environment the probes rely on); never report that as a
-		// clean pass.
-		status = checkWarn
-		detail += fmt.Sprintf("; catalog-defined servers are missing (%v)", catalogErr)
-		remediation = "fix the MCP catalog or catalog override file named in the error"
-	}
-	return checkResult{"mcp", status, detail, remediation}
+	return checkResult{"mcp", status, detail, mcpLivenessHint}
 }
 
 // checkHooks verifies hook files are deployed under .claude/hooks/.

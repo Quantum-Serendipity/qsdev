@@ -28,7 +28,8 @@ const maxHealthResponseBytes = 1 << 20 // 1 MiB
 
 // CheckServer probes a single MCP server and returns its health status.
 // The provided context controls cancellation and timeout; callers should use
-// context.WithTimeout to enforce a deadline.
+// context.WithTimeout to enforce a deadline. References in the URL and header
+// values are expanded only when cfg.ExpandEnv is set (see ServerConfig).
 func CheckServer(ctx context.Context, cfg ServerConfig) *ServerHealth {
 	h := &ServerHealth{Name: cfg.Name}
 

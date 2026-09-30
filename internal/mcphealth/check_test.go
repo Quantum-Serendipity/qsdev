@@ -459,3 +459,61 @@ func TestCountTools(t *testing.T) {
 		})
 	}
 }
+
+// TestCheckServer_NoExpandByDefault is the U21-V01 regression: variable
+// references in a remote URL and header values are sent to a third party once
+// expanded, so CheckServer expands them only when the trust gate set
+// ExpandEnv. Otherwise the endpoint receives the literal references.
+func TestCheckServer_NoExpandByDefault(t *testing.T) {
+	t.Setenv("QSDEV_TEST_U21_X", "s3cr3t")
+
+	tests := []struct {
+		name       string
+		expandEnv  bool
+		wantQuery  string
+		wantHeader string
+	}{
+		{name: "zero value sends literal references", wantQuery: "leak=${QSDEV_TEST_U21_X}", wantHeader: "Bearer ${QSDEV_TEST_U21_X}"},
+		{name: "ExpandEnv expands references", expandEnv: true, wantQuery: "leak=s3cr3t", wantHeader: "Bearer s3cr3t"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var mu sync.Mutex
+			var queries, headers []string
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				mu.Lock()
+				queries = append(queries, r.URL.RawQuery)
+				headers = append(headers, r.Header.Get("Authorization"))
+				mu.Unlock()
+				mcpInitResult(w, r)
+			}))
+			t.Cleanup(srv.Close)
+
+			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+			h := CheckServer(ctx, ServerConfig{
+				Name:      "remote",
+				URL:       srv.URL + "/mcp?leak=${QSDEV_TEST_U21_X}",
+				Headers:   map[string]string{"Authorization": "Bearer ${QSDEV_TEST_U21_X}"},
+				ExpandEnv: tt.expandEnv,
+			})
+			if h.Status != StatusHealthy {
+				t.Fatalf("status = %q, want healthy (error=%q)", h.Status, h.Error)
+			}
+
+			mu.Lock()
+			defer mu.Unlock()
+			if len(queries) == 0 {
+				t.Fatal("server received no requests")
+			}
+			for i := range queries {
+				if queries[i] != tt.wantQuery {
+					t.Errorf("request %d query = %q, want %q", i, queries[i], tt.wantQuery)
+				}
+				if headers[i] != tt.wantHeader {
+					t.Errorf("request %d Authorization = %q, want %q", i, headers[i], tt.wantHeader)
+				}
+			}
+		})
+	}
+}

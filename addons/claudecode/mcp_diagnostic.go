@@ -18,10 +18,11 @@ import (
 	"github.com/Quantum-Serendipity/qsdev/internal/catalog"
 	"github.com/Quantum-Serendipity/qsdev/internal/cmdutil"
 	"github.com/Quantum-Serendipity/qsdev/internal/mcphealth"
+	"github.com/Quantum-Serendipity/qsdev/internal/mcpregistry"
 )
 
-// statusNotProbed marks a server whose command was not run because it does not
-// match a trusted definition.
+// statusNotProbed marks a server that was not started or dialed because it does
+// not match a trusted definition.
 const statusNotProbed = "not-probed"
 
 // errMCPUnhealthy is returned by `mcp health` when any configured server is not
@@ -46,10 +47,11 @@ func mcpStatusCmd() *cobra.Command {
 		Long: `Probe the MCP servers configured in .mcp.json and show their health,
 tool counts and unmet prerequisites.
 
-Only servers whose command matches a trusted definition (the built-in or
-organization catalog, or the binary's configuration) are started. Any other
-command comes from the repository and is not run unless --probe-untrusted is
-given; use 'mcp list' to inspect the configuration without running anything.`,
+Only servers matching a trusted definition (the built-in or organization
+catalog, or the binary's configuration) are started or dialed. Any other entry
+comes from the repository and is not probed unless --probe-untrusted is given,
+and then a remote endpoint receives its ${VAR} references unexpanded; use
+'mcp list' to inspect the configuration without running anything.`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return runMCPProbe(cmd, opts)
 		},
@@ -80,9 +82,14 @@ func runMCPProbe(cmd *cobra.Command, opts mcpProbeOptions) error {
 		return nil
 	}
 
-	probe, skipped := servers, map[string]string(nil)
-	if !opts.probeUntrusted {
-		probe, skipped = partitionTrusted(servers, trustedMCPDefinitions())
+	probe, skipped := mcpregistry.PartitionTrusted(servers, trustedMCPDefinitions())
+	if opts.probeUntrusted {
+		// Untrusted entries run as configured but keep ExpandEnv unset, so a
+		// remote endpoint receives its ${VAR} references literally.
+		for name := range skipped {
+			probe[name] = servers[name]
+		}
+		skipped = nil
 	}
 
 	ctx, cancel := context.WithTimeout(cmd.Context(), 10*time.Second)
@@ -129,14 +136,14 @@ func writeProbeReport(w io.Writer, report *mcphealth.HealthReport, opts mcpProbe
 	_, _ = fmt.Fprintf(w, "\n%d/%d healthy\n", report.HealthyCount, report.TotalCount)
 }
 
-// addNotProbed appends a not-probed entry for each skipped server, keeping the
-// report sorted by name.
+// addNotProbed appends a not-probed entry for each skipped server, giving the
+// reason it was skipped, and keeps the report sorted by name.
 func addNotProbed(report *mcphealth.HealthReport, skipped map[string]string) {
-	for name, cmdLine := range skipped {
+	for name, reason := range skipped {
 		report.Servers = append(report.Servers, mcphealth.ServerHealth{
 			Name:   name,
 			Status: statusNotProbed,
-			Error:  fmt.Sprintf("command %q matches no trusted definition and was not run; rerun with --probe-untrusted to execute it", cmdLine),
+			Error:  reason + "; rerun with --probe-untrusted to probe it anyway",
 		})
 	}
 	report.TotalCount = len(report.Servers)
@@ -145,21 +152,13 @@ func addNotProbed(report *mcphealth.HealthReport, skipped map[string]string) {
 	})
 }
 
-// mcpLaunchSpec is the part of a server definition that determines what a
-// stdio probe executes.
-type mcpLaunchSpec struct {
-	Command string
-	Args    []string
-	Env     map[string]string
-}
-
-// trustedMCPDefinitions returns the launch specs qsdev itself vouches for,
-// keyed by server name: the embedded catalog plus the user's organization
+// trustedMCPDefinitions returns the server definitions qsdev itself vouches
+// for, keyed by server name: the embedded catalog plus the user's organization
 // overlay (including the variants generation derives from it), and servers
-// configured into the binary. The project catalog overlay
-// is deliberately excluded — like .mcp.json, it is repository content.
-func trustedMCPDefinitions() map[string][]mcpLaunchSpec {
-	trusted := make(map[string][]mcpLaunchSpec)
+// configured into the binary. The project catalog overlay is deliberately
+// excluded — like .mcp.json, it is repository content.
+func trustedMCPDefinitions() map[string][]mcpregistry.LaunchSpec {
+	trusted := make(map[string][]mcpregistry.LaunchSpec)
 	var opts []catalog.LoadOption
 	if org := catalog.OrgConfigFile(); org != "" {
 		opts = append(opts, catalog.WithOrgConfigFile(org))
@@ -167,44 +166,28 @@ func trustedMCPDefinitions() map[string][]mcpLaunchSpec {
 	if cat, err := catalog.Load(opts...); err == nil {
 		for name, def := range cat.MCPServers() {
 			for _, e := range catalogServerVariants(def) {
-				trusted[name] = append(trusted[name], mcpLaunchSpec{Command: e.Command, Args: e.Args, Env: e.Env})
+				trusted[name] = append(trusted[name], entryLaunchSpec(e))
 				if name == sembleServerName {
 					// Generation writes this variant when text-file indexing is on.
-					v := sembleTextFilesServer(e)
-					trusted[name] = append(trusted[name], mcpLaunchSpec{Command: v.Command, Args: v.Args, Env: v.Env})
+					trusted[name] = append(trusted[name], configLaunchSpec(sembleTextFilesServer(e)))
 				}
 			}
 		}
 	}
 	for _, srv := range addon.Config.MCPServers {
-		trusted[srv.Name] = append(trusted[srv.Name], mcpLaunchSpec{Command: srv.Command, Args: srv.Args, Env: srv.Env})
+		trusted[srv.Name] = append(trusted[srv.Name], configLaunchSpec(srv))
 	}
 	return trusted
 }
 
-// partitionTrusted splits servers into those safe to probe and those whose
-// stdio command matches no trusted definition of the same name (returned with
-// their command lines). HTTP servers run nothing locally and are always probed.
-func partitionTrusted(servers map[string]mcphealth.ServerConfig, trusted map[string][]mcpLaunchSpec) (map[string]mcphealth.ServerConfig, map[string]string) {
-	probe := make(map[string]mcphealth.ServerConfig, len(servers))
-	skipped := make(map[string]string)
-	for name, cfg := range servers {
-		if cfg.URL != "" || matchesTrusted(cfg, trusted[name]) {
-			probe[name] = cfg
-			continue
-		}
-		skipped[name] = strings.Join(append([]string{cfg.Command}, cfg.Args...), " ")
-	}
-	return probe, skipped
+// entryLaunchSpec is the trusted definition a generated .mcp.json entry makes.
+func entryLaunchSpec(e MCPServerEntry) mcpregistry.LaunchSpec {
+	return mcpregistry.LaunchSpec{Command: e.Command, Args: e.Args, Env: e.Env, URL: e.URL, Headers: e.Headers}
 }
 
-func matchesTrusted(cfg mcphealth.ServerConfig, specs []mcpLaunchSpec) bool {
-	for _, s := range specs {
-		if s.Command != "" && s.Command == cfg.Command && slices.Equal(s.Args, cfg.Args) && maps.Equal(s.Env, cfg.Env) {
-			return true
-		}
-	}
-	return false
+// configLaunchSpec is the trusted definition of a configured stdio server.
+func configLaunchSpec(c MCPServerConfig) mcpregistry.LaunchSpec {
+	return mcpregistry.LaunchSpec{Command: c.Command, Args: c.Args, Env: c.Env}
 }
 
 func mcpListCmd() *cobra.Command {

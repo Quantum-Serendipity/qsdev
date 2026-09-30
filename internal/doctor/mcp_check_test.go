@@ -3,11 +3,129 @@ package doctor
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
 	"github.com/Quantum-Serendipity/qsdev/internal/mcphealth"
+	"github.com/Quantum-Serendipity/qsdev/internal/mcpregistry"
 )
+
+// TestMCPFindings covers the static MCP validation both doctors share: it
+// reads .mcp.json, reports per-server status without starting anything, fails
+// on an unreadable file, and carries a broken catalog as a warning.
+func TestMCPFindings(t *testing.T) {
+	t.Parallel()
+
+	exe, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
+	}
+	servers := func(entries map[string]any) string {
+		data, err := json.Marshal(map[string]any{"mcpServers": entries})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return string(data)
+	}
+
+	tests := []struct {
+		name        string
+		mcpJSON     string // empty writes no .mcp.json
+		noRoot      bool
+		catalogErr  error
+		wantErr     bool
+		wantNil     bool
+		wantWarning string
+		wantStatus  map[string]string
+	}{
+		{name: "outside a project", noRoot: true, wantNil: true},
+		{name: "missing .mcp.json", wantNil: true},
+		{name: "no servers", mcpJSON: `{"mcpServers":{}}`, wantNil: true},
+		{name: "invalid JSON", mcpJSON: "{not json", wantErr: true},
+		{
+			name: "PATH-missing command is misconfigured",
+			mcpJSON: servers(map[string]any{
+				"present": map[string]any{"command": exe},
+				"missing": map[string]any{"command": "qsdev-u21-absent-mcp"},
+			}),
+			wantStatus: map[string]string{"present": MCPStatusOK, "missing": MCPStatusMisconfigured},
+		},
+		{
+			name:        "catalog error carried as a warning",
+			mcpJSON:     servers(map[string]any{"present": map[string]any{"command": exe}}),
+			catalogErr:  errors.New("loading MCP server catalog: bad yaml"),
+			wantWarning: "bad yaml",
+			wantStatus:  map[string]string{"present": MCPStatusOK},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			root := t.TempDir()
+			if tt.mcpJSON != "" {
+				if err := os.WriteFile(filepath.Join(root, ".mcp.json"), []byte(tt.mcpJSON), 0o644); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if tt.noRoot {
+				root = ""
+			}
+
+			ms, err := mcpFindings(root, mcpregistry.NewRegistry(), tt.catalogErr)
+			if (err != nil) != tt.wantErr {
+				t.Fatalf("mcpFindings() error = %v, wantErr %v", err, tt.wantErr)
+			}
+			if tt.wantErr {
+				if ms != nil {
+					t.Errorf("mcpFindings() = %+v alongside an error, want nil", ms)
+				}
+				return
+			}
+			if (ms == nil) != tt.wantNil {
+				t.Fatalf("mcpFindings() = %+v, wantNil %v", ms, tt.wantNil)
+			}
+			if ms == nil {
+				return
+			}
+			switch got := strings.Join(ms.Warnings, "\n"); {
+			case tt.wantWarning == "" && got != "":
+				t.Errorf("warnings = %v, want none", ms.Warnings)
+			case !strings.Contains(got, tt.wantWarning):
+				t.Errorf("warnings = %v, want one containing %q", ms.Warnings, tt.wantWarning)
+			}
+			got := make(map[string]string, len(ms.Servers))
+			for _, s := range ms.Servers {
+				got[s.Name] = s.Status
+			}
+			if len(got) != len(tt.wantStatus) {
+				t.Errorf("servers = %v, want %v", got, tt.wantStatus)
+			}
+			for name, want := range tt.wantStatus {
+				if got[name] != want {
+					t.Errorf("server %q status = %q, want %q (all: %+v)", name, got[name], want, ms.Servers)
+				}
+			}
+		})
+	}
+}
+
+// TestMCPFindings_UsesRegistryCatalogErr verifies the exported entry point
+// takes the catalog error from the registry: a healthy registry adds no warning.
+func TestMCPFindings_UsesRegistryCatalogErr(t *testing.T) {
+	t.Parallel()
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, ".mcp.json"), []byte(`{"mcpServers":{"x":{"command":"qsdev-u21-absent-mcp"}}}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	ms, err := MCPFindings(root, mcpregistry.NewRegistry())
+	if err != nil || ms == nil || len(ms.Warnings) != 0 || len(ms.Servers) != 1 {
+		t.Fatalf("MCPFindings() = %+v, %v; want one server and no warnings", ms, err)
+	}
+}
 
 func TestNewMCPSection(t *testing.T) {
 	t.Parallel()

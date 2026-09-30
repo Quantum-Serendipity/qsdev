@@ -36,7 +36,7 @@ func Tools(projectRoot string) []spi.ToolRegistration {
 		},
 		{
 			Name:        "qsdev_devenv_doctor",
-			Description: "Run seven project-integrity checks in parallel (config validity, state integrity, tool availability, Nix install, MCP server health, hook deployment, permission consistency) with a 5s timeout, returning per-check pass/warning/fail and remediation.",
+			Description: "Run seven project-integrity checks in parallel (config validity, state integrity, tool availability, Nix install, MCP config validity (static; starts nothing), hook deployment, permission consistency) with a 5s timeout, returning per-check pass/warning/fail and remediation.",
 			InputSchema: doctorSchema(),
 			Category:    middleware.CategoryDiagnostics,
 			Tier:        tierStandard,

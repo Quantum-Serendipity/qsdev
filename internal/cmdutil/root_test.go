@@ -37,6 +37,8 @@ func TestProjectRoot(t *testing.T) {
 		{name: "config name as directory is not a marker", markers: []string{"src/.qsdev.yaml/"}, cwd: "src", want: "src"},
 		{name: "project data dir in ancestor", markers: []string{".qsdev/"}, cwd: "internal/check", want: "."},
 		{name: "global data dir in home is not a project", markers: []string{".qsdev/logs/"}, home: ".", cwd: "newproj", want: "newproj"},
+		{name: "ancestor config above git child is ignored", markers: []string{".qsdev.yaml", "child/.git/"}, cwd: "child", want: "child"},
+		{name: "marker at git toplevel found from subdirectory", markers: []string{".qsdev.yaml", ".git/"}, cwd: "sub/dir", want: "."},
 	}
 
 	for _, tt := range tests {

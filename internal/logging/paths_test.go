@@ -52,6 +52,38 @@ func TestWalkUp(t *testing.T) {
 	})
 }
 
+// TestWalkUpUntil pins the ceiling order: match is checked before stop, so a
+// match in the ceiling directory itself is found, while nothing above it is.
+func TestWalkUpUntil(t *testing.T) {
+	t.Parallel()
+
+	root := t.TempDir()
+	ceiling := filepath.Join(root, "ceil")
+	start := filepath.Join(ceiling, "a")
+	is := func(want string) func(string) bool {
+		return func(d string) bool { return d == want }
+	}
+	tests := []struct {
+		name   string
+		match  func(string) bool
+		want   string
+		wantOK bool
+	}{
+		{name: "match below ceiling", match: is(start), want: start, wantOK: true},
+		{name: "match at ceiling", match: is(ceiling), want: ceiling, wantOK: true},
+		{name: "match above ceiling not visited", match: is(root)},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			got, ok := walkUpUntil(start, tt.match, is(ceiling))
+			if got != tt.want || ok != tt.wantOK {
+				t.Errorf("walkUpUntil = (%q,%v), want (%q,%v)", got, ok, tt.want, tt.wantOK)
+			}
+		})
+	}
+}
+
 // TestWalkUpMarkerSetsStayDistinct proves the shared traversal is parameterised
 // by the caller's marker predicate: the logging marker set (a .qsdev/ directory
 // counts as a root) and the resolve marker set (only a .qsdev.yaml *file* counts

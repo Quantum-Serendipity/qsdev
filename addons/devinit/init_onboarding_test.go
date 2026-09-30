@@ -147,9 +147,11 @@ func TestInitCmd_MergeOnboardsExistingConfig(t *testing.T) {
 // does.
 func TestInitCmd_PartialWriteLeavesRecoverableProject(t *testing.T) {
 	dir := createGoFixture(t)
-	// A directory where the generated .envrc goes makes that one write fail.
-	envrc := filepath.Join(dir, ".envrc")
-	if err := os.Mkdir(envrc, 0o755); err != nil {
+	// A directory where the generated docs/security-overview.md goes makes
+	// that one write fail. (.envrc is not used: under its Skip strategy an
+	// existing directory is kept rather than failed.)
+	blocker := filepath.Join(dir, "docs", "security-overview.md")
+	if err := os.MkdirAll(blocker, 0o755); err != nil {
 		t.Fatal(err)
 	}
 
@@ -168,12 +170,12 @@ func TestInitCmd_PartialWriteLeavesRecoverableProject(t *testing.T) {
 	}
 	requireFileNotExists(t, dir, branding.Get().ConfigFile)
 
-	if err := os.Remove(envrc); err != nil {
+	if err := os.Remove(blocker); err != nil {
 		t.Fatal(err)
 	}
 	if out, err := executeInitCmd(t, dir, "--yes", "--merge", "--lang", "go"); err != nil {
 		t.Fatalf("re-run after fixing the failure: %v\n%s", err, out)
 	}
 	requireFileExists(t, dir, branding.Get().ConfigFile)
-	requireFileExists(t, dir, ".envrc")
+	requireFileExists(t, dir, "docs/security-overview.md")
 }

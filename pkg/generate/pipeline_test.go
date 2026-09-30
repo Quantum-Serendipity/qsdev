@@ -274,12 +274,11 @@ func TestWriteFiles_CreatesNestedDirectories(t *testing.T) {
 
 func TestWriteResult_Summary(t *testing.T) {
 	r := generate.WriteResult{
-		Created: 3,
-		Updated: 1,
-		Skipped: 0,
-		Failed:  0,
+		Created:   3,
+		Updated:   1,
+		Unchanged: 2,
 	}
-	expected := "Created 3, updated 1, skipped 0, failed 0"
+	expected := "Created 3, updated 1, unchanged 2, kept 0, sidecar 0, failed 0"
 	if got := r.Summary(); got != expected {
 		t.Errorf("Summary() = %q, want %q", got, expected)
 	}
@@ -404,7 +403,9 @@ func TestFileAction_String(t *testing.T) {
 	}{
 		{generate.ActionCreated, "created"},
 		{generate.ActionUpdated, "updated"},
-		{generate.ActionSkipped, "skipped"},
+		{generate.ActionUnchanged, "unchanged"},
+		{generate.ActionKept, "kept"},
+		{generate.ActionSidecar, "sidecar"},
 		{generate.ActionFailed, "failed"},
 		{generate.FileAction(99), "unknown"},
 	}

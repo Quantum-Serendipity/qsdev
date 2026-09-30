@@ -98,7 +98,7 @@ func TestWriteFiles_RecordedStateMatchesDiskAfterMerge(t *testing.T) {
 	}
 }
 
-func TestWriteFiles_IdenticalFileIsSkipped(t *testing.T) {
+func TestWriteFilesIdenticalReportsUnchanged(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
 	files := []types.GeneratedFile{
@@ -119,12 +119,12 @@ func TestWriteFiles_IdenticalFileIsSkipped(t *testing.T) {
 	if err != nil {
 		t.Fatalf("second WriteFiles: %v", err)
 	}
-	if res.Skipped != 1 || res.Updated != 0 || res.Created != 0 {
-		t.Fatalf("second run = %s, want 1 skipped only", res.Summary())
+	if res.Unchanged != 1 || res.Updated != 0 || res.Created != 0 {
+		t.Fatalf("second run = %s, want 1 unchanged only", res.Summary())
 	}
 	fr := res.Files[0]
-	if fr.Action != generate.ActionSkipped {
-		t.Errorf("Action = %v, want skipped", fr.Action)
+	if fr.Action != generate.ActionUnchanged {
+		t.Errorf("Action = %v, want unchanged", fr.Action)
 	}
 	if want := state.ComputeHash(files[0].Content); fr.PrevHash != want {
 		t.Errorf("PrevHash = %q, want %q", fr.PrevHash, want)
@@ -136,10 +136,10 @@ func TestWriteFiles_IdenticalFileIsSkipped(t *testing.T) {
 	if !info.ModTime().Equal(past) {
 		t.Errorf("identical file was rewritten: mtime %v, want %v", info.ModTime(), past)
 	}
-	// A skipped file is still present with its intended content, so it must
-	// be recorded in state rather than dropped.
+	// An unchanged file is still present with its intended content, so it
+	// must be recorded in state rather than dropped.
 	if got := res.SuccessfulFiles(files); len(got) != 1 {
-		t.Errorf("SuccessfulFiles = %d entries, want 1 (skipped file must be recorded)", len(got))
+		t.Errorf("SuccessfulFiles = %d entries, want 1 (unchanged file must be recorded)", len(got))
 	}
 }
 

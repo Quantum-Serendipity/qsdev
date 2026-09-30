@@ -357,13 +357,20 @@ func writeAndRecordResults(cmd *cobra.Command, opts InitOptions, projectRoot str
 	slog.Info("files written",
 		"created", result.Created,
 		"updated", result.Updated,
-		"skipped", result.Skipped,
+		"unchanged", result.Unchanged,
+		"kept", result.Kept,
+		"sidecar", result.Sidecar,
 		"failed", result.Failed)
 
 	// The answers are saved even when some files failed: they are the input
 	// a re-run and repair regenerate from.
 	if err := saveAddonAnswers(cmd, projectRoot, answers, accResult); err != nil {
 		return err
+	}
+	// The summary is printed on partial failure too, so kept, sidecar and
+	// --force notes for the files that did succeed are not lost.
+	if !opts.Quiet {
+		_, _ = fmt.Fprintln(cmd.OutOrStdout(), result.Summary())
 	}
 	if result.HasFailures() {
 		// .qsdev.yaml is only written once every file is, so the project
@@ -374,25 +381,10 @@ func writeAndRecordResults(cmd *cobra.Command, opts InitOptions, projectRoot str
 		if !opts.Force && !opts.Merge {
 			rerun += " with --merge added"
 		}
-		return partialWriteError(result, len(successfulFiles), rerun)
-	}
-
-	if !opts.Quiet {
-		_, _ = fmt.Fprintln(cmd.OutOrStdout(), result.Summary())
+		return generate.PartialWriteError(result, len(successfulFiles), rerun)
 	}
 
 	return nil
-}
-
-// partialWriteError reports the files a write failed on and the command that
-// finishes the setup once their errors are fixed.
-func partialWriteError(result generate.WriteResult, recorded int, rerun string) error {
-	var details strings.Builder
-	for _, ff := range result.FailedFiles() {
-		fmt.Fprintf(&details, "\n  - %s: %v", ff.Path, ff.Error)
-	}
-	return fmt.Errorf("partial write: %d files failed (state saved for %d successful files); fix the errors below and re-run %s to finish setup%s",
-		result.Failed, recorded, rerun, details.String())
 }
 
 // saveAddonAnswers persists answers to the primary answers file and to each

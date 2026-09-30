@@ -112,9 +112,10 @@ func initCmd() *cobra.Command {
 
 			// Write files to disk. ThreeWayMergeFunc preserves user-owned
 			// top-level keys (e.g. settings.json "env") when --force overwrites
-			// an existing file.
+			// an existing file; Force overwrites one that cannot be merged.
 			result, err := generate.WriteFiles(files, generate.PipelineOptions{
 				ProjectRoot:       projectRoot,
+				Force:             force,
 				SectionMergeFunc:  merge.SectionMarkersOrAppend,
 				ThreeWayMergeFunc: merge.MergeOnCreate,
 			})
@@ -133,7 +134,8 @@ func initCmd() *cobra.Command {
 				_, _ = fmt.Fprintf(cmd.ErrOrStderr(), "Warning: %v; starting a fresh state file\n", err)
 				existingState = types.GeneratedState{}
 			}
-			if err := persistRegenState(projectRoot, answers, result.SuccessfulFiles(files), nil, existingState, true); err != nil {
+			successful := result.SuccessfulFiles(files)
+			if err := persistRegenState(projectRoot, answers, successful, nil, existingState, true); err != nil {
 				return err
 			}
 
@@ -142,8 +144,11 @@ func initCmd() *cobra.Command {
 				_, _ = fmt.Fprintln(cmd.ErrOrStderr(), "Warning: "+w)
 			}
 
-			// Print summary.
+			// Print summary; announce success only when every file was written.
 			_, _ = fmt.Fprintln(cmd.OutOrStdout(), result.Summary())
+			if err := generate.PartialWriteError(result, len(successful), "'"+branding.Get().AppName+" claude init --force'"); err != nil {
+				return err
+			}
 			_, _ = fmt.Fprintln(cmd.OutOrStdout(), "Claude Code configuration generated. Review .claude/settings.json and CLAUDE.md.")
 
 			return nil

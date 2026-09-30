@@ -680,27 +680,23 @@ func regenerateAndPersist(cmd *cobra.Command, answers types.WizardAnswers, opts 
 }
 
 // writeAndPersist writes files to disk, records their state and saves the
-// answers. Existing files whose strategy is Skip are left untouched. State is
-// saved for every file that was written, while prior entries for files that
-// were skipped or failed are carried forward so their modification tracking
-// survives. Answers are saved only when every file was written; otherwise an
-// error listing the failures is returned so the command exits non-zero and
-// the configuration change is not recorded. force is passed to the pipeline.
+// answers. The pipeline enforces each file's strategy: an existing
+// user-owned Skip file (e.g. .envrc) is kept, while unmodified qsdev output is
+// regenerated. State is saved for every file that was written, while prior
+// entries for files that were kept or failed are carried forward so their
+// modification tracking survives. Answers are saved only when every file was
+// written; otherwise an error listing the failures is returned so the command
+// exits non-zero and the configuration change is not recorded. force is
+// passed to the pipeline.
 func writeAndPersist(cmd *cobra.Command, projectRoot string, answers types.WizardAnswers, files []types.GeneratedFile, oldState types.GeneratedState, cleanup, force bool) (*generate.WriteResult, error) {
-	toWrite, preserved := splitPreservedFiles(projectRoot, files)
-
 	// force lets a ManualMerge file with local edits (devenv.nix) be replaced
 	// instead of getting a sidecar; it never overrides Skip.
-	result, err := generate.WriteFiles(toWrite, generate.PipelineOptions{
+	result, err := generate.WriteFiles(files, generate.PipelineOptions{
 		ProjectRoot: projectRoot,
 		Force:       force,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("writing files: %w", err)
-	}
-	for _, path := range preserved {
-		result.Files = append(result.Files, generate.FileResult{Path: path, Action: generate.ActionSkipped})
-		result.Skipped++
 	}
 
 	// Only remove orphans when the new configuration was fully written;
@@ -710,14 +706,14 @@ func writeAndPersist(cmd *cobra.Command, projectRoot string, answers types.Wizar
 		released = cleanupOrphanedFiles(cmd, oldState, files, projectRoot)
 	}
 
-	genState := state.RecordFiles(result.SuccessfulFiles(toWrite))
+	genState := state.RecordFiles(result.SuccessfulFiles(files))
 	carryForwardState(&genState, oldState, released)
 	if err := state.SaveProjectState(projectRoot, statePath(), genState); err != nil {
 		return nil, fmt.Errorf("saving state: %w", err)
 	}
 
 	if result.HasFailures() {
-		return &result, partialWriteError(result)
+		return &result, fmt.Errorf("configuration change not saved:\n%w", result.Err())
 	}
 
 	if err := saveAnswers(projectRoot, answers); err != nil {
@@ -805,24 +801,6 @@ func recordedFileHashes(projectRoot string) (map[string]map[string]bool, error) 
 	return recorded, nil
 }
 
-// splitPreservedFiles separates files whose Skip strategy means an existing
-// on-disk copy must be left alone (e.g. a user-owned .envrc) from the files
-// that should be written. It returns the files to write and the paths kept.
-func splitPreservedFiles(projectRoot string, files []types.GeneratedFile) ([]types.GeneratedFile, []string) {
-	toWrite := make([]types.GeneratedFile, 0, len(files))
-	var preserved []string
-	for _, f := range files {
-		if f.Strategy == types.Skip {
-			if _, err := os.Lstat(filepath.Join(projectRoot, f.Path)); err == nil {
-				preserved = append(preserved, f.Path)
-				continue
-			}
-		}
-		toWrite = append(toWrite, f)
-	}
-	return toWrite, preserved
-}
-
 // carryForwardState copies entries from oldState into newState for paths that
 // were not rewritten in this run (skipped, failed, or orphaned but kept),
 // except for released paths that are no longer tracked.
@@ -833,16 +811,6 @@ func carryForwardState(newState *types.GeneratedState, oldState types.GeneratedS
 		}
 		newState.Files[path] = fs
 	}
-}
-
-// partialWriteError describes the files that WriteFiles failed to write.
-func partialWriteError(result generate.WriteResult) error {
-	var details strings.Builder
-	for _, ff := range result.FailedFiles() {
-		fmt.Fprintf(&details, "\n  - %s: %v", ff.Path, ff.Error)
-	}
-	return fmt.Errorf("%d file(s) failed to write; configuration change not saved:%s",
-		result.Failed, details.String())
 }
 
 // cleanupOrphanedFiles removes files that were previously tracked in state but

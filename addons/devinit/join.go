@@ -309,13 +309,17 @@ func writeJoinResults(
 	if err := saveAddonAnswers(cmd, projectRoot, answers, accResult); err != nil {
 		return err
 	}
+	// The summary is printed on partial failure too, so kept, sidecar and
+	// --force notes for the files that did succeed are not lost.
+	if !opts.Quiet {
+		_, _ = fmt.Fprintln(cmd.OutOrStdout(), result.Summary())
+	}
 	if result.HasFailures() {
-		return partialWriteError(result, len(successfulFiles), "'"+branding.Get().AppName+" init --mode join'")
+		return generate.PartialWriteError(result, len(successfulFiles), "'"+branding.Get().AppName+" init --mode join'")
 	}
 
 	// Print join-specific summary.
 	if !opts.Quiet {
-		_, _ = fmt.Fprintln(cmd.OutOrStdout(), result.Summary())
 		_, _ = fmt.Fprintln(cmd.OutOrStdout(), joinOutcome(result))
 		_, _ = fmt.Fprint(cmd.OutOrStdout(), postGenerationMessage(answers, accResult))
 	}
@@ -328,12 +332,7 @@ func writeJoinResults(
 // changes the config does not describe (e.g. a hand edit to devenv.nix) is
 // kept and gets a sidecar, which the teammate must reconcile.
 func joinOutcome(result generate.WriteResult) string {
-	var sidecars int
-	for _, fr := range result.Files {
-		if fr.SidecarPath != "" {
-			sidecars++
-		}
-	}
+	sidecars := result.Sidecar
 	cfgFile := branding.Get().ConfigFile
 	if sidecars == 0 {
 		return fmt.Sprintf("Joined project successfully from %s configuration.", cfgFile)

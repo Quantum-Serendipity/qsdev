@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"os"
 	"path/filepath"
+	"runtime"
 	"slices"
 	"strings"
 	"testing"
@@ -212,6 +213,80 @@ func TestAddPackageCmd_RefusesToOverwriteModifiedFiles(t *testing.T) {
 	// .envrc uses the Skip strategy: an existing copy is never overwritten.
 	if got := readFile(t, envrcPath); got != userEnvrc {
 		t.Errorf(".envrc = %q, want user content preserved", got)
+	}
+}
+
+func TestUpdateCmd_ReportsKeptOnlyForUserEnvrc(t *testing.T) {
+	root := initProject(t)
+	envrcPath := filepath.Join(root, ".envrc")
+
+	// qsdev's own unmodified .envrc is not a kept user file.
+	out, err := runDevenv(t, "update")
+	if err != nil {
+		t.Fatalf("update failed: %v\n%s", err, out)
+	}
+	if strings.Contains(out, "kept existing .envrc") || !strings.Contains(out, "kept 0") {
+		t.Errorf("update reported qsdev's own .envrc as kept:\n%s", out)
+	}
+
+	userEnvrc := "export FOO=mine\n"
+	writeFile(t, envrcPath, userEnvrc)
+	out, err = runDevenv(t, "update")
+	if err != nil {
+		t.Fatalf("update failed: %v\n%s", err, out)
+	}
+	if !strings.Contains(out, "kept 1") || !strings.Contains(out, "kept existing .envrc") {
+		t.Errorf("update did not report the user's .envrc as kept:\n%s", out)
+	}
+	if got := readFile(t, envrcPath); got != userEnvrc {
+		t.Errorf(".envrc = %q, want user content preserved", got)
+	}
+}
+
+// TestDevenvCmds_KeepSymlinkedEnvrc is the regression test for devenv
+// mutations failing with "configuration change not saved" when .envrc is a
+// symlink pointing outside the project or nowhere. qsdev never writes through
+// a kept Skip file, so the symlink is kept and the command succeeds.
+func TestDevenvCmds_KeepSymlinkedEnvrc(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("symlink creation requires privileges on Windows")
+	}
+	outside := filepath.Join(t.TempDir(), "envrc")
+	writeFile(t, outside, "export FOO=outside\n")
+
+	tests := []struct {
+		name   string
+		target string
+		args   []string
+	}{
+		{name: "out-of-root symlink", target: outside, args: []string{"update"}},
+		{name: "dangling symlink", target: "nowhere", args: []string{"add-package", "jq"}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			root := initProject(t)
+			envrcPath := filepath.Join(root, ".envrc")
+			if err := os.Remove(envrcPath); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.Symlink(tt.target, envrcPath); err != nil {
+				t.Fatal(err)
+			}
+
+			out, err := runDevenv(t, tt.args...)
+			if err != nil {
+				t.Fatalf("%v: %v\n%s", tt.args, err, out)
+			}
+			if !strings.Contains(out, "kept 1") || !strings.Contains(out, "kept existing .envrc") {
+				t.Errorf("symlinked .envrc not reported as kept:\n%s", out)
+			}
+			if got, err := os.Readlink(envrcPath); err != nil || got != tt.target {
+				t.Errorf(".envrc link = %q (err %v), want %q", got, err, tt.target)
+			}
+		})
+	}
+	if got := readFile(t, outside); got != "export FOO=outside\n" {
+		t.Errorf("outside file = %q, want it untouched", got)
 	}
 }
 

@@ -1,8 +1,10 @@
 package vulnscan
 
 import (
+	"maps"
 	"os"
 	"path/filepath"
+	"slices"
 	"sort"
 	"testing"
 
@@ -143,37 +145,156 @@ func TestDetectLockFilePrefersDedicatedLock(t *testing.T) {
 	}
 }
 
-// TestDetectLockFilesCoversEveryEcosystem verifies polyglot detection returns
-// one lock file per ecosystem, preferring dedicated lock files within one.
-func TestDetectLockFilesCoversEveryEcosystem(t *testing.T) {
-	t.Parallel()
+// writeTree creates each slash-separated relative path under a fresh temp dir
+// as an empty file and returns the dir.
+func writeTree(t *testing.T, rels ...string) string {
+	t.Helper()
 	dir := t.TempDir()
-	for _, name := range []string{"go.sum", "package-lock.json", "requirements.txt", "poetry.lock"} {
-		if err := os.WriteFile(filepath.Join(dir, name), nil, 0o644); err != nil {
-			t.Fatalf("write %s: %v", name, err)
+	for _, rel := range rels {
+		p := filepath.Join(dir, filepath.FromSlash(rel))
+		if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
+			t.Fatalf("mkdir for %s: %v", rel, err)
+		}
+		if err := os.WriteFile(p, nil, 0o644); err != nil {
+			t.Fatalf("write %s: %v", rel, err)
 		}
 	}
-	got := make(map[string]string)
-	for _, d := range DetectLockFiles(dir) {
-		if prev, dup := got[d.Ecosystem()]; dup {
-			t.Errorf("ecosystem %s detected twice (%s and %s)", d.Ecosystem(), prev, d.Name())
+	return dir
+}
+
+// enumeratedRels renders EnumerateLockFiles(root) as root-relative slash paths.
+func enumeratedRels(t *testing.T, root string) []string {
+	t.Helper()
+	var rels []string
+	for _, st := range EnumerateLockFiles(root) {
+		rel, err := filepath.Rel(root, st.Path)
+		if err != nil {
+			t.Fatalf("rel %s: %v", st.Path, err)
 		}
-		got[d.Ecosystem()] = d.Name()
-		if d.Path != filepath.Join(dir, d.Name()) {
-			t.Errorf("path = %q, want it under %q", d.Path, dir)
+		rels = append(rels, filepath.ToSlash(rel))
+	}
+	return rels
+}
+
+// TestEnumerateLockFiles_CoversCatalog proves the enumerator's candidate set is
+// the whole catalog, not only the formats a parser exists for: every
+// ecosystem.LockFilesByEcosystem name present on disk is reported exactly once,
+// tagged with its catalog ecosystem, and Supported says whether the scanner can
+// actually read it.
+func TestEnumerateLockFiles_CoversCatalog(t *testing.T) {
+	t.Parallel()
+	want := map[string]string{} // name -> catalog ecosystem
+	for eco, names := range ecosystem.LockFilesByEcosystem {
+		for _, name := range names {
+			want[name] = eco
 		}
 	}
-	want := map[string]string{"Go": "go.sum", "npm": "package-lock.json", "PyPI": "poetry.lock"}
+	root := writeTree(t, slices.Collect(maps.Keys(want))...)
+
+	got := map[string]LockFileStatus{}
+	for _, st := range EnumerateLockFiles(root) {
+		if _, dup := got[st.Name]; dup {
+			t.Errorf("lock file %q enumerated twice", st.Name)
+		}
+		got[st.Name] = st
+	}
+	for name, eco := range want {
+		st, ok := got[name]
+		if !ok {
+			t.Errorf("catalog lock file %q missing from the enumerator candidate set", name)
+			continue
+		}
+		if st.CatalogEcosystem != eco {
+			t.Errorf("%s: CatalogEcosystem = %q, want %q", name, st.CatalogEcosystem, eco)
+		}
+		if st.Path != filepath.Join(root, name) {
+			t.Errorf("%s: Path = %q, want it under %q", name, st.Path, root)
+		}
+		lf, resolves := LockFileForPath(st.Path)
+		if st.Supported != resolves {
+			t.Errorf("%s: Supported = %t, want %t (LockFileForPath resolves)", name, st.Supported, resolves)
+		}
+		if resolves && st.OSVEcosystem != lf.Ecosystem() {
+			t.Errorf("%s: OSVEcosystem = %q, want %q", name, st.OSVEcosystem, lf.Ecosystem())
+		}
+	}
 	if len(got) != len(want) {
-		t.Errorf("detected %v, want %v", got, want)
+		t.Errorf("enumerated %d files, want %d", len(got), len(want))
 	}
-	for eco, name := range want {
-		if got[eco] != name {
-			t.Errorf("ecosystem %s: detected %q, want %q", eco, got[eco], name)
-		}
+}
+
+// TestEnumerateLockFiles_FindsSubprojectAndSkipsVendored proves the enumerator
+// walks subproject directories but not dependency trees or hidden directories.
+func TestEnumerateLockFiles_FindsSubprojectAndSkipsVendored(t *testing.T) {
+	t.Parallel()
+	root := writeTree(t,
+		"go.sum",
+		"frontend/package-lock.json",
+		"node_modules/x/package-lock.json",
+		".hidden/go.sum",
+	)
+	got := enumeratedRels(t, root)
+	want := []string{"go.sum", "frontend/package-lock.json"}
+	if !slices.Equal(got, want) {
+		t.Errorf("EnumerateLockFiles = %v, want %v", got, want)
 	}
-	if files := DetectLockFiles(t.TempDir()); len(files) != 0 {
-		t.Errorf("empty dir detected %v, want none", files)
+}
+
+// TestEnumerateLockFiles_SymlinkedRootLockFile is the regression for a root
+// whose lock file is a symlink: the walker only reports regular files, so the
+// root dropped out of the directory list and its go.sum was never scanned
+// while a regular subproject lock file made the scan look complete.
+func TestEnumerateLockFiles_SymlinkedRootLockFile(t *testing.T) {
+	t.Parallel()
+	target := filepath.Join(writeTree(t, "go.sum"), "go.sum")
+	tests := []struct {
+		name  string
+		extra []string
+		want  []string
+	}{
+		{"only lock file", nil, []string{"go.sum"}},
+		{"beside a regular subproject lock file", []string{"frontend/package-lock.json"}, []string{"go.sum", "frontend/package-lock.json"}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			root := writeTree(t, tt.extra...)
+			if err := os.Symlink(target, filepath.Join(root, "go.sum")); err != nil {
+				t.Skipf("symlinks unavailable: %v", err)
+			}
+			if got := enumeratedRels(t, root); !slices.Equal(got, tt.want) {
+				t.Errorf("EnumerateLockFiles = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
+// TestEnumerateLockFilesListsEveryPresentFile proves a polyglot root reports
+// every present lock file, including several from one ecosystem (poetry.lock
+// and requirements.txt), in catalog order, and an empty dir reports none.
+func TestEnumerateLockFilesListsEveryPresentFile(t *testing.T) {
+	t.Parallel()
+	root := writeTree(t, "requirements.txt", "poetry.lock", "package-lock.json", "go.sum")
+	got := enumeratedRels(t, root)
+	want := []string{"go.sum", "package-lock.json", "poetry.lock", "requirements.txt"}
+	if !slices.Equal(got, want) {
+		t.Errorf("EnumerateLockFiles = %v, want %v", got, want)
+	}
+	if files := EnumerateLockFiles(t.TempDir()); len(files) != 0 {
+		t.Errorf("empty dir enumerated %v, want none", files)
+	}
+}
+
+// TestSupportedLockFileNamesMatchesParsers proves the supported-name list is the
+// scanner's own table, so user-facing text cannot drift from the parsers.
+func TestSupportedLockFileNamesMatchesParsers(t *testing.T) {
+	t.Parallel()
+	var want []string
+	for _, lf := range knownLockFiles() {
+		want = append(want, lf.Name())
+	}
+	if got := SupportedLockFileNames(); !slices.Equal(got, want) {
+		t.Errorf("SupportedLockFileNames = %v, want %v", got, want)
 	}
 }
 

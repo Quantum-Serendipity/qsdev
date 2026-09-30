@@ -4,9 +4,10 @@ import (
 	"bufio"
 	"encoding/json"
 	"fmt"
+	"maps"
 	"os"
 	"path/filepath"
-	"sort"
+	"slices"
 	"strings"
 	"sync"
 
@@ -90,32 +91,24 @@ var knownLockFiles = sync.OnceValue(buildKnownLockFiles)
 // alphabetically, and within an ecosystem dedicated lock files are preferred
 // over loose manifests.
 func buildKnownLockFiles() []LockFile {
-	ecos := make([]string, 0, len(ecosystem.LockFilesByEcosystem))
-	for eco := range ecosystem.LockFilesByEcosystem {
-		ecos = append(ecos, eco)
-	}
-	sort.Strings(ecos)
-
 	var out []LockFile
-	for _, eco := range ecos {
-		osvEco, ok := osvEcosystems[eco]
+	for _, c := range lockCandidates() {
+		osvEco, ok := osvEcosystems[c.eco]
 		if !ok {
 			continue // no OSV namespace for this ecosystem; nothing to scan
 		}
-		for _, name := range ecosystem.OrderedLockFiles(eco) {
-			parser, ok := lockParsers[name]
-			if !ok {
-				continue // no parser for this lock format yet
-			}
-			out = append(out, LockFile{
-				name:       name,
-				ecosystem:  osvEco,
-				catalogEco: eco,
-				parse: func(path string) ([]Package, error) {
-					return parser(path, osvEco)
-				},
-			})
+		parser, ok := lockParsers[c.name]
+		if !ok {
+			continue // no parser for this lock format yet
 		}
+		out = append(out, LockFile{
+			name:       c.name,
+			ecosystem:  osvEco,
+			catalogEco: c.eco,
+			parse: func(path string) ([]Package, error) {
+				return parser(path, osvEco)
+			},
+		})
 	}
 	return out
 }
@@ -151,32 +144,100 @@ func LockFileForEcosystem(projectRoot, eco string) (LockFile, string, bool) {
 	return LockFile{}, "", false
 }
 
-// DetectedLockFile is a known lock file found in a project, with its full path.
-type DetectedLockFile struct {
-	LockFile
-	Path string
+// LockFileStatus is one catalog lock file present on disk under a project
+// root. Supported reports whether the scanner has a parser and an OSV
+// namespace for it; an unsupported file was found but cannot be scanned, so a
+// scan that skips it is partial, not clean.
+type LockFileStatus struct {
+	Path             string // full path
+	Name             string // base name, e.g. "pnpm-lock.yaml"
+	CatalogEcosystem string // pkg/ecosystem name, e.g. ecosystem.NameJavaScript
+	OSVEcosystem     string // OSV namespace when Supported, else ""
+	Supported        bool
 }
 
-// DetectLockFiles returns the preferred lock file present in projectRoot for
-// every ecosystem, in the same order DetectLockFile searches. A polyglot project
-// (e.g. go.sum plus package-lock.json) yields one entry per ecosystem, so a scan
-// can cover all of them instead of only the first one found. Within an ecosystem
-// only the first present file is returned, matching DetectLockFile's preference
-// for dedicated lock files over loose manifests.
-func DetectLockFiles(projectRoot string) []DetectedLockFile {
-	var out []DetectedLockFile
-	seenEco := make(map[string]bool)
-	for _, lf := range knownLockFiles() {
-		if seenEco[lf.ecosystem] {
-			continue
-		}
-		p := filepath.Join(projectRoot, lf.name)
-		if info, err := os.Stat(p); err == nil && !info.IsDir() {
-			seenEco[lf.ecosystem] = true
-			out = append(out, DetectedLockFile{LockFile: lf, Path: p})
+// lockCandidate is one catalog lock filename and the ecosystem that owns it.
+type lockCandidate struct {
+	name string
+	eco  string
+}
+
+// lockCandidates returns every lock filename in ecosystem.LockFilesByEcosystem,
+// ecosystems visited alphabetically and each in OrderedLockFiles order, so
+// enumeration sees formats the scanner cannot parse as well as those it can.
+var lockCandidates = sync.OnceValue(func() []lockCandidate {
+	ecos := slices.Sorted(maps.Keys(ecosystem.LockFilesByEcosystem))
+	seen := make(map[string]bool)
+	var out []lockCandidate
+	for _, eco := range ecos {
+		for _, name := range ecosystem.OrderedLockFiles(eco) {
+			if !seen[name] {
+				seen[name] = true
+				out = append(out, lockCandidate{name: name, eco: eco})
+			}
 		}
 	}
 	return out
+})
+
+// catalogLockIndex returns the lockCandidates index of name, or -1.
+func catalogLockIndex(name string) int {
+	return slices.IndexFunc(lockCandidates(), func(c lockCandidate) bool { return c.name == name })
+}
+
+// isCatalogLockName reports whether name is a lock filename in the catalog.
+func isCatalogLockName(name string) bool { return catalogLockIndex(name) >= 0 }
+
+// EnumerateLockFiles returns every catalog lock file present in root and in
+// its subproject directories (found by ecosystem.ProjectDirsWith, which bounds
+// the depth and skips dependency trees and hidden directories). Directories are
+// visited in sorted order and files within one in catalog order. Root is always
+// probed, even when ProjectDirsWith does not list it (its walk only sees
+// regular files, so a root whose lock files are all symlinks is otherwise
+// missed); a symlinked lock file in a subdirectory is found only when that
+// directory also holds a regular catalog lock file. Unlike LockFileForEcosystem
+// it keeps every file, including unsupported formats and several lock files of
+// one ecosystem, so a caller can tell a complete scan from a partial one.
+func EnumerateLockFiles(root string) []LockFileStatus {
+	dirs := ecosystem.ProjectDirsWith(root, isCatalogLockName)
+	if !slices.Contains(dirs, ".") {
+		dirs = append([]string{"."}, dirs...)
+	}
+	var out []LockFileStatus
+	for _, dir := range dirs {
+		for _, c := range lockCandidates() {
+			p := filepath.Join(root, filepath.FromSlash(dir), c.name)
+			if info, err := os.Stat(p); err != nil || info.IsDir() {
+				continue
+			}
+			out = append(out, DescribeLockFile(p))
+		}
+	}
+	return out
+}
+
+// DescribeLockFile classifies the lock file at path by its base name: its
+// catalog ecosystem ("" when the name is not a catalog lock file) and whether
+// the scanner supports it. The file itself is not read.
+func DescribeLockFile(path string) LockFileStatus {
+	st := LockFileStatus{Path: path, Name: filepath.Base(path)}
+	if i := catalogLockIndex(st.Name); i >= 0 {
+		st.CatalogEcosystem = lockCandidates()[i].eco
+	}
+	if lf, ok := LockFileForPath(path); ok {
+		st.Supported, st.OSVEcosystem = true, lf.ecosystem
+	}
+	return st
+}
+
+// SupportedLockFileNames returns the lock filenames the scanner can read, in
+// detection order, for user-facing text that must not drift from the parsers.
+func SupportedLockFileNames() []string {
+	var names []string
+	for _, lf := range knownLockFiles() {
+		names = append(names, lf.name)
+	}
+	return names
 }
 
 // LockFileForPath resolves the parser for an explicitly supplied manifest path

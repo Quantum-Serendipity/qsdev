@@ -16,8 +16,13 @@
 package security
 
 import (
+	"fmt"
+	"strings"
+
 	"github.com/Quantum-Serendipity/qsdev/internal/mcpserve/middleware"
 	"github.com/Quantum-Serendipity/qsdev/internal/mcpserve/spi"
+	"github.com/Quantum-Serendipity/qsdev/internal/vulnscan"
+	"github.com/Quantum-Serendipity/qsdev/pkg/ecosystem"
 	"github.com/Quantum-Serendipity/qsdev/pkg/types"
 )
 
@@ -54,7 +59,7 @@ func Tools(projectRoot string, enforced *middleware.Policy, credentialVend types
 	return append(regs, []spi.ToolRegistration{
 		{
 			Name:        "qsdev_security_scan",
-			Description: "Scan the project's pinned dependencies (from the lock file of every detected ecosystem: go.sum, package-lock.json, Cargo.lock, poetry.lock, uv.lock, Pipfile.lock, or requirements.txt) against the OSV.dev vulnerability database and report findings at or above a severity threshold.",
+			Description: securityScanDescription(),
 			InputSchema: securityScanSchema(),
 			Category:    middleware.CategorySecurity,
 			Tier:        tierStandard,
@@ -92,11 +97,22 @@ func credentialVendSchema() map[string]any {
 	}
 }
 
+// securityScanDescription names the scannable formats from the scanner's own
+// parser table so the description cannot drift from what is actually scanned.
+func securityScanDescription() string {
+	return "Scan the project's pinned dependencies against the OSV.dev vulnerability database and report findings at or above a severity threshold. " +
+		"Every lock file found is reported in lock_files_status as scanned, no_pinned_deps, parse_error or unsupported_format; " +
+		fmt.Sprintf("lock files are found in the project root and in subdirectories up to %d levels deep, excluding hidden, node_modules and vendor directories, symlinked directories and unreadable directories, which are not examined and not reported; ", ecosystem.ProjectScanDepth) +
+		"scannable formats: " + strings.Join(vulnscan.SupportedLockFileNames(), ", ") + ". " +
+		"coverage is \"complete\" only when every lock file found was scanned or pins nothing, and \"partial\" otherwise, naming what was not scanned. " +
+		"A partial result where earlier versions said complete is a correction (those files were never checked), not a regression."
+}
+
 func securityScanSchema() map[string]any {
 	return map[string]any{
 		"type": "object",
 		"properties": map[string]any{
-			"manifest_path": map[string]any{"type": "string", "description": "Explicit lock-file path. Omit to scan the lock file of every ecosystem detected under the project root."},
+			"manifest_path": map[string]any{"type": "string", "description": "Explicit lock-file path; limits the scan and its coverage to that file. Omit to scan every lock file found in the project root and its subdirectories (see the tool description for which are searched)."},
 			"severity_threshold": map[string]any{
 				"type":        "string",
 				"enum":        []any{"low", "medium", "high", "critical"},

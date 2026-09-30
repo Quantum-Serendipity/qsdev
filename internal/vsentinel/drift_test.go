@@ -1,6 +1,10 @@
 package vsentinel
 
 import (
+	"os"
+	"path/filepath"
+	"slices"
+	"strings"
 	"testing"
 
 	"github.com/Quantum-Serendipity/qsdev/pkg/ecosystem"
@@ -524,5 +528,195 @@ func TestCargoSemverSatisfies_BoundaryFalseNegative(t *testing.T) {
 		if got != tc.want {
 			t.Errorf("cargoSemverSatisfies(%q, %q) = %v, want %v", tc.constraint, tc.locked, got, tc.want)
 		}
+	}
+}
+
+// driftReportFor writes files (paths may contain slash-separated
+// subdirectories) under a fresh root and returns DetectDrift's report, passing
+// knownManifests through.
+func driftReportFor(t *testing.T, files map[string]string, knownManifests ...string) *DriftReport {
+	t.Helper()
+	dir := t.TempDir()
+	for name := range files {
+		if err := os.MkdirAll(filepath.Dir(filepath.Join(dir, filepath.FromSlash(name))), 0o755); err != nil {
+			t.Fatalf("creating dir for %s: %v", name, err)
+		}
+	}
+	fixtures := make(map[string]string, len(files))
+	for name, body := range files {
+		fixtures[filepath.FromSlash(name)] = body
+	}
+	writeFixtures(t, dir, fixtures)
+	report, err := DetectDrift(dir, knownManifests...)
+	if err != nil {
+		t.Fatalf("DetectDrift() error = %v", err)
+	}
+	return report
+}
+
+// notVerifiedMentions reports whether any NotVerified entry names path.
+func notVerifiedMentions(r *DriftReport, path string) bool {
+	return slices.ContainsFunc(r.NotVerified, func(s string) bool {
+		return strings.HasPrefix(s, path+" ")
+	})
+}
+
+// TestDetectDrift_PresenceOnlyFlagged is the U22-04 regression: a pnpm lockfile
+// pins package.json but is never version-diffed, so the result must say so
+// instead of reading as a verified zero drift.
+func TestDetectDrift_PresenceOnlyFlagged(t *testing.T) {
+	t.Parallel()
+	report := driftReportFor(t, map[string]string{
+		"package.json":   `{"name":"x","dependencies":{"left-pad":"^1.3.0","evil":"^9.9.9"}}`,
+		"pnpm-lock.yaml": "lockfileVersion: '9.0'\nimporters: {}\n",
+	})
+	if len(report.Manifests) != 1 {
+		t.Fatalf("manifests = %+v, want 1", report.Manifests)
+	}
+	if got := report.Manifests[0].Verification; got != VerificationPresenceOnly {
+		t.Errorf("verification = %q, want %q", got, VerificationPresenceOnly)
+	}
+	if report.Coverage != CoveragePartial {
+		t.Errorf("coverage = %q, want %q", report.Coverage, CoveragePartial)
+	}
+	if !notVerifiedMentions(report, "package.json") {
+		t.Errorf("NotVerified = %q, want package.json listed", report.NotVerified)
+	}
+}
+
+// TestDetectDrift_AllCsprojChecked asserts every glob match is checked, not
+// only the first.
+func TestDetectDrift_AllCsprojChecked(t *testing.T) {
+	t.Parallel()
+	report := driftReportFor(t, map[string]string{
+		"A.csproj":           "<Project/>",
+		"B.csproj":           "<Project/>",
+		"packages.lock.json": `{"version":1}`,
+	})
+	var paths []string
+	for _, m := range report.Manifests {
+		if m.Ecosystem == ecosystem.NameDotnet {
+			paths = append(paths, filepath.Base(m.Path))
+		}
+	}
+	slices.Sort(paths)
+	if !slices.Equal(paths, []string{"A.csproj", "B.csproj"}) {
+		t.Errorf("dotnet statuses = %q, want A.csproj and B.csproj", paths)
+	}
+	for _, p := range []string{"A.csproj", "B.csproj"} {
+		if !notVerifiedMentions(report, p) {
+			t.Errorf("NotVerified = %q, want %s listed", report.NotVerified, p)
+		}
+	}
+}
+
+func TestDetectDrift_DiffedIsComplete(t *testing.T) {
+	t.Parallel()
+	report := driftReportFor(t, map[string]string{
+		"go.mod": "module example.com/x\n\ngo 1.22\n\nrequire golang.org/x/sys v0.20.0\n",
+		"go.sum": "golang.org/x/sys v0.20.0 h1:x=\ngolang.org/x/sys v0.20.0/go.mod h1:y=\n",
+	})
+	if len(report.Manifests) != 1 {
+		t.Fatalf("manifests = %+v, want 1", report.Manifests)
+	}
+	m := report.Manifests[0]
+	if m.Verification != VerificationDiffed || m.DriftCount != 0 {
+		t.Errorf("status = %+v, want diffed with 0 drift", m)
+	}
+	if report.Coverage != CoverageComplete || len(report.NotVerified) != 0 {
+		t.Errorf("coverage = %q, NotVerified = %q; want complete and none", report.Coverage, report.NotVerified)
+	}
+}
+
+// TestDetectDrift_NestedManifestListedNotVerified asserts a manifest below the
+// root, which DetectDrift does not check, makes coverage partial and is named.
+func TestDetectDrift_NestedManifestListedNotVerified(t *testing.T) {
+	t.Parallel()
+	report := driftReportFor(t, map[string]string{
+		"services/api/go.mod":          "module example.com/api\n\ngo 1.22\n",
+		"node_modules/x/package.json":  `{"name":"x"}`,
+		".hidden/go.mod":               "module example.com/h\n",
+		"services/api/vendor/m/go.mod": "module example.com/m\n",
+		"services/api/README.md":       "not a manifest",
+	})
+	if report.Coverage != CoveragePartial {
+		t.Errorf("coverage = %q, want %q", report.Coverage, CoveragePartial)
+	}
+	if !notVerifiedMentions(report, "services/api/go.mod") {
+		t.Errorf("NotVerified = %q, want services/api/go.mod listed", report.NotVerified)
+	}
+	if len(report.NotVerified) != 1 {
+		t.Errorf("NotVerified = %q, want only services/api/go.mod (skipped dirs excluded)", report.NotVerified)
+	}
+}
+
+// TestDetectDrift_UncoveredManifestNotComplete is the regression for manifests
+// outside the drift catalog (mix.exs, *.tf): they were never examined, yet the
+// report claimed coverage complete with zero drift.
+func TestDetectDrift_UncoveredManifestNotComplete(t *testing.T) {
+	t.Parallel()
+	known := []string{"mix.exs", "*.tf", "go.mod"}
+	tests := []struct {
+		name  string
+		files map[string]string
+		want  []string // NotVerified path prefixes
+	}{
+		{
+			name:  "mix.exs with deps and no lockfile",
+			files: map[string]string{"mix.exs": `defp deps, do: [{:plug, "~> 1.0"}]`},
+			want:  []string{"mix.exs"},
+		},
+		{
+			name:  "terraform root with nested module",
+			files: map[string]string{"main.tf": `provider "aws" {}`, "infra/modules/net/main.tf": `provider "aws" {}`},
+			want:  []string{"main.tf", "infra/modules/net/main.tf"},
+		},
+		{
+			name: "uncovered beside a diffed manifest",
+			files: map[string]string{
+				"go.mod":  "module example.com/x\n\ngo 1.22\n",
+				"mix.exs": `defp deps, do: []`,
+			},
+			want: []string{"mix.exs"},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			report := driftReportFor(t, tt.files, known...)
+			if report.Coverage != CoveragePartial {
+				t.Errorf("coverage = %q, want %q", report.Coverage, CoveragePartial)
+			}
+			for _, p := range tt.want {
+				if !notVerifiedMentions(report, p) {
+					t.Errorf("NotVerified = %q, want %s listed", report.NotVerified, p)
+				}
+			}
+			if len(report.NotVerified) != len(tt.want) {
+				t.Errorf("NotVerified = %q, want exactly %q", report.NotVerified, tt.want)
+			}
+		})
+	}
+}
+
+// TestDetectDrift_NoManifestIsNone asserts a report that checked nothing does
+// not read as a verified clean.
+func TestDetectDrift_NoManifestIsNone(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name  string
+		files map[string]string
+	}{
+		{"empty root", map[string]string{"README.md": "hi"}},
+		{"only a manifest no caller named", map[string]string{"mix.exs": `defp deps, do: [{:plug, "~> 1.0"}]`}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			report := driftReportFor(t, tt.files)
+			if report.Coverage != CoverageNone {
+				t.Errorf("coverage = %q, want %q", report.Coverage, CoverageNone)
+			}
+		})
 	}
 }

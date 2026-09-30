@@ -5,12 +5,19 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"strings"
 	"testing"
 
 	"github.com/Quantum-Serendipity/qsdev/internal/answers"
 	"github.com/Quantum-Serendipity/qsdev/internal/mcpserve/spi"
+	"github.com/Quantum-Serendipity/qsdev/internal/vsentinel"
 	"github.com/Quantum-Serendipity/qsdev/pkg/ecosystem"
+	_ "github.com/Quantum-Serendipity/qsdev/pkg/ecosystem/modules/dotnet"
+	_ "github.com/Quantum-Serendipity/qsdev/pkg/ecosystem/modules/elixir"
+	_ "github.com/Quantum-Serendipity/qsdev/pkg/ecosystem/modules/golang"
+	_ "github.com/Quantum-Serendipity/qsdev/pkg/ecosystem/modules/javascript"
+	_ "github.com/Quantum-Serendipity/qsdev/pkg/ecosystem/modules/terraform"
 	"github.com/Quantum-Serendipity/qsdev/pkg/types"
 )
 
@@ -135,7 +142,148 @@ func TestManifestCoverage(t *testing.T) {
 	if res.IsError {
 		t.Fatalf("initialized project: unexpected error %q", res.Text)
 	}
-	if _, ok := res.Structured.(ecosystem.ManifestCoverageReport); !ok {
-		t.Errorf("structured result = %T, want ecosystem.ManifestCoverageReport", res.Structured)
+	got, ok := res.Structured.(manifestCoverageReport)
+	if !ok {
+		t.Fatalf("structured result = %T, want manifestCoverageReport", res.Structured)
+	}
+	if got.Coverage != vsentinel.CoverageNone || len(got.Diffed)+len(got.PresenceOnly)+len(got.Uncovered) != 0 {
+		t.Errorf("unregistered language: report = %+v, want coverage none with no manifests", got)
+	}
+}
+
+// manifestCoverageFor saves answers with languages into a fresh project and
+// returns its manifest_coverage report.
+func manifestCoverageFor(t *testing.T, languages []types.LanguageChoice) manifestCoverageReport {
+	t.Helper()
+	project := t.TempDir()
+	if err := answers.SavePrimary(project, types.WizardAnswers{Languages: languages}); err != nil {
+		t.Fatal(err)
+	}
+	res := call(t, handlers(project)["manifest_coverage"], nil)
+	if res.IsError {
+		t.Fatalf("unexpected error %q", res.Text)
+	}
+	got, ok := res.Structured.(manifestCoverageReport)
+	if !ok {
+		t.Fatalf("structured result = %T, want manifestCoverageReport", res.Structured)
+	}
+	return got
+}
+
+func manifestPaths(entries []manifestCoverageEntry) []string {
+	out := make([]string, 0, len(entries))
+	for _, e := range entries {
+		out = append(out, e.Path)
+	}
+	return out
+}
+
+// TestManifestCoverage_HonestLevels proves manifest_coverage reports what
+// Version-Sentinel can actually check rather than the modules' VSSupported
+// flag: go.mod (flagged unsupported) is version-diffed, while *.csproj and a
+// pnpm-locked package.json (both flagged supported) only get a lockfile
+// presence check, which makes coverage partial.
+func TestManifestCoverage_HonestLevels(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name             string
+		languages        []types.LanguageChoice
+		wantDiffed       []string
+		wantPresenceOnly []string
+		wantUncovered    []string
+		wantCoverage     string
+	}{
+		{
+			name:             "go and dotnet",
+			languages:        []types.LanguageChoice{{Name: ecosystem.NameGo}, {Name: ecosystem.NameDotnet}},
+			wantDiffed:       []string{"go.mod"},
+			wantPresenceOnly: []string{"*.csproj"},
+			wantCoverage:     vsentinel.CoveragePartial,
+		},
+		{
+			name:             "javascript with pnpm",
+			languages:        []types.LanguageChoice{{Name: ecosystem.NameJavaScript, PackageManager: "pnpm"}},
+			wantPresenceOnly: []string{"package.json"},
+			wantCoverage:     vsentinel.CoveragePartial,
+		},
+		{
+			name:          "elixir and terraform have no drift checker",
+			languages:     []types.LanguageChoice{{Name: ecosystem.NameElixir}, {Name: ecosystem.NameTerraform}},
+			wantUncovered: []string{"mix.exs", "*.tf"},
+			wantCoverage:  vsentinel.CoveragePartial,
+		},
+		{
+			name:         "go only",
+			languages:    []types.LanguageChoice{{Name: ecosystem.NameGo}},
+			wantDiffed:   []string{"go.mod"},
+			wantCoverage: vsentinel.CoverageComplete,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			got := manifestCoverageFor(t, tt.languages)
+			if d := manifestPaths(got.Diffed); !slices.Equal(d, tt.wantDiffed) {
+				t.Errorf("diffed = %v, want %v", d, tt.wantDiffed)
+			}
+			if p := manifestPaths(got.PresenceOnly); !slices.Equal(p, tt.wantPresenceOnly) {
+				t.Errorf("presence_only = %v, want %v", p, tt.wantPresenceOnly)
+			}
+			if u := manifestPaths(got.Uncovered); !slices.Equal(u, tt.wantUncovered) {
+				t.Errorf("uncovered = %v, want %v", u, tt.wantUncovered)
+			}
+			if got.Coverage != tt.wantCoverage {
+				t.Errorf("coverage = %q, want %q", got.Coverage, tt.wantCoverage)
+			}
+			notChecked := append(slices.Clone(tt.wantPresenceOnly), tt.wantUncovered...)
+			if len(got.NotVersionChecked) != len(notChecked) {
+				t.Errorf("not_version_checked = %v, want one entry per unchecked manifest %v", got.NotVersionChecked, notChecked)
+			}
+			for i, want := range notChecked {
+				if i < len(got.NotVersionChecked) && !strings.HasPrefix(got.NotVersionChecked[i], want+" ") {
+					t.Errorf("not_version_checked[%d] = %q, want it to name %s", i, got.NotVersionChecked[i], want)
+				}
+			}
+		})
+	}
+}
+
+// TestDetectDrift_UncoveredEcosystemNotComplete is the regression for
+// manifests of registered ecosystems that have no drift checker: a mix.exs or
+// main.tf with dependencies and no lockfile was reported as coverage complete
+// with zero drift although it was never examined.
+func TestDetectDrift_UncoveredEcosystemNotComplete(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name  string
+		files map[string]string
+		want  string
+	}{
+		{"mix.exs with deps, no lockfile", map[string]string{"mix.exs": `defp deps, do: [{:plug, "~> 1.0"}]`}, "mix.exs"},
+		{"terraform provider, no lockfile", map[string]string{"main.tf": `provider "aws" {}`}, "main.tf"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			root := t.TempDir()
+			writeFiles(t, root, tt.files)
+			res := call(t, handlers(root)["detect_drift"], nil)
+			if res.IsError {
+				t.Fatalf("unexpected error %q", res.Text)
+			}
+			report, ok := res.Structured.(*vsentinel.DriftReport)
+			if !ok {
+				t.Fatalf("structured result = %T, want *vsentinel.DriftReport", res.Structured)
+			}
+			if report.Coverage != vsentinel.CoveragePartial {
+				t.Errorf("coverage = %q, want %q", report.Coverage, vsentinel.CoveragePartial)
+			}
+			if !slices.ContainsFunc(report.NotVerified, func(s string) bool {
+				return strings.HasPrefix(s, tt.want+" (no drift checker")
+			}) {
+				t.Errorf("not_verified = %q, want %s named as having no drift checker", report.NotVerified, tt.want)
+			}
+		})
 	}
 }

@@ -37,6 +37,9 @@ ALLOW_UNSIGNED=false
 if [ "${QSDEV_ALLOW_UNSIGNED:-}" = "1" ]; then ALLOW_UNSIGNED=true; fi
 REQUIRE_SIGNATURE=false
 if [ "${QSDEV_REQUIRE_SIGNATURE:-}" = "1" ]; then REQUIRE_SIGNATURE=true; fi
+# Strongest check that passed: none, checksum or cosign. Set only on success
+# paths, so it never claims more than was verified.
+VERIFIED_BY=none
 
 # Temporary paths, removed by cleanup() on exit.
 tmp_dir=""
@@ -92,9 +95,10 @@ Options:
   --no-modify-path    Skip adding the install directory to shell PATH
   --install-dir DIR   Override the install directory (default: ~/.qsdev/bin)
   --version VERSION   Install (or verify) a specific version (e.g. 1.2.3)
-  --verify-only       Verify an installed binary against the signed release
-                      (exit 0 verified, 1 mismatch or error, 2 cannot verify
-                      a package-manager install)
+  --verify-only       Verify an installed binary against the release
+                      (exit 0 verified, 1 mismatch or error,
+                      exit 2 cannot verify: package-manager install
+                      or no signature verifier (cosign v2+))
   --no-verify         Skip all verification (SHA256 and Sigstore)
   --allow-unsigned    Install even if the release has no Sigstore bundle
   --require-signature Fail unless the Sigstore signature is verified
@@ -267,7 +271,7 @@ verify_sigstore() {
             error "cosign not found, but a verified Sigstore signature is required (--require-signature)."
             exit 1
         fi
-        info "cosign not found; skipping Sigstore verification. Install cosign for enhanced security."
+        warn "cosign not found; skipping Sigstore verification. The release is checked by checksum only, which does not detect replaced release assets. Install cosign v2+ or re-run with --require-signature."
         return
     fi
 
@@ -311,6 +315,7 @@ verify_sigstore() {
         --certificate-oidc-issuer "https://token.actions.githubusercontent.com" \
         "${tmp_dir}/checksums.txt"; then
         success "Sigstore signature verified."
+        VERIFIED_BY=cosign
     else
         error "Sigstore verification FAILED. The checksums file may have been tampered with."
         exit 1
@@ -366,8 +371,20 @@ download_and_verify() {
     fi
 
     success "Checksum verified."
+    VERIFIED_BY=checksum
 
     verify_sigstore
+}
+
+# --- Verification verdict ---
+# verification_verdict prints the one-line summary of VERIFIED_BY; it is the
+# single source of the wording that says which verifier ran.
+verification_verdict() {
+    case "${VERIFIED_BY}" in
+        cosign)   printf '%s\n' "Authenticity verified by cosign (Sigstore signature on checksums.txt)." ;;
+        checksum) printf '%s\n' "checksum only, NOT authenticity-verified: install cosign v2+ or re-run with --require-signature." ;;
+        *)        printf '%s\n' "NOT verified (no checksum or signature check ran)." ;;
+    esac
 }
 
 # --- Extract the downloaded archive into ${tmp_dir}/extracted ---
@@ -451,7 +468,8 @@ setup_path() {
 # install (checksum and Sigstore, fail closed), and compares the binary inside
 # with the installed one. The installed binary is never executed: it is the
 # file under suspicion. Exit codes: 0 verified, 1 mismatch or error, 2 cannot
-# verify (a package-manager install, which is not a release archive copy).
+# verify (a package-manager install, which is not a release archive copy, or
+# no signature verifier ran, so a match proves nothing about authenticity).
 run_verify_only() {
     installed_path=""
     if [ -x "${INSTALL_DIR}/${BINARY_NAME}" ]; then
@@ -508,7 +526,13 @@ run_verify_only() {
         error "  Got (installed):           ${actual_checksum}"
         exit 1
     fi
-    success "${installed_path} matches the signed qsdev v${VERSION} release binary."
+    # A mismatch is conclusive even against a checksum-only release, so it is
+    # checked first; a match is only meaningful if the signature was verified.
+    if [ "${VERIFIED_BY}" != cosign ]; then
+        error "cannot verify authenticity: $(verification_verdict)"
+        exit 2
+    fi
+    success "${installed_path} matches the qsdev v${VERSION} release binary (signature verified by cosign)."
 }
 
 # --- Parse arguments ---
@@ -651,6 +675,14 @@ main() {
     download_and_verify
     extract_and_install
     setup_path
+
+    if [ "${DRY_RUN}" != true ]; then
+        if [ "${VERIFIED_BY}" = cosign ]; then
+            success "$(verification_verdict)"
+        else
+            warn "$(verification_verdict)"
+        fi
+    fi
 
     printf "\n"
     success "Installation complete!"

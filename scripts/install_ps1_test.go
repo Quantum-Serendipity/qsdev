@@ -160,7 +160,8 @@ func (e *psEnv) installed() bool {
 }
 
 // TestInstallPS1 covers W188 (exact checksum match, Sigstore fail-closed,
-// arm64 fallback) and W179 (QSDEV_VERSION is not a pin) for install.ps1.
+// arm64 fallback), W179 (QSDEV_VERSION is not a pin) and TR-9 (the output
+// names the verifier that ran) for install.ps1.
 func TestInstallPS1(t *testing.T) {
 	t.Parallel()
 	tests := []struct {
@@ -172,19 +173,19 @@ func TestInstallPS1(t *testing.T) {
 		args        []string
 		wantCode    int
 		wantInstall bool
-		wantOut     string
+		wantOut     []string
 	}{
-		{"checksum matched exactly despite SBOM lines", false, "", true, nil, []string{"-Version", "1.2.3"}, 0, true, "Checksum verified"},
-		{"no cosign", false, "", false, nil, []string{"-Version", "v1.2.3"}, 0, true, "cosign not found"},
-		{"bundle missing fails closed", true, "", false, nil, []string{"-Version", "1.2.3"}, 1, false, "Sigstore bundle unavailable"},
-		{"bundle missing allowed explicitly", true, "", false, []string{"QSDEV_ALLOW_UNSIGNED=1"}, []string{"-Version", "1.2.3"}, 0, true, "WITHOUT SIGNATURE VERIFICATION"},
-		{"valid signature", true, "valid", false, nil, []string{"-Version", "1.2.3"}, 0, true, "Sigstore signature verified"},
-		{"invalid signature", true, "forged", false, nil, []string{"-Version", "1.2.3"}, 1, false, "Sigstore verification FAILED"},
-		{"signature required without cosign", false, "valid", false, nil, []string{"-Version", "1.2.3", "-RequireSignature"}, 1, false, "signature is required"},
-		{"allow-unsigned and require-signature contradict", true, "", false, nil, []string{"-Version", "1.2.3", "-AllowUnsigned", "-RequireSignature"}, 1, false, "contradict"},
-		{"arm64 falls back to x86_64", false, "", false, nil, []string{"-Version", "1.2.3", "-ForceArch", "arm64", "-DryRun"}, 0, false, winArchive},
-		{"devenv QSDEV_VERSION ignored", false, "", false, []string{"QSDEV_VERSION=v0.7.4-7-g952bd4f"}, nil, 0, true, "Ignoring QSDEV_VERSION"},
-		{"invalid pin rejected", false, "", false, []string{"QSDEV_INSTALL_VERSION=0.7.4-7+g952bd4f"}, nil, 1, false, "Invalid version"},
+		{"checksum matched exactly despite SBOM lines", false, "", true, nil, []string{"-Version", "1.2.3"}, 0, true, []string{"Checksum verified"}},
+		{"no cosign", false, "", false, nil, []string{"-Version", "v1.2.3"}, 0, true, []string{"WARNING: cosign not found", "checksum only, NOT authenticity-verified"}},
+		{"bundle missing fails closed", true, "", false, nil, []string{"-Version", "1.2.3"}, 1, false, []string{"Sigstore bundle unavailable"}},
+		{"bundle missing allowed explicitly", true, "", false, []string{"QSDEV_ALLOW_UNSIGNED=1"}, []string{"-Version", "1.2.3"}, 0, true, []string{"WITHOUT SIGNATURE VERIFICATION", "NOT authenticity-verified"}},
+		{"valid signature", true, "valid", false, nil, []string{"-Version", "1.2.3"}, 0, true, []string{"Sigstore signature verified", "Authenticity verified by cosign"}},
+		{"invalid signature", true, "forged", false, nil, []string{"-Version", "1.2.3"}, 1, false, []string{"Sigstore verification FAILED"}},
+		{"signature required without cosign", false, "valid", false, nil, []string{"-Version", "1.2.3", "-RequireSignature"}, 1, false, []string{"signature is required"}},
+		{"allow-unsigned and require-signature contradict", true, "", false, nil, []string{"-Version", "1.2.3", "-AllowUnsigned", "-RequireSignature"}, 1, false, []string{"contradict"}},
+		{"arm64 falls back to x86_64", false, "", false, nil, []string{"-Version", "1.2.3", "-ForceArch", "arm64", "-DryRun"}, 0, false, []string{winArchive}},
+		{"devenv QSDEV_VERSION ignored", false, "", false, []string{"QSDEV_VERSION=v0.7.4-7-g952bd4f"}, nil, 0, true, []string{"Ignoring QSDEV_VERSION"}},
+		{"invalid pin rejected", false, "", false, []string{"QSDEV_INSTALL_VERSION=0.7.4-7+g952bd4f"}, nil, 1, false, []string{"Invalid version"}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -197,8 +198,10 @@ func TestInstallPS1(t *testing.T) {
 			if got := e.installed(); got != tt.wantInstall {
 				t.Errorf("installed = %v, want %v\n%s", got, tt.wantInstall, out)
 			}
-			if !strings.Contains(out, tt.wantOut) {
-				t.Errorf("output lacks %q:\n%s", tt.wantOut, out)
+			for _, want := range tt.wantOut {
+				if !strings.Contains(out, want) {
+					t.Errorf("output lacks %q:\n%s", want, out)
+				}
 			}
 		})
 	}

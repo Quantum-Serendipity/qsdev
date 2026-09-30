@@ -38,7 +38,7 @@ cd your-project
 qsdev init --yes
 ```
 
-The installer checks downloads against SHA-256 checksums and, when a cosign that supports `--bundle` (v2 or later) is installed, verifies the Sigstore signature; otherwise only SHA-256 against checksums from the same release (no authenticity check), and with no checksum tool (`sha256sum` or `shasum`) it installs unverified; pass `--require-signature` to refuse instead. On Apple Silicon under Rosetta 2, it detects translation and downloads the native arm64 binary. Flags: `--verify-only` (check an existing install), `--no-verify` (skip verification), `--force-arch` (override architecture detection).
+The installer checks downloads against SHA-256 checksums and, when a cosign that supports `--bundle` (v2 or later) is installed, verifies the Sigstore signature; otherwise only SHA-256 against checksums from the same release (no authenticity check), and with no checksum tool (`sha256sum` or `shasum`) it installs unverified; pass `--require-signature` to refuse instead. The installer names which verifier ran, and `--verify-only` exits 2 when the binary matches but no signature was verified. On Apple Silicon under Rosetta 2, it detects translation and downloads the native arm64 binary. Flags: `--verify-only` (check an existing install), `--require-signature` (fail unless the signature is verified), `--no-verify` (skip verification), `--force-arch` (override architecture detection).
 
 Without `--yes`, `qsdev init` runs an interactive wizard. Set `ACCESSIBLE=1` (or run under `TERM=dumb`) to get plain line-by-line prompts that work with screen readers. `NO_COLOR` only removes color, following [no-color.org](https://no-color.org/); the wizard stays interactive.
 

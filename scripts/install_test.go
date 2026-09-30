@@ -11,6 +11,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"runtime"
 	"strings"
 	"syscall"
@@ -62,6 +63,16 @@ done
 [ "$(cat "$b")" = "valid" ] && echo "Verified OK" && exit 0
 echo "invalid signature" >&2; exit 1
 `
+
+// fakeCosignV1 is a cosign without verify-blob --bundle support.
+const fakeCosignV1 = `#!/bin/sh
+if [ "$2" = "--help" ]; then echo "  --signature string"; exit 0; fi
+echo "unexpected cosign call: $*" >&2; exit 1
+`
+
+// signedWord matches the word "signed" (not "unsigned"): only a
+// cosign-verified result may call the binary signed.
+var signedWord = regexp.MustCompile(`\bsigned\b`)
 
 // systemTools are the real binaries the installer may use.
 var systemTools = []string{
@@ -229,15 +240,18 @@ func TestInstall_Sigstore(t *testing.T) {
 		env         []string
 		wantCode    int
 		wantInstall bool
-		wantOut     string
+		wantOut     []string
 	}{
-		{"bundle missing fails closed", true, "", nil, 1, false, "Sigstore bundle unavailable"},
-		{"bundle missing allowed explicitly", true, "", []string{"QSDEV_ALLOW_UNSIGNED=1"}, 0, true, "WITHOUT SIGNATURE VERIFICATION"},
-		{"valid signature", true, "valid", nil, 0, true, "Sigstore signature verified"},
-		{"invalid signature", true, "forged", nil, 1, false, "Sigstore verification FAILED"},
-		{"no cosign", false, "", nil, 0, true, "cosign not found"},
-		{"no cosign but signature required", false, "valid", []string{"QSDEV_REQUIRE_SIGNATURE=1"}, 1, false, "signature is required"},
-		{"allow-unsigned and require-signature contradict", true, "", []string{"QSDEV_ALLOW_UNSIGNED=1", "QSDEV_REQUIRE_SIGNATURE=1"}, 1, false, "contradict"},
+		{"bundle missing fails closed", true, "", nil, 1, false, []string{"Sigstore bundle unavailable"}},
+		{"bundle missing allowed explicitly", true, "", []string{"QSDEV_ALLOW_UNSIGNED=1"}, 0, true,
+			[]string{"WITHOUT SIGNATURE VERIFICATION", "NOT authenticity-verified"}},
+		{"valid signature", true, "valid", nil, 0, true,
+			[]string{"Sigstore signature verified", "Authenticity verified by cosign"}},
+		{"invalid signature", true, "forged", nil, 1, false, []string{"Sigstore verification FAILED"}},
+		{"no cosign", false, "", nil, 0, true,
+			[]string{"Warning: cosign not found", "checksum only, NOT authenticity-verified"}},
+		{"no cosign but signature required", false, "valid", []string{"QSDEV_REQUIRE_SIGNATURE=1"}, 1, false, []string{"signature is required"}},
+		{"allow-unsigned and require-signature contradict", true, "", []string{"QSDEV_ALLOW_UNSIGNED=1", "QSDEV_REQUIRE_SIGNATURE=1"}, 1, false, []string{"contradict"}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -250,8 +264,10 @@ func TestInstall_Sigstore(t *testing.T) {
 			if got := e.installed() != nil; got != tt.wantInstall {
 				t.Errorf("installed = %v, want %v\n%s", got, tt.wantInstall, out)
 			}
-			if !strings.Contains(out, tt.wantOut) {
-				t.Errorf("output lacks %q:\n%s", tt.wantOut, out)
+			for _, want := range tt.wantOut {
+				if !strings.Contains(out, want) {
+					t.Errorf("output lacks %q:\n%s", want, out)
+				}
 			}
 		})
 	}
@@ -363,21 +379,27 @@ func TestInstall_VerifyOnly(t *testing.T) {
 		return []byte("#!/bin/sh\ntouch " + marker + "\necho 'qsdev version 1.2.3'\n")
 	}
 	tests := []struct {
-		name       string
-		tamper     bool
-		receipt    bool
-		unsigned   bool // the release's Sigstore bundle is removed
-		args       []string
-		wantCode   int
-		wantOutput string
+		name     string
+		tamper   bool
+		noRcpt   bool   // the install receipt is removed
+		unsigned bool   // the release's Sigstore bundle is removed
+		cosign   string // cosign at verify time: "" valid, "none" absent, "v1" no --bundle
+		args     []string
+		wantCode int
+		wantOut  string
+		unproven bool // the output must not call the binary signed
 	}{
-		{"genuine binary", false, true, false, nil, 0, "matches the signed qsdev v1.2.3"},
-		{"tampered binary", true, true, false, nil, 1, "does NOT match"},
-		{"no receipt and no version", false, false, false, nil, 1, "--version"},
-		{"no receipt with --version", false, false, false, []string{"--version", "1.2.3"}, 0, "matches"},
-		{"tampered, version from flag", true, false, false, []string{"--version", "1.2.3"}, 1, "does NOT match"},
-		{"unsigned release fails closed", false, true, true, nil, 1, "Sigstore bundle unavailable"},
-		{"--no-verify rejected", false, true, false, []string{"--no-verify"}, 1, "cannot be combined"},
+		{name: "genuine binary", wantOut: "signature verified by cosign"},
+		{name: "tampered binary", tamper: true, wantCode: 1, wantOut: "does NOT match"},
+		{name: "no receipt and no version", noRcpt: true, wantCode: 1, wantOut: "--version"},
+		{name: "no receipt with --version", noRcpt: true, args: []string{"--version", "1.2.3"}, wantOut: "matches"},
+		{name: "tampered, version from flag", tamper: true, noRcpt: true, args: []string{"--version", "1.2.3"}, wantCode: 1, wantOut: "does NOT match"},
+		{name: "unsigned release fails closed", unsigned: true, wantCode: 1, wantOut: "Sigstore bundle unavailable"},
+		{name: "--no-verify rejected", args: []string{"--no-verify"}, wantCode: 1, wantOut: "cannot be combined"},
+		{name: "no verifier (no cosign)", cosign: "none", wantCode: 2, wantOut: "checksum only, NOT authenticity-verified", unproven: true},
+		{name: "unsigned release with --allow-unsigned", unsigned: true, args: []string{"--allow-unsigned"}, wantCode: 2, wantOut: "cannot verify authenticity", unproven: true},
+		{name: "cosign v1 without --bundle", cosign: "v1", wantCode: 2, wantOut: "cannot verify authenticity", unproven: true},
+		{name: "tampered binary, no verifier", tamper: true, cosign: "none", wantCode: 1, wantOut: "does NOT match", unproven: true},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -392,7 +414,7 @@ func TestInstall_VerifyOnly(t *testing.T) {
 					t.Fatal(err)
 				}
 			}
-			if !tt.receipt {
+			if tt.noRcpt {
 				if err := os.Remove(filepath.Join(e.installDir, ".qsdev-version")); err != nil {
 					t.Fatal(err)
 				}
@@ -402,6 +424,14 @@ func TestInstall_VerifyOnly(t *testing.T) {
 					t.Fatal(err)
 				}
 			}
+			switch tt.cosign {
+			case "none":
+				if err := os.Remove(filepath.Join(e.pathDir, "cosign")); err != nil {
+					t.Fatal(err)
+				}
+			case "v1":
+				e.writeExec(filepath.Join(e.pathDir, "cosign"), fakeCosignV1)
+			}
 			// The GitHub API is unreachable: verification must not need it.
 			_ = os.Remove(filepath.Join(e.releaseDir, "latest.json"))
 
@@ -409,8 +439,11 @@ func TestInstall_VerifyOnly(t *testing.T) {
 			if code != tt.wantCode {
 				t.Errorf("exit %d, want %d\n%s", code, tt.wantCode, out)
 			}
-			if !strings.Contains(out, tt.wantOutput) {
-				t.Errorf("output lacks %q:\n%s", tt.wantOutput, out)
+			if !strings.Contains(out, tt.wantOut) {
+				t.Errorf("output lacks %q:\n%s", tt.wantOut, out)
+			}
+			if tt.unproven && signedWord.MatchString(out) {
+				t.Errorf("output calls an unverified binary signed:\n%s", out)
 			}
 			if _, err := os.Stat(marker); err == nil {
 				t.Error("--verify-only executed the installed binary")
@@ -421,20 +454,53 @@ func TestInstall_VerifyOnly(t *testing.T) {
 
 // TestInstall_RequireSignatureWithoutChecksumTool: with no sha256 tool the
 // archive cannot be tied to the signed checksums.txt, so --require-signature
-// must fail rather than install unverified.
+// must fail rather than install unverified, and a plain install must say
+// that nothing was verified.
 func TestInstall_RequireSignatureWithoutChecksumTool(t *testing.T) {
 	t.Parallel()
-	e := newEnv(t, true, release{version: "1.2.3", binary: genuine, bundle: "valid"})
-	for _, tool := range []string{"sha256sum", "shasum"} {
-		if err := os.Remove(filepath.Join(e.pathDir, tool)); err != nil && !errors.Is(err, os.ErrNotExist) {
-			t.Fatal(err)
-		}
+	tests := []struct {
+		name        string
+		args        []string
+		wantCode    int
+		wantInstall bool
+		wantOut     string
+	}{
+		{"signature required", []string{"--require-signature"}, 1, false, "signature cannot be checked"},
+		{"no requirement", nil, 0, true, "NOT verified (no checksum or signature check ran)"},
 	}
-	code, out := e.run([]string{"QSDEV_INSTALL_VERSION=1.2.3"}, "--require-signature")
-	if code != 1 || e.installed() != nil {
-		t.Errorf("exit %d, installed %v; want exit 1 and nothing installed\n%s", code, e.installed() != nil, out)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			e := newEnv(t, true, release{version: "1.2.3", binary: genuine, bundle: "valid"})
+			for _, tool := range []string{"sha256sum", "shasum"} {
+				if err := os.Remove(filepath.Join(e.pathDir, tool)); err != nil && !errors.Is(err, os.ErrNotExist) {
+					t.Fatal(err)
+				}
+			}
+			code, out := e.run([]string{"QSDEV_INSTALL_VERSION=1.2.3"}, tt.args...)
+			if code != tt.wantCode {
+				t.Errorf("exit %d, want %d\n%s", code, tt.wantCode, out)
+			}
+			if got := e.installed() != nil; got != tt.wantInstall {
+				t.Errorf("installed = %v, want %v\n%s", got, tt.wantInstall, out)
+			}
+			if !strings.Contains(out, tt.wantOut) {
+				t.Errorf("output lacks %q:\n%s", tt.wantOut, out)
+			}
+		})
 	}
-	if !strings.Contains(out, "signature cannot be checked") {
-		t.Errorf("output lacks the reason:\n%s", out)
+}
+
+// TestInstall_HelpVerifyOnlyExitCodes: --help documents that --verify-only
+// exits 2 when no signature verifier is available.
+func TestInstall_HelpVerifyOnlyExitCodes(t *testing.T) {
+	t.Parallel()
+	e := newEnv(t, false)
+	code, out := e.run(nil, "--help")
+	if code != 0 {
+		t.Fatalf("exit %d, want 0\n%s", code, out)
+	}
+	if !strings.Contains(out, "no signature verifier") {
+		t.Errorf("--help lacks the exit 2 reason:\n%s", out)
 	}
 }

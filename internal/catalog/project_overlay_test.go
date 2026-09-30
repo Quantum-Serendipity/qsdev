@@ -2,6 +2,7 @@ package catalog
 
 import (
 	"errors"
+	"fmt"
 	"slices"
 	"strings"
 	"testing"
@@ -413,6 +414,67 @@ tier_to_compliance:
 	for _, field := range []string{"keep_vars:", "mcp_servers:", "tier_to_compliance.full:"} {
 		if !strings.Contains(err.Error(), field) {
 			t.Errorf("error = %v, want it to name %s", err, field)
+		}
+	}
+}
+
+// A project defaults file cannot smuggle Nix code into devenv.nix through a
+// hook id: every section that names hooks only accepts plain Nix
+// identifiers, and the rejection names the project file.
+func TestProjectOverlay_RejectsHostileHookID(t *testing.T) {
+	t.Parallel()
+
+	sections := []struct {
+		name   string
+		accept []string
+		render func(id string) string
+	}{
+		{
+			name:   "security_hooks",
+			accept: []string{"ripsecrets", "check-added-large-files"},
+			render: func(id string) string { return fmt.Sprintf("security_hooks:\n  - %q\n", id) },
+		},
+		{
+			name:   "hook_tiers",
+			accept: []string{"ripsecrets", "check-added-large-files"},
+			render: func(id string) string {
+				tier := "enhanced"
+				if id == "ripsecrets" || id == "check-added-large-files" {
+					tier = "baseline" // their existing tier; a hook sits in one tier only
+				}
+				return fmt.Sprintf("hook_tiers:\n  %s:\n    - %q\n", tier, id)
+			},
+		},
+		{
+			name:   "custom_hooks",
+			accept: []string{"project-license-header"}, // built-in ids cannot be reused
+			render: func(id string) string {
+				return fmt.Sprintf("custom_hooks:\n  - id: %q\n    name: x\n    description: x\n    entry: ./check.sh\n    language: system\n    stages: [pre-commit]\n", id)
+			},
+		},
+	}
+
+	for _, sec := range sections {
+		for _, id := range hostileHookIDs {
+			t.Run(fmt.Sprintf("%s/rejects/%q", sec.name, id), func(t *testing.T) {
+				t.Parallel()
+				path := writeUnifiedFile(t, sec.render(id))
+				_, err := Load(WithProjectConfigFile(path))
+				if !errors.Is(err, ErrProjectOverlayRejected) {
+					t.Fatalf("Load() error = %v, want ErrProjectOverlayRejected", err)
+				}
+				for _, want := range []string{path + ": ", fmt.Sprintf("invalid hook id %q", id)} {
+					if !strings.Contains(err.Error(), want) {
+						t.Errorf("error = %v, want it to contain %q", err, want)
+					}
+				}
+			})
+		}
+		for _, id := range sec.accept {
+			t.Run(fmt.Sprintf("%s/accepts/%s", sec.name, id), func(t *testing.T) {
+				t.Parallel()
+				mustLoadProject(t, sec.render(id))
+			})
 		}
 	}
 }

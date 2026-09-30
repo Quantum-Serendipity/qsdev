@@ -1,6 +1,9 @@
 package defaults
 
 import (
+	"bytes"
+	"os"
+	"path/filepath"
 	"reflect"
 	"slices"
 	"strings"
@@ -155,5 +158,35 @@ func TestEditorCommand(t *testing.T) {
 				t.Errorf("editorCommand(%q) = %q %v, want %q %v", tt.env, bin, args, tt.wantBin, tt.wantArgs)
 			}
 		})
+	}
+}
+
+// `defaults validate` fails on a project defaults file whose hook id would
+// inject Nix code into devenv.nix. Not parallel: it sets the catalog's
+// process-wide project root.
+func TestValidate_RejectsHostileHookID(t *testing.T) {
+	root := t.TempDir()
+	path := catalog.ProjectConfigPath(root)
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	content := "security_hooks:\n  - 'zz.enable = true; ripsecrets.stages = [ \"manual\" ]; yy'\n"
+	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	prev := catalog.ProjectRoot()
+	catalog.SetProjectRoot(root)
+	t.Cleanup(func() { catalog.SetProjectRoot(prev) })
+
+	cmd := validateCmd()
+	var stdout, stderr bytes.Buffer
+	cmd.SetOut(&stdout)
+	cmd.SetErr(&stderr)
+	cmd.SetArgs(nil)
+	if err := cmd.Execute(); err == nil {
+		t.Fatalf("defaults validate succeeded, want error; stdout: %s", stdout.String())
+	}
+	if !strings.Contains(stderr.String(), "invalid hook id") {
+		t.Errorf("stderr = %q, want it to contain %q", stderr.String(), "invalid hook id")
 	}
 }

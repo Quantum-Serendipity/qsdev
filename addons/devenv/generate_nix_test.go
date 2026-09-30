@@ -8,12 +8,17 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"text/template"
 
 	"github.com/Quantum-Serendipity/qsdev/addons/devenv"
 	"github.com/Quantum-Serendipity/qsdev/internal/catalog"
+	"github.com/Quantum-Serendipity/qsdev/internal/tmpl"
 	"github.com/Quantum-Serendipity/qsdev/internal/validation"
 	"github.com/Quantum-Serendipity/qsdev/pkg/ecosystem"
 	"github.com/Quantum-Serendipity/qsdev/pkg/types"
+
+	// Register every ecosystem module with the DefaultRegistry.
+	_ "github.com/Quantum-Serendipity/qsdev/pkg/ecosystem/modules"
 )
 
 // newTestRegistry creates a registry and registers the given mock modules.
@@ -587,6 +592,81 @@ func TestGenerateDevenvNix_BuiltInHookRejectsBadSettingKey(t *testing.T) {
 	answers := types.WizardAnswers{Languages: []types.LanguageChoice{{Name: "go"}}}
 	if _, err := devenv.GenerateDevenvNix(answers, newTestRegistry(t, mock)); err == nil {
 		t.Fatal("expected an error for an invalid hook setting key")
+	}
+}
+
+// TestNixHookID_AcceptsEveryShippedHookID proves that routing hook ids
+// through nixHookID leaves devenv.nix byte-identical for every id qsdev
+// ships: each embedded catalog hook id and each registered module hook id
+// renders unchanged.
+func TestNixHookID_AcceptsEveryShippedHookID(t *testing.T) {
+	t.Parallel()
+	cat, err := catalog.Default()
+	if err != nil {
+		t.Fatalf("loading catalog: %v", err)
+	}
+	ids := map[string]string{}
+	add := func(source string, list ...string) {
+		for _, id := range list {
+			ids[id] = source
+		}
+	}
+	add("security_hooks", cat.SecurityHooks()...)
+	for tier, members := range cat.HookTiers() {
+		add("hook_tiers."+tier, members...)
+	}
+	for _, h := range cat.CustomHooks() {
+		add("custom_hooks", h.ID)
+	}
+	for level, def := range cat.ComplianceLevels() {
+		add("compliance."+level, def.RequiredPreCommitHooks...)
+	}
+	for _, mod := range ecosystem.DefaultRegistry().All() {
+		for _, h := range mod.PreCommitHooks(ecosystem.ModuleConfig{}) {
+			add("module "+mod.Name(), h.ID)
+		}
+	}
+	if len(ids) == 0 {
+		t.Fatal("no shipped hook ids found")
+	}
+
+	tpl := template.Must(template.New("id").Funcs(tmpl.NixFuncMap()).Parse(`{{ nixHookID . }}`))
+	for _, id := range slices.Sorted(maps.Keys(ids)) {
+		var buf strings.Builder
+		if err := tpl.Execute(&buf, id); err != nil {
+			t.Errorf("%s hook id %q rejected: %v", ids[id], id, err)
+			continue
+		}
+		if buf.String() != id {
+			t.Errorf("%s hook id %q rendered as %q", ids[id], id, buf.String())
+		}
+	}
+}
+
+// TestGenerateDevenvNix_RejectsHostileModuleHookID is the render-time
+// defense for U08-01: a module hook id that is not a plain Nix identifier
+// fails generation instead of splicing Nix into git-hooks.hooks.
+func TestGenerateDevenvNix_RejectsHostileModuleHookID(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name string
+		hook ecosystem.HookConfig
+	}{
+		{"built_in", ecosystem.HookConfig{ID: "x; y", BuiltIn: true}},
+		{"built_in_with_options", ecosystem.HookConfig{ID: "x; y", BuiltIn: true, Excludes: []string{"^vendor/"}}},
+		{"custom", ecosystem.HookConfig{ID: "x; y", Name: "x", Entry: "true", Language: "system"}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			mock := goMock()
+			mock.PreCommitHooksVal = []ecosystem.HookConfig{tt.hook}
+			answers := types.WizardAnswers{Languages: []types.LanguageChoice{{Name: "go"}}}
+			out, err := devenv.GenerateDevenvNix(answers, newTestRegistry(t, mock))
+			if err == nil || !strings.Contains(err.Error(), "invalid hook id") {
+				t.Fatalf("GenerateDevenvNix error = %v, want an 'invalid hook id' error; output:\n%+v", err, out)
+			}
+		})
 	}
 }
 

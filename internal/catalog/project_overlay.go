@@ -124,6 +124,10 @@ func setTopLevelSections(data []byte) ([]string, error) {
 //   - tier_to_compliance: a tier may move to a compliance level of equal or
 //     higher order, never a lower one.
 //
+// Every hook id the overlay names must be a plain Nix identifier (see
+// Catalog.validateHookIDs), so a committed file cannot inject Nix code into
+// devenv.nix.
+//
 // base is not modified.
 func applyProjectOverlay(base *Catalog, ov *projectOverlay) (*Catalog, []CatalogError) {
 	var errs []CatalogError
@@ -136,6 +140,8 @@ func applyProjectOverlay(base *Catalog, ov *projectOverlay) (*Catalog, []Catalog
 				strings.Join(projectOverlaySections, ", "))
 		}
 	}
+
+	errs = append(errs, ov.cat.validateHookIDs(ov.path)...)
 
 	// MergeCatalogs with an empty overlay copies base.
 	out := MergeCatalogs(base, &Catalog{})

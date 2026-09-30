@@ -6,6 +6,8 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+
+	"github.com/Quantum-Serendipity/qsdev/internal/tmpl"
 )
 
 // maxInheritanceDepth is the maximum allowed tier inheritance chain length.
@@ -37,6 +39,7 @@ func (c *Catalog) Validate() []CatalogError {
 	errs = append(errs, c.validateMCPServerRefs()...)
 	errs = append(errs, c.validatePresetRefs()...)
 	errs = append(errs, c.validateComplianceHooks()...)
+	errs = append(errs, c.validateHookIDs("defaults.yaml")...)
 	errs = append(errs, c.validateTools()...)
 
 	return errs
@@ -171,6 +174,38 @@ func (c *Catalog) validateHookTiers() []CatalogError {
 	}
 
 	return append(errs, c.validateRequiredHookTiers(tierOf)...)
+}
+
+// validateHookIDs checks that every hook id the catalog names (always-on
+// security hooks, hook tier members, custom hook ids and the hooks each
+// compliance level requires) is a plain Nix identifier. devenv.nix renders each id bare
+// as git-hooks.hooks.<id>, so any other id would splice Nix code into the
+// generated file. file names the source reported in each error.
+func (c *Catalog) validateHookIDs(file string) []CatalogError {
+	var errs []CatalogError
+	check := func(field, id string) {
+		if err := tmpl.ValidateNixIdent(id); err != nil {
+			errs = append(errs, CatalogError{file, field, fmt.Sprintf("invalid hook id %q: %v", id, err)})
+		}
+	}
+
+	for _, id := range c.security.Hooks.Default {
+		check(sectionSecurityHooks, id)
+	}
+	for _, tier := range slices.Sorted(maps.Keys(c.hookTiers.Tiers)) {
+		for _, id := range c.hookTiers.Tiers[tier] {
+			check(sectionHookTiers+"."+tier, id)
+		}
+	}
+	for i, h := range c.security.CustomHooks {
+		check(fmt.Sprintf("%s[%d].id", sectionCustomHooks, i), h.ID)
+	}
+	for _, level := range slices.Sorted(maps.Keys(c.compliance.Levels)) {
+		for _, id := range c.compliance.Levels[level].RequiredPreCommitHooks {
+			check("compliance."+level+".required_pre_commit_hooks", id)
+		}
+	}
+	return errs
 }
 
 // validateRequiredHookTiers rejects a hook tier layout that would tier a

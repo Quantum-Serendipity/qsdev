@@ -108,6 +108,124 @@ func TestNixFuncMap_TemplateFailsOnInjectedPackage(t *testing.T) {
 	}
 }
 
+// nixHookIDPayloads are hook ids that would splice extra attributes into
+// devenv.nix if rendered as git-hooks.hooks.<id>.
+var nixHookIDPayloads = []string{
+	`zz.enable = true; ripsecrets.stages = [ "manual" ]; yy`,
+	`evil = { enable = false; }; x`,
+}
+
+func TestValidateNixIdent(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name    string
+		input   string
+		wantErr bool
+	}{
+		{"plain", "ripsecrets", false},
+		{"hyphens", "check-added-large-files", false},
+		{"digits_and_hyphen", "nixpkgs-fmt", false},
+		{"lint", "golangci-lint", false},
+		{"underscore_and_quote", "_a'b", false},
+		{"empty", "", true},
+		{"dotted", "a.b", true},
+		{"space", "a b", true},
+		{"leading_digit", "1abc", true},
+		{"keyword_with", "with", true},
+		{"keyword_in", "in", true},
+		{"keyword_or", "or", true},
+		{"keyword_inherit", "inherit", true},
+		{"newline", "a\nb", true},
+		{"injection_security_hooks", nixHookIDPayloads[0], true},
+		{"injection_attrset", nixHookIDPayloads[1], true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			err := ValidateNixIdent(tt.input)
+			if (err != nil) != tt.wantErr {
+				t.Fatalf("ValidateNixIdent(%q) error = %v, wantErr %v", tt.input, err, tt.wantErr)
+			}
+		})
+	}
+}
+
+func TestNixHookID(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name    string
+		input   string
+		wantErr bool
+	}{
+		{"plain", "ripsecrets", false},
+		{"hyphens", "check-added-large-files", false},
+		{"keyword_with", "with", true},
+		{"dotted", "a.b", true},
+		{"empty", "", true},
+		{"space", "a b", true},
+		{"leading_digit", "1abc", true},
+		{"injection_security_hooks", nixHookIDPayloads[0], true},
+		{"injection_attrset", nixHookIDPayloads[1], true},
+	}
+	tpl := template.Must(template.New("t").Funcs(NixFuncMap()).Parse(`{{ nixHookID . }}.enable = true;`))
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			var buf strings.Builder
+			err := tpl.Execute(&buf, tt.input)
+			if !tt.wantErr {
+				if err != nil {
+					t.Fatalf("nixHookID(%q) error = %v, want nil", tt.input, err)
+				}
+				if want := tt.input + ".enable = true;"; buf.String() != want {
+					t.Fatalf("nixHookID(%q) rendered %q, want %q", tt.input, buf.String(), want)
+				}
+				return
+			}
+			if err == nil || !strings.Contains(err.Error(), "invalid hook id") {
+				t.Fatalf("nixHookID(%q) error = %v, want it to contain %q", tt.input, err, "invalid hook id")
+			}
+			if tt.input != "" && strings.Contains(buf.String(), tt.input) {
+				t.Errorf("rejected hook id reached output: %q", buf.String())
+			}
+		})
+	}
+}
+
+func TestValidateNixAttrPath(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name    string
+		input   string
+		wantErr string
+	}{
+		{"single", "jq", ""},
+		{"dotted", "python312Packages.pip", ""},
+		{"keyword_segment", "pkgs.with", `"with" is a Nix keyword`},
+		{"keyword_whole", "let", `"let" is a Nix keyword`},
+		{"leading_dot", ".leading", "must be dot-separated identifiers"},
+		{"injection", `hello ]; x = [ pkgs.hello`, "must be dot-separated identifiers"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			err := ValidateNixAttrPath(tt.input)
+			if tt.wantErr == "" {
+				if err != nil {
+					t.Fatalf("ValidateNixAttrPath(%q) error = %v, want nil", tt.input, err)
+				}
+				return
+			}
+			if err == nil || !strings.Contains(err.Error(), tt.wantErr) {
+				t.Fatalf("ValidateNixAttrPath(%q) error = %v, want it to contain %q", tt.input, err, tt.wantErr)
+			}
+		})
+	}
+}
+
 func TestNixAttrName(t *testing.T) {
 	tests := []struct {
 		name  string

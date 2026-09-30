@@ -7,6 +7,11 @@ import (
 	"slices"
 )
 
+// MinHookPython is the oldest python3 ("major.minor") the generated Python
+// hooks support (D20). Each hook script blocks (exit 2) below it; the
+// scripts' in-file `_MIN_PYTHON` tuples are pinned to it by tests.
+const MinHookPython = "3.9"
+
 // ErrUnknownHook reports a hook name that has no HookChoices field.
 var ErrUnknownHook = errors.New("unknown hook")
 

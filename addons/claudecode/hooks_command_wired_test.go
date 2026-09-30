@@ -25,7 +25,7 @@ func TestHookWired_MatchesGeneratedWiring(t *testing.T) {
 			if def.EnabledFunc != nil && !def.EnabledFunc(answers) {
 				continue
 			}
-			if !hookWired(def, def.commandFor(answers), deployed[def.Event]) {
+			if !hookWired(def, answers, deployed[def.Event]) {
 				t.Errorf("sandbox=%v: %s (%s) generated but not recognized as wired", sandbox, def.Owner, def.Command)
 			}
 		}
@@ -33,7 +33,7 @@ func TestHookWired_MatchesGeneratedWiring(t *testing.T) {
 
 	def := defaultHookRegistry().Definitions()[1]
 	foreign := []HookMatcher{{Matcher: def.Matcher, Hooks: []HookEntry{{Type: "command", Command: "true -- " + def.Command}}}}
-	if hookWired(def, def.Command, foreign) {
+	if hookWired(def, types.WizardAnswers{}, foreign) {
 		t.Errorf("a foreign wrapper around %s must not count as wired", def.Command)
 	}
 }

@@ -8,6 +8,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"text/tabwriter"
 
@@ -172,7 +173,7 @@ func applyDeployment(statuses []HookStatus, registry *HookRegistry, answers type
 		expected[filepath.ToSlash(f.Path)] = f.Content
 	}
 	for i, def := range registry.Definitions() {
-		if !hookWired(def, def.commandFor(answers), deployed[def.Event]) {
+		if !hookWired(def, answers, deployed[def.Event]) {
 			statuses[i].Deployment = deployStatusNotDeployed
 			continue
 		}
@@ -180,18 +181,22 @@ func applyDeployment(statuses []HookStatus, registry *HookRegistry, answers type
 	}
 }
 
-// hookWired reports whether def's emitted command (command, as generation
-// writes it for the current answers) is wired under its matcher, either
-// directly or exactly as the sandbox wraps it. Any other wrapper may not run
-// the hook as generated, so it does not count as deployed.
-func hookWired(def HookDefinition, command string, matchers []HookMatcher) bool {
-	sandboxed := sandboxHookCommand(branding.Get().AppName, def.SandboxCategory, command)
+// hookWired reports whether def is wired under its matcher exactly as
+// generation emits it for answers, with the sandbox either off or on. Any
+// other wrapper may not run the hook as generated, so it does not count as
+// deployed.
+func hookWired(def HookDefinition, answers types.WizardAnswers, matchers []HookMatcher) bool {
+	app := branding.Get().AppName
+	plain, sandboxed := answers, answers
+	plain.Hooks.SandboxEnabled = false
+	sandboxed.Hooks.SandboxEnabled = true
+	want := []string{def.emittedCommand(plain, app), def.emittedCommand(sandboxed, app)}
 	for _, m := range matchers {
 		if m.Matcher != def.Matcher {
 			continue
 		}
 		for _, h := range m.Hooks {
-			if h.Command == command || h.Command == sandboxed {
+			if slices.Contains(want, h.Command) {
 				return true
 			}
 		}

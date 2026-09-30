@@ -32,6 +32,9 @@ type HookDefinition struct {
 	// PolicyKey names the .qsdev.yaml key that sets the policy.
 	HasPolicy func(types.WizardAnswers) bool
 	PolicyKey string
+	// FailClosed marks a security hook whose failure to run must block the
+	// tool call: its emitted command is wrapped by failClosedCommand.
+	FailClosed bool
 }
 
 // lacksPolicy reports whether the hook is enabled by answers but has no
@@ -47,6 +50,35 @@ func (h HookDefinition) commandFor(answers types.WizardAnswers) string {
 		return h.CommandFunc(answers)
 	}
 	return h.Command
+}
+
+// emittedCommand returns the command written into settings.json for answers:
+// commandFor, then the sandbox prefix when the sandbox is enabled, then the
+// fail-closed wrapper, which is therefore always outermost. app is the branded
+// binary the sandbox prefix invokes.
+func (h HookDefinition) emittedCommand(answers types.WizardAnswers, app string) string {
+	cmd := h.commandFor(answers)
+	if answers.Hooks.SandboxEnabled {
+		cmd = sandboxHookCommand(app, h.SandboxCategory, cmd)
+	}
+	if h.FailClosed {
+		cmd = failClosedCommand(h.Owner, cmd)
+	}
+	return cmd
+}
+
+// failClosedCommand wraps a hook command so that any exit other than 0 or 2
+// becomes 2, a block. Claude Code treats every other code (1 for a crash, 126
+// or 127 for a missing interpreter or binary) as a non-blocking error, which
+// would let the tool call through unchecked. Exit 0 passes through with its
+// stdout, and exit 2 keeps the hook's own stderr reason. The wrapper uses only
+// POSIX sh: settings.json is shared across the team's OSes, and Claude Code
+// runs hooks through sh (Git Bash on Windows). cmd must be one simple command:
+// the exit status of a list or pipeline is only its last part's, so an
+// earlier part's failure could not be caught here.
+func failClosedCommand(owner, cmd string) string {
+	return cmd + ` || { rc=$?; [ "$rc" -eq 2 ] || echo "qsdev: ` + owner +
+		` hook could not run (exit $rc: interpreter/binary missing or crashed); blocking" >&2; exit 2; }`
 }
 
 // HookRegistry collects hook definitions and produces the hooks map for
@@ -81,7 +113,7 @@ func (r *HookRegistry) HooksForEvent(event string, answers types.WizardAnswers) 
 			Matcher: h.Matcher,
 			Hooks: []HookEntry{{
 				Type:          "command",
-				Command:       h.commandFor(answers),
+				Command:       h.emittedCommand(answers, branding.Get().AppName),
 				Timeout:       h.Timeout,
 				StatusMessage: h.StatusMessage,
 			}},
@@ -163,6 +195,7 @@ func defaultHookRegistry() *HookRegistry {
 		Timeout:       10,
 		StatusMessage: "Checking self-protection rules...",
 		EnabledFunc:   func(a types.WizardAnswers) bool { return a.Hooks.SelfProtection },
+		FailClosed:    true,
 	})
 
 	guardCmd := `"${CLAUDE_PROJECT_DIR}"/.claude/hooks/package-guard.py`
@@ -176,6 +209,7 @@ func defaultHookRegistry() *HookRegistry {
 		StatusMessage:   "Checking package install safety...",
 		SandboxCategory: "linter",
 		EnabledFunc:     func(a types.WizardAnswers) bool { return a.Hooks.SafetyBlock },
+		FailClosed:      true,
 	})
 
 	r.Register(HookDefinition{
@@ -187,6 +221,7 @@ func defaultHookRegistry() *HookRegistry {
 		StatusMessage:   "Scanning for credentials...",
 		SandboxCategory: "linter",
 		EnabledFunc:     func(a types.WizardAnswers) bool { return a.Hooks.CredentialScan },
+		FailClosed:      true,
 	})
 
 	r.Register(HookDefinition{
@@ -194,10 +229,11 @@ func defaultHookRegistry() *HookRegistry {
 		Event:           "PreToolUse",
 		Matcher:         shellToolMatcher,
 		Command:         `"${CLAUDE_PROJECT_DIR}"/.claude/hooks/block-destructive.py`,
-		Timeout:         5,
+		Timeout:         10,
 		StatusMessage:   "Checking command safety...",
 		SandboxCategory: "linter",
 		EnabledFunc:     func(a types.WizardAnswers) bool { return a.Hooks.DestructivePrevention },
+		FailClosed:      true,
 	})
 
 	r.Register(HookDefinition{
@@ -205,10 +241,11 @@ func defaultHookRegistry() *HookRegistry {
 		Event:           "PreToolUse",
 		Matcher:         "Write|Edit|MultiEdit|NotebookEdit|Read|Grep|Glob",
 		Command:         `"${CLAUDE_PROJECT_DIR}"/.claude/hooks/file-boundary.py`,
-		Timeout:         5,
+		Timeout:         10,
 		StatusMessage:   "Checking file boundary...",
 		SandboxCategory: "linter",
 		EnabledFunc:     func(a types.WizardAnswers) bool { return a.Hooks.FileBoundary },
+		FailClosed:      true,
 	})
 
 	r.Register(HookDefinition{
@@ -216,12 +253,13 @@ func defaultHookRegistry() *HookRegistry {
 		Event:           "PreToolUse",
 		Matcher:         "*",
 		Command:         `"${CLAUDE_PROJECT_DIR}"/.claude/hooks/tool-gates.py`,
-		Timeout:         3,
+		Timeout:         10,
 		StatusMessage:   "Checking tool policy...",
 		SandboxCategory: "linter",
 		EnabledFunc:     func(a types.WizardAnswers) bool { return a.Hooks.ToolGates },
 		HasPolicy:       func(a types.WizardAnswers) bool { return a.HookPolicy.ToolGates.HasPolicy() },
 		PolicyKey:       "hooks.tool_gates",
+		FailClosed:      true,
 	})
 
 	soc2Cmd := `"${CLAUDE_PROJECT_DIR}"/.claude/hooks/soc2-audit-log.py`
@@ -323,9 +361,10 @@ func defaultHookRegistry() *HookRegistry {
 		Event:         "PreToolUse",
 		Matcher:       "*",
 		Command:       enforceApp + " enforce --hook PreToolUse",
-		Timeout:       5,
+		Timeout:       10,
 		StatusMessage: "Evaluating security policy...",
 		EnabledFunc:   func(a types.WizardAnswers) bool { return a.Hooks.SecurityEnforcement },
+		FailClosed:    true,
 	})
 
 	r.Register(HookDefinition{

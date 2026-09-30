@@ -611,7 +611,7 @@ func TestGenerateSettings_HooksSection(t *testing.T) {
 	if hook.Type != "command" {
 		t.Errorf("hook type should be 'command', got %q", hook.Type)
 	}
-	if hook.Command != `"${CLAUDE_PROJECT_DIR}"/.claude/hooks/package-guard.py` {
+	if want := claudecode.ExportFailClosedCommand("package-guard", `"${CLAUDE_PROJECT_DIR}"/.claude/hooks/package-guard.py`); hook.Command != want {
 		t.Errorf("hook command wrong: %q", hook.Command)
 	}
 	if hook.Timeout != 30 {

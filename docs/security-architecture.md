@@ -456,6 +456,8 @@ in your home or cache directories are not confined to the project.
 
 The self-protection layer (Layer 14) runs as the first PreToolUse hook. It evaluates before package-guard, credential-scan, and all other hooks. Guardrail-tampering attempts are blocked before any other hook logic executes.
 
+The security hooks fail closed. They are self-protection, package-guard, credential-scan, destructive-prevention, file-boundary, tool-gates and `qsdev enforce`. Each needs `python3` 3.9 or newer and `qsdev` on the `PATH` that Claude Code runs hooks with. A hook that cannot start (missing interpreter or binary), crashes, or runs on an older Python blocks every tool call it matches, with the reason on stderr, rather than letting the call through. Each Python hook also stops itself 2 seconds before its registered timeout and blocks the call, because Claude Code lets a call through when a hook times out. `qsdev devenv doctor` warns when `python3` is older than 3.9. A blocked call whose reason says "could not run" means `python3` or `qsdev` is missing.
+
 Hooks run inside a sandboxed environment that restricts filesystem access, network, and syscalls. The sandbox degrades gracefully based on available kernel features:
 
 | Tier | Isolation | Requires |

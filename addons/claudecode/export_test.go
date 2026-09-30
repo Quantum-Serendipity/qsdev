@@ -4,6 +4,7 @@ import (
 	"slices"
 
 	"github.com/Quantum-Serendipity/qsdev/internal/validation"
+	"github.com/Quantum-Serendipity/qsdev/pkg/types"
 )
 
 // ExportMCPServerConfig re-exports MCPServerConfig for convenience in tests.
@@ -100,8 +101,14 @@ var (
 	ExportHooksCmd            = hooksCmd
 	ExportTemplateFS          = templateFS
 	ExportGenerateHookFiles   = GenerateHookFiles
-	ExportWrapHooksForSandbox = wrapHooksForSandbox
+	ExportFailClosedCommand   = failClosedCommand
+	ExportBuildHooks          = buildHooks
 )
+
+// ExportEmittedCommand exposes HookDefinition.emittedCommand for external tests.
+func ExportEmittedCommand(h HookDefinition, answers types.WizardAnswers, app string) string {
+	return h.emittedCommand(answers, app)
+}
 
 var ExportIsTemplateTestFixture = isTemplateTestFixture
 

@@ -66,17 +66,49 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import NamedTuple, Optional
 
-# Oldest interpreter the guard supports. Below it, block (exit 2) with a clear
-# message instead of crashing with exit 1, which Claude Code treats as a
-# non-blocking error (the install would proceed unguarded). The module must
-# still COMPILE on older interpreters for this check to run: no `from
-# __future__ import annotations` (a SyntaxError on 3.6) and no subscripted
-# builtins (`list[str]`) in evaluated annotations.
-_MIN_PYTHON = (3, 8)
+# U17-WS7: moves to qsdev_hooklib
+# Oldest interpreter the guard supports (Go: types.MinHookPython). Below it,
+# block (exit 2) with a clear message instead of crashing with exit 1, which
+# Claude Code treats as a non-blocking error (the install would proceed
+# unguarded). The module must still COMPILE on older interpreters for this
+# check to run: no `from __future__ import annotations` (a SyntaxError on 3.6)
+# and no subscripted builtins (`list[str]`) in evaluated annotations.
+_MIN_PYTHON = (3, 9)
 if sys.version_info < _MIN_PYTHON:
     print(f"package-guard requires Python {'.'.join(map(str, _MIN_PYTHON))}+ "
           f"(found {sys.version.split()[0]}); blocking to fail closed.", file=sys.stderr)
     sys.exit(2)
+
+# U17-WS7: moves to qsdev_hooklib
+# Internal deadline: the hook's registered settings.json timeout minus 2s.
+# Claude Code lets the tool call through when a hook times out, so the
+# watchdog blocks first. QSDEV_HOOK_DEADLINE_MS can only shorten it. Known
+# limit: a C-level regex match that holds the GIL cannot be interrupted by
+# any in-process watchdog.
+_HOOK_DEADLINE_S = 28
+
+
+def _deadline_seconds() -> float:
+    """The effective deadline: _HOOK_DEADLINE_S, or QSDEV_HOOK_DEADLINE_MS
+    when that is shorter."""
+    try:
+        return min(float(_HOOK_DEADLINE_S), int(os.environ.get("QSDEV_HOOK_DEADLINE_MS", "")) / 1000)
+    except ValueError:
+        return float(_HOOK_DEADLINE_S)
+
+
+def _arm_deadline() -> None:
+    """Start a daemon watchdog that blocks (exit 2) once the deadline passes."""
+    seconds = _deadline_seconds()
+
+    def expire() -> None:
+        sys.stderr.write(f"package-guard: evaluation exceeded {seconds:g}s deadline; blocking (fail closed)\n")
+        sys.stderr.flush()
+        os._exit(2)
+
+    timer = threading.Timer(seconds, expire)
+    timer.daemon = True
+    timer.start()
 
 # ---------------------------------------------------------------------------
 # Configuration (environment variable overrides)
@@ -3960,6 +3992,7 @@ def _fixed_denials(d: Detection) -> list:
 
 def main() -> None:
     global _deadline
+    _arm_deadline()
     start_time = time.monotonic()
 
     # 1. Read JSON from stdin.

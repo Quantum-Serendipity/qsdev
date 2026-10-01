@@ -243,7 +243,9 @@ func checkLocalOverride(projectRoot string, project claudesettings.Settings, exp
 
 // checkHookPrograms reports registered hook commands whose program is a bare
 // name that does not resolve on PATH: the shell exits 127, which Claude Code
-// treats as a non-blocking error, so the hook fails open. Paths and command
+// treats as a non-blocking error, so an unwrapped hook fails open, and a
+// generated fail-closed wrapper turns it into a block on every matching tool
+// call. Either way the hook never evaluates anything. Paths and command
 // words built from an expansion are skipped (project scripts are covered by
 // checkHookScripts); the program is only looked up, never run.
 func checkHookPrograms(actual claudesettings.Settings, lookPath func(string) (string, error)) []CheckResult {
@@ -263,7 +265,7 @@ func checkHookPrograms(actual claudesettings.Settings, lookPath func(string) (st
 					severity = SeverityCritical
 				}
 				r := postureResult("claude_hook_unresolvable", StatusFail, severity,
-					fmt.Sprintf("%s hook %q runs %s, which is not on PATH: the hook exits 127 and Claude Code does not block on it", event, h.Command, program),
+					fmt.Sprintf("%s hook %q runs %s, which is not on PATH, so the hook cannot run: unwrapped it exits 127 and Claude Code lets the call through; wrapped fail-closed it blocks every matching call", event, h.Command, program),
 					fmt.Sprintf("Install %s on PATH or run 'qsdev init --update' to regenerate the hook", program))
 				r.Metadata = map[string]string{"event": event, "program": program}
 				results = append(results, r)

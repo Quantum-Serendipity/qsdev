@@ -371,23 +371,27 @@ func gradeAtMost(grade, worst string) bool {
 }
 
 // TestAssess_GuttedGuard is the K1/K2 regression test: an emptied guard, or
-// hooks switched off in settings.local.json, leaves every layer the guard
-// provides disabled, and the gutted project no longer grades well.
+// hooks switched off in settings.local.json or the user settings.json, leaves
+// every layer the guard provides disabled, and the gutted project no longer
+// grades well.
 func TestAssess_GuttedGuard(t *testing.T) {
 	t.Parallel()
 	tests := []struct {
 		name      string
 		disk      map[string]string
+		user      string // written as the user settings.json after the pristine run
 		wantGrade string // worst acceptable grade; "" skips the grade check
 	}{
 		{name: "K1 emptied guard", disk: map[string]string{packageGuardPath: ""}, wantGrade: "C"},
 		{name: "K2 hooks disabled locally", disk: map[string]string{".claude/settings.local.json": `{"disableAllHooks":true}`}},
+		{name: "K2 hooks disabled for the user", user: `{"disableAllHooks":true}`},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 			dir := writeT1GuardedProject(t)
-			pristine, err := Assess(dir, AssessOptions{})
+			opts := AssessOptions{ClaudeUserDir: t.TempDir()}
+			pristine, err := Assess(dir, opts)
 			if err != nil {
 				t.Fatalf("Assess: %v", err)
 			}
@@ -400,7 +404,10 @@ func TestAssess_GuttedGuard(t *testing.T) {
 			for rel, content := range tt.disk {
 				writeFile(t, dir, rel, content)
 			}
-			report, err := Assess(dir, AssessOptions{})
+			if tt.user != "" {
+				writeFile(t, opts.ClaudeUserDir, "settings.json", tt.user)
+			}
+			report, err := Assess(dir, opts)
 			if err != nil {
 				t.Fatalf("Assess: %v", err)
 			}

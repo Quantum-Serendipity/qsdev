@@ -14,6 +14,7 @@ import (
 	"github.com/Quantum-Serendipity/qsdev/internal/posture"
 	"github.com/Quantum-Serendipity/qsdev/internal/posture/conformance"
 	"github.com/Quantum-Serendipity/qsdev/internal/posture/render"
+	"github.com/Quantum-Serendipity/qsdev/internal/selfprotect/canon"
 	"github.com/Quantum-Serendipity/qsdev/pkg/branding"
 )
 
@@ -159,7 +160,7 @@ func runPostureStatus(cmd *cobra.Command, args []string, opts postureStatusOptio
 	}
 
 	// Perform assessment.
-	report, err := posture.Assess(projectDir, posture.AssessOptions{FreshScan: opts.scan})
+	report, err := posture.Assess(projectDir, posture.AssessOptions{FreshScan: opts.scan, ClaudeUserDir: claudeUserDir()})
 	if err != nil {
 		if errors.Is(err, posture.ErrNotInitialized) {
 			fmt.Fprintf(cmd.ErrOrStderr(), "Project not initialized. Run '%s init' first.\n", branding.Get().AppName)
@@ -280,4 +281,16 @@ func exitForAudit(report *posture.PostureReport, auditLevel string) error {
 		}
 	}
 	return nil
+}
+
+// claudeUserDir returns the user Claude settings directory, whose
+// disableAllHooks Claude Code honours for every project, or "" when it cannot
+// be located (the judgement then covers the project files alone).
+func claudeUserDir() string {
+	dir, err := canon.ClaudeConfigDir()
+	if err != nil {
+		slog.Debug("user Claude settings not judged", "error", err)
+		return ""
+	}
+	return dir
 }

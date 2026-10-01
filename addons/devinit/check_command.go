@@ -82,6 +82,7 @@ func runCheck(cmd *cobra.Command, format check.OutputFormat, auditLevel check.Au
 		ProbeTool: func(binary, versionArg string) toolcheck.Info {
 			return toolcheck.Detect(cmd.Context(), binary, versionArg)
 		},
+		ClaudeUserDir: claudeUserDir(),
 	}
 
 	// Parse config if present. The error travels in the context so the report

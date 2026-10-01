@@ -9,17 +9,33 @@ import (
 	"path/filepath"
 )
 
+// UserLabel names the user settings file in Sources and messages.
+const UserLabel = "~/.claude/settings.json"
+
+// userSettingsFile is the name of the user settings file in UserDir.
+const userSettingsFile = "settings.json"
+
 // Effective is the settings view Claude Code runs a project with: the
-// committed file overlaid by the local one.
+// committed file overlaid by the local one, and, when read with
+// ReadOptions.UserDir, the user file beneath both.
 type Effective struct {
 	// Settings is the merged view.
 	Settings
-	// Project and Local are the parsed files, nil when the file is absent.
-	Project, Local *Settings
+	// User, Project and Local are the parsed files, nil when the file is
+	// absent or (User) not read.
+	User, Project, Local *Settings
 	// Sources maps KeyDisableAllHooks, KeyDefaultMode and
-	// KeyDisableBypassPermissionsMode to the RelPath of every file whose
-	// value is in effect, in read order.
+	// KeyDisableBypassPermissionsMode to the RelPath (UserLabel for the user
+	// file) of every file whose value is in effect, in read order.
 	Sources map[string][]string
+}
+
+// ReadOptions selects the settings files ReadWith reads beyond the project's.
+type ReadOptions struct {
+	// UserDir is the Claude Code user configuration directory holding the
+	// user settings.json (canon.ClaudeConfigDir); empty skips it, so the
+	// result does not depend on the machine.
+	UserDir string
 }
 
 // Read returns the effective settings of the project at projectRoot. It
@@ -34,6 +50,13 @@ type Effective struct {
 // An empty projectRoot yields an empty view. User and managed settings are
 // not read, so the result does not depend on the machine.
 func Read(projectRoot string) (Effective, error) {
+	return ReadWith(projectRoot, ReadOptions{})
+}
+
+// ReadWith is Read that also reads the files opts selects. The user file is
+// read first, beneath the project files, with the same merge; managed
+// settings are never read. An empty projectRoot still yields an empty view.
+func ReadWith(projectRoot string, opts ReadOptions) (Effective, error) {
 	e := Effective{
 		Settings: Settings{Hooks: map[string][]Matcher{}, Env: map[string]string{}},
 		Sources:  map[string][]string{},
@@ -41,8 +64,18 @@ func Read(projectRoot string) (Effective, error) {
 	if projectRoot == "" {
 		return e, nil
 	}
+	if opts.UserDir != "" {
+		u, err := readFile(filepath.Join(opts.UserDir, userSettingsFile), UserLabel)
+		if err != nil {
+			return Effective{}, err
+		}
+		if u != nil {
+			e.User = u
+			e.overlay(UserLabel, *u)
+		}
+	}
 	for _, rel := range []string{ProjectRelPath, LocalRelPath} {
-		s, err := readFile(projectRoot, rel)
+		s, err := readFile(filepath.Join(projectRoot, filepath.FromSlash(rel)), rel)
 		if err != nil {
 			return Effective{}, err
 		}
@@ -59,19 +92,19 @@ func Read(projectRoot string) (Effective, error) {
 	return e, nil
 }
 
-// readFile parses the settings file rel under root; it returns nil when the
-// file does not exist.
-func readFile(root, rel string) (*Settings, error) {
-	data, err := os.ReadFile(filepath.Join(root, filepath.FromSlash(rel)))
+// readFile parses the settings file at path, named label in errors; it
+// returns nil when the file does not exist.
+func readFile(path, label string) (*Settings, error) {
+	data, err := os.ReadFile(path)
 	if errors.Is(err, fs.ErrNotExist) {
 		return nil, nil
 	}
 	if err != nil {
-		return nil, fmt.Errorf("reading %s: %w", rel, err)
+		return nil, fmt.Errorf("reading %s: %w", label, err)
 	}
 	s, err := Parse(data)
 	if err != nil {
-		return nil, fmt.Errorf("%s: %w", rel, err)
+		return nil, fmt.Errorf("%s: %w", label, err)
 	}
 	return &s, nil
 }

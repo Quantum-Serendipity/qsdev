@@ -1,6 +1,7 @@
 package check
 
 import (
+	"cmp"
 	"encoding/json"
 	"os"
 	"os/exec"
@@ -34,9 +35,11 @@ func TestCheckClaudeSettingsPosture(t *testing.T) {
 		actual   string
 		expected string
 		local    string // .claude/settings.local.json; absent when empty
+		user     string // the user settings.json; absent when empty
 		noScript bool
-		wantFail []string // failing result names, sorted
-		wantWarn []string // warning result names, sorted
+		wantFail []string      // failing result names, sorted
+		failSev  CheckSeverity // severity of every failure; high when empty
+		wantWarn []string      // warning result names, sorted
 	}{
 		{name: "intact", actual: generatedSettings, expected: generatedSettings},
 		{
@@ -73,6 +76,7 @@ func TestCheckClaudeSettingsPosture(t *testing.T) {
 			actual:   strings.Replace(generatedSettings, `"hooks": {`, `"disableAllHooks": true, "hooks": {`, 1),
 			expected: generatedSettings,
 			wantFail: []string{"claude_all_hooks_disabled"},
+			failSev:  SeverityCritical,
 		},
 		{
 			name:     "guard narrowed by an if condition",
@@ -131,6 +135,30 @@ func TestCheckClaudeSettingsPosture(t *testing.T) {
 			expected: generatedSettings,
 			local:    `{"disableAllHooks": true}`,
 			wantFail: []string{"claude_settings_local_override"},
+			failSev:  SeverityCritical,
+		},
+		{
+			// Claude Code honours a user-level disableAllHooks for every
+			// project, so it switches the guards off just as a local one does.
+			name:     "user disableAllHooks",
+			actual:   generatedSettings,
+			expected: generatedSettings,
+			user:     `{"disableAllHooks": true}`,
+			wantFail: []string{"claude_settings_user_override"},
+			failSev:  SeverityCritical,
+		},
+		{
+			name:     "user settings without override",
+			actual:   generatedSettings,
+			expected: generatedSettings,
+			user:     `{"permissions": {"allow": ["Bash(ls)"]}}`,
+		},
+		{
+			name:     "user parse error",
+			actual:   generatedSettings,
+			expected: generatedSettings,
+			user:     `{"disableAllHooks": `,
+			wantFail: []string{"claude_settings_parse"},
 		},
 		{
 			name:     "local bypassPermissions",
@@ -186,19 +214,25 @@ func TestCheckClaudeSettingsPosture(t *testing.T) {
 			if tt.local != "" {
 				writeTestFile(t, dir, claudesettings.LocalRelPath, tt.local)
 			}
+			userDir := t.TempDir()
+			if tt.user != "" {
+				writeTestFile(t, userDir, "settings.json", tt.user)
+			}
+			wantSev := cmp.Or(tt.failSev, SeverityHigh)
 
 			results := CheckClaudeSettingsPosture(CheckContext{
 				ProjectRoot:            dir,
 				ExpectedClaudeSettings: []byte(tt.expected),
 				LookPath:               lookPathFound,
+				ClaudeUserDir:          userDir,
 			})
 			var failed, warned []string
 			passed := false
 			for _, r := range results {
 				switch r.Status {
 				case StatusFail:
-					if r.Severity != SeverityHigh {
-						t.Errorf("%s severity = %s, want high", r.Name, r.Severity)
+					if r.Severity != wantSev {
+						t.Errorf("%s severity = %s, want %s", r.Name, r.Severity, wantSev)
 					}
 					failed = append(failed, r.Name)
 				case StatusWarn:

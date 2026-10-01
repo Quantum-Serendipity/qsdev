@@ -198,6 +198,10 @@ type CheckContext struct {
 	// LookPath resolves a hook's bare command word on PATH; nil uses
 	// toolcheck.LookPath.
 	LookPath func(file string) (string, error)
+	// ClaudeUserDir is the user Claude settings directory
+	// (canon.ClaudeConfigDir) whose settings.json is judged as a
+	// per-machine override; empty skips it.
+	ClaudeUserDir string
 }
 
 // CustomConformance carries the evaluated requirements of a project's custom

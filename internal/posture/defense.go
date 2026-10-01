@@ -95,6 +95,8 @@ type assessmentInput struct {
 	claudeSettings func() (claudesettings.Effective, error)
 	// guardOnce returns the package guard's state, judged once on first use.
 	guardOnce func() guardState
+	// userSettingsRead records that claudeSettings includes the user file.
+	userSettingsRead bool
 }
 
 // guardState is whether the package guard is in force, and why.
@@ -137,8 +139,8 @@ func (in assessmentInput) guard() guardState {
 
 // judgeGuard judges the package guard from the effective Claude settings, the
 // enabled tools and the guard script on disk. The first check that fails
-// decides; the guard is in force only when none does. User and managed
-// settings are not read (see claudesettings.Read).
+// decides; the guard is in force only when none does. Managed settings are
+// never read, user settings only when the assessment was asked to.
 func (in assessmentInput) judgeGuard() guardState {
 	disabled := func(reason string) guardState { return guardState{Status: LayerDisabled, Reason: reason} }
 	settings, err := in.settings()
@@ -161,8 +163,12 @@ func (in assessmentInput) judgeGuard() guardState {
 			"(not async, timeout at least %ds) in %s or %s",
 			claudesettings.GuardHookTimeout, claudesettings.ProjectRelPath, claudesettings.LocalRelPath))
 	}
+	unread := "user/managed"
+	if in.userSettingsRead {
+		unread = "managed"
+	}
 	return guardState{Status: LayerEnabled, Reason: "package-guard.py unmodified and registered as a PreToolUse hook " +
-		"matching Bash (user/managed settings not inspected)"}
+		"matching Bash (" + unread + " settings not inspected)"}
 }
 
 // guardModified returns why package-guard.py on disk cannot be credited as the
@@ -495,14 +501,22 @@ func assessLayer(spec layerSpec, input assessmentInput) DefenseLayer {
 // Enabled and Total count only the layers in scope at currentTier, matching
 // the tier-relative Score, so the "N/M layers" summary never contradicts it.
 func AssessDefenseLayers(projectPath string, enabledTools map[string]bool, detected types.DetectedProject, genState types.GeneratedState, currentTier int) DefenseCoverage {
+	return assessDefenseLayers(projectPath, claudesettings.ReadOptions{}, enabledTools, detected, genState, currentTier)
+}
+
+// assessDefenseLayers is AssessDefenseLayers reading the Claude settings with
+// settingsOpts, so a user-level disableAllHooks disables the guard layers.
+func assessDefenseLayers(projectPath string, settingsOpts claudesettings.ReadOptions, enabledTools map[string]bool,
+	detected types.DetectedProject, genState types.GeneratedState, currentTier int) DefenseCoverage {
 	input := assessmentInput{
 		ProjectPath:  projectPath,
 		EnabledTools: enabledTools,
 		Detected:     detected,
 		GenState:     genState,
 		claudeSettings: sync.OnceValues(func() (claudesettings.Effective, error) {
-			return claudesettings.Read(projectPath)
+			return claudesettings.ReadWith(projectPath, settingsOpts)
 		}),
+		userSettingsRead: settingsOpts.UserDir != "",
 	}
 	input.guardOnce = sync.OnceValue(input.judgeGuard)
 

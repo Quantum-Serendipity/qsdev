@@ -297,4 +297,9 @@ type ToolStatus struct {
 type AssessOptions struct {
 	// FreshScan runs an OSV vulnerability scan of each detected lock file.
 	FreshScan bool
+	// ClaudeUserDir is the user Claude settings directory
+	// (canon.ClaudeConfigDir) whose settings.json the guard judgement also
+	// reads; empty judges the project files alone, so the result does not
+	// depend on the machine.
+	ClaudeUserDir string
 }

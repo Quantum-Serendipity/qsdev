@@ -208,3 +208,55 @@ func TestRead_ParseErrorNamesFile(t *testing.T) {
 		})
 	}
 }
+
+// TestReadWith_UserSettings checks that the user settings.json is read
+// beneath the project files when asked for: its disableAllHooks is in effect
+// and named as a source, the project's defaultMode still wins, and Read alone
+// never consults it.
+func TestReadWith_UserSettings(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name      string
+		user      string
+		userDir   bool
+		wantOff   bool
+		wantMode  string
+		wantError bool
+	}{
+		{name: "not asked", user: `{"disableAllHooks": true}`, wantMode: "default"},
+		{name: "disables hooks", user: `{"disableAllHooks": true}`, userDir: true, wantOff: true, wantMode: "default"},
+		{name: "project mode wins", user: `{"permissions": {"defaultMode": "bypassPermissions"}}`, userDir: true, wantMode: "default"},
+		{name: "absent file", userDir: true, wantMode: "default"},
+		{name: "parse error", user: `{"disableAllHooks": `, userDir: true, wantError: true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			root, home := t.TempDir(), t.TempDir()
+			writeSettings(t, root, ProjectRelPath, generated)
+			if tt.user != "" {
+				writeSettings(t, home, "settings.json", tt.user)
+			}
+			var opts ReadOptions
+			if tt.userDir {
+				opts.UserDir = home
+			}
+			e, err := ReadWith(root, opts)
+			if tt.wantError {
+				if err == nil || !strings.Contains(err.Error(), UserLabel) {
+					t.Fatalf("ReadWith error = %v, want one naming %s", err, UserLabel)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			if e.DisableAllHooks != tt.wantOff || e.DefaultMode != tt.wantMode {
+				t.Errorf("effective = %+v, want disableAllHooks %v, defaultMode %q", e.Settings, tt.wantOff, tt.wantMode)
+			}
+			if tt.wantOff && !slices.Equal(e.Sources[KeyDisableAllHooks], []string{UserLabel}) {
+				t.Errorf("Sources[%s] = %v, want [%s]", KeyDisableAllHooks, e.Sources[KeyDisableAllHooks], UserLabel)
+			}
+		})
+	}
+}

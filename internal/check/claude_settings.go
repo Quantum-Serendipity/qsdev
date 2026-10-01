@@ -59,7 +59,7 @@ func CheckClaudeSettingsPosture(ctx CheckContext) []CheckResult {
 
 	var results []CheckResult
 	if actual.DisableAllHooks {
-		results = append(results, postureResult("claude_all_hooks_disabled", StatusFail, SeverityHigh,
+		results = append(results, postureResult("claude_all_hooks_disabled", StatusFail, SeverityCritical,
 			fmt.Sprintf("%s sets %s, so no generated hook (self-protection, package guard) runs", ClaudeSettingsRelPath, claudesettings.KeyDisableAllHooks),
 			"Remove "+claudesettings.KeyDisableAllHooks+" or run 'qsdev init --update' to restore the generated settings"))
 	}
@@ -80,7 +80,7 @@ func CheckClaudeSettingsPosture(ctx CheckContext) []CheckResult {
 	results = append(results, checkHookScripts(ctx.ProjectRoot, actual, lookPath)...)
 	results = append(results, checkHookPrograms(actual, lookPath)...)
 	results = append(results, checkHooksWithoutPolicy(ctx.HooksWithoutPolicy)...)
-	results = append(results, checkLocalOverride(ctx.ProjectRoot, actual, expected)...)
+	results = append(results, checkLocalOverride(ctx.ProjectRoot, ctx.ClaudeUserDir, actual, expected)...)
 
 	if len(results) == 0 {
 		return []CheckResult{postureResult("claude_settings_posture", StatusPass, SeverityInfo,
@@ -313,27 +313,38 @@ func absInterpreterProblem(projectRoot, interp string) *runProblem {
 	return nil
 }
 
-// checkLocalOverride reports each way the per-machine settings.local.json
-// weakens the committed settings.json in the effective settings. Disabling
-// hooks or defaulting to bypassPermissions fails: CI never sees the file, but
-// the agent on this machine runs without its guardrails. Changing
-// disableBypassPermissionsMode or a hook-policy env variable warns. Weakenings
-// the committed file already has are reported by the checks above.
-func checkLocalOverride(projectRoot string, project claudesettings.Settings, expected *claudesettings.Settings) []CheckResult {
-	eff, err := claudesettings.Read(projectRoot)
+// checkLocalOverride reports each way the per-machine settings (the
+// project's settings.local.json and, when userDir is set, the user
+// settings.json beneath it) weaken the committed settings.json in the
+// effective settings. Disabling hooks fails at critical, as a gutted guard
+// script does: it switches off self-protection and the package guard
+// together. Defaulting to bypassPermissions fails at high. CI never sees
+// these files, but the agent on this machine runs without its guardrails.
+// Changing disableBypassPermissionsMode or a hook-policy env variable warns.
+// Weakenings the committed file already has are reported by the checks above.
+func checkLocalOverride(projectRoot, userDir string, project claudesettings.Settings, expected *claudesettings.Settings) []CheckResult {
+	eff, err := claudesettings.ReadWith(projectRoot, claudesettings.ReadOptions{UserDir: userDir})
 	if err != nil {
 		r := postureResult("claude_settings_parse", StatusFail, SeverityHigh,
 			fmt.Sprintf("Could not read the effective Claude settings: %v", err),
-			"Fix the JSON syntax in "+claudesettings.LocalRelPath+" or delete it")
+			"Fix the JSON syntax in the named settings file or delete it")
 		r.FilePath = claudesettings.LocalRelPath
 		return []CheckResult{r}
 	}
-	local := eff.Local
-	if local == nil {
-		return nil
-	}
 
 	var results []CheckResult
+	if user := eff.User; user != nil && !project.DisableAllHooks && user.DisableAllHooks {
+		r := postureResult("claude_settings_user_override", StatusFail, SeverityCritical,
+			fmt.Sprintf("%s sets %s, so no generated hook (self-protection, package guard) runs on this machine",
+				claudesettings.UserLabel, claudesettings.KeyDisableAllHooks),
+			"Remove "+claudesettings.KeyDisableAllHooks+" from "+claudesettings.UserLabel)
+		r.Metadata = map[string]string{"source": claudesettings.UserLabel}
+		results = append(results, r)
+	}
+	local := eff.Local
+	if local == nil {
+		return results
+	}
 	add := func(status CheckStatus, severity CheckSeverity, msg string) {
 		r := postureResult("claude_settings_local_override", status, severity,
 			claudesettings.LocalRelPath+" "+msg,
@@ -342,7 +353,7 @@ func checkLocalOverride(projectRoot string, project claudesettings.Settings, exp
 		results = append(results, r)
 	}
 	if local.DisableAllHooks && !project.DisableAllHooks {
-		add(StatusFail, SeverityHigh, fmt.Sprintf("sets %s, so no generated hook (self-protection, package guard) runs on this machine",
+		add(StatusFail, SeverityCritical, fmt.Sprintf("sets %s, so no generated hook (self-protection, package guard) runs on this machine",
 			claudesettings.KeyDisableAllHooks))
 	}
 	if local.DefaultMode == claudesettings.ModeBypassPermissions && project.DefaultMode != claudesettings.ModeBypassPermissions {

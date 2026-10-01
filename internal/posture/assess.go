@@ -14,6 +14,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/Quantum-Serendipity/qsdev/internal/claudesettings"
 	"github.com/Quantum-Serendipity/qsdev/internal/config"
 	"github.com/Quantum-Serendipity/qsdev/internal/detect"
 	"github.com/Quantum-Serendipity/qsdev/internal/posture/drift"
@@ -199,7 +200,8 @@ func Assess(projectPath string, opts AssessOptions) (*PostureReport, error) {
 	}
 
 	// Assess defense layers.
-	report.Defense = AssessDefenseLayers(projectPath, activeTools, detected, presentState, report.Tier.Position)
+	report.Defense = assessDefenseLayers(projectPath, claudesettings.ReadOptions{UserDir: opts.ClaudeUserDir},
+		activeTools, detected, presentState, report.Tier.Position)
 
 	configScore := ComputeConfigScore(configFiles)
 	report.Config = ConfigHealth{

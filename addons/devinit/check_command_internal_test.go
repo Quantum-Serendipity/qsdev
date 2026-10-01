@@ -18,6 +18,7 @@ import (
 	"github.com/Quantum-Serendipity/qsdev/internal/claudesettings"
 	"github.com/Quantum-Serendipity/qsdev/internal/shebang"
 	"github.com/Quantum-Serendipity/qsdev/internal/state"
+	"github.com/Quantum-Serendipity/qsdev/internal/toolreg"
 	"github.com/Quantum-Serendipity/qsdev/pkg/branding"
 	"github.com/Quantum-Serendipity/qsdev/pkg/ecosystem"
 	"github.com/Quantum-Serendipity/qsdev/pkg/types"
@@ -490,44 +491,62 @@ func TestCheckCmd_ToolGatesPolicy(t *testing.T) {
 
 // TestRunCheck_ExpectedSettingsEnforceAlwaysOn is the U28-V01 regression:
 // saved answers that dropped the safety block must not also drop the
-// package-guard registration from the settings check expects. Always-on
-// enforcement is applied to the loaded answers before the expected settings
-// are generated, so the stripped always-on hook is reported.
+// package-guard registration from the settings check expects. The loaded
+// answers are reconciled against the committed tools block, as every
+// generation path does, before the expected settings are generated, so the
+// stripped always-on hook is reported. An answers-only opt-out (the tool off
+// and the opt-out recorded in the answers file, but no committed
+// tools.disabled entry) is not an opt-out either.
 func TestRunCheck_ExpectedSettingsEnforceAlwaysOn(t *testing.T) {
-	dir := initLifecycleProject(t)
+	tests := []struct {
+		name   string
+		tamper func(a *types.WizardAnswers)
+	}{
+		{name: "safety block off", tamper: func(a *types.WizardAnswers) { a.Hooks.SafetyBlock = false }},
+		{name: "answers-only opt-out", tamper: func(a *types.WizardAnswers) {
+			a.EnabledTools[toolreg.ToolAttachGuard] = false
+			a.Hooks.SafetyBlockOptOut = true
+			a.Hooks.SafetyBlock = false
+		}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			dir := initLifecycleProject(t)
 
-	saved, err := answers.LoadPrimary(dir)
-	if err != nil {
-		t.Fatal(err)
-	}
-	saved.Hooks.SafetyBlock = false
-	if err := answers.SavePrimary(dir, saved); err != nil {
-		t.Fatal(err)
-	}
+			saved, err := answers.LoadPrimary(dir)
+			if err != nil {
+				t.Fatal(err)
+			}
+			tt.tamper(&saved)
+			if err := answers.SavePrimary(dir, saved); err != nil {
+				t.Fatal(err)
+			}
 
-	const guard = "package-guard.py"
-	settingsPath := filepath.Join(dir, ".claude", "settings.json")
-	var settings map[string]any
-	if err := json.Unmarshal([]byte(readProjectFile(t, dir, ".claude/settings.json")), &settings); err != nil {
-		t.Fatal(err)
-	}
-	if removed := stripHookCommands(settings, guard); removed == 0 {
-		t.Fatalf("generated settings.json registers no %s hook", guard)
-	}
-	data, err := json.Marshal(settings)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(settingsPath, data, 0o644); err != nil {
-		t.Fatal(err)
-	}
+			const guard = "package-guard.py"
+			settingsPath := filepath.Join(dir, ".claude", "settings.json")
+			var settings map[string]any
+			if err := json.Unmarshal([]byte(readProjectFile(t, dir, ".claude/settings.json")), &settings); err != nil {
+				t.Fatal(err)
+			}
+			if removed := stripHookCommands(settings, guard); removed == 0 {
+				t.Fatalf("generated settings.json registers no %s hook", guard)
+			}
+			data, err := json.Marshal(settings)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(settingsPath, data, 0o644); err != nil {
+				t.Fatal(err)
+			}
 
-	report := runCheckJSON(t, dir)
-	if !slices.ContainsFunc(report.Checks, func(c check.CheckResult) bool {
-		return c.Name == "claude_hook_missing" && c.Status == check.StatusFail &&
-			strings.Contains(c.Metadata["command"], guard)
-	}) {
-		t.Errorf("check did not report the stripped %s registration: %+v", guard, report.Checks)
+			report := runCheckJSON(t, dir)
+			if !slices.ContainsFunc(report.Checks, func(c check.CheckResult) bool {
+				return c.Name == "claude_hook_missing" && c.Status == check.StatusFail &&
+					strings.Contains(c.Metadata["command"], guard)
+			}) {
+				t.Errorf("check did not report the stripped %s registration: %+v", guard, report.Checks)
+			}
+		})
 	}
 }
 

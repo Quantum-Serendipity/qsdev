@@ -153,13 +153,18 @@ func runCheck(cmd *cobra.Command, format check.OutputFormat, auditLevel check.Au
 
 	// The generator's output for the saved answers is what the on-disk
 	// settings.json must still enforce (hook registrations, bypass mode).
-	// Always-on tools are enforced first, as every generation path does, so
-	// saved answers that dropped one (e.g. safety_block: false) still expect
-	// its hook registrations.
+	// The tools are reconciled against the committed tools block first, as
+	// every generation path does, so an opt-out the answers file records but
+	// .qsdev.yaml does not (e.g. attach-guard: false) still expects the
+	// guard's hook registrations.
 	var freshFiles map[string]types.GeneratedFile
 	var genErr error
 	if answers.ProjectName != "" {
-		toolreg.MergeInferredTools(&answers, toolRegistry)
+		var committed *types.ToolsConfig
+		if ctx.QsdevConfig != nil {
+			committed = &ctx.QsdevConfig.Tools
+		}
+		toolreg.Reconcile(&answers, toolRegistry, committed)
 		freshFiles, _, genErr = regenerateFreshFiles(answers)
 		if genErr != nil {
 			_, _ = fmt.Fprintf(cmd.ErrOrStderr(), "Warning: could not regenerate expected files: %v\n", genErr)

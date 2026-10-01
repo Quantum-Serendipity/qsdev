@@ -176,9 +176,13 @@ func TestCheckAll_Bounded(t *testing.T) {
 	t.Parallel()
 
 	// Each probe is held for most of its timeout: with a deadline shared
-	// across the queue, the third wave of probes would never start.
-	const timeout = 300 * time.Millisecond
-	target := &blockingProbeTarget{hold: 200 * time.Millisecond}
+	// across the queue, the third wave of probes (starting at 2*hold) would
+	// never start. The timeout leaves hold plenty of slack, because a probe
+	// that times out client-side leaves its handler in flight until it sees
+	// the cancellation, which the server would count against the next wave.
+	const hold = 500 * time.Millisecond
+	const timeout = 900 * time.Millisecond
+	target := &blockingProbeTarget{hold: hold}
 	srv := httptest.NewServer(target)
 	t.Cleanup(srv.Close)
 

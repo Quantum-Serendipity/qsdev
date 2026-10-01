@@ -582,3 +582,31 @@ func TestCheckHookScripts_NamesCommand(t *testing.T) {
 		t.Errorf("message %q does not quote the hook command %s", r.Message, want)
 	}
 }
+
+// TestCheckHookRegistrations_UnregisteredGuardIsCritical pins that a missing
+// generated guard registration (a fail-closed PreToolUse hook such as the
+// package guard) fails at critical, like a gutted guard script, while other
+// missing hooks keep their severity.
+func TestCheckHookRegistrations_UnregisteredGuardIsCritical(t *testing.T) {
+	t.Parallel()
+	guard := claudesettings.FailClosedCommand("package-guard", `"${CLAUDE_PROJECT_DIR}"/.claude/hooks/package-guard.py`)
+	expected := claudesettings.Settings{Hooks: map[string][]claudesettings.Matcher{
+		claudesettings.EventPreToolUse: {
+			{Matcher: "Bash", Hooks: []claudesettings.Hook{{Type: claudesettings.HookTypeCommand, Command: guard}}},
+			{Matcher: "LSP", Hooks: []claudesettings.Hook{{Type: claudesettings.HookTypeCommand, Command: "qsdev lsp-guard"}}},
+		},
+		"PostToolUse": {
+			{Matcher: "*", Hooks: []claudesettings.Hook{{Type: claudesettings.HookTypeCommand, Command: "qsdev audit"}}},
+		},
+	}}
+	want := map[string]CheckSeverity{guard: SeverityCritical, "qsdev lsp-guard": SeverityHigh, "qsdev audit": SeverityMedium}
+	results := checkHookRegistrations(claudesettings.Settings{}, expected)
+	if len(results) != len(want) {
+		t.Fatalf("got %d results, want %d: %+v", len(results), len(want), results)
+	}
+	for _, r := range results {
+		if got := r.Severity; got != want[r.Metadata["command"]] {
+			t.Errorf("missing %q: severity %s, want %s", r.Metadata["command"], got, want[r.Metadata["command"]])
+		}
+	}
+}

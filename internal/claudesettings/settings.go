@@ -217,6 +217,15 @@ var failClosedRe = func() string {
 	return strings.Replace(regexp.QuoteMeta(FailClosedCommand(owner, "")), regexp.QuoteMeta(owner), `[A-Za-z0-9._-]+`, 1)
 }()
 
+// failClosedSuffixRe matches a command ending in the FailClosedCommand suffix.
+var failClosedSuffixRe = regexp.MustCompile(failClosedRe + `[ \t]*$`)
+
+// IsFailClosed reports whether cmd is wrapped by FailClosedCommand: the
+// generator wraps exactly the security hooks (the guards) this way.
+func IsFailClosed(cmd string) bool {
+	return failClosedSuffixRe.MatchString(cmd)
+}
+
 // programRe returns a pattern matching a hook command whose program is a
 // project hook script, capturing the script. Only the forms qsdev emits are
 // accepted: the script, addressed through the project-dir variable, may

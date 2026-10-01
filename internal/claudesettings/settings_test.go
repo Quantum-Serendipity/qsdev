@@ -346,3 +346,22 @@ func TestScripts(t *testing.T) {
 		})
 	}
 }
+
+func TestIsFailClosed(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		cmd  string
+		want bool
+	}{
+		{FailClosedCommand("package-guard", `"${CLAUDE_PROJECT_DIR}"/.claude/hooks/package-guard.py`), true},
+		{FailClosedCommand("self-protection", "qsdev selfprotect"), true},
+		{"qsdev selfprotect", false},
+		{FailClosedCommand("x", "a") + "; true", false},
+		{"", false},
+	}
+	for _, tt := range tests {
+		if got := IsFailClosed(tt.cmd); got != tt.want {
+			t.Errorf("IsFailClosed(%q) = %v, want %v", tt.cmd, got, tt.want)
+		}
+	}
+}

@@ -111,7 +111,13 @@ func checkHookRegistrations(actual, expected claudesettings.Settings) []CheckRes
 				if h.Command == "" || actual.Registered(event, m.Matcher, h) {
 					continue
 				}
-				r := postureResult("claude_hook_missing", StatusFail, severity,
+				sev := severity
+				if event == claudesettings.EventPreToolUse && claudesettings.IsFailClosed(h.Command) {
+					// A generated guard (self-protection, package guard, ...)
+					// left unregistered is off, as a gutted guard script is.
+					sev = SeverityCritical
+				}
+				r := postureResult("claude_hook_missing", StatusFail, sev,
 					fmt.Sprintf("Generated %s hook %q (matcher %q) is not registered in %s", event, h.Command, m.Matcher, ClaudeSettingsRelPath),
 					"Run 'qsdev init --update' to restore the generated hook registrations")
 				r.Metadata = map[string]string{"event": event, "matcher": m.Matcher, "command": h.Command}

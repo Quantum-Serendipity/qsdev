@@ -61,7 +61,14 @@ func TestRunWithDeadline(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
-			ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+			// Only the timeout case races the deadline; the others get one
+			// they cannot reach under load, so a slow scheduler cannot turn
+			// a fast verdict into a timeout.
+			deadline := 50 * time.Millisecond
+			if !tt.wantTimedOut {
+				deadline = 10 * time.Second
+			}
+			ctx, cancel := context.WithTimeout(context.Background(), deadline)
 			defer cancel()
 
 			var out bytes.Buffer

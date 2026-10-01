@@ -105,7 +105,7 @@ func claudeLaunchOverride(cmds []cmdscan.Command, text string, depth int) string
 	}
 	for _, c := range cmds {
 		words := append([]string{c.Name}, c.Args...)
-		if script, ok := shellScript(words); ok {
+		if script, ok := cmdscan.ShellScript(words); ok {
 			if reason := scriptLaunchOverride(script, depth); reason != "" {
 				return reason
 			}
@@ -114,7 +114,7 @@ func claudeLaunchOverride(cmds []cmdscan.Command, text string, depth int) string
 			return reason
 		}
 		i := slices.IndexFunc(words, isClaudeCLI)
-		if i < 0 || !isClaudePackage(words[i]) && !isClaudeEntryScript(words[i]) && !slices.Contains(commandWordIndexes(words), i) {
+		if i < 0 || !isClaudePackage(words[i]) && !isClaudeEntryScript(words[i]) && !slices.Contains(cmdscan.CommandWordIndexes(words), i) {
 			continue
 		}
 		if v := wrapperEnvAssignment(words[:i]); v != "" {

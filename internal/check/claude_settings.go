@@ -1,15 +1,18 @@
 package check
 
 import (
+	"cmp"
 	"fmt"
 	"maps"
 	"os"
 	"path/filepath"
+	"runtime"
 	"slices"
 	"strings"
 
 	"github.com/Quantum-Serendipity/qsdev/internal/claudesettings"
 	"github.com/Quantum-Serendipity/qsdev/internal/selfprotect/cmdscan"
+	"github.com/Quantum-Serendipity/qsdev/internal/shebang"
 	"github.com/Quantum-Serendipity/qsdev/internal/toolcheck"
 )
 
@@ -70,11 +73,11 @@ func CheckClaudeSettingsPosture(ctx CheckContext) []CheckResult {
 		results = append(results, checkHookRegistrations(actual, *expected)...)
 		results = append(results, checkHookEnv(actual, *expected)...)
 	}
-	results = append(results, checkHookScripts(ctx.ProjectRoot, actual)...)
 	lookPath := ctx.LookPath
 	if lookPath == nil {
 		lookPath = toolcheck.LookPath
 	}
+	results = append(results, checkHookScripts(ctx.ProjectRoot, actual, lookPath)...)
 	results = append(results, checkHookPrograms(actual, lookPath)...)
 	results = append(results, checkHooksWithoutPolicy(ctx.HooksWithoutPolicy)...)
 	results = append(results, checkLocalOverride(ctx.ProjectRoot, actual, expected)...)
@@ -158,9 +161,12 @@ func checkHooksWithoutPolicy(hooks []HookWithoutPolicy) []CheckResult {
 }
 
 // checkHookScripts reports registered hook commands whose project script is
-// missing: Claude Code treats the failure to run it as a non-blocking error,
-// so the guard silently stops applying.
-func checkHookScripts(projectRoot string, actual claudesettings.Settings) []CheckResult {
+// missing, and scripts a hook starts as a program that cannot run: their
+// interpreter does not resolve or they are not executable. Claude Code
+// treats each failure as a non-blocking error, so the guard silently stops
+// applying. Interpreters are only looked up,
+// never run.
+func checkHookScripts(projectRoot string, actual claudesettings.Settings, lookPath func(string) (string, error)) []CheckResult {
 	var results []CheckResult
 	for _, event := range slices.Sorted(maps.Keys(actual.Hooks)) {
 		severity := SeverityMedium
@@ -168,17 +174,143 @@ func checkHookScripts(projectRoot string, actual claudesettings.Settings) []Chec
 			severity = SeverityHigh
 		}
 		for _, ref := range actual.ScriptRefs(event) {
-			if _, err := os.Stat(filepath.Join(projectRoot, filepath.FromSlash(ref.Script))); err == nil {
+			info, err := os.Stat(filepath.Join(projectRoot, filepath.FromSlash(ref.Script)))
+			if err != nil {
+				r := postureResult("claude_hook_script_missing", StatusFail, severity,
+					fmt.Sprintf("%s hook %q runs %s, which does not exist", event, ref.Command, ref.Script),
+					"Run 'qsdev repair' to restore the hook script")
+				r.FilePath = ref.Script
+				results = append(results, r)
 				continue
 			}
-			r := postureResult("claude_hook_script_missing", StatusFail, severity,
-				fmt.Sprintf("%s hook %q runs %s, which does not exist", event, ref.Command, ref.Script),
-				"Run 'qsdev repair' to restore the hook script")
+			if !slices.Contains(programScripts(ref.Command), ref.Script) {
+				continue
+			}
+			problem := scriptRunProblem(projectRoot, ref.Script, info, lookPath)
+			if problem == nil {
+				continue
+			}
+			r := postureResult("claude_hook_unresolvable", StatusFail, severity,
+				fmt.Sprintf("%s hook %q runs %s, which %s, so the hook cannot run", event, ref.Command, ref.Script, problem.reason),
+				problem.remediation)
 			r.FilePath = ref.Script
+			r.Metadata = map[string]string{"event": event, "program": problem.program}
 			results = append(results, r)
 		}
 	}
 	return results
+}
+
+// programScripts returns the project hook scripts command starts as a
+// program: the command word (directly or through wrappers such as exec, env
+// or timeout, see cmdscan.ProgramWordIndex), the word after "--" that wrapper
+// commands such as
+// `qsdev sandbox exec ... -- <script>` start, or one of those inside a
+// `sh -c` script. A script passed to an interpreter (`sh <script>`) needs
+// neither an exec bit nor a resolvable shebang. An unparseable command, or
+// one nested too deep, counts every script it names.
+func programScripts(command string) []string {
+	return nestedProgramScripts(command, 0)
+}
+
+// maxScriptNesting bounds how many `sh -c` levels programScripts parses.
+const maxScriptNesting = 4
+
+func nestedProgramScripts(command string, depth int) []string {
+	cmds, err := cmdscan.Parse(command)
+	if err != nil || depth > maxScriptNesting {
+		return claudesettings.ScriptRe.FindAllString(command, -1)
+	}
+	var scripts []string
+	for _, c := range cmds {
+		if c.Name == "" {
+			continue
+		}
+		words := append([]string{c.Name}, c.Args...)
+		p := cmdscan.ProgramWordIndex(words)
+		if p < 0 {
+			continue
+		}
+		run := words[p:]
+		if script, ok := cmdscan.ShellScript(run); ok {
+			scripts = append(scripts, nestedProgramScripts(script, depth+1)...)
+		}
+		for i, w := range run {
+			if i == 0 || run[i-1] == "--" {
+				scripts = append(scripts, claudesettings.ScriptRe.FindAllString(w, -1)...)
+			}
+		}
+	}
+	return scripts
+}
+
+// runProblem is why the shell cannot start a hook script, and the program
+// the script's interpreter line names.
+type runProblem struct {
+	program, reason, remediation string
+}
+
+const (
+	remediateInterpreter = "Install the script's interpreter on PATH, make the script executable, or run 'qsdev repair' to restore it"
+	remediateCRLF        = "Convert the script to LF line endings (and add a '.gitattributes' rule such as '.claude/hooks/** text eol=lf'), or run 'qsdev repair' to restore it"
+)
+
+// scriptRunProblem returns why the shell cannot start the project script
+// (described by info) as a program, or nil when it can. On Windows Claude
+// Code runs hooks through Git Bash, which has no exec bit, tolerates CRLF
+// interpreter lines and maps absolute interpreters such as /usr/bin/python3
+// into its own layer, so only env lookups are checked there.
+func scriptRunProblem(projectRoot, script string, info os.FileInfo, lookPath func(string) (string, error)) *runProblem {
+	path := filepath.Join(projectRoot, filepath.FromSlash(script))
+	line, err := shebang.Read(path)
+	if err != nil {
+		return &runProblem{script, fmt.Sprintf("cannot be read: %v", err), remediateInterpreter}
+	}
+	posix := runtime.GOOS != "windows"
+	named := cmp.Or(line.Program(), line.Interpreter)
+	switch {
+	case posix && !canExecute(path):
+		return &runProblem{cmp.Or(named, script), "is not executable for this user (the shell exits 126)", remediateInterpreter}
+	case line.Interpreter == "":
+		return nil // no #! line: the shell runs it as a shell script
+	case posix && strings.ContainsRune(line.Interpreter+line.Arg, '\r'):
+		return &runProblem{named, "has a CRLF interpreter line, so the kernel looks for an interpreter or argument ending in a carriage return", remediateCRLF}
+	case line.ViaEnv():
+		if posix {
+			// The kernel must find env itself before env looks up the program.
+			if p := absInterpreterProblem(projectRoot, line.Interpreter); p != nil {
+				return p
+			}
+		}
+		prog, ok := line.EnvProgram(runtime.GOOS)
+		if !ok {
+			return &runProblem{line.Interpreter, fmt.Sprintf("has interpreter line %q, from which env runs no program", line.Interpreter+" "+line.Arg), remediateInterpreter}
+		}
+		if _, err := lookPath(prog); err != nil {
+			return &runProblem{prog, fmt.Sprintf("needs interpreter %q, which is not on PATH (the shell exits 127)", prog), remediateInterpreter}
+		}
+	case posix:
+		return absInterpreterProblem(projectRoot, line.Interpreter)
+	}
+	return nil
+}
+
+// absInterpreterProblem returns why the kernel cannot run interp, a path
+// relative to projectRoot (the hook's working directory) unless absolute, as
+// an interpreter, or nil.
+func absInterpreterProblem(projectRoot, interp string) *runProblem {
+	p := interp
+	if !filepath.IsAbs(p) {
+		p = filepath.Join(projectRoot, p)
+	}
+	fi, err := os.Stat(p)
+	if err != nil {
+		return &runProblem{interp, fmt.Sprintf("needs interpreter %s, which does not exist", interp), remediateInterpreter}
+	}
+	if fi.IsDir() || !canExecute(p) {
+		return &runProblem{interp, fmt.Sprintf("needs interpreter %s, which is not an executable file for this user", interp), remediateInterpreter}
+	}
+	return nil
 }
 
 // checkLocalOverride reports each way the per-machine settings.local.json
@@ -243,7 +375,9 @@ func checkLocalOverride(projectRoot string, project claudesettings.Settings, exp
 // generated fail-closed wrapper turns it into a block on every matching tool
 // call. Either way the hook never evaluates anything. Paths and command
 // words built from an expansion are skipped (project scripts are covered by
-// checkHookScripts); the program is only looked up, never run.
+// checkHookScripts); an expanded argument, as in
+// `python3 "${CLAUDE_PROJECT_DIR}"/x.py`, does not hide the program. The
+// program is only looked up, never run.
 func checkHookPrograms(actual claudesettings.Settings, lookPath func(string) (string, error)) []CheckResult {
 	var results []CheckResult
 	for _, event := range slices.Sorted(maps.Keys(actual.Hooks)) {
@@ -273,7 +407,8 @@ func checkHookPrograms(actual claudesettings.Settings, lookPath func(string) (st
 
 // hookProgram returns the command word and arguments of a hook command's
 // first simple command when that word is a bare program name resolved on
-// PATH; ok is false for paths, expansions and unparseable commands.
+// PATH; ok is false for paths, expanded command words and unparseable
+// commands.
 func hookProgram(command string) (program string, args []string, ok bool) {
 	cmds, err := cmdscan.Parse(command)
 	if err != nil {
@@ -283,7 +418,7 @@ func hookProgram(command string) (program string, args []string, ok bool) {
 		if c.Name == "" {
 			continue
 		}
-		if c.HasExpansion || strings.ContainsAny(c.Name, `/\$`) {
+		if c.NameHasExpansion || strings.ContainsAny(c.Name, `/\$`) {
 			return "", nil, false
 		}
 		return c.Name, c.Args, true

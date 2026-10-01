@@ -1,71 +1,177 @@
 package rules
 
 import (
+	"cmp"
+	"math"
 	"path/filepath"
+	"runtime"
 	"slices"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/Quantum-Serendipity/qsdev/internal/selfprotect/hookio"
 )
 
 // adversarialPayloads are the U18-04 shapes that ran for seconds to minutes
-// before the brace scan and the missing-tail canonicalization were made
-// linear. Each stays under hookio.MaxCommandBytes and MaxSimpleCommands, so
-// the rules themselves must answer within budget (1s unless budget says
-// otherwise, scaled by raceScale under the race detector).
+// before the brace scan and the missing-tail canonicalization were fixed.
+// build(n) returns the payload at size n; at n itself each stays under
+// hookio.MaxCommandBytes and MaxSimpleCommands. maxRatio bounds how much
+// doubling n may multiply the evaluation's CPU time, zero meaning
+// linearRatio; cpuBudget bounds the best CPU time at n, zero meaning
+// defaultCPUBudget (scaled by raceScale).
 var adversarialPayloads = []struct {
-	name    string
-	command string
-	want    Verdict
-	cd      bool
-	budget  time.Duration
+	name      string
+	build     func(n int) string
+	n         int
+	maxRatio  float64
+	cpuBudget time.Duration
+	want      Verdict
+	cd        bool
 }{
-	{name: "unclosed braces", command: "echo " + strings.Repeat("{", 60000), want: Allow},
-	{name: "unclosed braces then protected write", command: "echo " + strings.Repeat("{", 60000) + "; rm -rf .claude/settings.json", want: Deny},
-	{name: "unclosed brace words", command: "echo " + strings.Repeat("{x", 30000), want: Allow},
-	{name: "many comma groups in one word", command: "echo " + strings.Repeat("{a,b}", 12000), want: Allow},
-	{name: "many comma groups in a removed word", command: "rm " + strings.Repeat("{a,b}", 12000), want: Deny},
-	{name: "many sequence groups in one word", command: "echo " + strings.Repeat("{1..2}", 10000), want: Allow},
-	{name: "deeply nested non-groups", command: "echo " + strings.Repeat("{", 30000) + strings.Repeat("}", 30000), want: Allow},
+	{name: "unclosed braces", build: repeatAfter("echo ", "{", ""), n: 60000, want: Allow},
+	{name: "unclosed braces then protected write", build: repeatAfter("echo ", "{", "; rm -rf .claude/settings.json"), n: 60000, want: Deny},
+	{name: "unclosed brace words", build: repeatAfter("echo ", "{x", ""), n: 30000, want: Allow},
+	{name: "many comma groups in one word", build: repeatAfter("echo ", "{a,b}", ""), n: 12000, want: Allow},
+	{name: "many comma groups in a removed word", build: repeatAfter("rm ", "{a,b}", ""), n: 12000, want: Deny},
+	{name: "many sequence groups in one word", build: repeatAfter("echo ", "{1..2}", ""), n: 10000, want: Allow},
+	{name: "deeply nested non-groups", build: func(n int) string {
+		return "echo " + strings.Repeat("{", n) + strings.Repeat("}", n)
+	}, n: 30000, want: Allow},
 	// 20,000 path variants, each canonicalized against the filesystem: linear
-	// but syscall-bound, so it gets a wider budget that is still well inside
-	// the hook's evaluation deadline.
-	{name: "many comma group words", command: "echo " + strings.Repeat("{a,b} ", 10000), want: Allow, budget: 3 * time.Second},
-	{name: "long cd chain then protected write", command: strings.Repeat("cd a && ", 1999) + "rm .claude/settings.json", want: Deny, cd: true},
-	{name: "long cd chain", command: strings.Repeat("cd a && ", 1999) + "true", want: Allow, cd: true},
+	// but syscall-bound, so it gets a wider CPU budget.
+	{name: "many comma group words", build: repeatAfter("echo ", "{a,b} ", ""), n: 10000, cpuBudget: 3 * time.Second, want: Allow},
+	// A cd chain is quadratic: the working directory grows one component per
+	// cd and every later command handles it. Doubling it measures about 3
+	// (4 asymptotically); the cubic canonicalization before the fix measured
+	// about 6.
+	{name: "long cd chain then protected write", build: repeatAfter("", "cd a && ", "rm .claude/settings.json"), n: 1999, maxRatio: quadraticRatio, want: Deny, cd: true},
+	{name: "long cd chain", build: repeatAfter("", "cd a && ", "true"), n: 1999, maxRatio: quadraticRatio, want: Allow, cd: true},
 }
 
-// evalBashTimed evaluates command in a fresh project directory and returns the
-// verdict and the wall-clock time EvaluateAll took.
-func evalBashTimed(t *testing.T, command string) (Verdict, time.Duration) {
+// repeatAfter returns a payload builder that repeats unit n times between
+// prefix and suffix.
+func repeatAfter(prefix, unit, suffix string) func(n int) string {
+	return func(n int) string { return prefix + strings.Repeat(unit, n) + suffix }
+}
+
+// The doubling ratio compares CPU time, not wall time: a preempted run on a
+// loaded machine takes longer by the clock but not in CPU, so the ratio
+// measures the algorithm rather than the load. Each size still takes the
+// best of several samples, at least minTimingRuns and, while the ratio is
+// over its limit, up to maxTimingRuns; a worse complexity class never gets
+// under the limit however many samples it is given.
+const (
+	minTimingRuns = 3
+	maxTimingRuns = 10
+)
+
+// minCPUSample is the least CPU time one sample spans, repeating the
+// evaluation as needed, so a coarse process clock still resolves it.
+const minCPUSample = 10 * cpuClockResolution
+
+// minRatioBaseline floors the smaller timing so a sub-millisecond run cannot
+// inflate the doubling ratio.
+const minRatioBaseline = time.Millisecond
+
+// Doubling a linear scan's input doubles its time and a quadratic one's
+// quadruples it, so linearRatio passes the first and fails the second.
+// quadraticRatio sits likewise between the cd chain's quadratic and its
+// former cubic cost.
+const (
+	linearRatio    = 3.0
+	quadraticRatio = 5.0
+)
+
+// defaultCPUBudget is the CPU time one adversarial evaluation may take at
+// full size. CPU time does not grow with machine load, so this backstop to
+// the doubling ratio stays tight without flaking.
+const defaultCPUBudget = time.Second
+
+// evalTiming is the wall-clock and CPU time of one evaluation.
+type evalTiming struct{ wall, cpu time.Duration }
+
+// min keeps the best wall and CPU times independently.
+func (a evalTiming) min(b evalTiming) evalTiming {
+	return evalTiming{wall: min(a.wall, b.wall), cpu: min(a.cpu, b.cpu)}
+}
+
+// timeEval evaluates command in a fresh project directory, repeating until
+// the sample spans minCPUSample, fails on a verdict other than want, and
+// returns the mean time per evaluation. It collects garbage first so an
+// earlier sample's allocations are not charged to this one.
+func timeEval(t *testing.T, command string, want Verdict) evalTiming {
 	t.Helper()
-	ctx := EvalContext{ToolName: "Bash", Command: command, CWD: filepath.Join(t.TempDir(), "project")}
-	start := time.Now()
-	v, _ := Tier1Rules.EvaluateAll(&ctx)
-	return v, time.Since(start)
+	cwd := filepath.Join(t.TempDir(), "project")
+	runtime.GC()
+	startWall, startCPU := time.Now(), processCPUTime(t)
+	var runs time.Duration
+	for {
+		ctx := EvalContext{ToolName: "Bash", Command: command, CWD: cwd}
+		if v, _ := Tier1Rules.EvaluateAll(&ctx); v != want {
+			t.Fatalf("verdict = %v, want %v (payload of %d bytes)", v, want, len(command))
+		}
+		runs++
+		if cpu := processCPUTime(t) - startCPU; cpu >= minCPUSample {
+			return evalTiming{wall: time.Since(startWall) / runs, cpu: cpu / runs}
+		}
+	}
 }
 
-// runAdversarial evaluates the payloads whose cd field equals cd and checks
-// each verdict and its time budget. Callers are not parallel so the timings
-// are not skewed by sibling tests.
+// doublingTimes samples half and full alternately, so a load spike does not
+// land on one size only, and returns the best timing of each once their CPU
+// ratio is under limit or maxTimingRuns pairs have run.
+func doublingTimes(t *testing.T, half, full string, want Verdict, limit float64) (bestHalf, bestFull evalTiming) {
+	t.Helper()
+	bestHalf = evalTiming{wall: math.MaxInt64, cpu: math.MaxInt64}
+	bestFull = bestHalf
+	for run := 1; run <= maxTimingRuns; run++ {
+		bestHalf = bestHalf.min(timeEval(t, half, want))
+		bestFull = bestFull.min(timeEval(t, full, want))
+		if run >= minTimingRuns && doublingRatio(bestHalf.cpu, bestFull.cpu) < limit {
+			break
+		}
+	}
+	return bestHalf, bestFull
+}
+
+// doublingRatio is full/half with half floored at minRatioBaseline.
+func doublingRatio(half, full time.Duration) float64 {
+	return float64(full) / float64(max(half, minRatioBaseline))
+}
+
+// runAdversarial evaluates the payloads whose cd field equals cd at n and
+// at 2n. The best wall time at n must be inside hookio.EvalDeadline (scaled by
+// raceScale), the absolute property the hook relies on; the best CPU time at
+// n must be inside the payload's cpuBudget; and the CPU doubling ratio must
+// stay under the payload's maxRatio, which pins the complexity. Neither CPU
+// bound depends on how loaded the machine is. The ratio doubles n rather than
+// halving it: below n a sample lasts a few milliseconds and the garbage
+// collector's pacing, not the algorithm, decides it, so a linear scan could
+// measure over linearRatio. Callers are not parallel
+// so sibling tests do not add to the process CPU time.
 func runAdversarial(t *testing.T, cd bool) {
 	t.Helper()
+	deadline := hookio.EvalDeadline * raceScale
 	for _, p := range adversarialPayloads {
 		if p.cd != cd {
 			continue
 		}
 		t.Run(p.name, func(t *testing.T) {
-			budget := p.budget
-			if budget == 0 {
-				budget = time.Second
+			limit := p.maxRatio
+			if limit == 0 {
+				limit = linearRatio
 			}
-			budget *= raceScale
-			v, took := evalBashTimed(t, p.command)
-			if v != p.want {
-				t.Errorf("verdict = %v, want %v", v, p.want)
+			atN, doubled := doublingTimes(t, p.build(p.n), p.build(2*p.n), p.want, limit)
+			if atN.wall > deadline {
+				t.Errorf("EvaluateAll took %v at best, want under the %v hook deadline", atN.wall, deadline)
 			}
-			if took > budget {
-				t.Errorf("EvaluateAll took %v, want under %v", took, budget)
+			if budget := cmp.Or(p.cpuBudget, defaultCPUBudget) * raceScale; atN.cpu > budget {
+				t.Errorf("EvaluateAll took %v of CPU at best, want under %v", atN.cpu, budget)
+			}
+			if ratio := doublingRatio(atN.cpu, doubled.cpu); ratio >= limit {
+				t.Errorf("doubling the payload took %.2fx the CPU time (%v -> %v), want under %.1fx",
+					ratio, atN.cpu, doubled.cpu, limit)
 			}
 		})
 	}
@@ -280,9 +386,10 @@ func TestBraceExpansionVerdicts(t *testing.T) {
 func BenchmarkSelfprotectAdversarial(b *testing.B) {
 	cwd := filepath.Join(b.TempDir(), "project")
 	for _, p := range adversarialPayloads {
+		command := p.build(p.n)
 		b.Run(p.name, func(b *testing.B) {
 			for b.Loop() {
-				ctx := EvalContext{ToolName: "Bash", Command: p.command, CWD: cwd}
+				ctx := EvalContext{ToolName: "Bash", Command: command, CWD: cwd}
 				Tier1Rules.EvaluateAll(&ctx)
 			}
 		})

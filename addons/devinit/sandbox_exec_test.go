@@ -208,6 +208,7 @@ func newStoreLayout(t *testing.T) storeLayout {
 	writeExec(filepath.Join(l.hostBin, "hostonly"), "\x7fELF")
 	writeExec(filepath.Join(l.project, "tool"), "\x7fELF")
 	writeExec(filepath.Join(l.project, "env-hook.py"), "#!/usr/bin/env interp\nprint()\n")
+	writeExec(filepath.Join(l.project, "env-arg-hook.py"), "#!/usr/bin/env interp -u\nprint()\n")
 	writeExec(filepath.Join(l.project, "arg-hook.sh"), "#!"+filepath.Join(l.hostBin, "interp")+" -e\n")
 	writeExec(filepath.Join(l.project, "store-hook.sh"), "#!"+filepath.Join(l.store, "bin", "interp")+"\n")
 	writeExec(filepath.Join(l.project, "hostonly-hook.sh"), "#!"+filepath.Join(l.hostBin, "hostonly")+"\n")
@@ -244,6 +245,13 @@ func TestNamespaceHookCommand(t *testing.T) {
 			name:    "env shebang is resolved on the host",
 			command: []string{filepath.Join(l.project, "env-hook.py"), "x"},
 			want:    []string{filepath.Join(storeBin, "interp"), filepath.Join(l.project, "env-hook.py"), "x"},
+		},
+		{
+			// Linux passes "interp -u" to env as one program name, which
+			// does not exist on the host.
+			name:    "env shebang with an unsplit option is rejected",
+			command: []string{filepath.Join(l.project, "env-arg-hook.py")},
+			wantErr: true,
 		},
 		{
 			name:    "hidden interpreter with an argument is made explicit",

@@ -7,8 +7,30 @@ import (
 	"strings"
 	"time"
 
+	"github.com/mattn/go-isatty"
+
 	"github.com/Quantum-Serendipity/qsdev/pkg/branding"
 )
+
+// NoticeWanted reports whether a process writing to stderr should run the
+// background update check and show its notice. Only an interactive terminal
+// session wants it: hooks (Claude Code pipes their stderr), the MCP server
+// (stdio is piped) and CI (no TTY) do not, so they make no request, write no
+// cache and print nothing that could pollute a hook's block reason. It is also
+// false when the user opted out with QSDEV_NO_UPDATE_CHECK=1.
+func NoticeWanted(stderr *os.File) bool {
+	if stderr == nil {
+		return false
+	}
+	fd := stderr.Fd()
+	return noticeWanted(isatty.IsTerminal(fd) || isatty.IsCygwinTerminal(fd))
+}
+
+// noticeWanted is NoticeWanted for a stream that is (isTTY) or is not a
+// terminal.
+func noticeWanted(isTTY bool) bool {
+	return isTTY && os.Getenv(branding.Get().EnvNoUpdate) != "1"
+}
 
 // BackgroundCheck starts a goroutine that checks for updates with a 5-second
 // timeout. It returns a channel that will receive at most one message: a

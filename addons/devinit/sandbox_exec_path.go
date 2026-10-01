@@ -1,17 +1,16 @@
 package devinit
 
 import (
-	"bytes"
-	"errors"
 	"fmt"
-	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 
 	"github.com/Quantum-Serendipity/qsdev/internal/sandbox"
 	"github.com/Quantum-Serendipity/qsdev/internal/sandbox/bwrap"
+	"github.com/Quantum-Serendipity/qsdev/internal/shebang"
 )
 
 // sandboxStoreDir is mounted read-only into every bubblewrap sandbox.
@@ -19,10 +18,6 @@ const sandboxStoreDir = "/nix/store"
 
 // maxSymlinkHops bounds symlink-chain resolution, matching the kernel's limit.
 const maxSymlinkHops = 40
-
-// shebangBufSize is the number of leading bytes the kernel reads to parse an
-// interpreter line (BINPRM_BUF_SIZE).
-const shebangBufSize = 256
 
 // namespaceHookCommand returns cfg.HookCommand rewritten so that every file the
 // kernel opens to start it is reachable inside a bubblewrap sandbox, which
@@ -180,28 +175,21 @@ func resolvesInside(p string, visible func(string) bool) bool {
 // exe is a script whose interpreter is not visible inside the sandbox. It
 // returns nil for binaries and for scripts the kernel can start as-is.
 func scriptInterpreter(exe string, visible func(string) bool) ([]string, error) {
-	line, err := readShebang(exe)
-	if err != nil || line == "" {
+	line, err := shebang.Read(exe)
+	if err != nil || line.Interpreter == "" {
 		return nil, err
 	}
-
-	// Linux semantics: the interpreter ends at the first blank, and everything
-	// after it (trimmed) is passed as one optional argument.
-	interp, arg := line, ""
-	if i := strings.IndexAny(line, " \t"); i >= 0 {
-		interp, arg = line[:i], strings.TrimSpace(line[i+1:])
-	}
-	if interp == "" {
-		return nil, fmt.Errorf("%s: empty interpreter line", exe)
-	}
+	interp, arg := line.Interpreter, line.Arg
 	if resolvesInside(interp, visible) {
 		return nil, nil
 	}
 
 	// `#!/usr/bin/env prog` looks prog up on PATH; do that lookup on the host so
 	// the sandbox needs neither /usr/bin/env nor the host's PATH directories.
-	if filepath.Base(interp) == "env" && arg != "" && !strings.HasPrefix(arg, "-") && !strings.ContainsAny(arg, " \t") {
-		prog, err := hostExecutable(arg)
+	// Only a lone program word is replaced: options and assignments are left
+	// for env itself to apply.
+	if prog, ok := line.EnvProgram(runtime.GOOS); ok && prog == arg {
+		prog, err := hostExecutable(prog)
 		if err != nil {
 			return nil, fmt.Errorf("%s: interpreter: %w", exe, err)
 		}
@@ -220,26 +208,4 @@ func scriptInterpreter(exe string, visible func(string) bool) ([]string, error) 
 		return []string{resolved}, nil
 	}
 	return []string{resolved, arg}, nil
-}
-
-// readShebang returns the interpreter line of a script (without the leading
-// "#!"), or "" when the file does not start with one.
-func readShebang(path string) (string, error) {
-	f, err := os.Open(path) //nolint:gosec // path is the hook command the caller asked to run
-	if err != nil {
-		return "", fmt.Errorf("opening %s: %w", path, err)
-	}
-	defer func() { _ = f.Close() }()
-
-	buf := make([]byte, shebangBufSize)
-	n, err := io.ReadFull(f, buf)
-	if err != nil && !errors.Is(err, io.ErrUnexpectedEOF) && !errors.Is(err, io.EOF) {
-		return "", fmt.Errorf("reading %s: %w", path, err)
-	}
-	head := buf[:n]
-	if !bytes.HasPrefix(head, []byte("#!")) {
-		return "", nil
-	}
-	line, _, _ := bytes.Cut(head[2:], []byte("\n"))
-	return strings.TrimSpace(string(line)), nil
 }

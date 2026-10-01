@@ -46,6 +46,33 @@ func TestParse_ExpansionDetection(t *testing.T) {
 	}
 }
 
+func TestParse_NameHasExpansion(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name, cmd string
+		want      bool
+	}{
+		{"literal name, expanded argument", `python3 "${CLAUDE_PROJECT_DIR}"/x.py`, false},
+		{"expanded name", `"${CLAUDE_PROJECT_DIR}"/x.py arg`, true},
+		{"substituted name", `$(which python3) x.py`, true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			cmds, err := Parse(tt.cmd)
+			if err != nil || len(cmds) == 0 {
+				t.Fatalf("Parse(%q) = %+v, %v; want the outer command first", tt.cmd, cmds, err)
+			}
+			if got := cmds[0].NameHasExpansion; got != tt.want {
+				t.Errorf("Parse(%q).NameHasExpansion = %v, want %v", tt.cmd, got, tt.want)
+			}
+			if !cmds[0].HasExpansion {
+				t.Errorf("Parse(%q).HasExpansion = false, want true", tt.cmd)
+			}
+		})
+	}
+}
+
 func TestParse_Redirects(t *testing.T) {
 	t.Parallel()
 

@@ -609,12 +609,20 @@ func allHooksAnswers(sandbox bool) types.WizardAnswers {
 // stdout and stderr. It skips the test when no `sh` is available.
 func runSh(t *testing.T, command string, env []string) (int, string, string) {
 	t.Helper()
+	return runShInput(t, command, env, "")
+}
+
+// runShInput is runSh with stdin. `sh` is resolved from the test's own PATH
+// before env replaces it, so env may name an empty or bogus PATH.
+func runShInput(t *testing.T, command string, env []string, stdin string) (int, string, string) {
+	t.Helper()
 	sh, err := exec.LookPath("sh")
 	if err != nil {
 		t.Skip("sh not found")
 	}
 	cmd := exec.Command(sh, "-c", command)
 	cmd.Env = env
+	cmd.Stdin = strings.NewReader(stdin)
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
@@ -668,6 +676,8 @@ func shStub(t *testing.T, dir, name, content string) string {
 // TestFailClosedCommand_ExitCodes pins the wrapper's exit-code mapping: 0
 // passes through with stdout (so a JSON permissionDecision still works), 2
 // keeps the hook's own reason, and anything else becomes a reasoned block.
+// Its "uncaught python exception blocks" case is XS-WS1 A5 against a real
+// interpreter.
 func TestFailClosedCommand_ExitCodes(t *testing.T) {
 	t.Parallel()
 	if runtime.GOOS == "windows" {

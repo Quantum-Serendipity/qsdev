@@ -5,6 +5,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"slices"
 	"strconv"
 	"strings"
@@ -180,7 +181,7 @@ func TestCheckClaudeSettingsPosture(t *testing.T) {
 			dir := t.TempDir()
 			writeTestFile(t, dir, ClaudeSettingsRelPath, tt.actual)
 			if !tt.noScript {
-				writeTestFile(t, dir, ".claude/hooks/package-guard.py", "#!/usr/bin/env python3\n")
+				writeTestScript(t, dir, ".claude/hooks/package-guard.py", "#!/usr/bin/env python3\n")
 			}
 			if tt.local != "" {
 				writeTestFile(t, dir, claudesettings.LocalRelPath, tt.local)
@@ -258,7 +259,7 @@ func TestCheckClaudeSettingsPosture_HooksWithoutPolicy(t *testing.T) {
 			t.Parallel()
 			dir := t.TempDir()
 			writeTestFile(t, dir, ClaudeSettingsRelPath, generatedSettings)
-			writeTestFile(t, dir, ".claude/hooks/package-guard.py", "#!/usr/bin/env python3\n")
+			writeTestScript(t, dir, ".claude/hooks/package-guard.py", "#!/usr/bin/env python3\n")
 
 			results := CheckClaudeSettingsPosture(CheckContext{
 				ProjectRoot:            dir,
@@ -306,6 +307,7 @@ func TestCheckHookPrograms(t *testing.T) {
 		{name: "absolute path", command: "/nonexistent/qsdev selfprotect", event: "PreToolUse"},
 		{name: "relative path", command: "./bin/qsdev selfprotect", event: "PreToolUse"},
 		{name: "unparseable", command: "qsdev 'selfprotect", event: "PreToolUse"},
+		{name: "unresolvable interpreter of a project script", command: `nonexistent-bin "${CLAUDE_PROJECT_DIR}"/.claude/hooks/x.py`, event: "PreToolUse", wantSev: SeverityHigh, wantProg: "nonexistent-bin"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -358,10 +360,146 @@ func TestCheckClaudeSettingsPosture_UnresolvableHook(t *testing.T) {
 	}
 }
 
-// lookPathFound resolves every name except "nonexistent-bin", so tests do
-// not depend on the programs installed on PATH.
+// TestCheckHookScripts_Interpreter guards XS-WS1 A7: a registered hook
+// script whose interpreter does not resolve exits 127, and one that is not
+// executable exits 126; Claude Code treats both as non-blocking errors, so the
+// guard silently stops applying.
+func TestCheckHookScripts_Interpreter(t *testing.T) {
+	t.Parallel()
+	interpDir := t.TempDir()
+	missingAbs := filepath.Join(interpDir, "no-such-python3")
+	notExecInterp := filepath.Join(interpDir, "not-exec-python3")
+	writeTestFile(t, interpDir, "not-exec-python3", "\x7fELF")
+	tests := []struct {
+		name     string
+		command  string
+		content  string
+		noExec   bool
+		mode     os.FileMode // when set, the script's exact mode
+		notRoot  bool        // the case only applies to a non-root user
+		posix    bool        // the case only applies where the kernel runs the shebang
+		goos     string      // the case only applies on this platform
+		wantProg string      // empty: no finding
+	}{
+		{name: "env interpreter missing", content: "#!/usr/bin/env nonexistent-bin\n", wantProg: "nonexistent-bin"},
+		{name: "env -S interpreter missing", content: "#!/usr/bin/env -S nonexistent-bin -u\n", wantProg: "nonexistent-bin"},
+		{name: "absolute interpreter missing", content: "#!" + missingAbs + "\n", posix: true, wantProg: missingAbs},
+		{name: "not executable", content: "#!/usr/bin/env python3\n", noExec: true, posix: true, wantProg: "python3"},
+		{name: "absolute interpreter is a directory", content: "#!" + filepath.Dir(missingAbs) + "\n", posix: true, wantProg: filepath.Dir(missingAbs)},
+		{name: "absolute interpreter not executable", content: "#!" + notExecInterp + "\n", posix: true, wantProg: notExecInterp},
+		{name: "CRLF interpreter line", content: "#!/usr/bin/env python3\r\nprint(1)\r\n", posix: true, wantProg: "python3"},
+		{name: "env with unsplit option", content: "#!/usr/bin/env python3 -u\n", goos: "linux", wantProg: "python3 -u"},
+		{name: "env option without -S", content: "#!/usr/bin/env -i python3\n", goos: "linux", wantProg: "/usr/bin/env"},
+		{name: "env -S with options resolvable", content: "#!/usr/bin/env -S python3 -u\n"},
+		{name: "env path missing", content: "#!/nonexistent/env python3\n", posix: true, wantProg: "/nonexistent/env"},
+		{name: "relative env path missing", content: "#!env python3\n", posix: true, wantProg: "env"},
+		{name: "executable by others only", content: "#!/usr/bin/env python3\n", mode: 0o645, notRoot: true, posix: true, wantProg: "python3"},
+		{
+			name:    "timeout wrapper with interpreter",
+			command: `timeout 30 python3 "${CLAUDE_PROJECT_DIR}"/.claude/hooks/x.py`,
+			content: "#!/usr/bin/env nonexistent-bin\n",
+			noExec:  true,
+		},
+		{
+			name:    "env assignment with interpreter",
+			command: `env PYTHONSAFEPATH=1 python3 "${CLAUDE_PROJECT_DIR}"/.claude/hooks/x.py`,
+			content: "#!" + missingAbs + "\n",
+		},
+		{
+			name:     "exec wrapper",
+			command:  `exec "${CLAUDE_PROJECT_DIR}"/.claude/hooks/x.py`,
+			content:  "#!/usr/bin/env nonexistent-bin\n",
+			wantProg: "nonexistent-bin",
+		},
+		{
+			name:     "timeout wrapper",
+			command:  `timeout 30 "${CLAUDE_PROJECT_DIR}"/.claude/hooks/x.py`,
+			content:  "#!/usr/bin/env nonexistent-bin\n",
+			wantProg: "nonexistent-bin",
+		},
+		{
+			name:     "sh -c script",
+			command:  `bash -c '"${CLAUDE_PROJECT_DIR}"/.claude/hooks/x.py'`,
+			content:  "#!/usr/bin/env nonexistent-bin\n",
+			wantProg: "nonexistent-bin",
+		},
+		{name: "resolvable", content: "#!/usr/bin/env python3\n"},
+		{name: "no shebang runs under sh", content: "echo ok\n"},
+		{
+			name:     "sandboxed script missing interpreter",
+			command:  `qsdev sandbox exec --category linter -- "${CLAUDE_PROJECT_DIR}"/.claude/hooks/x.py`,
+			content:  "#!/usr/bin/env nonexistent-bin\n",
+			wantProg: "nonexistent-bin",
+		},
+		{
+			name:    "script passed to an interpreter",
+			command: `sh "${CLAUDE_PROJECT_DIR}"/.claude/hooks/x.py`,
+			content: "#!/usr/bin/env nonexistent-bin\n",
+			noExec:  true,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			if tt.posix && runtime.GOOS == "windows" {
+				t.Skip("Windows runs hook scripts through Git Bash, which has no exec bit, tolerates CRLF and maps absolute interpreters itself")
+			}
+			if tt.goos != "" && runtime.GOOS != tt.goos {
+				t.Skipf("the kernel's interpreter-line rule differs from %s here", tt.goos)
+			}
+			if tt.notRoot && os.Geteuid() == 0 {
+				t.Skip("root may execute a file with any execute bit set")
+			}
+			dir := t.TempDir()
+			command := tt.command
+			if command == "" {
+				command = `"${CLAUDE_PROJECT_DIR}"/.claude/hooks/x.py || { rc=$?; exit 2; }`
+			}
+			switch {
+			case tt.mode != 0:
+				writeTestFileMode(t, dir, ".claude/hooks/x.py", tt.content, tt.mode)
+				if err := os.Chmod(filepath.Join(dir, ".claude", "hooks", "x.py"), tt.mode); err != nil {
+					t.Fatal(err)
+				}
+			case tt.noExec:
+				writeTestFile(t, dir, ".claude/hooks/x.py", tt.content)
+			default:
+				writeTestScript(t, dir, ".claude/hooks/x.py", tt.content)
+			}
+			cmd, err := json.Marshal(command)
+			if err != nil {
+				t.Fatal(err)
+			}
+			actual, err := claudesettings.Parse([]byte(`{"hooks": {"PreToolUse": [{"matcher": "Bash", "hooks": [{"type": "command", "command": ` + string(cmd) + `}]}]}}`))
+			if err != nil {
+				t.Fatal(err)
+			}
+			results := checkHookScripts(dir, actual, lookPathFound)
+			if tt.wantProg == "" {
+				if len(results) != 0 {
+					t.Fatalf("unexpected findings: %+v", results)
+				}
+				return
+			}
+			if len(results) != 1 {
+				t.Fatalf("got %d findings, want 1: %+v", len(results), results)
+			}
+			r := results[0]
+			if r.Name != "claude_hook_unresolvable" || r.Status != StatusFail || r.Severity != SeverityHigh {
+				t.Errorf("finding = %s/%s/%s, want claude_hook_unresolvable/fail/high", r.Name, r.Status, r.Severity)
+			}
+			if r.Metadata["program"] != tt.wantProg || r.FilePath != ".claude/hooks/x.py" {
+				t.Errorf("finding metadata %v, file %q; want program %s, file .claude/hooks/x.py", r.Metadata, r.FilePath, tt.wantProg)
+			}
+		})
+	}
+}
+
+// lookPathFound resolves every name except "nonexistent-bin" and names no
+// file has (with a blank or a carriage return), so tests do not depend on the
+// programs installed on PATH.
 func lookPathFound(file string) (string, error) {
-	if file == "nonexistent-bin" {
+	if file == "nonexistent-bin" || strings.ContainsAny(file, " \t\r") {
 		return "", exec.ErrNotFound
 	}
 	return filepath.Join("/usr/bin", file), nil
@@ -369,11 +507,22 @@ func lookPathFound(file string) (string, error) {
 
 func writeTestFile(t *testing.T, dir, rel, content string) {
 	t.Helper()
+	writeTestFileMode(t, dir, rel, content, 0o644)
+}
+
+// writeTestScript writes an executable hook script, as qsdev generates them.
+func writeTestScript(t *testing.T, dir, rel, content string) {
+	t.Helper()
+	writeTestFileMode(t, dir, rel, content, 0o755)
+}
+
+func writeTestFileMode(t *testing.T, dir, rel, content string, mode os.FileMode) {
+	t.Helper()
 	abs := filepath.Join(dir, filepath.FromSlash(rel))
 	if err := os.MkdirAll(filepath.Dir(abs), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(abs, []byte(content), 0o644); err != nil {
+	if err := os.WriteFile(abs, []byte(content), mode); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -386,7 +535,7 @@ func TestCheckHookScripts_NamesCommand(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	results := checkHookScripts(t.TempDir(), actual)
+	results := checkHookScripts(t.TempDir(), actual, lookPathFound)
 	if len(results) != 1 {
 		t.Fatalf("got %d results, want 1: %+v", len(results), results)
 	}

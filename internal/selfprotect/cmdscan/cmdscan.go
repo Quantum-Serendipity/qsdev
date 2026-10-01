@@ -46,6 +46,9 @@ type Command struct {
 	// (`<<EOF ... EOF`), which a shell such as `sh <<EOF` executes as a script.
 	Heredocs     []string
 	HasExpansion bool
+	// NameHasExpansion is set when the command word itself is built from an
+	// expansion, so Name is not the program the shell runs.
+	NameHasExpansion bool
 	// Assigns names the variables this statement sets for the command or the
 	// rest of the shell line: prefix assignments (`GIT_EXTERNAL_DIFF=x git
 	// diff`) and bare assignment statements (`PATH=/tmp/x`, emitted as a
@@ -256,6 +259,7 @@ func ParseWithVars(command string, vars map[string]string) ([]Command, error) {
 				hasWord = true
 				name, exp := wordText(cmd.Args[0], vars)
 				c.Name = name
+				c.NameHasExpansion = exp
 				c.HasExpansion = c.HasExpansion || exp
 				for _, w := range cmd.Args[1:] {
 					t, e := wordText(w, vars)

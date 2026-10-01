@@ -260,7 +260,7 @@ func TestSelfprotect_TooManySimpleCommandsDenies(t *testing.T) {
 // TestSelfprotect_AdversarialInputsUnderBudget runs the production hook as a
 // process against inputs that used to take tens of seconds (or never finish),
 // long past Claude Code's hook timeout, which then allows the call. Each must
-// now be denied with exit 2 well inside the budget.
+// now be denied with exit 2 well inside the budget. This is XS-WS1 A3.
 func TestSelfprotect_AdversarialInputsUnderBudget(t *testing.T) {
 	t.Parallel()
 

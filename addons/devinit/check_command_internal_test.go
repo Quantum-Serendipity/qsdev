@@ -2,9 +2,11 @@ package devinit
 
 import (
 	"encoding/json"
+	"io/fs"
 	"maps"
 	"os"
 	"path/filepath"
+	"runtime"
 	"slices"
 	"strings"
 	"testing"
@@ -13,6 +15,8 @@ import (
 	"github.com/Quantum-Serendipity/qsdev/internal/answers"
 	"github.com/Quantum-Serendipity/qsdev/internal/catalog"
 	"github.com/Quantum-Serendipity/qsdev/internal/check"
+	"github.com/Quantum-Serendipity/qsdev/internal/claudesettings"
+	"github.com/Quantum-Serendipity/qsdev/internal/shebang"
 	"github.com/Quantum-Serendipity/qsdev/internal/state"
 	"github.com/Quantum-Serendipity/qsdev/pkg/branding"
 	"github.com/Quantum-Serendipity/qsdev/pkg/ecosystem"
@@ -135,55 +139,80 @@ func TestRequiredDenyRules_MatchGeneratedSettings(t *testing.T) {
 // generated project whose settings.json lost its guard hooks and was switched
 // to bypassPermissions: the report must carry high-severity posture failures
 // and the command must exit non-zero at --audit-level low.
-func TestCheckCmd_FailsWhenGuardHooksStripped(t *testing.T) {
-	dir := initLifecycleProject(t)
-	settingsPath := filepath.Join(dir, ".claude", "settings.json")
-
-	postureFailures := func(out string) []string {
-		t.Helper()
-		var report check.CheckReport
-		// The JSON report may be followed by cobra's error output.
-		if err := json.NewDecoder(strings.NewReader(out[strings.Index(out, "{"):])).Decode(&report); err != nil {
-			t.Fatalf("parsing report: %v\n%s", err, out)
-		}
-		var names []string
-		if !slices.ContainsFunc(report.Checks, func(c check.CheckResult) bool { return strings.HasPrefix(c.Name, "claude_") }) {
-			t.Fatalf("report has no Claude settings posture result:\n%s", out)
-		}
-		for _, c := range report.Checks {
-			if strings.HasPrefix(c.Name, "claude_") && c.Status == check.StatusFail {
-				names = append(names, c.Name)
-			}
-		}
-		return names
+// postureFailures parses the JSON report of `qsdev check --format json` and
+// returns the names of the failing Claude settings posture results.
+func postureFailures(t *testing.T, out string) []string {
+	t.Helper()
+	var report check.CheckReport
+	// The JSON report may be followed by cobra's error output.
+	if err := json.NewDecoder(strings.NewReader(out[strings.Index(out, "{"):])).Decode(&report); err != nil {
+		t.Fatalf("parsing report: %v\n%s", err, out)
 	}
-
-	out, _ := runLifecycleCmd(t, dir, checkCmd(), "--format", "json", "--audit-level", "low")
-	if failed := postureFailures(out); len(failed) != 0 {
-		t.Fatalf("freshly generated project fails posture checks: %v", failed)
+	var names []string
+	if !slices.ContainsFunc(report.Checks, func(c check.CheckResult) bool { return strings.HasPrefix(c.Name, "claude_") }) {
+		t.Fatalf("report has no Claude settings posture result:\n%s", out)
 	}
-
-	var settings map[string]any
-	if err := json.Unmarshal([]byte(readProjectFile(t, dir, ".claude/settings.json")), &settings); err != nil {
-		t.Fatal(err)
+	for _, c := range report.Checks {
+		if strings.HasPrefix(c.Name, "claude_") && c.Status == check.StatusFail {
+			names = append(names, c.Name)
+		}
 	}
-	delete(settings, "hooks")
-	perms := settings["permissions"].(map[string]any)
-	perms["defaultMode"] = "bypassPermissions"
-	delete(perms, "disableBypassPermissionsMode")
-	data, err := json.Marshal(settings)
+	return names
+}
+
+// stubHookProgramsOnPath prepends to PATH a directory holding an empty stub
+// for each program the generated hooks in dir look up on PATH: the app binary
+// and each hook script's env interpreter. `qsdev check` only looks them up,
+// never runs them, so the posture result does not depend on what the machine
+// has installed.
+func stubHookProgramsOnPath(t *testing.T, dir string) {
+	t.Helper()
+	names := []string{branding.Get().AppName}
+	err := filepath.WalkDir(filepath.Join(dir, ".claude", "hooks"), func(p string, d fs.DirEntry, err error) error {
+		if err != nil || d.IsDir() {
+			return err
+		}
+		if line, err := shebang.Read(p); err == nil && line.ViaEnv() && line.Program() != "" {
+			names = append(names, line.Program())
+		}
+		return nil
+	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(settingsPath, data, 0o644); err != nil {
-		t.Fatal(err)
+	bin := t.TempDir()
+	for _, name := range names {
+		if runtime.GOOS == "windows" {
+			name += ".exe"
+		}
+		if err := os.WriteFile(filepath.Join(bin, name), nil, 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
+}
+
+func TestCheckCmd_FailsWhenGuardHooksStripped(t *testing.T) {
+	dir := initLifecycleProject(t)
+	stubHookProgramsOnPath(t, dir)
+
+	out, _ := runLifecycleCmd(t, dir, checkCmd(), "--format", "json", "--audit-level", "low")
+	if failed := postureFailures(t, out); len(failed) != 0 {
+		t.Fatalf("freshly generated project fails posture checks: %v", failed)
 	}
 
-	out, err = runLifecycleCmd(t, dir, checkCmd(), "--format", "json", "--audit-level", "low")
+	editSettings(t, dir, func(settings map[string]any) {
+		delete(settings, "hooks")
+		perms := settings["permissions"].(map[string]any)
+		perms["defaultMode"] = "bypassPermissions"
+		delete(perms, "disableBypassPermissionsMode")
+	})
+
+	out, err := runLifecycleCmd(t, dir, checkCmd(), "--format", "json", "--audit-level", "low")
 	if err == nil {
 		t.Fatalf("check passed with guard hooks stripped:\n%s", out)
 	}
-	failed := postureFailures(out)
+	failed := postureFailures(t, out)
 	for _, want := range []string{"claude_bypass_permissions_mode", "claude_disable_bypass_missing", "claude_hook_missing"} {
 		if !slices.Contains(failed, want) {
 			t.Errorf("report lacks failing %s; posture failures: %v", want, failed)
@@ -196,8 +225,86 @@ func TestCheckCmd_FailsWhenGuardHooksStripped(t *testing.T) {
 		t.Fatal(err)
 	}
 	out, err = runLifecycleCmd(t, dir, checkCmd(), "--format", "json", "--audit-level", "low")
-	if err == nil || !slices.Contains(postureFailures(out), "claude_hook_missing") {
+	if err == nil || !slices.Contains(postureFailures(t, out), "claude_hook_missing") {
 		t.Errorf("without saved answers the stripped hooks went unreported (err=%v):\n%s", err, out)
+	}
+}
+
+// TestCheckCmd_FailsWhenHookDoesNotResolve guards XS-WS1 A7: a registered
+// hook that cannot start (its script's interpreter or its program is not on
+// PATH) exits 127, which Claude Code treats as a non-blocking error, so
+// `qsdev check` must fail on it.
+func TestCheckCmd_FailsWhenHookDoesNotResolve(t *testing.T) {
+	tests := []struct {
+		name string
+		edit func(t *testing.T, dir string)
+	}{
+		{"script interpreter", func(t *testing.T, dir string) {
+			t.Helper()
+			rel := registeredHookScript(t, dir)
+			_, rest, _ := strings.Cut(readProjectFile(t, dir, rel), "\n")
+			if err := os.WriteFile(filepath.Join(dir, filepath.FromSlash(rel)), []byte("#!/usr/bin/env qsdev-xsws1-no-such-interpreter\n"+rest), 0o755); err != nil {
+				t.Fatal(err)
+			}
+		}},
+		{"bare program", func(t *testing.T, dir string) {
+			t.Helper()
+			editSettings(t, dir, func(settings map[string]any) {
+				hook := settings["hooks"].(map[string]any)["PreToolUse"].([]any)[0].(map[string]any)["hooks"].([]any)[0].(map[string]any)
+				hook["command"] = "qsdev-xsws1-no-such-bin selfprotect"
+			})
+		}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			dir := initLifecycleProject(t)
+			stubHookProgramsOnPath(t, dir)
+			tt.edit(t, dir)
+
+			out, err := runLifecycleCmd(t, dir, checkCmd(), "--format", "json")
+			if err == nil {
+				t.Fatalf("check passed with a hook that cannot run:\n%s", out)
+			}
+			if failed := postureFailures(t, out); !slices.Contains(failed, "claude_hook_unresolvable") {
+				t.Errorf("report lacks failing claude_hook_unresolvable; posture failures: %v", failed)
+			}
+		})
+	}
+}
+
+// registeredHookScript returns the first project hook script the generated
+// settings.json registers for PreToolUse.
+func registeredHookScript(t *testing.T, dir string) string {
+	t.Helper()
+	settings, err := claudesettings.Parse([]byte(readProjectFile(t, dir, ".claude/settings.json")))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, m := range settings.Hooks[claudesettings.EventPreToolUse] {
+		for _, h := range m.Hooks {
+			if script := claudesettings.ScriptRe.FindString(h.Command); script != "" {
+				return script
+			}
+		}
+	}
+	t.Fatal("generated settings.json registers no PreToolUse hook script")
+	return ""
+}
+
+// editSettings rewrites .claude/settings.json in dir through edit.
+func editSettings(t *testing.T, dir string, edit func(map[string]any)) {
+	t.Helper()
+	var settings map[string]any
+	if err := json.Unmarshal([]byte(readProjectFile(t, dir, ".claude/settings.json")), &settings); err != nil {
+		t.Fatal(err)
+	}
+	edit(settings)
+	data, err := json.Marshal(settings)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, ".claude", "settings.json"), data, 0o644); err != nil {
+		t.Fatal(err)
 	}
 }
 

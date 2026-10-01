@@ -161,8 +161,19 @@ func installDefaultRuntime() *Runtime {
 	// cmd.Main. Finish runs at most once, so Main's own call is harmless.
 	cobra.OnFinalize(rt.Finish)
 
-	rt.updateCh = selfupdate.BackgroundCheck(version.Info().Version)
+	rt.updateCh = startUpdateCheck(selfupdate.NoticeWanted(os.Stderr), version.Info().Version)
 	return rt
+}
+
+// startUpdateCheck starts the background update check for an interactive
+// process and returns its notice channel. A non-interactive process (hook,
+// MCP server, CI) gets nil, so it makes no request, writes no cache and Finish
+// prints nothing.
+func startUpdateCheck(interactive bool, currentVersion string) <-chan string {
+	if !interactive {
+		return nil
+	}
+	return selfupdate.BackgroundCheck(currentVersion)
 }
 
 // standardCommands returns the commands every tool on this framework ships:

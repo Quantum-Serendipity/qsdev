@@ -131,19 +131,15 @@ func securityToHookChoices(cfg *types.QsdevConfig) types.HookChoices {
 	return hc
 }
 
-// levelHookChoices returns the hooks a compliance level requires:
-//   - baseline: none beyond the safety block
-//   - enhanced: pre-commit
-//   - strict: pre-commit + audit-log + auto-format
+// levelHookChoices returns the Claude Code hooks a compliance level requires:
+// audit-log for strict, none beyond the safety block otherwise. No level
+// implies auto-format or pre-commit: neither registers a Claude Code hook,
+// and the commit-time checks a level requires are devenv git hooks (the
+// compliance level's required_pre_commit_hooks).
 func levelHookChoices(level string) types.HookChoices {
 	var hc types.HookChoices
-	switch level {
-	case "enhanced":
-		hc.PreCommit = true
-	case "strict":
-		hc.PreCommit = true
+	if level == "strict" {
 		hc.AuditLog = true
-		hc.AutoFormat = true
 	}
 	return hc
 }

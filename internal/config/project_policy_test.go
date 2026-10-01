@@ -202,8 +202,11 @@ func TestProjectPolicy_Apply(t *testing.T) {
 				if a.ComplianceLevel != "strict" {
 					t.Errorf("ComplianceLevel = %q, want strict", a.ComplianceLevel)
 				}
-				if !a.Hooks.PreCommit || !a.Hooks.AuditLog || !a.Hooks.AutoFormat {
+				if !a.Hooks.AuditLog {
 					t.Errorf("strict hooks not enabled: %+v", a.Hooks)
+				}
+				if a.Hooks.AutoFormat || a.Hooks.PreCommit {
+					t.Errorf("strict implied a preset no Claude Code hook implements: %+v", a.Hooks)
 				}
 				if a.PermissionLevel != "minimal" {
 					t.Errorf("PermissionLevel = %q, want the strict client's minimal", a.PermissionLevel)
@@ -240,7 +243,7 @@ func TestProjectPolicy_Apply(t *testing.T) {
 			answers: types.WizardAnswers{ClaudeCode: true},
 			check: func(t *testing.T, a types.WizardAnswers) {
 				t.Helper()
-				if a.ComplianceLevel != "enhanced" || !a.Hooks.PreCommit {
+				if a.ComplianceLevel != "enhanced" {
 					t.Errorf("floor not applied: level %q, hooks %+v", a.ComplianceLevel, a.Hooks)
 				}
 			},

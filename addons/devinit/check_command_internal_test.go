@@ -380,3 +380,71 @@ func TestCheckCmd_ToolGatesPolicy(t *testing.T) {
 		t.Errorf("dropped tool-gates policy env not reported: %+v", r.Checks)
 	}
 }
+
+// TestRunCheck_ExpectedSettingsEnforceAlwaysOn is the U28-V01 regression:
+// saved answers that dropped the safety block must not also drop the
+// package-guard registration from the settings check expects. Always-on
+// enforcement is applied to the loaded answers before the expected settings
+// are generated, so the stripped always-on hook is reported.
+func TestRunCheck_ExpectedSettingsEnforceAlwaysOn(t *testing.T) {
+	dir := initLifecycleProject(t)
+
+	saved, err := answers.LoadPrimary(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	saved.Hooks.SafetyBlock = false
+	if err := answers.SavePrimary(dir, saved); err != nil {
+		t.Fatal(err)
+	}
+
+	const guard = "package-guard.py"
+	settingsPath := filepath.Join(dir, ".claude", "settings.json")
+	var settings map[string]any
+	if err := json.Unmarshal([]byte(readProjectFile(t, dir, ".claude/settings.json")), &settings); err != nil {
+		t.Fatal(err)
+	}
+	if removed := stripHookCommands(settings, guard); removed == 0 {
+		t.Fatalf("generated settings.json registers no %s hook", guard)
+	}
+	data, err := json.Marshal(settings)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(settingsPath, data, 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	report := runCheckJSON(t, dir)
+	if !slices.ContainsFunc(report.Checks, func(c check.CheckResult) bool {
+		return c.Name == "claude_hook_missing" && c.Status == check.StatusFail &&
+			strings.Contains(c.Metadata["command"], guard)
+	}) {
+		t.Errorf("check did not report the stripped %s registration: %+v", guard, report.Checks)
+	}
+}
+
+// stripHookCommands removes every hook whose command contains substr from a
+// decoded settings.json and returns how many it removed.
+func stripHookCommands(settings map[string]any, substr string) int {
+	hooks, _ := settings["hooks"].(map[string]any)
+	removed := 0
+	for _, matchers := range hooks {
+		list, _ := matchers.([]any)
+		for _, m := range list {
+			entry, _ := m.(map[string]any)
+			inner, _ := entry["hooks"].([]any)
+			kept := inner[:0]
+			for _, h := range inner {
+				cmd, _ := h.(map[string]any)["command"].(string)
+				if strings.Contains(cmd, substr) {
+					removed++
+					continue
+				}
+				kept = append(kept, h)
+			}
+			entry["hooks"] = kept
+		}
+	}
+	return removed
+}

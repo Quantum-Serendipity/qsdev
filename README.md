@@ -305,11 +305,11 @@ Pre-configured bundles for common project types:
 | Profile | Languages | Services | Security |
 |---------|-----------|----------|----------|
 | `go-web` | Go | PostgreSQL, Redis | Standard + safety-block |
-| `ts-fullstack` | TypeScript (pnpm) | PostgreSQL, Redis | Standard + auto-format |
+| `ts-fullstack` | TypeScript (pnpm) | PostgreSQL, Redis | Standard |
 | `ts-backend` | TypeScript (pnpm) | PostgreSQL, Redis | Standard |
 | `python-data` | Python (uv) | — | Minimal |
 | `python-web` | Python (uv) | PostgreSQL, Redis | Standard |
-| `rust-cli` | Rust | — | Minimal + pre-commit |
+| `rust-cli` | Rust | — | Minimal |
 | `rust-web` | Rust | PostgreSQL, Redis | Standard |
 | `java-web` | Java (Gradle) | PostgreSQL, Redis | Standard |
 | `elixir-web` | Elixir | PostgreSQL, Redis | Standard |

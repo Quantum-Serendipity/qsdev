@@ -14,6 +14,8 @@ import (
 // as the customize path.
 func buildPlanPreview(fs *formState) string {
 	answers := mapFormToAnswers(fs, fs.partial.ProjectRoot, fs.partial.ProjectName, fs.partial.Detected)
+	// Preview what init will generate: always-on tools are enforced then.
+	enforceAlwaysOn(&answers, fs.tools)
 	return renderPlanPreview(answers)
 }
 
@@ -132,9 +134,7 @@ func hookNames(a types.WizardAnswers) []string {
 		enabled bool
 	}{
 		{"self-protection", h.SelfProtection},
-		{"auto-format", h.AutoFormat},
 		{"safety-block", h.SafetyBlock},
-		{"pre-commit", h.PreCommit},
 		{"audit-log", h.AuditLog},
 		{"credential-scan", h.CredentialScan},
 		{"destructive-prevention", h.DestructivePrevention},

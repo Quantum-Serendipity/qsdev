@@ -170,15 +170,22 @@ Hook presets control Claude Code runtime behavior:
 | `file-boundary` | Prevents Write/Edit/Read/Grep/Glob operations outside the project tree (reads of dependency caches such as the Go module cache and /nix/store, and of `.qsdev.yaml` `hooks.file_boundary.extra_read_paths`, are allowed). Shell commands are out of its scope |
 | `tool-gates` | Blocks the tools listed in `.qsdev.yaml` `hooks.tool_gates.denied`, and every tool outside `hooks.tool_gates.allowed` when that list is set, on all tool invocations. With neither list set it has no policy and allows every tool; `qsdev claude hooks list` and `qsdev check` report it as "no policy" |
 | `soc2-audit` | Logs session start/end (with the end reason), tool invocations, failed and denied tool calls, and checkpoints for SOC 2 compliance (metadata-only audit trail with monthly rotation) |
-| `auto-format` | Runs formatters after file writes |
-| `pre-commit` | Runs pre-commit checks before git operations |
 | `audit-log` | Logs all tool invocations for compliance auditing (simpler alternative to soc2-audit) |
 
 The hook sandbox is experimental and not yet enableable from the CLI (planned opt-in `--claude-hooks sandbox`, Linux/Nix builds); no generated hook is wrapped in it today. `qsdev sandbox status` shows what isolation this machine could provide.
+`safety-block` is always on whatever other presets you pick; `--claude-hooks`
+adds presets to it. The only opt-out is `qsdev disable attach-guard --force`,
+which lists `attach-guard` under `tools.disabled` in `.qsdev.yaml`; the saved
+answers' `safety_block_opt_out` is derived from that entry, and `init`,
+`init --update`, `claude init` and `claude update` warn while it stands
+(`qsdev enable attach-guard` turns the guard back on). Commit-time checks such
+as pre-commit are devenv git hooks set by the compliance level's
+`required_pre_commit_hooks`, not Claude Code hooks, so `--claude-hooks`
+rejects `pre-commit` and `auto-format`.
 
 ```bash
 # At init time
-qsdev init --claude-hooks safety-block,pre-commit --yes
+qsdev init --claude-hooks audit-log,credential-scan --yes
 
 # Add to an existing project
 qsdev claude add-hook audit-log
@@ -391,8 +398,7 @@ claude:
     - review-pr
   hooks:
     - safety-block
-    - pre-commit
-    - auto-format
+    - audit-log
 ```
 
 Each repository then runs:

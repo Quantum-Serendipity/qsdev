@@ -98,7 +98,6 @@ project_profiles:
             - security-review-owasp
         hooks:
             - safety-block
-            - pre-commit
     elixir-web:
         description: 'Elixir web service: Elixir, PostgreSQL, Redis, direnv, Claude Code (standard)'
         tier: full
@@ -115,7 +114,6 @@ project_profiles:
             - security-review-owasp
         hooks:
             - safety-block
-            - pre-commit
     go-web:
         description: 'Go web service: Go 1.24, PostgreSQL, Redis, direnv, Claude Code (standard), deploy + security-review-owasp skills'
         tier: full
@@ -133,7 +131,6 @@ project_profiles:
             - security-review-owasp
         hooks:
             - safety-block
-            - pre-commit
     java-web:
         description: 'Java web service: Java 21 (Gradle), PostgreSQL, Redis, direnv, Claude Code (standard)'
         tier: full
@@ -152,7 +149,6 @@ project_profiles:
             - security-review-owasp
         hooks:
             - safety-block
-            - pre-commit
     python-data:
         description: 'Python data science: Python 3.12 (uv), no services, direnv, Claude Code (minimal)'
         tier: full
@@ -168,7 +164,6 @@ project_profiles:
             - security-review-owasp
         hooks:
             - safety-block
-            - pre-commit
     python-web:
         description: 'Python web service: Python 3.12 (uv), PostgreSQL, Redis, direnv, Claude Code (standard)'
         tier: full
@@ -187,7 +182,6 @@ project_profiles:
             - security-review-owasp
         hooks:
             - safety-block
-            - pre-commit
     rust-cli:
         description: 'Rust CLI tool: Rust, no services, direnv, Claude Code (minimal)'
         tier: full
@@ -201,7 +195,6 @@ project_profiles:
             - security-review-owasp
         hooks:
             - safety-block
-            - pre-commit
     rust-web:
         description: 'Rust web service: Rust, PostgreSQL, Redis, direnv, Claude Code (standard)'
         tier: full
@@ -218,7 +211,6 @@ project_profiles:
             - security-review-owasp
         hooks:
             - safety-block
-            - pre-commit
     ts-backend:
         description: 'TypeScript backend: JavaScript (pnpm), PostgreSQL, Redis, direnv, Claude Code (standard)'
         tier: full
@@ -236,7 +228,6 @@ project_profiles:
             - security-review-owasp
         hooks:
             - safety-block
-            - pre-commit
     ts-fullstack:
         description: 'TypeScript full-stack: JavaScript (pnpm), PostgreSQL, Redis, direnv, Claude Code (standard)'
         tier: full
@@ -253,9 +244,7 @@ project_profiles:
             - deploy
             - security-review-owasp
         hooks:
-            - auto-format
             - safety-block
-            - pre-commit
 tools:
     agent-postmortem:
         display_name: Agent Postmortem Protocol
@@ -1129,7 +1118,7 @@ hook_tiers:
         - terraform-validate
         - tflint
         - zig-fmt
-    # strict adds audit logging and auto-format hooks, not pre-commit hooks.
+    # strict adds the audit-log hook, not pre-commit hooks.
     strict: []
 # The tier a project gets when nothing selects one. init persists it to
 # .qsdev.yaml so readers never have to guess the tier.

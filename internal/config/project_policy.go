@@ -48,6 +48,16 @@ func LoadProjectPolicy(projectRoot string) (*ProjectPolicy, error) {
 	return ResolveProjectPolicy(project, local)
 }
 
+// CommittedTools returns the tools block of projectRoot's committed
+// .qsdev.yaml, or nil when there is none or it cannot be loaded.
+func CommittedTools(projectRoot string) *types.ToolsConfig {
+	policy, err := LoadProjectPolicy(projectRoot)
+	if err != nil {
+		return nil
+	}
+	return &policy.Committed.Tools
+}
+
 // ResolveProjectPolicy resolves an already-parsed project config and optional
 // local overrides with an empty organization-defaults layer.
 func ResolveProjectPolicy(project *types.QsdevConfig, local *LocalConfig) (*ProjectPolicy, error) {
@@ -79,9 +89,7 @@ func (p *ProjectPolicy) Apply(a *types.WizardAnswers) {
 	overlay := p.clientComplianceOverlay()
 	if a.ClaudeCode {
 		implied := levelHookChoices(level)
-		a.Hooks.PreCommit = a.Hooks.PreCommit || implied.PreCommit
-		a.Hooks.AuditLog = a.Hooks.AuditLog || implied.AuditLog
-		a.Hooks.AutoFormat = a.Hooks.AutoFormat || implied.AutoFormat
+		a.Hooks = a.Hooks.Union(implied)
 		if a.PermissionLevel == "" && overlay != nil {
 			a.PermissionLevel = overlay.ClaudeCode.PermissionLevel
 		}

@@ -85,9 +85,9 @@ func TestBuiltinProfiles_TSFullstack(t *testing.T) {
 	if p.PermissionLevel != "standard" {
 		t.Errorf("PermissionLevel = %q, want %q", p.PermissionLevel, "standard")
 	}
-	// Should have auto-format, safety-block, pre-commit hooks.
-	if len(p.Hooks) != 3 {
-		t.Errorf("Hooks length = %d, want 3", len(p.Hooks))
+	// Should have the safety-block hook.
+	if len(p.Hooks) != 1 {
+		t.Errorf("Hooks length = %d, want 1", len(p.Hooks))
 	}
 }
 
@@ -123,9 +123,9 @@ func TestBuiltinProfiles_RustCLI(t *testing.T) {
 	if p.PermissionLevel != "minimal" {
 		t.Errorf("PermissionLevel = %q, want %q", p.PermissionLevel, "minimal")
 	}
-	// Should have safety-block, pre-commit hooks.
-	if len(p.Hooks) != 2 {
-		t.Errorf("Hooks length = %d, want 2", len(p.Hooks))
+	// Should have the safety-block hook.
+	if len(p.Hooks) != 1 {
+		t.Errorf("Hooks length = %d, want 1", len(p.Hooks))
 	}
 }
 

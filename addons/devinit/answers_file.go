@@ -11,6 +11,7 @@ import (
 
 	"gopkg.in/yaml.v3"
 
+	"github.com/Quantum-Serendipity/qsdev/addons/claudecode"
 	"github.com/Quantum-Serendipity/qsdev/pkg/types"
 )
 
@@ -24,7 +25,7 @@ func LoadAnswersFile(path string) (types.WizardAnswers, error) {
 	if err != nil {
 		return types.WizardAnswers{}, err
 	}
-	return decodeAnswers(data, source)
+	return decodeAnswersFile(data, source)
 }
 
 // LoadAnswersFromReader reads and parses WizardAnswers from an io.Reader.
@@ -33,7 +34,7 @@ func LoadAnswersFromReader(r io.Reader, source string) (types.WizardAnswers, err
 	if err != nil {
 		return types.WizardAnswers{}, err
 	}
-	return decodeAnswers(data, source)
+	return decodeAnswersFile(data, source)
 }
 
 // OverlayAnswersFile applies the answers file at path (or "-" for stdin) over
@@ -46,7 +47,7 @@ func OverlayAnswersFile(base types.WizardAnswers, path string) (types.WizardAnsw
 		return types.WizardAnswers{}, err
 	}
 	// Decode strictly first so typos are reported against the file itself.
-	if _, err := decodeAnswers(data, source); err != nil {
+	if _, err := decodeAnswersFile(data, source); err != nil {
 		return types.WizardAnswers{}, err
 	}
 	var overlay map[string]any
@@ -104,6 +105,20 @@ func readAnswersData(r io.Reader, source string) ([]byte, error) {
 		return nil, fmt.Errorf("answers from %s exceed the %d-byte limit", source, maxAnswersFileSize)
 	}
 	return data, nil
+}
+
+// decodeAnswersFile decodes a user-supplied answers document and rejects the
+// hook presets it turns on that no Claude Code hook implements (U28-17), the
+// same presets --claude-hooks, profiles and `claude add-hook` reject.
+func decodeAnswersFile(data []byte, source string) (types.WizardAnswers, error) {
+	answers, err := decodeAnswers(data, source)
+	if err != nil {
+		return types.WizardAnswers{}, err
+	}
+	if err := claudecode.ValidateHookChoices(answers.Hooks); err != nil {
+		return types.WizardAnswers{}, fmt.Errorf("answers from %s: %w", source, err)
+	}
+	return answers, nil
 }
 
 // decodeAnswers parses an answers document strictly: an unknown or misspelled

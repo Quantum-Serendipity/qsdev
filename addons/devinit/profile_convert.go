@@ -3,9 +3,8 @@ package devinit
 import (
 	"fmt"
 	"maps"
-	"strings"
 
-	"github.com/Quantum-Serendipity/qsdev/internal/validation"
+	"github.com/Quantum-Serendipity/qsdev/addons/claudecode"
 	"github.com/Quantum-Serendipity/qsdev/pkg/types"
 )
 
@@ -57,14 +56,13 @@ func ProfileToAnswers(p Profile, projectRoot, projectName string) (types.WizardA
 }
 
 // hooksFromStrings maps hook preset names to HookChoices. The selectable names
-// are the catalog's hook presets; an unknown or misspelled name is an error
-// rather than a silently disabled hook.
+// are claudecode.SelectableHookPresets; an unknown, misspelled or
+// unimplemented name is an error rather than a silently absent hook.
 func hooksFromStrings(hooks []string) (types.HookChoices, error) {
 	var hc types.HookChoices
 	for _, h := range hooks {
-		if !validation.IsValidHookPreset(h) {
-			return types.HookChoices{}, fmt.Errorf("unknown hook preset %q; valid presets: %s",
-				h, strings.Join(validation.HookPresets(), ", "))
+		if err := claudecode.ValidateHookPreset(h); err != nil {
+			return types.HookChoices{}, err
 		}
 		if err := hc.EnableHook(h); err != nil {
 			return types.HookChoices{}, fmt.Errorf("hook preset %q: %w", h, err)
@@ -88,6 +86,7 @@ func applyAnswerInvariants(a *types.WizardAnswers) {
 //
 // Language overrides REPLACE the base languages entirely.
 // Service overrides APPEND to the base services (deduplicating by name).
+// Hook overrides are ADDED to the base hooks.
 // Environment variables merge per key, and agent tools per setting.
 // All other fields use simple replacement when the key is present in changed.
 // The result satisfies applyAnswerInvariants.
@@ -121,7 +120,8 @@ func MergeProfileWithFlags(base types.WizardAnswers, overrides types.WizardAnswe
 		result.Skills = overrides.Skills
 	}
 	if changed["hooks"] {
-		result.Hooks = overrides.Hooks
+		// Flag hook presets ADD to the profile's hooks.
+		result.Hooks = base.Hooks.Union(overrides.Hooks)
 	}
 	if changed["git_hooks"] {
 		result.GitHooks = overrides.GitHooks

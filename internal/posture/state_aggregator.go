@@ -110,7 +110,10 @@ func LoadAllStates(projectRoot string) *MergedState {
 
 // loadAnswersFallback fills EnabledTools for projects initialized before
 // EnabledTools was persisted to state, by running the standard inference over
-// the primary answers file. Inference turns every always-on tool on, so it
+// the primary answers file. The inference reports what the answers configure
+// and does not enforce always-on tools, so a guard whose backing answer is
+// off (hooks.safety_block: false) is not credited. Inference still turns
+// the always-on tools without a backing answer on, so it
 // runs only when that file actually exists: with no answers there is nothing
 // to infer from, and crediting the always-on tools would report protection the
 // project was never configured with. A missing or unreadable answers file
@@ -129,7 +132,7 @@ func loadAnswersFallback(projectRoot string, merged *MergedState) {
 		merged.ToolStateUnknown = true
 		return
 	}
-	toolreg.MergeInferredTools(&a, toolreg.DefaultRegistry())
+	toolreg.InferTools(&a, toolreg.DefaultRegistry())
 	for k, v := range a.EnabledTools {
 		merged.EnabledTools[k] = v
 	}

@@ -219,7 +219,11 @@ func TestFillDefaults_JavaBuildToolFromMarkers(t *testing.T) {
 	}
 }
 
-func TestWizardAnswers_ApplyClaudeHookDefaults(t *testing.T) {
+// TestApplyClaudeHookDefaults_SafetyBlockIndependent verifies the
+// generator-side invariant: with Claude Code on, self-protection is always on
+// and the safety block is on unless the answers record an opt-out, whichever
+// other hooks were chosen.
+func TestApplyClaudeHookDefaults_SafetyBlockIndependent(t *testing.T) {
 	t.Parallel()
 	tests := []struct {
 		name string
@@ -227,10 +231,32 @@ func TestWizardAnswers_ApplyClaudeHookDefaults(t *testing.T) {
 		want types.HookChoices
 	}{
 		{"claude disabled is untouched", types.WizardAnswers{}, types.HookChoices{}},
+		{"claude disabled keeps an opt-out untouched",
+			types.WizardAnswers{Hooks: types.HookChoices{SafetyBlockOptOut: true}},
+			types.HookChoices{SafetyBlockOptOut: true}},
 		{"no hooks gets self-protection and safety block", types.WizardAnswers{ClaudeCode: true},
 			types.HookChoices{SelfProtection: true, SafetyBlock: true}},
-		{"explicit primary hook keeps safety block off", types.WizardAnswers{ClaudeCode: true, Hooks: types.HookChoices{AutoFormat: true}},
-			types.HookChoices{SelfProtection: true, AutoFormat: true}},
+		{"explicit primary hook keeps safety block on",
+			types.WizardAnswers{ClaudeCode: true, Hooks: types.HookChoices{AutoFormat: true}},
+			types.HookChoices{SelfProtection: true, AutoFormat: true, SafetyBlock: true}},
+		{"pre-commit alone keeps safety block on",
+			types.WizardAnswers{ClaudeCode: true, Hooks: types.HookChoices{PreCommit: true}},
+			types.HookChoices{SelfProtection: true, PreCommit: true, SafetyBlock: true}},
+		{"audit-log alone keeps safety block on",
+			types.WizardAnswers{ClaudeCode: true, Hooks: types.HookChoices{AuditLog: true}},
+			types.HookChoices{SelfProtection: true, AuditLog: true, SafetyBlock: true}},
+		{"credential-scan alone keeps safety block on",
+			types.WizardAnswers{ClaudeCode: true, Hooks: types.HookChoices{CredentialScan: true}},
+			types.HookChoices{SelfProtection: true, CredentialScan: true, SafetyBlock: true}},
+		{"safety block off without an opt-out is turned on",
+			types.WizardAnswers{ClaudeCode: true, Hooks: types.HookChoices{SafetyBlock: false, AuditLog: true}},
+			types.HookChoices{SelfProtection: true, AuditLog: true, SafetyBlock: true}},
+		{"recorded opt-out keeps safety block off",
+			types.WizardAnswers{ClaudeCode: true, Hooks: types.HookChoices{SafetyBlockOptOut: true}},
+			types.HookChoices{SelfProtection: true, SafetyBlockOptOut: true}},
+		{"recorded opt-out wins over a stale safety block",
+			types.WizardAnswers{ClaudeCode: true, Hooks: types.HookChoices{SafetyBlock: true, SafetyBlockOptOut: true}},
+			types.HookChoices{SelfProtection: true, SafetyBlockOptOut: true}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

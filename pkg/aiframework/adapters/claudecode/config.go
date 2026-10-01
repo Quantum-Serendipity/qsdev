@@ -119,8 +119,8 @@ func (a *Adapter) Format() string { return "json" }
 // wizard answers and addon config that GenerateSettings/GenerateMcpJson
 // consume. It also returns the URL-based MCP servers, which the addon config
 // cannot express and Render emits directly. The always-on Claude Code hooks
-// (self-protection, and package-guard when no primary hook is chosen) are
-// applied whatever hooks the policy lists.
+// (self-protection and package-guard, whose opt-out a policy cannot record)
+// are applied whatever hooks the policy lists.
 func (a *Adapter) policyToInputs(input *aiframework.PolicyInput) (types.WizardAnswers, ccaddon.Config, []aiframework.MCPServerSpec) {
 	cfg := a.cfg
 	cfg.MCPServers = slices.Clone(cfg.MCPServers)

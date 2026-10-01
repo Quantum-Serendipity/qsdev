@@ -90,15 +90,9 @@ func runCheck(cmd *cobra.Command, format check.OutputFormat, auditLevel check.Au
 	cfgFile := branding.Get().ConfigFile
 	ctx.QsdevConfig, ctx.ConfigErr = qsdevconfig.ParseQsdevConfig(filepath.Join(projectRoot, cfgFile))
 
-	// Tool names from registry: all names for config validation, and the
-	// always-on subset for the required-tools check.
+	// Tool names from registry for config validation.
 	toolRegistry := toolreg.DefaultRegistry()
 	ctx.ToolNames = toolRegistry.Names()
-	for _, tool := range toolRegistry.All() {
-		if tool.Default == toolreg.AlwaysOn {
-			ctx.AlwaysOnToolNames = append(ctx.AlwaysOnToolNames, tool.Name)
-		}
-	}
 
 	// mcp.disabled_tools names MCP tools, a namespace separate from the
 	// catalog: validate it against every tool the MCP server can mount.
@@ -129,6 +123,14 @@ func runCheck(cmd *cobra.Command, format check.OutputFormat, auditLevel check.Au
 		answers.HookPolicy = ctx.QsdevConfig.Hooks.Clone()
 	}
 
+	// The required-tools check covers the always-on tools that apply to the
+	// project: those that configure Claude Code only when it is enabled.
+	for _, tool := range toolRegistry.All() {
+		if tool.EnforcedFor(&answers) {
+			ctx.AlwaysOnToolNames = append(ctx.AlwaysOnToolNames, tool.Name)
+		}
+	}
+
 	// Required deny rules: every base rule the project's permission preset
 	// generates, so deleting any of them from settings.json is caught.
 	ctx.RequiredDenyRules, err = requiredDenyRules(answers, ctx.QsdevConfig)
@@ -150,9 +152,13 @@ func runCheck(cmd *cobra.Command, format check.OutputFormat, auditLevel check.Au
 
 	// The generator's output for the saved answers is what the on-disk
 	// settings.json must still enforce (hook registrations, bypass mode).
+	// Always-on tools are enforced first, as every generation path does, so
+	// saved answers that dropped one (e.g. safety_block: false) still expect
+	// its hook registrations.
 	var freshFiles map[string]types.GeneratedFile
 	var genErr error
 	if answers.ProjectName != "" {
+		toolreg.MergeInferredTools(&answers, toolRegistry)
 		freshFiles, _, genErr = regenerateFreshFiles(answers)
 		if genErr != nil {
 			_, _ = fmt.Fprintf(cmd.ErrOrStderr(), "Warning: could not regenerate expected files: %v\n", genErr)

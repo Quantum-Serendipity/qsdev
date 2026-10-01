@@ -1,6 +1,8 @@
 package devinit_test
 
 import (
+	"slices"
+	"strings"
 	"testing"
 
 	"github.com/spf13/cobra"
@@ -27,7 +29,7 @@ func TestAnswersFromFlags_FullFlagSet(t *testing.T) {
 		ClaudeCode:        true,
 		ClaudePermissions: "standard",
 		ClaudeSkills:      []string{"deploy"},
-		ClaudeHooks:       []string{"safety-block", "auto-format"},
+		ClaudeHooks:       []string{"safety-block", "audit-log"},
 		MCPServers:        []string{"github"},
 		GitHooks:          []string{"pre-commit"},
 		Packages:          []string{"jq", "ripgrep"},
@@ -100,8 +102,8 @@ func TestAnswersFromFlags_FullFlagSet(t *testing.T) {
 	if !answers.Hooks.SafetyBlock {
 		t.Error("expected SafetyBlock hook")
 	}
-	if !answers.Hooks.AutoFormat {
-		t.Error("expected AutoFormat hook")
+	if !answers.Hooks.AuditLog {
+		t.Error("expected AuditLog hook")
 	}
 
 	// Check MCPServers.
@@ -109,9 +111,9 @@ func TestAnswersFromFlags_FullFlagSet(t *testing.T) {
 		t.Errorf("MCPServers = %v, want [github]", answers.MCPServers)
 	}
 
-	// Check skills.
-	if len(answers.Skills) != 1 || answers.Skills[0] != "deploy" {
-		t.Errorf("Skills = %v, want [deploy]", answers.Skills)
+	// Check skills: the flag's, then the always-on trail-of-bits skill.
+	if want := []string{"deploy", "security-review-owasp"}; !slices.Equal(answers.Skills, want) {
+		t.Errorf("Skills = %v, want %v", answers.Skills, want)
 	}
 }
 
@@ -432,4 +434,56 @@ func TestAnswersFromFlags_ReturnsWizardAnswers(t *testing.T) {
 		Direnv:            true,
 	}
 	_ = mustAnswersFromFlags(t, opts, "/tmp/test")
+}
+
+func TestInitFlags_RejectsUnimplementedHookPreset(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name  string
+		hooks []string
+		want  string
+	}{
+		{"auto-format", []string{"auto-format", "audit-log"}, `unknown or unimplemented hook preset "auto-format"`},
+		{"pre-commit", []string{"pre-commit"}, `unknown or unimplemented hook preset "pre-commit"`},
+		{"typo", []string{"audit_log"}, `unknown or unimplemented hook preset "audit_log"`},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			_, err := devinit.ExportAnswersFromFlags(devinit.ExportInitOptions{ClaudeHooks: tt.hooks}, "/tmp/project")
+			if err == nil || !strings.Contains(err.Error(), tt.want) {
+				t.Fatalf("err = %v, want it to contain %s", err, tt.want)
+			}
+		})
+	}
+}
+
+// TestAnswersFromFlags_ClaudeHooksAddToAlwaysOn verifies --claude-hooks adds
+// to the always-on hooks the flag answers start from, instead of relying on
+// the later enforcement to put the safety block back; without Claude Code
+// nothing is seeded.
+func TestAnswersFromFlags_ClaudeHooksAddToAlwaysOn(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name       string
+		claudeCode bool
+		want       bool
+	}{
+		{name: "claude code", claudeCode: true, want: true},
+		{name: "no claude code", claudeCode: false, want: false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			opts := devinit.ExportInitOptions{ClaudeCode: tt.claudeCode, ClaudeHooks: []string{"audit-log"}}
+			answers := mustAnswersFromFlags(t, opts, "/tmp/project")
+			if answers.Hooks.SafetyBlock != tt.want || answers.AgentTools.PostmortemEnabled != tt.want {
+				t.Errorf("SafetyBlock = %v, PostmortemEnabled = %v, want both %v",
+					answers.Hooks.SafetyBlock, answers.AgentTools.PostmortemEnabled, tt.want)
+			}
+			if !answers.Hooks.AuditLog {
+				t.Error("AuditLog = false, want the --claude-hooks preset")
+			}
+		})
+	}
 }

@@ -9,6 +9,7 @@ import (
 
 	"github.com/Quantum-Serendipity/qsdev/addons/claudecode"
 	"github.com/Quantum-Serendipity/qsdev/internal/state"
+	"github.com/Quantum-Serendipity/qsdev/internal/toolreg"
 	"github.com/Quantum-Serendipity/qsdev/pkg/types"
 )
 
@@ -426,7 +427,7 @@ func TestBuildClaudeAnswersFromFlags(t *testing.T) {
 	mcpServers := []string{"github"}
 	yes := true
 
-	answers := claudecode.ExportBuildClaudeAnswersFromFlags(projectRoot, preset, skills, mcpServers, yes, false)
+	answers := claudecode.ExportBuildClaudeAnswersFromFlags(projectRoot, preset, skills, mcpServers, yes)
 
 	if answers.ProjectRoot != projectRoot {
 		t.Errorf("ProjectRoot = %q, want %q", answers.ProjectRoot, projectRoot)
@@ -792,8 +793,8 @@ func TestAddHookCmd_Invalid(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error for invalid hook")
 	}
-	if !strings.Contains(err.Error(), "unknown hook preset") {
-		t.Errorf("error should mention 'unknown hook preset', got: %v", err)
+	if !strings.Contains(err.Error(), "unknown or unimplemented hook preset") {
+		t.Errorf("error should mention 'unknown or unimplemented hook preset', got: %v", err)
 	}
 }
 
@@ -839,7 +840,10 @@ func TestListSkillsCmd_ShowsInstalledStatus(t *testing.T) {
 	}
 }
 
-func TestInitCmd_NoSafetyBlock(t *testing.T) {
+// TestClaudeInit_NoSafetyBlockRejected verifies `claude init` cannot drop the
+// always-on package guard: --no-safety-block fails, points at the only
+// opt-out, and writes nothing.
+func TestClaudeInit_NoSafetyBlockRejected(t *testing.T) {
 	tmpDir := t.TempDir()
 	chdir(t, tmpDir)
 
@@ -849,17 +853,172 @@ func TestInitCmd_NoSafetyBlock(t *testing.T) {
 	cmd.SetErr(&buf)
 	cmd.SetArgs([]string{"init", "--yes", "--permission-preset", "standard", "--no-safety-block"})
 
+	err := cmd.Execute()
+	if err == nil {
+		t.Fatal("init with --no-safety-block succeeded, want an error")
+	}
+	if want := "qsdev disable attach-guard --force"; !strings.Contains(err.Error(), want) {
+		t.Errorf("error = %q, want it to point at %q", err, want)
+	}
+	if _, statErr := os.Stat(filepath.Join(tmpDir, ".claude", "settings.json")); !os.IsNotExist(statErr) {
+		t.Errorf("settings.json written despite the rejected flag: %v", statErr)
+	}
+}
+
+// TestClaudeInit_EnforcesAlwaysOnTools verifies `claude init` reconciles the
+// saved tools: an always-on tool lost from the answers is restored with a
+// warning, while an explicit `disable --force` opt-out is kept.
+func TestClaudeInit_EnforcesAlwaysOnTools(t *testing.T) {
+	tests := []struct {
+		name        string
+		saved       map[string]bool
+		wantEnabled bool
+		wantWarning bool
+	}{
+		{name: "dropped tool restored", saved: map[string]bool{}, wantEnabled: true, wantWarning: true},
+		{name: "explicit opt-out kept", saved: map[string]bool{toolreg.ToolAttachGuard: false}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			tmpDir := t.TempDir()
+			chdir(t, tmpDir)
+			saved := types.WizardAnswers{
+				ProjectRoot:  tmpDir,
+				ProjectName:  filepath.Base(tmpDir),
+				ClaudeCode:   true,
+				Confirmed:    true,
+				EnabledTools: tt.saved,
+			}
+			if err := claudecode.ExportSaveAnswers(tmpDir, saved); err != nil {
+				t.Fatal(err)
+			}
+
+			cmd := claudecode.ExportClaudeCmd()
+			var stdout, stderr bytes.Buffer
+			cmd.SetOut(&stdout)
+			cmd.SetErr(&stderr)
+			cmd.SetArgs([]string{"init", "--yes", "--force"})
+			if err := cmd.Execute(); err != nil {
+				t.Fatalf("claude init: %v\n%s", err, stderr.String())
+			}
+
+			answers, err := claudecode.ExportLoadAnswers(tmpDir)
+			if err != nil {
+				t.Fatal(err)
+			}
+			enabled, set := answers.EnabledTools[toolreg.ToolAttachGuard]
+			if !set || enabled != tt.wantEnabled || answers.Hooks.SafetyBlock != tt.wantEnabled {
+				t.Errorf("enabled_tools[attach-guard] = %v (set %v), hooks.safety_block = %v; want %v",
+					enabled, set, answers.Hooks.SafetyBlock, tt.wantEnabled)
+			}
+			const warning = `always-on tool "attach-guard" kept enabled`
+			if got := strings.Contains(stderr.String(), warning); got != tt.wantWarning {
+				t.Errorf("stderr contains %q = %v, want %v:\n%s", warning, got, tt.wantWarning, stderr.String())
+			}
+		})
+	}
+}
+
+// TestClaudeUpdate_RestoresUncommittedSafetyBlockOptOut verifies claude
+// update and init reconcile the safety-block opt-out against the committed
+// .qsdev.yaml: a hand-edited opt-out that tools.disabled does not list is
+// undone with the always-on warning, while a committed one is kept and
+// reported with the opt-out warning.
+func TestClaudeUpdate_RestoresUncommittedSafetyBlockOptOut(t *testing.T) {
+	const (
+		restored = `always-on tool "attach-guard" kept enabled`
+		optedOut = "Warning: the package-install guard (attach-guard) is disabled by tools.disabled in .qsdev.yaml; re-enable with `qsdev enable attach-guard`"
+	)
+	tests := []struct {
+		name       string
+		committed  string
+		args       []string
+		wantOptOut bool
+	}{
+		{name: "update restores uncommitted opt-out", committed: "version: 2\ntools:\n  disabled: []\n", args: []string{"update", "--force"}},
+		{name: "update keeps committed opt-out", committed: "version: 2\ntools:\n  disabled: [attach-guard]\n", args: []string{"update", "--force"}, wantOptOut: true},
+		{name: "init keeps committed opt-out", committed: "version: 2\ntools:\n  disabled: [attach-guard]\n", args: []string{"init", "--yes", "--force"}, wantOptOut: true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			tmpDir := t.TempDir()
+			chdir(t, tmpDir)
+			runClaude(t, "init", "--yes", "--permission-preset", "standard")
+			if err := os.WriteFile(filepath.Join(tmpDir, ".qsdev.yaml"), []byte(tt.committed), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			saved, err := claudecode.ExportLoadAnswers(tmpDir)
+			if err != nil {
+				t.Fatal(err)
+			}
+			// A hand edit flips only the hook answer; `disable attach-guard
+			// --force` also records the tool off.
+			saved.Hooks.SetSafetyBlock(false)
+			if tt.wantOptOut {
+				saved.EnabledTools[toolreg.ToolAttachGuard] = false
+			}
+			if err := claudecode.ExportSaveAnswers(tmpDir, saved); err != nil {
+				t.Fatal(err)
+			}
+
+			out := runClaude(t, tt.args...)
+
+			if got := strings.Contains(out, restored); got == tt.wantOptOut {
+				t.Errorf("output contains %q = %v, want %v:\n%s", restored, got, !tt.wantOptOut, out)
+			}
+			if got := strings.Contains(out, optedOut); got != tt.wantOptOut {
+				t.Errorf("output contains the opt-out warning = %v, want %v:\n%s", got, tt.wantOptOut, out)
+			}
+			answers, err := claudecode.ExportLoadAnswers(tmpDir)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if answers.Hooks.SafetyBlockOptOut != tt.wantOptOut || answers.Hooks.SafetyBlock == tt.wantOptOut {
+				t.Errorf("hooks.safety_block = %v, safety_block_opt_out = %v; want opt-out = %v",
+					answers.Hooks.SafetyBlock, answers.Hooks.SafetyBlockOptOut, tt.wantOptOut)
+			}
+			if tt.args[0] != "update" {
+				// claude init --force merges onto the existing settings.json,
+				// which still registers the guard the fixture never removed.
+				return
+			}
+			settings, err := os.ReadFile(filepath.Join(tmpDir, ".claude", "settings.json"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got := strings.Contains(string(settings), "package-guard"); got == tt.wantOptOut {
+				t.Errorf("settings.json registers package-guard = %v, want %v", got, !tt.wantOptOut)
+			}
+		})
+	}
+}
+
+// TestClaudeInit_FreshProjectDoesNotWarn verifies a fresh `claude init`
+// starts from the always-on defaults, so it warns about no always-on tool:
+// nothing switched one off.
+func TestClaudeInit_FreshProjectDoesNotWarn(t *testing.T) {
+	tmpDir := t.TempDir()
+	chdir(t, tmpDir)
+
+	cmd := claudecode.ExportClaudeCmd()
+	var stdout, stderr bytes.Buffer
+	cmd.SetOut(&stdout)
+	cmd.SetErr(&stderr)
+	cmd.SetArgs([]string{"init", "--yes", "--permission-preset", "standard"})
 	if err := cmd.Execute(); err != nil {
-		t.Fatalf("init with --no-safety-block failed: %v", err)
+		t.Fatalf("claude init: %v\n%s", err, stderr.String())
 	}
 
-	// Verify answers have safety block disabled.
+	if strings.Contains(stderr.String(), "always-on tool") {
+		t.Errorf("fresh claude init warned about an always-on tool:\n%s", stderr.String())
+	}
 	answers, err := claudecode.ExportLoadAnswers(tmpDir)
 	if err != nil {
-		t.Fatalf("loading answers: %v", err)
+		t.Fatal(err)
 	}
-	if answers.Hooks.SafetyBlock {
-		t.Error("Hooks.SafetyBlock should be false when --no-safety-block is used")
+	if !answers.AgentTools.PostmortemEnabled || !answers.EnabledTools[toolreg.ToolAgentPostmortem] {
+		t.Errorf("agent-postmortem not enabled: postmortem_enabled = %v, enabled_tools = %v",
+			answers.AgentTools.PostmortemEnabled, answers.EnabledTools)
 	}
 }
 

@@ -183,8 +183,10 @@ func buildJoinAnswers(cmd *cobra.Command, opts InitOptions, projectRoot string) 
 		return types.WizardAnswers{}, err
 	}
 
-	// Augment EnabledTools with inferred tools (AlwaysOn, hooks-implied).
-	toolreg.MergeInferredTools(&answers, registry)
+	// Augment EnabledTools with inferred tools (AlwaysOn, hooks-implied);
+	// only the committed tools.disabled opts out of an always-on tool, not
+	// an --answers-file overlay.
+	toolreg.Reconcile(&answers, registry, &policy.Committed.Tools)
 	enforceAnswerInvariants(&answers)
 
 	return answers, nil

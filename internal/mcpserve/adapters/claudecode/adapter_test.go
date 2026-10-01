@@ -498,7 +498,7 @@ func TestConfigRenderIncludesSecurityHooks(t *testing.T) {
 		wantUnrendered []string
 	}{
 		{"standard preset", "version: 1\nclaude_code:\n  permission_level: standard\n", nil},
-		{"strict security level", "version: 1\nsecurity:\n  level: strict\n", []string{"auto_format", "pre_commit", "audit_log"}},
+		{"strict security level", "version: 1\nsecurity:\n  level: strict\n", []string{"audit_log"}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/Quantum-Serendipity/qsdev/addons/devinit"
+	"github.com/Quantum-Serendipity/qsdev/internal/toolreg"
 	"github.com/Quantum-Serendipity/qsdev/pkg/types"
 )
 
@@ -35,7 +36,7 @@ func TestBuildPlanPreview_WithClaude(t *testing.T) {
 		devinit.WithSelectedLanguages([]string{"go"}),
 		devinit.WithClaudeCode(true),
 		devinit.WithPermissionLevel("standard"),
-		devinit.WithSafetyBlock(true),
+		devinit.WithTools(toolreg.DefaultRegistry()),
 	)
 
 	preview := devinit.ExportBuildPlanPreview(fs)
@@ -53,7 +54,7 @@ func TestBuildPlanPreview_WithClaude(t *testing.T) {
 		t.Error("preview should mention .claude/rules/ when Claude is enabled")
 	}
 	if !strings.Contains(preview, "safety-block") {
-		t.Error("preview should mention safety-block hook when enabled")
+		t.Error("preview should mention the always-on safety-block hook")
 	}
 }
 

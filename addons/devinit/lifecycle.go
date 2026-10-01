@@ -144,9 +144,9 @@ func loadToolForEnable(ctx context.Context, projectRoot, toolName string) (types
 }
 
 // loadLifecycleAnswers loads saved answers (empty if no prior init) and
-// refreshes them exactly as update does — current detection plus inferred
-// tools — so the shared files enable/disable regenerate match what the next
-// update would produce.
+// refreshes them as update does — current detection plus tools reconciled
+// against the committed .qsdev.yaml — so the shared files enable/disable
+// regenerate match what the next update would produce.
 func loadLifecycleAnswers(ctx context.Context, projectRoot string) (types.WizardAnswers, error) {
 	answers, err := loadAnswersOrEmpty(projectRoot)
 	if err != nil {
@@ -154,7 +154,7 @@ func loadLifecycleAnswers(ctx context.Context, projectRoot string) (types.Wizard
 	}
 	answers.ProjectRoot = projectRoot
 	answers.Detected = detect.Detect(ctx, projectRoot)
-	toolreg.MergeInferredTools(&answers, toolreg.DefaultRegistry())
+	toolreg.Reconcile(&answers, toolreg.DefaultRegistry(), qsdevconfig.CommittedTools(projectRoot))
 	return answers, nil
 }
 

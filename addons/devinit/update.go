@@ -278,8 +278,8 @@ func loadAndRefreshForUpdate(ctx context.Context, w io.Writer, projectRoot strin
 		return types.WizardAnswers{}, err
 	}
 
-	// Augment EnabledTools with inferred tools (AlwaysOn, hooks-implied).
-	toolreg.MergeInferredTools(&answers, toolreg.DefaultRegistry())
+	// Augment EnabledTools with inferred tools and keep always-on tools.
+	reconcileTools(w, projectRoot, &answers, toolreg.DefaultRegistry())
 	adoptCommittedTier(projectRoot, &answers)
 	enforceAnswerInvariants(&answers)
 

@@ -181,6 +181,11 @@ type HookChoices struct {
 	SandboxEnabled        bool `yaml:"sandbox_enabled"         json:"sandbox_enabled"`
 	SecurityEnforcement   bool `yaml:"security_enforcement"    json:"security_enforcement"`
 	SelfProtection        bool `yaml:"self_protection"         json:"self_protection"`
+
+	// SafetyBlockOptOut records that the safety block was switched off on
+	// purpose (`disable attach-guard --force`), so ApplyClaudeHookDefaults
+	// leaves it off. It is not a selectable hook. Set it via SetSafetyBlock.
+	SafetyBlockOptOut bool `yaml:"safety_block_opt_out,omitempty" json:"safety_block_opt_out,omitempty"`
 }
 
 // GeneratedFile represents a single file to be written by the generation pipeline.
@@ -373,17 +378,15 @@ func (a *WizardAnswers) ConfiguredMCPServers() []string {
 
 // ApplyClaudeHookDefaults enforces the hook invariants every Claude Code
 // configuration must carry, whichever path produced the answers: the
-// self-protection hook is always on, and the package-guard safety block is
-// enabled when no other primary hook was chosen. It is a no-op when Claude
-// Code is disabled.
+// self-protection hook is always on, and the package-guard safety block is on
+// unless the answers record an opt-out (Hooks.SafetyBlockOptOut), whichever
+// other hooks were chosen. It is a no-op when Claude Code is disabled.
 func (a *WizardAnswers) ApplyClaudeHookDefaults() {
 	if !a.ClaudeCode {
 		return
 	}
 	a.Hooks.SelfProtection = true
-	if !a.Hooks.SafetyBlock && !a.Hooks.AutoFormat && !a.Hooks.PreCommit && !a.Hooks.AuditLog {
-		a.Hooks.SafetyBlock = true
-	}
+	a.Hooks.SafetyBlock = !a.Hooks.SafetyBlockOptOut
 }
 
 // supplyChainOnly names both the lowest tier and its permission preset.

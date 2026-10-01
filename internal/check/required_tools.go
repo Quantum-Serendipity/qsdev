@@ -1,8 +1,14 @@
 package check
 
-import "github.com/Quantum-Serendipity/qsdev/pkg/branding"
+import (
+	"slices"
 
-// CheckRequiredTools verifies that always-on tools are not in the disabled list.
+	"github.com/Quantum-Serendipity/qsdev/pkg/branding"
+)
+
+// CheckRequiredTools verifies that every always-on tool is recorded in
+// tools.enabled and not in tools.disabled. A tool in neither list was dropped
+// without the explicit `disable --force` opt-out.
 func CheckRequiredTools(ctx CheckContext) []CheckResult {
 	if ctx.QsdevConfig == nil {
 		return []CheckResult{
@@ -28,23 +34,31 @@ func CheckRequiredTools(ctx CheckContext) []CheckResult {
 		}
 	}
 
-	disabled := make(map[string]bool, len(ctx.QsdevConfig.Tools.Disabled))
-	for _, t := range ctx.QsdevConfig.Tools.Disabled {
-		disabled[t] = true
-	}
-
+	tools := ctx.QsdevConfig.Tools
+	cfgFile := branding.Get().ConfigFile
 	var results []CheckResult
 	// Only always-on tools are required; opt-in and detected tools may be
-	// legitimately listed in tools.disabled.
+	// legitimately listed in tools.disabled or absent from both lists.
 	for _, toolName := range ctx.AlwaysOnToolNames {
-		if disabled[toolName] {
+		switch {
+		case slices.Contains(tools.Disabled, toolName):
 			results = append(results, CheckResult{
 				Category:    CategoryRequiredTools,
 				Name:        "tool_not_disabled_" + toolName,
 				Status:      StatusFail,
 				Severity:    SeverityHigh,
 				Message:     "Required tool " + toolName + " is in the disabled list",
-				Remediation: "Remove " + toolName + " from tools.disabled in " + branding.Get().ConfigFile,
+				Remediation: "Remove " + toolName + " from tools.disabled in " + cfgFile,
+			})
+		case !slices.Contains(tools.Enabled, toolName):
+			results = append(results, CheckResult{
+				Category: CategoryRequiredTools,
+				Name:     "tool_missing_" + toolName,
+				Status:   StatusFail,
+				Severity: SeverityHigh,
+				Message:  "Always-on tool " + toolName + " is in neither tools.enabled nor tools.disabled in " + cfgFile,
+				Remediation: "Run `qsdev update` to restore " + toolName +
+					", or `qsdev disable " + toolName + " --force` to opt out explicitly",
 			})
 		}
 	}
@@ -55,7 +69,7 @@ func CheckRequiredTools(ctx CheckContext) []CheckResult {
 			Name:     "required_tools",
 			Status:   StatusPass,
 			Severity: SeverityInfo,
-			Message:  "No required tools are disabled",
+			Message:  "All always-on tools are enabled",
 		})
 	}
 

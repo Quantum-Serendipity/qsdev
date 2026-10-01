@@ -305,3 +305,32 @@ func TestRegisterBehaviors(t *testing.T) {
 		t.Error("provider registered after build was not applied")
 	}
 }
+
+// TestHookAccessors_CoverCatalogToggles verifies that every toggle_field the
+// catalog declares resolves through the toggle accessor table and that its
+// setter and getter agree, so a catalog toggle can never be a label without a
+// field behind it.
+func TestHookAccessors_CoverCatalogToggles(t *testing.T) {
+	t.Parallel()
+	for name, def := range catalog.MustDefault().Tools() {
+		if def.ToggleField == "" {
+			continue
+		}
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			acc, ok := toggleFields[def.ToggleField]
+			if !ok {
+				t.Fatalf("toggle_field %q has no accessor", def.ToggleField)
+			}
+			var a types.WizardAnswers
+			acc.set(&a, true)
+			if !acc.get(&a) {
+				t.Errorf("%s: set(true) then get() = false", def.ToggleField)
+			}
+			acc.set(&a, false)
+			if acc.get(&a) {
+				t.Errorf("%s: set(false) then get() = true", def.ToggleField)
+			}
+		})
+	}
+}

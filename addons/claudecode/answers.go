@@ -65,8 +65,9 @@ func loadAnswers(projectRoot string) (types.WizardAnswers, error) {
 // the languages, services, tier and enabled tools recorded by `qsdev init` and
 // `qsdev enable`. Without saved answers, the flag answers are returned as-is.
 //
-// The permission preset, the safety-block hook and the confirmation are always
-// taken from the flags; skills and MCP servers only when the flags name some.
+// The permission preset and the confirmation are always taken from the flags;
+// skills and MCP servers only when the flags name some. The saved hooks are
+// kept, so a `disable attach-guard --force` opt-out survives a re-init.
 func overlayInitAnswers(projectRoot string, flags types.WizardAnswers) (types.WizardAnswers, error) {
 	if _, err := os.Stat(answersPath(projectRoot)); errors.Is(err, fs.ErrNotExist) {
 		return flags, nil
@@ -83,7 +84,6 @@ func overlayInitAnswers(projectRoot string, flags types.WizardAnswers) (types.Wi
 	merged.ClaudeCode = flags.ClaudeCode
 	merged.PermissionLevel = flags.PermissionLevel
 	merged.Confirmed = flags.Confirmed
-	merged.Hooks.SafetyBlock = flags.Hooks.SafetyBlock
 	if len(flags.Skills) > 0 {
 		merged.Skills = flags.Skills
 	}

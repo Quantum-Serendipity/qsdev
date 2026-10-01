@@ -9,6 +9,7 @@ import (
 	"github.com/spf13/pflag"
 
 	"github.com/Quantum-Serendipity/qsdev/internal/catalog"
+	"github.com/Quantum-Serendipity/qsdev/internal/toolreg"
 	"github.com/Quantum-Serendipity/qsdev/internal/validation"
 	"github.com/Quantum-Serendipity/qsdev/pkg/types"
 )
@@ -149,12 +150,12 @@ func RegisterInitFlags(cmd *cobra.Command, opts *InitOptions) {
 	// tier is chosen either).
 	cmd.Flags().StringVar(&opts.ClaudePermissions, "claude-permissions", "", "Permission preset (supply-chain-only, minimal, standard, permissive, custom); defaults to the tier's preset, or standard")
 	cmd.Flags().StringSliceVar(&opts.ClaudeSkills, "claude-skills", nil, "Skills to install (e.g. deploy,review-pr)")
-	cmd.Flags().StringSliceVar(&opts.ClaudeHooks, "claude-hooks", nil, "Hook presets to enable (e.g. safety-block,auto-format)")
+	cmd.Flags().StringSliceVar(&opts.ClaudeHooks, "claude-hooks", nil, "Hook presets to add to the always-on hooks (e.g. audit-log,credential-scan); always-on hooks are dropped only by 'qsdev disable <tool> --force'")
 	cmd.Flags().StringSliceVar(&opts.MCPServers, "mcp", nil, "MCP servers to configure (e.g. github,filesystem); added to the servers enabled tools provide")
 	cmd.Flags().BoolVar(&opts.ListProfiles, "list-profiles", false, "List available project-type profiles and exit")
 
 	// AI Agent Tools flags.
-	cmd.Flags().BoolVar(&opts.AgentPostmortem, "agent-postmortem", true, "Enable agent-postmortem verification skill")
+	cmd.Flags().BoolVar(&opts.AgentPostmortem, "agent-postmortem", true, "Agent-postmortem verification skill; always on, so false is rejected (opt out with 'qsdev disable agent-postmortem --force')")
 	cmd.Flags().BoolVar(&opts.AgentVersionSentinel, "agent-version-sentinel", true, "Enable Version-Sentinel dependency guardrails")
 	cmd.Flags().BoolVar(&opts.AgentSemble, "agent-semble", false, "Enable semble semantic search MCP server")
 	cmd.Flags().StringVar(&opts.AgentSembleMode, "agent-semble-mode", "mcp", "Semble mode: mcp, subagent, both")
@@ -311,7 +312,7 @@ func AnswersFromFlags(opts InitOptions, projectRoot string) (types.WizardAnswers
 		if err != nil {
 			return answers, fmt.Errorf("--claude-hooks: %w", err)
 		}
-		answers.Hooks = hooks
+		answers.Hooks = answers.Hooks.Union(hooks)
 	}
 
 	// --devenv-only disables Claude Code.
@@ -327,6 +328,15 @@ func AnswersFromFlags(opts InitOptions, projectRoot string) (types.WizardAnswers
 	if opts.Tier != "" {
 		answers.Tier = opts.Tier
 	}
+
+	// Seed what backs the always-on tools, so the enforcement after every
+	// answer source warns only about a source that explicitly switched one
+	// off: --claude-hooks adds to these hooks rather than replacing them.
+	treg, err := toolreg.Default()
+	if err != nil {
+		return answers, fmt.Errorf("loading tool registry: %w", err)
+	}
+	toolreg.SeedAlwaysOn(&answers, treg)
 
 	return answers, nil
 }

@@ -433,8 +433,9 @@ client:
 
 - **Security floor.** The stricter of `security.level` and
   `client.security_level` is the floor. Generation uses at least that
-  compliance level, and the hooks it requires are enabled (`enhanced`:
-  pre-commit; `strict`: pre-commit, audit-log and auto-format). A
+  compliance level, and the Claude Code hooks it requires are enabled
+  (`strict`: audit-log; its commit-time checks are the devenv git hooks
+  listed under the level's `required_pre_commit_hooks`). A
   `security.*` switch the floor mandates (`age_gating`, `script_blocking`,
   `lock_enforcement`, `vuln_scanning`) cannot be turned off locally.
 - **Client compliance level.** `client.security_level` also enables the
@@ -691,7 +692,7 @@ gets the hooks of the effective security level's tier (the stricter of
 |------|-------|---------|
 | `baseline` | Security hooks (`ripsecrets`, `gitleaks`, `semgrep`, `opengrep`, `nix-secrets-check`, `lock-file-audit`, `shellcheck`, `govulncheck`, `bandit`, `tfsec`) and repository hygiene (`check-added-large-files`, `no-commit-to-branch`, `check-merge-conflicts`) | Every level |
 | `enhanced` | Language formatters and linters (`gofmt`, `govet`, `staticcheck`, `ruff`, `mypy`, `eslint`, `prettier`, `rustfmt`, `clippy`, `statix`, ...) | `enhanced`, `strict` |
-| `strict` | None (strict adds audit logging and auto-format, not pre-commit hooks) | `strict` |
+| `strict` | None (strict adds audit logging, not pre-commit hooks) | `strict` |
 
 Security hooks are never tiered out: only non-security hooks sit above
 `baseline`. A hook no tier lists (for example a tool's `commit-ticket` or
@@ -1707,6 +1708,18 @@ Commit it together with the generated files it describes. A change to it in a pu
 | **Purpose** | Saved wizard answers for non-interactive updates |
 
 Contains selected languages, services, permission level, skills, hooks, MCP servers, and infrastructure profile. Used by `qsdev update` to regenerate files without re-running the wizard.
+
+`hooks.safety_block_opt_out` records that the package-install guard
+(`attach-guard`, the `safety-block` hook) is switched off. It is derived, not
+a setting: `qsdev disable attach-guard --force` is the only opt-out, and it
+writes `attach-guard` to `tools.disabled` in `.qsdev.yaml`, the committed
+record. `qsdev init`, `qsdev init --update`, `qsdev claude init` and
+`qsdev claude update` reconcile the answers against that list: an opt-out it
+does not list (a hand edit, say) is undone with the warning
+`always-on tool "attach-guard" kept enabled`, and while the opt-out stands
+they warn, at every tier, that the guard is disabled. `qsdev enable
+attach-guard` clears it. Choosing other hook presets never switches the
+guard off: `--claude-hooks` adds to it.
 
 ### `.devinit/.qsdev-init-state.yaml`
 

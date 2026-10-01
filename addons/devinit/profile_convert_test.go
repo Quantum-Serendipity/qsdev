@@ -19,7 +19,7 @@ func TestProfileToAnswers_BasicMapping(t *testing.T) {
 		ClaudeCode:      true,
 		PermissionLevel: "standard",
 		Skills:          []string{"deploy", "security-review"},
-		Hooks:           []string{"safety-block", "pre-commit"},
+		Hooks:           []string{"safety-block", "audit-log"},
 		ExtraPackages:   []string{"jq", "curl"},
 		MCPServers:      []string{"filesystem"},
 		GitHooks:        []string{"pre-push"},
@@ -97,8 +97,8 @@ func TestProfileToAnswers_HookMapping(t *testing.T) {
 		want  types.HookChoices
 	}{
 		{
-			hooks: []string{"auto-format", "safety-block", "pre-commit", "audit-log"},
-			want:  types.HookChoices{AutoFormat: true, SafetyBlock: true, PreCommit: true, AuditLog: true},
+			hooks: []string{"credential-scan", "safety-block", "audit-log"},
+			want:  types.HookChoices{CredentialScan: true, SafetyBlock: true, AuditLog: true},
 		},
 		{
 			hooks: []string{"safety-block"},
@@ -123,7 +123,7 @@ func TestProfileToAnswers_HookMapping(t *testing.T) {
 // misspelled hook names being silently dropped (disabling the hook).
 func TestProfileToAnswers_UnknownHookFails(t *testing.T) {
 	t.Parallel()
-	for _, hooks := range [][]string{{"unknown-hook"}, {"safety_block"}, {"safety-block", "typo"}} {
+	for _, hooks := range [][]string{{"unknown-hook"}, {"safety_block"}, {"safety-block", "typo"}, {"auto-format"}, {"pre-commit"}} {
 		p := devinit.ExportProfile{Hooks: hooks}
 		if _, err := devinit.ExportProfileToAnswers(p, "/tmp", "test"); err == nil {
 			t.Errorf("hooks %v: expected an error", hooks)
@@ -171,11 +171,9 @@ func TestProfileToAnswers_BuiltinGoWeb(t *testing.T) {
 	if !answers.Hooks.SafetyBlock {
 		t.Error("Hooks.SafetyBlock should be true")
 	}
-	if !answers.Hooks.PreCommit {
-		t.Error("Hooks.PreCommit should be true")
-	}
-	if answers.Hooks.AutoFormat {
-		t.Error("Hooks.AutoFormat should be false for go-web")
+	// pre-commit is a devenv git hook, not a Claude Code hook preset.
+	if answers.Hooks.PreCommit || answers.Hooks.AutoFormat {
+		t.Errorf("go-web selects an unimplemented hook preset: %+v", answers.Hooks)
 	}
 }
 
@@ -327,13 +325,13 @@ func TestMergeProfileWithFlags_TierOverride(t *testing.T) {
 }
 
 func TestHooksFromStrings(t *testing.T) {
-	hc, err := devinit.ExportHooksFromStrings([]string{"auto-format", "audit-log"})
+	hc, err := devinit.ExportHooksFromStrings([]string{"credential-scan", "audit-log"})
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	if !hc.AutoFormat {
-		t.Error("AutoFormat should be true")
+	if !hc.CredentialScan {
+		t.Error("CredentialScan should be true")
 	}
 	if hc.SafetyBlock {
 		t.Error("SafetyBlock should be false")

@@ -571,8 +571,10 @@ func TestLifecycle_SembleEnableDisable(t *testing.T) {
 
 // TestLifecycle_SembleOptInOnly verifies semble (an unpinned uvx server) is
 // only configured when opted in: a default init neither lists it in .mcp.json
-// nor provisions uv for it, and explicit --agent-*=false opt-outs are kept
-// instead of being re-enabled from catalog defaults.
+// nor provisions uv for it, and an explicit --agent-semble=false opt-out is
+// kept instead of being re-enabled from catalog defaults. An always-on tool
+// is different: --agent-postmortem=false is rejected, because the only
+// opt-out for agent-postmortem is `disable --force` (U28-WS1).
 func TestLifecycle_SembleOptInOnly(t *testing.T) {
 	t.Run("default init", func(t *testing.T) {
 		dir := initLifecycleProject(t)
@@ -587,21 +589,39 @@ func TestLifecycle_SembleOptInOnly(t *testing.T) {
 			t.Errorf("semble recorded as configured: agent_tools=%+v mcp=%v", a.AgentTools, a.MCPServers)
 		}
 	})
-	t.Run("explicit opt-outs survive", func(t *testing.T) {
+	t.Run("opt-in opt-outs survive, always-on is kept", func(t *testing.T) {
 		dir := t.TempDir()
 		if err := os.WriteFile(filepath.Join(dir, "go.mod"), []byte("module example.com/lc\n\ngo 1.24\n"), 0o644); err != nil {
 			t.Fatal(err)
 		}
 		if out, err := executeInitCmd(t, dir, "--yes", "--lang", "go", "--tier", "full",
-			"--agent-semble=false", "--agent-postmortem=false", "--agent-version-sentinel=false"); err != nil {
+			"--agent-semble=false", "--agent-version-sentinel=false"); err != nil {
 			t.Fatalf("init: %v\n%s", err, out)
 		}
 		a := loadProjectAnswers(t, dir)
-		if a.AgentTools.PostmortemEnabled || a.AgentTools.VersionSentinel || a.AgentTools.SembleEnabled {
-			t.Errorf("explicit opt-outs were re-enabled: %+v", a.AgentTools)
+		if a.AgentTools.SembleEnabled || a.EnabledTools["semble"] {
+			t.Errorf("explicit semble opt-out was re-enabled: %+v", a.AgentTools)
 		}
-		if _, err := os.Stat(filepath.Join(dir, ".claude", "skills", "agent-postmortem")); err == nil {
-			t.Error("agent-postmortem skill generated despite --agent-postmortem=false")
+		if !a.AgentTools.PostmortemEnabled || !a.EnabledTools[toolreg.ToolAgentPostmortem] {
+			t.Errorf("always-on agent-postmortem not enabled: agent_tools=%+v", a.AgentTools)
+		}
+		if _, err := os.Stat(filepath.Join(dir, ".claude", "skills", "agent-postmortem")); err != nil {
+			t.Errorf("always-on agent-postmortem skill not generated: %v", err)
+		}
+	})
+	t.Run("always-on opt-out flag is rejected", func(t *testing.T) {
+		dir := t.TempDir()
+		if err := os.WriteFile(filepath.Join(dir, "go.mod"), []byte("module example.com/lc\n\ngo 1.24\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		out, err := executeInitCmd(t, dir, "--yes", "--lang", "go", "--agent-postmortem=false")
+		if err == nil || !strings.Contains(err.Error(), "disable agent-postmortem --force") {
+			t.Fatalf("init --agent-postmortem=false: err = %v, want the disable --force pointer\n%s", err, out)
+		}
+		for _, rel := range []string{".qsdev.yaml", "devenv.nix", filepath.Join(".claude", "settings.json")} {
+			if _, statErr := os.Stat(filepath.Join(dir, rel)); statErr == nil {
+				t.Errorf("rejected init still wrote %s", rel)
+			}
 		}
 	})
 }

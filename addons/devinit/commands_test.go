@@ -2,12 +2,22 @@ package devinit
 
 import (
 	"bytes"
+	"encoding/json"
+	"errors"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"runtime"
 	"slices"
 	"strings"
 	"testing"
+
+	"gopkg.in/yaml.v3"
+
+	"github.com/Quantum-Serendipity/qsdev/internal/check"
+	qsdevconfig "github.com/Quantum-Serendipity/qsdev/internal/config"
+	"github.com/Quantum-Serendipity/qsdev/internal/state"
+	"github.com/Quantum-Serendipity/qsdev/internal/toolreg"
 )
 
 // executeInitCmd creates and runs the init command in the given directory with
@@ -465,4 +475,366 @@ func TestUpdateAndJoin_WarnPoetryProjectFiles(t *testing.T) {
 			t.Errorf("join output does not contain %q:\n%s", want, buf.String())
 		}
 	})
+}
+
+// initGoProject writes a go.mod into a fresh directory and runs init there
+// with args, returning the directory and the command output.
+func initGoProject(t *testing.T, args ...string) (string, string) {
+	t.Helper()
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "go.mod"), []byte("module example.com/aon\n\ngo 1.24\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	out, err := executeInitCmd(t, dir, append([]string{"--yes", "--lang", "go"}, args...)...)
+	if err != nil {
+		t.Fatalf("init %v: %v\n%s", args, err, out)
+	}
+	return dir, out
+}
+
+// committedTools returns tools.enabled and tools.disabled from .qsdev.yaml.
+func committedTools(t *testing.T, dir string) (enabled, disabled []string) {
+	t.Helper()
+	cfg, err := qsdevconfig.ParseQsdevConfig(filepath.Join(dir, ".qsdev.yaml"))
+	if err != nil {
+		t.Fatalf("parsing .qsdev.yaml: %v", err)
+	}
+	return cfg.Tools.Enabled, cfg.Tools.Disabled
+}
+
+// assertAttachGuardOn checks every place that records the package guard: the
+// committed tool list, the saved hook answer, the hook script and its
+// settings.json registration.
+func assertAttachGuardOn(t *testing.T, dir string) {
+	t.Helper()
+	if enabled, _ := committedTools(t, dir); !slices.Contains(enabled, toolreg.ToolAttachGuard) {
+		t.Errorf(".qsdev.yaml tools.enabled = %v, want it to contain %s", enabled, toolreg.ToolAttachGuard)
+	}
+	a := loadProjectAnswers(t, dir)
+	if !a.Hooks.SafetyBlock || !a.EnabledTools[toolreg.ToolAttachGuard] {
+		t.Errorf("answers hooks.safety_block = %v, enabled_tools[%s] = %v, want both true",
+			a.Hooks.SafetyBlock, toolreg.ToolAttachGuard, a.EnabledTools[toolreg.ToolAttachGuard])
+	}
+	if _, err := os.Stat(filepath.Join(dir, ".claude", "hooks", "package-guard.py")); err != nil {
+		t.Errorf("package-guard.py not generated: %v", err)
+	}
+	if settings := readProjectFile(t, dir, ".claude/settings.json"); !strings.Contains(settings, "package-guard.py") {
+		t.Error("settings.json does not register package-guard.py")
+	}
+}
+
+// TestInit_ClaudeHooksKeepsPackageGuard is the U28-01 regression: naming
+// hook presets with --claude-hooks adds them to the always-on set instead of
+// replacing it, so the package guard is still generated and recorded.
+func TestInit_ClaudeHooksKeepsPackageGuard(t *testing.T) {
+	dir, out := initGoProject(t, "--claude-hooks", "audit-log")
+	if strings.Contains(out, "always-on tool") {
+		t.Errorf("--claude-hooks init warned although nothing opted out:\n%s", out)
+	}
+
+	assertAttachGuardOn(t, dir)
+	if !loadProjectAnswers(t, dir).Hooks.AuditLog {
+		t.Error("answers hooks.audit_log = false, want the --claude-hooks preset enabled")
+	}
+	if _, err := os.Stat(filepath.Join(dir, ".claude", "hooks", "audit-log.sh")); err != nil {
+		t.Errorf("audit-log hook not generated: %v", err)
+	}
+}
+
+// TestReinitForce_ClaudeHooksKeepsAttachGuard is the U28-V01 regression:
+// re-initialising with --force and --claude-hooks must not drop attach-guard
+// from .qsdev.yaml nor switch off the safety block recorded in the answers.
+func TestReinitForce_ClaudeHooksKeepsAttachGuard(t *testing.T) {
+	dir, _ := initGoProject(t)
+	assertAttachGuardOn(t, dir)
+
+	if out, err := executeInitCmd(t, dir, "--yes", "--lang", "go", "--force", "--claude-hooks", "audit-log"); err != nil {
+		t.Fatalf("re-init: %v\n%s", err, out)
+	}
+	assertAttachGuardOn(t, dir)
+}
+
+// TestReinit_RespectsExplicitAlwaysOnDisable verifies `disable --force` is a
+// real opt-out: a later re-init keeps attach-guard in tools.disabled and does
+// not restore the safety block.
+func TestReinit_RespectsExplicitAlwaysOnDisable(t *testing.T) {
+	dir, _ := initGoProject(t)
+	mustDisable(t, dir, toolreg.ToolAttachGuard, "--force")
+
+	out, err := executeInitCmd(t, dir, "--yes", "--lang", "go", "--force")
+	if err != nil {
+		t.Fatalf("re-init: %v\n%s", err, out)
+	}
+	enabled, disabled := committedTools(t, dir)
+	if !slices.Contains(disabled, toolreg.ToolAttachGuard) || slices.Contains(enabled, toolreg.ToolAttachGuard) {
+		t.Errorf(".qsdev.yaml tools.enabled = %v, tools.disabled = %v, want %s only disabled",
+			enabled, disabled, toolreg.ToolAttachGuard)
+	}
+	a := loadProjectAnswers(t, dir)
+	if enabled, set := a.EnabledTools[toolreg.ToolAttachGuard]; !set || enabled {
+		t.Errorf("answers enabled_tools[%s] = %v (set %v), want an explicit false", toolreg.ToolAttachGuard, enabled, set)
+	}
+	if a.Hooks.SafetyBlock {
+		t.Error("answers hooks.safety_block = true, want the explicit opt-out kept")
+	}
+	if settings := readProjectFile(t, dir, ".claude/settings.json"); strings.Contains(settings, "package-guard.py") {
+		t.Error("settings.json registers package-guard.py although attach-guard was disabled")
+	}
+	if strings.Contains(out, "always-on tool") {
+		t.Errorf("re-init warned about restoring an opted-out tool:\n%s", out)
+	}
+}
+
+// TestUpdate_WarnsWhenAlwaysOnRestored verifies update restores an always-on
+// tool lost from a project and says so, whether the saved answers dropped it
+// (a U28-01 victim) or it was deleted from .qsdev.yaml tools.enabled by hand.
+func TestUpdate_WarnsWhenAlwaysOnRestored(t *testing.T) {
+	tests := []struct {
+		name string
+		drop func(t *testing.T, dir string)
+	}{
+		{"saved answers without the safety block", func(t *testing.T, dir string) {
+			a := loadProjectAnswers(t, dir)
+			a.Hooks.SafetyBlock = false
+			delete(a.EnabledTools, toolreg.ToolAttachGuard)
+			if err := saveAnswers(dir, a); err != nil {
+				t.Fatal(err)
+			}
+		}},
+		{"entry deleted from tools.enabled", func(t *testing.T, dir string) {
+			path := filepath.Join(dir, ".qsdev.yaml")
+			data, err := os.ReadFile(path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			lines := strings.SplitAfter(string(data), "\n")
+			kept := slices.DeleteFunc(lines, func(l string) bool {
+				return strings.TrimSpace(l) == "- "+toolreg.ToolAttachGuard
+			})
+			if len(kept) == len(lines) {
+				t.Fatalf(".qsdev.yaml has no %s entry:\n%s", toolreg.ToolAttachGuard, data)
+			}
+			if err := os.WriteFile(path, []byte(strings.Join(kept, "")), 0o644); err != nil {
+				t.Fatal(err)
+			}
+		}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			dir, _ := initGoProject(t)
+			tt.drop(t, dir)
+
+			out, err := executeInitCmd(t, dir, "--update")
+			if err != nil {
+				t.Fatalf("update: %v\n%s", err, out)
+			}
+			want := "always-on tool \"attach-guard\" kept enabled; opt out with `qsdev disable attach-guard --force`"
+			if !strings.Contains(out, want) {
+				t.Errorf("update output does not contain %q:\n%s", want, out)
+			}
+			assertAttachGuardOn(t, dir)
+		})
+	}
+}
+
+// safetyBlockOptOutWarning is the warning init, update and claude
+// init/update print while the package guard is opted out.
+const safetyBlockOptOutWarning = "Warning: the package-install guard (attach-guard) is disabled by tools.disabled in .qsdev.yaml; re-enable with `qsdev enable attach-guard`"
+
+// TestInitUpdate_WarnsOnCommittedSafetyBlockOptOut verifies update keeps a
+// committed `disable attach-guard --force` opt-out, records it in the answers
+// and says so, while a project without the opt-out gets no warning.
+func TestInitUpdate_WarnsOnCommittedSafetyBlockOptOut(t *testing.T) {
+	tests := []struct {
+		name   string
+		optOut bool
+	}{
+		{name: "committed opt-out", optOut: true},
+		{name: "no opt-out"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			dir, _ := initGoProject(t)
+			if tt.optOut {
+				mustDisable(t, dir, toolreg.ToolAttachGuard, "--force")
+			}
+
+			out, err := executeInitCmd(t, dir, "--update")
+			if err != nil {
+				t.Fatalf("update: %v\n%s", err, out)
+			}
+			if got := strings.Contains(out, safetyBlockOptOutWarning); got != tt.optOut {
+				t.Errorf("update printed the opt-out warning = %v, want %v:\n%s", got, tt.optOut, out)
+			}
+			a := loadProjectAnswers(t, dir)
+			if a.Hooks.SafetyBlockOptOut != tt.optOut || a.Hooks.SafetyBlock == tt.optOut {
+				t.Errorf("answers safety_block = %v, safety_block_opt_out = %v; want opt-out = %v",
+					a.Hooks.SafetyBlock, a.Hooks.SafetyBlockOptOut, tt.optOut)
+			}
+		})
+	}
+}
+
+// checkReport runs `check --format json` in dir and returns the report.
+func checkReport(t *testing.T, dir string) check.CheckReport {
+	t.Helper()
+	out, _ := runLifecycleCmd(t, dir, checkCmd(), "--format", "json", "--audit-level", "low")
+	i := strings.Index(out, "{")
+	if i < 0 {
+		t.Fatalf("check printed no JSON report:\n%s", out)
+	}
+	var report check.CheckReport
+	// The JSON report may be followed by cobra's error output.
+	if err := json.NewDecoder(strings.NewReader(out[i:])).Decode(&report); err != nil {
+		t.Fatalf("parsing report: %v\n%s", err, out)
+	}
+	return report
+}
+
+// missingTools returns the tool_missing_* checks that failed.
+func missingTools(report check.CheckReport) []string {
+	var names []string
+	for _, c := range report.Checks {
+		if strings.HasPrefix(c.Name, "tool_missing_") && c.Status == check.StatusFail {
+			names = append(names, c.Name)
+		}
+	}
+	return names
+}
+
+// TestInit_DefaultProjectHasEveryAlwaysOnTool verifies a default init
+// records every always-on tool and generates what backs it, so check finds
+// none missing and the trail-of-bits skill it records is on disk.
+func TestInit_DefaultProjectHasEveryAlwaysOnTool(t *testing.T) {
+	dir, out := initGoProject(t)
+
+	if strings.Contains(out, "always-on tool") {
+		t.Errorf("default init warned about an always-on tool:\n%s", out)
+	}
+	if missing := missingTools(checkReport(t, dir)); len(missing) != 0 {
+		t.Errorf("check reports missing always-on tools: %v", missing)
+	}
+	if _, err := os.Stat(filepath.Join(dir, ".claude", "skills", "security-review-owasp", "SKILL.md")); err != nil {
+		t.Errorf("trail-of-bits-skills recorded but its skill is not generated: %v", err)
+	}
+}
+
+// TestInit_DevenvOnlyRecordsNoClaudeCodeTools is the --devenv-only
+// regression: without Claude Code, the always-on tools that configure it are
+// neither recorded, warned about, nor required by check.
+func TestInit_DevenvOnlyRecordsNoClaudeCodeTools(t *testing.T) {
+	dir, out := initGoProject(t, "--devenv-only")
+
+	if strings.Contains(out, "always-on tool") {
+		t.Errorf("--devenv-only init warned about an always-on tool:\n%s", out)
+	}
+	enabled, _ := committedTools(t, dir)
+	for _, name := range []string{toolreg.ToolAttachGuard, toolreg.ToolTrailOfBitsSkills} {
+		if slices.Contains(enabled, name) {
+			t.Errorf(".qsdev.yaml tools.enabled = %v, want no %s without Claude Code", enabled, name)
+		}
+	}
+	if !slices.Contains(enabled, "branch-naming") {
+		t.Errorf(".qsdev.yaml tools.enabled = %v, want the project tool branch-naming", enabled)
+	}
+	if missing := missingTools(checkReport(t, dir)); len(missing) != 0 {
+		t.Errorf("check requires Claude Code tools in a --devenv-only project: %v", missing)
+	}
+}
+
+// TestInit_AnswersFileCannotOptOutAlwaysOn verifies an answers file is not
+// an opt-out: its explicit off for attach-guard is dropped with a warning,
+// and init does not write the tool to tools.disabled.
+func TestInit_AnswersFileCannotOptOutAlwaysOn(t *testing.T) {
+	src, _ := initGoProject(t)
+	a := loadProjectAnswers(t, src)
+	a.Hooks.SafetyBlock = false
+	a.EnabledTools[toolreg.ToolAttachGuard] = false
+	data, err := yaml.Marshal(a)
+	if err != nil {
+		t.Fatal(err)
+	}
+	answersFile := filepath.Join(t.TempDir(), "answers.yaml")
+	if err := os.WriteFile(answersFile, data, 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	dir, out := initGoProject(t, "--answers-file", answersFile)
+
+	want := "always-on tool \"attach-guard\" kept enabled; opt out with `qsdev disable attach-guard --force`"
+	if !strings.Contains(out, want) {
+		t.Errorf("init output does not contain %q:\n%s", want, out)
+	}
+	if _, disabled := committedTools(t, dir); slices.Contains(disabled, toolreg.ToolAttachGuard) {
+		t.Errorf(".qsdev.yaml tools.disabled = %v, want init never to write the opt-out", disabled)
+	}
+	assertAttachGuardOn(t, dir)
+}
+
+// TestInit_AgentPostmortemFalseRejected verifies --agent-postmortem=false is
+// rejected with a pointer to the only opt-out rather than silently ignored.
+func TestInit_AgentPostmortemFalseRejected(t *testing.T) {
+	dir := t.TempDir()
+	out, err := executeInitCmd(t, dir, "--yes", "--lang", "go", "--agent-postmortem=false")
+	if err == nil {
+		t.Fatalf("init --agent-postmortem=false succeeded:\n%s", out)
+	}
+	if want := "qsdev disable agent-postmortem --force"; !strings.Contains(err.Error(), want) {
+		t.Errorf("error = %q, want it to point at %q", err, want)
+	}
+	if _, statErr := os.Stat(filepath.Join(dir, ".qsdev.yaml")); !errors.Is(statErr, fs.ErrNotExist) {
+		t.Errorf(".qsdev.yaml written despite the rejected flag: %v", statErr)
+	}
+}
+
+// TestUpdate_RestoresTrailOfBitsSkill covers a project from a release that
+// recorded trail-of-bits-skills without generating its skill: check fails
+// with tool_missing, and update restores both the entry and the skill.
+func TestUpdate_RestoresTrailOfBitsSkill(t *testing.T) {
+	dir, _ := initGoProject(t)
+	a := loadProjectAnswers(t, dir)
+	a.Skills = slices.DeleteFunc(a.Skills, func(s string) bool { return s == "security-review-owasp" })
+	delete(a.EnabledTools, toolreg.ToolTrailOfBitsSkills)
+	if err := saveAnswers(dir, a); err != nil {
+		t.Fatal(err)
+	}
+	cfgPath := filepath.Join(dir, ".qsdev.yaml")
+	data, err := os.ReadFile(cfgPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	stripped := strings.ReplaceAll(string(data), "        - "+toolreg.ToolTrailOfBitsSkills+"\n", "")
+	stripped = strings.ReplaceAll(stripped, "    - "+toolreg.ToolTrailOfBitsSkills+"\n", "")
+	if stripped == string(data) {
+		t.Fatalf(".qsdev.yaml has no %s entry:\n%s", toolreg.ToolTrailOfBitsSkills, data)
+	}
+	if err := os.WriteFile(cfgPath, []byte(stripped), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	// That release never generated the skill, so neither disk nor state has it.
+	if err := os.RemoveAll(filepath.Join(dir, ".claude", "skills", "security-review-owasp")); err != nil {
+		t.Fatal(err)
+	}
+	st, err := state.LoadStateFromFile(filepath.Join(dir, stateFilePath()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	delete(st.Files, ".claude/skills/security-review-owasp/SKILL.md")
+	if err := state.SaveInitState(dir, st); err != nil {
+		t.Fatal(err)
+	}
+
+	if missing := missingTools(checkReport(t, dir)); !slices.Equal(missing, []string{"tool_missing_" + toolreg.ToolTrailOfBitsSkills}) {
+		t.Errorf("check missing = %v, want only %s", missing, toolreg.ToolTrailOfBitsSkills)
+	}
+	out, err := executeInitCmd(t, dir, "--update")
+	if err != nil {
+		t.Fatalf("update: %v\n%s", err, out)
+	}
+	if enabled, _ := committedTools(t, dir); !slices.Contains(enabled, toolreg.ToolTrailOfBitsSkills) {
+		t.Errorf(".qsdev.yaml tools.enabled = %v, want %s restored", enabled, toolreg.ToolTrailOfBitsSkills)
+	}
+	if _, err := os.Stat(filepath.Join(dir, ".claude", "skills", "security-review-owasp", "SKILL.md")); err != nil {
+		t.Errorf("update did not restore the skill: %v", err)
+	}
 }

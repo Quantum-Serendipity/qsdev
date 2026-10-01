@@ -79,7 +79,7 @@ func (g *ClaudeCodeGenerator) Generate(answers types.WizardAnswers) ([]types.Gen
 	files = append(files, hookFiles...)
 
 	// Gate 1: tier >= Standard for CLAUDE.md, skills, rules
-	if t < tier.Standard {
+	if !tier.GeneratesAgentConfig(answers) {
 		return files, nil
 	}
 
@@ -315,7 +315,7 @@ func dedupeFilesByPath(files []types.GeneratedFile) []types.GeneratedFile {
 // an unqualified success. After the standard-tier fix (skills + configured MCP
 // now emit at Standard), suppression only happens below Standard.
 func SuppressedConfigWarnings(answers types.WizardAnswers) []string {
-	if resolveTier(answers) >= tier.Standard {
+	if tier.GeneratesAgentConfig(answers) {
 		return nil
 	}
 	var warnings []string

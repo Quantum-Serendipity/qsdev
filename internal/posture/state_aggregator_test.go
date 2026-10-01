@@ -1,6 +1,7 @@
 package posture
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
@@ -250,6 +251,38 @@ func TestLoadAllStates_AnswersFallback(t *testing.T) {
 			}
 			if got := len(merged.EnabledTools) > 0; got != tt.wantTools {
 				t.Errorf("EnabledTools = %v, want non-empty=%v", merged.EnabledTools, tt.wantTools)
+			}
+		})
+	}
+}
+
+// TestLoadAllStates_AnswersFallbackReportsConfiguredGuard guards the
+// fallback against crediting enforcement it does not see: answers with the
+// safety block off (a U28-01 victim) must not report attach-guard enabled,
+// and answers with it on must.
+func TestLoadAllStates_AnswersFallbackReportsConfiguredGuard(t *testing.T) {
+	t.Parallel()
+	for _, safetyBlock := range []bool{false, true} {
+		t.Run(fmt.Sprintf("safety_block=%v", safetyBlock), func(t *testing.T) {
+			t.Parallel()
+			root := t.TempDir()
+			writeState(t, root, ".claude/.qsdev-claude-state.yaml", types.GeneratedState{
+				QsdevVersion: "1.0.0",
+				LastRun:      time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC),
+			})
+			dir := filepath.Join(root, ".devinit")
+			if err := os.MkdirAll(dir, 0o755); err != nil {
+				t.Fatal(err)
+			}
+			answers := fmt.Sprintf("claude_code: true\nhooks:\n  safety_block: %v\n  audit_log: true\n", safetyBlock)
+			if err := os.WriteFile(filepath.Join(dir, ".qsdev-init-answers.yaml"), []byte(answers), 0o644); err != nil {
+				t.Fatal(err)
+			}
+
+			merged := LoadAllStates(root)
+
+			if got := merged.EnabledTools["attach-guard"]; got != safetyBlock {
+				t.Errorf("EnabledTools[attach-guard] = %v, want %v", got, safetyBlock)
 			}
 		})
 	}

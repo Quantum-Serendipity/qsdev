@@ -13,6 +13,7 @@ import (
 	"github.com/Quantum-Serendipity/qsdev/addons/claudecode"
 	"github.com/Quantum-Serendipity/qsdev/internal/catalog"
 	"github.com/Quantum-Serendipity/qsdev/internal/termutil"
+	"github.com/Quantum-Serendipity/qsdev/internal/toolreg"
 	"github.com/Quantum-Serendipity/qsdev/pkg/ecosystem"
 	"github.com/Quantum-Serendipity/qsdev/pkg/types"
 )
@@ -24,6 +25,9 @@ type formState struct {
 	// the form does not ask about (tier, env vars, infra profile, enabled
 	// tools, additional hooks) survive.
 	partial types.WizardAnswers
+	// tools is the tool registry whose always-on tools init enforces; the
+	// form omits and the preview shows the hooks they turn on.
+	tools *toolreg.Registry
 
 	quickChoice string // "yes", "show", "customize"
 
@@ -42,11 +46,9 @@ type formState struct {
 	claudeCode      bool
 	permissionLevel string
 	skills          []string
-	autoFormat      bool
-	safetyBlock     bool
+	hookPresets     []string // added to the hooks the answers already enable
 	mcpServers      []string
 
-	agentPostmortem      bool
 	agentVersionSentinel bool
 	agentSemble          bool
 	agentSembleMode      string
@@ -65,8 +67,8 @@ func (fs *formState) previewBindings() []any {
 		&fs.selectedLanguages,
 		&fs.selectedServices,
 		&fs.direnv, &fs.gitHooks, &fs.extraPackages, &fs.nixHardeningGuide,
-		&fs.claudeCode, &fs.permissionLevel, &fs.skills, &fs.autoFormat, &fs.safetyBlock, &fs.mcpServers,
-		&fs.agentPostmortem, &fs.agentVersionSentinel, &fs.agentSemble, &fs.agentSembleMode, &fs.agentSembleTextFiles,
+		&fs.claudeCode, &fs.permissionLevel, &fs.skills, &fs.hookPresets, &fs.mcpServers,
+		&fs.agentVersionSentinel, &fs.agentSemble, &fs.agentSembleMode, &fs.agentSembleTextFiles,
 	}
 	for _, lf := range fs.moduleFields {
 		for _, f := range lf.fields {
@@ -103,7 +105,12 @@ func RunWizard(projectRoot string, detected types.DetectedProject, partial types
 	partial.ProjectName = defaults.ProjectName
 	partial.Detected = detected
 
+	tools, err := toolreg.Default()
+	if err != nil {
+		return types.WizardAnswers{}, fmt.Errorf("loading tool registry: %w", err)
+	}
 	fs := newFormState(detected, defaults, partial, flagSet)
+	fs.tools = tools
 	if err := runWizardForm(detected, fs, flagSet, themeName); err != nil {
 		if errors.Is(err, huh.ErrUserAborted) {
 			return types.WizardAnswers{Confirmed: false}, nil
@@ -111,6 +118,11 @@ func RunWizard(projectRoot string, detected types.DetectedProject, partial types
 		return types.WizardAnswers{}, fmt.Errorf("wizard form: %w", err)
 	}
 
+	// Reject an invalid hook selection here, before mapping: the form's
+	// options come from wizardHookPresets, so this only guards that invariant.
+	if _, err := hooksFromStrings(fs.hookPresets); err != nil {
+		return types.WizardAnswers{}, fmt.Errorf("wizard hook presets: %w", err)
+	}
 	return mapFormToAnswers(fs, projectRoot, defaults.ProjectName, detected), nil
 }
 
@@ -131,9 +143,7 @@ func newFormState(detected types.DetectedProject, defaults, partial types.Wizard
 		direnv:               true,
 		claudeCode:           true,
 		permissionLevel:      "standard",
-		safetyBlock:          true,
 		mcpServers:           catalog.MustDefault().DefaultMCPServers(),
-		agentPostmortem:      true,
 		agentVersionSentinel: hasVSSupportedLanguage(seedLangs),
 		agentSemble:          pythonVersionAtLeast(detected.PythonVersion, 3, 10),
 		agentSembleMode:      "mcp",
@@ -188,10 +198,6 @@ func seedFromPartial(fs *formState, partial types.WizardAnswers, flagSet *FlagSe
 		fs.extraPackages = strings.Join(partial.ExtraPackages, ", ")
 	}
 	fs.nixHardeningGuide = partial.NixHardeningGuide
-	if flagSet.IsSet("claude-hooks") {
-		fs.autoFormat = partial.Hooks.AutoFormat
-		fs.safetyBlock = partial.Hooks.SafetyBlock
-	}
 	seedAgentTools(fs, partial.AgentTools, flagSet)
 }
 
@@ -214,9 +220,6 @@ func seedPermissionLevel(partial types.WizardAnswers) string {
 
 // seedAgentTools applies explicitly set --agent-* flags to the form.
 func seedAgentTools(fs *formState, tools types.AgentToolsAnswers, flagSet *FlagSet) {
-	if flagSet.IsSet("agent-postmortem") {
-		fs.agentPostmortem = tools.PostmortemEnabled
-	}
 	if flagSet.IsSet("agent-version-sentinel") {
 		fs.agentVersionSentinel = tools.VersionSentinel
 	}
@@ -510,18 +513,20 @@ func claudeDetailFields(fs *formState) []huh.Field {
 			Description("Controls which tools Claude Code is allowed to use.").
 			Options(permissionOptions()...).
 			Value(&fs.permissionLevel),
-		huh.NewConfirm().
-			Title("Enable auto-format hook?").
-			Description("Automatically formats code after Claude edits files.").
-			Affirmative("Yes").
-			Negative("No").
-			Value(&fs.autoFormat),
-		huh.NewConfirm().
-			Title("Enable safety-block hook?").
-			Description("Blocks potentially dangerous operations.").
-			Affirmative("Yes").
-			Negative("No").
-			Value(&fs.safetyBlock),
+	}
+
+	if presets := wizardHookPresets(fs.tools); len(presets) > 0 {
+		fields = append(fields,
+			huh.NewMultiSelect[string]().
+				Title("Additional hooks").
+				Description("Added to the always-on hooks and to any chosen by flags, profile or tier.").
+				Options(huh.NewOptions(presets...)...).
+				Validate(func(chosen []string) error {
+					_, err := hooksFromStrings(chosen)
+					return err
+				}).
+				Value(&fs.hookPresets),
+		)
 	}
 
 	if skillNames := claudecode.AvailableSkillNames(); len(skillNames) > 0 {
@@ -544,12 +549,6 @@ func claudeDetailFields(fs *formState) []huh.Field {
 			Description("Select Model Context Protocol servers to configure.").
 			Options(mcpServerOptions()...).
 			Value(&fs.mcpServers),
-		huh.NewConfirm().
-			Title("Agent-postmortem skill").
-			Description("Require evidence-backed verification before claiming tasks done").
-			Affirmative("Yes").
-			Negative("No").
-			Value(&fs.agentPostmortem),
 		huh.NewConfirm().
 			Title("Version-Sentinel").
 			Description("Block dependency changes until versions verified against registry").
@@ -663,8 +662,11 @@ func applyFormChoices(answers *types.WizardAnswers, fs *formState, detected type
 	answers.GitHooks = slices.Clone(fs.gitHooks)
 	answers.ExtraPackages = parseExtraPackages(fs.extraPackages)
 	answers.NixHardeningGuide = fs.nixHardeningGuide
-	answers.Hooks.AutoFormat = fs.autoFormat
-	answers.Hooks.SafetyBlock = fs.safetyBlock
+	// RunWizard and the form's Validate reject an invalid selection, so an
+	// error here cannot happen.
+	if chosen, err := hooksFromStrings(fs.hookPresets); err == nil {
+		answers.Hooks = answers.Hooks.Union(chosen)
+	}
 	answers.ClaudeCode = fs.claudeCode
 	answers.PermissionLevel = fs.permissionLevel
 
@@ -677,7 +679,6 @@ func applyFormChoices(answers *types.WizardAnswers, fs *formState, detected type
 
 	answers.Skills = slices.Clone(fs.skills)
 	answers.MCPServers = slices.Clone(fs.mcpServers)
-	answers.AgentTools.PostmortemEnabled = fs.agentPostmortem
 	answers.AgentTools.VersionSentinel = fs.agentVersionSentinel
 	answers.AgentTools.SembleEnabled = fs.agentSemble
 	answers.AgentTools.SembleMode = fs.agentSembleMode
@@ -807,4 +808,29 @@ func serviceLabel(name string) string {
 		return l
 	}
 	return name
+}
+
+// wizardHookPresets returns the selectable hook presets the wizard offers:
+// claudecode.SelectableHookPresets minus those EnforceAlwaysOn already turns
+// on for tools, since a toggle for an always-on hook would do nothing.
+func wizardHookPresets(tools *toolreg.Registry) []string {
+	enforced := types.WizardAnswers{ClaudeCode: true}
+	if tools != nil {
+		toolreg.SeedAlwaysOn(&enforced, tools)
+	}
+	var out []string
+	for _, name := range claudecode.SelectableHookPresets() {
+		probe := enforced.Hooks
+		if err := probe.EnableHook(name); err == nil && probe != enforced.Hooks {
+			out = append(out, name)
+		}
+	}
+	return out
+}
+
+// enforceAlwaysOn applies toolreg.EnforceAlwaysOn when tools is set.
+func enforceAlwaysOn(a *types.WizardAnswers, tools *toolreg.Registry) {
+	if tools != nil {
+		toolreg.EnforceAlwaysOn(a, tools)
+	}
 }

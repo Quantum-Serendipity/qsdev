@@ -3,10 +3,12 @@ package devinit
 import (
 	"errors"
 	"fmt"
+	"io"
 	"io/fs"
 	"log/slog"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 
 	"github.com/charmbracelet/x/term"
@@ -77,6 +79,12 @@ func runInitWithModeDetection(cmd *cobra.Command, opts InitOptions) error {
 	projectRoot, err := cmdutil.WorkingDir()
 	if err != nil {
 		return err
+	}
+
+	// The postmortem skill backs an always-on tool: its only opt-out is
+	// disable --force.
+	if cmd.Flags().Changed("agent-postmortem") && !opts.AgentPostmortem {
+		return toolreg.OptOutFlagError("--agent-postmortem=false", toolreg.ToolAgentPostmortem)
 	}
 
 	// b. Handle --list-profiles early return.
@@ -304,10 +312,39 @@ func buildAnswersFromInputs(cmd *cobra.Command, opts InitOptions, projectRoot st
 	if err != nil {
 		return types.WizardAnswers{}, fmt.Errorf("loading tool registry: %w", err)
 	}
-	toolreg.MergeInferredTools(&answers, treg)
+	reconcileTools(cmd.ErrOrStderr(), projectRoot, &answers, treg)
 
 	enforceAnswerInvariants(&answers)
 	return answers, nil
+}
+
+// reconcileTools settles the enabled tools once every answer source has run
+// (see toolreg.Reconcile) and writes a warning to w for each always-on tool
+// kept enabled: one whose explicit off was dropped or overridden, or one the
+// committed .qsdev.yaml lists as neither enabled nor disabled. It also warns
+// when the committed opt-out keeps the package guard off (see
+// toolreg.WarnSafetyBlockOptOut). Without a loadable committed config no
+// opt-out is recorded, so every explicit off for an always-on tool is
+// dropped; applyCommittedPolicy already reported a config that cannot be
+// loaded.
+func reconcileTools(w io.Writer, projectRoot string, a *types.WizardAnswers, reg *toolreg.Registry) {
+	committed := qsdevconfig.CommittedTools(projectRoot)
+	if committed == nil {
+		kept := toolreg.Reconcile(a, reg, &types.ToolsConfig{})
+		toolreg.WarnAlwaysOnRestored(w, kept)
+		return
+	}
+	kept := toolreg.Reconcile(a, reg, committed)
+	for _, tool := range reg.All() {
+		name := tool.Name
+		if tool.EnforcedFor(a) && a.EnabledTools[name] &&
+			!slices.Contains(committed.Enabled, name) && !slices.Contains(committed.Disabled, name) {
+			kept = append(kept, name)
+		}
+	}
+	slices.Sort(kept)
+	toolreg.WarnAlwaysOnRestored(w, slices.Compact(kept))
+	toolreg.WarnSafetyBlockOptOut(w, a)
 }
 
 // runInitWizard collects the remaining answers interactively and validates

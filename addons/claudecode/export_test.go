@@ -25,14 +25,11 @@ var ExportLoadAnswers = loadAnswers
 
 // ExportBuildClaudeAnswersFromFlags exposes buildClaudeAnswersFromFlags for external tests.
 //
-// Parameters: projectRoot, preset string, skills, mcpServers []string, yes, noSafetyBlock bool
+// Parameters: projectRoot, preset string, skills, mcpServers []string, yes bool
 var ExportBuildClaudeAnswersFromFlags = buildClaudeAnswersFromFlags
 
 // ExportValidPermissionPresets exposes the permission presets init accepts for external tests.
 var ExportValidPermissionPresets = validation.PermissionPresets()
-
-// ExportValidHookPresets exposes the hook presets add-hook accepts for external tests.
-var ExportValidHookPresets = validation.HookPresets()
 
 // ExportClaudeCmd exposes claudeCmd for external tests.
 var ExportClaudeCmd = claudeCmd

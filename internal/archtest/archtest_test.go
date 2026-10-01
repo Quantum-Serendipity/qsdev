@@ -1,8 +1,10 @@
 package archtest
 
 import (
+	"bytes"
 	"flag"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"testing"
 )
@@ -26,6 +28,7 @@ func TestArchitecture(t *testing.T) {
 	if err != nil {
 		t.Fatalf("loading module: %v", err)
 	}
+	dropGitIgnored(t, repo)
 	got := Collect(repo, Rules())
 
 	if *update {
@@ -56,6 +59,32 @@ func TestBaselineMonotone(t *testing.T) {
 	for _, p := range CompareMonotone(current, base) {
 		t.Error(p)
 	}
+}
+
+// dropGitIgnored removes the files git ignores from repo, so local-only
+// trees (gitignored notes or scratch programs) neither fail the check nor
+// leak into a regenerated baseline: the result matches a fresh checkout.
+// Untracked files that are not ignored stay, so new code is still checked.
+// Outside a git work tree every file is kept.
+func dropGitIgnored(t *testing.T, repo *Repo) {
+	t.Helper()
+	out, err := exec.Command("git", "-C", moduleRoot, "ls-files", "-z",
+		"--cached", "--others", "--exclude-standard", "--", "*.go").Output()
+	if err != nil {
+		t.Logf("listing files with git: %v; checking every file", err)
+		return
+	}
+	visible := make(map[string]bool)
+	for _, p := range bytes.Split(out, []byte{0}) {
+		visible[string(p)] = true
+	}
+	kept := repo.Files[:0]
+	for _, f := range repo.Files {
+		if visible[f.Path] {
+			kept = append(kept, f)
+		}
+	}
+	repo.Files = kept
 }
 
 func readBaseline(t *testing.T, path string) Set {

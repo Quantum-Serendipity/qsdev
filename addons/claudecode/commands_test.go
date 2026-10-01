@@ -912,6 +912,7 @@ func TestClaudeInit_EnforcesAlwaysOnTools(t *testing.T) {
 				if err := os.WriteFile(filepath.Join(tmpDir, ".qsdev.yaml"), []byte(tt.committed), 0o644); err != nil {
 					t.Fatal(err)
 				}
+				markJoined(t, tmpDir)
 			}
 
 			cmd := claudecode.ExportClaudeCmd()
@@ -972,6 +973,7 @@ func TestClaudeUpdate_RestoresUncommittedSafetyBlockOptOut(t *testing.T) {
 			if err := os.WriteFile(filepath.Join(tmpDir, ".qsdev.yaml"), []byte(tt.committed), 0o644); err != nil {
 				t.Fatal(err)
 			}
+			markJoined(t, tmpDir)
 			saved, err := claudecode.ExportLoadAnswers(tmpDir)
 			if err != nil {
 				t.Fatal(err)

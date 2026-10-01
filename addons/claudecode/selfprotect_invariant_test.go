@@ -311,6 +311,7 @@ func TestClaudeUpdate_KeepsCommittedTier(t *testing.T) {
 			if err := os.WriteFile(cfgPath, []byte("version: 1\ntier: "+tt.committed+"\n"), 0o644); err != nil {
 				t.Fatal(err)
 			}
+			markJoined(t, dir)
 
 			mustRunClaude(t, "update", "--force")
 

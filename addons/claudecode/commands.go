@@ -77,7 +77,7 @@ func initCmd() *cobra.Command {
 				return fmt.Errorf("unknown permission preset %q; valid presets: %v", preset, validation.PermissionPresets())
 			}
 
-			projectRoot, err := cmdutil.ProjectRoot()
+			projectRoot, err := cmdutil.JoinedProjectRoot()
 			if err != nil {
 				return err
 			}
@@ -222,7 +222,7 @@ func updateCmd() *cobra.Command {
 		Short: "Regenerate Claude Code files from saved answers",
 		Long:  "Re-run generation using previously saved wizard answers, incorporating any detection changes.",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			projectRoot, err := cmdutil.ProjectRoot()
+			projectRoot, err := cmdutil.JoinedProjectRoot()
 			if err != nil {
 				return err
 			}
@@ -340,7 +340,7 @@ func makeAddItemCmd(spec addItemSpec) *cobra.Command {
 				}
 			}
 
-			projectRoot, err := cmdutil.ProjectRoot()
+			projectRoot, err := cmdutil.JoinedProjectRoot()
 			if err != nil {
 				return err
 			}

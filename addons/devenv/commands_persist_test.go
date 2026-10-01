@@ -430,6 +430,7 @@ func TestDayTwoCommands_RecordChangesInProjectConfig(t *testing.T) {
 	dir := initProject(t)
 	cfgPath := filepath.Join(dir, ".qsdev.yaml")
 	writeFile(t, cfgPath, "version: 1\nlanguages:\n  - name: go\nclient:\n  name: acme\n")
+	markJoined(t, dir)
 
 	steps := [][]string{
 		{"add-package", "jq", "ripgrep"},

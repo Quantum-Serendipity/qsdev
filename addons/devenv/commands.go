@@ -84,7 +84,7 @@ func initCmd() *cobra.Command {
 		Short: "Initialize a security-hardened devenv environment",
 		Long:  "Generate devenv.yaml, devenv.nix, and security configuration files for the current project.",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			projectRoot, err := cmdutil.ProjectRoot()
+			projectRoot, err := cmdutil.JoinedProjectRoot()
 			if err != nil {
 				return err
 			}
@@ -165,7 +165,7 @@ func updateCmd() *cobra.Command {
 		Short: "Regenerate devenv files from saved answers",
 		Long:  "Re-run generation using previously saved wizard answers, incorporating any detection changes.",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			projectRoot, err := cmdutil.ProjectRoot()
+			projectRoot, err := cmdutil.JoinedProjectRoot()
 			if err != nil {
 				return err
 			}
@@ -247,7 +247,7 @@ func makeAddCmd(spec itemSpec) *cobra.Command {
 		Args:              argsValidator,
 		ValidArgsFunction: cmdutil.CompleteFrom(spec.validArgs),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			projectRoot, err := cmdutil.ProjectRoot()
+			projectRoot, err := cmdutil.JoinedProjectRoot()
 			if err != nil {
 				return err
 			}
@@ -352,7 +352,7 @@ func makeRemoveCmd(spec itemSpec) *cobra.Command {
 		Args:              argsValidator,
 		ValidArgsFunction: cmdutil.CompleteFrom(spec.validArgs),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			projectRoot, err := cmdutil.ProjectRoot()
+			projectRoot, err := cmdutil.JoinedProjectRoot()
 			if err != nil {
 				return err
 			}

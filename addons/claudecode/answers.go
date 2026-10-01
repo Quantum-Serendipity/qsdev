@@ -9,20 +9,15 @@ import (
 	"path/filepath"
 
 	"github.com/Quantum-Serendipity/qsdev/internal/answers"
-	"github.com/Quantum-Serendipity/qsdev/pkg/branding"
+	qsdevconfig "github.com/Quantum-Serendipity/qsdev/internal/config"
 	"github.com/Quantum-Serendipity/qsdev/pkg/types"
 )
 
-// primaryAnswersFile returns the base name of the primary (devinit) answers
-// file, the single source of truth for wizard answers across all addons.
-func primaryAnswersFile() string {
-	return "." + branding.Get().AppName + "-init-answers.yaml"
-}
-
 // answersPath returns the full path to the answers file that claude
-// subcommands read and write: the project's primary answers file.
+// subcommands read and write: the project's primary (devinit) answers file,
+// the single source of truth for wizard answers across all addons.
 func answersPath(projectRoot string) string {
-	return answers.FilePath(projectRoot, branding.Get().StateDir, primaryAnswersFile())
+	return answers.PrimaryPath(projectRoot)
 }
 
 // legacyAnswersPath returns the path of the per-addon answers copy that older
@@ -55,8 +50,31 @@ func SaveAnswers(projectRoot string, a types.WizardAnswers) error {
 // loadAnswers reads the saved wizard answers from the primary answers file. It
 // returns an error telling the user to run init first if the file does not
 // exist.
+//
+// The loaded answers are normalised (see normalizeAnswers), so what claude
+// subcommands report and persist agrees with the settings they generate.
 func loadAnswers(projectRoot string) (types.WizardAnswers, error) {
-	return answers.LoadFromDir(projectRoot, branding.Get().StateDir, primaryAnswersFile(), "claude init")
+	a, err := loadSavedAnswers(projectRoot)
+	if err != nil {
+		return types.WizardAnswers{}, err
+	}
+	normalizeAnswers(projectRoot, &a)
+	return a, nil
+}
+
+// loadSavedAnswers reads the primary answers file as saved, without
+// normalising it.
+func loadSavedAnswers(projectRoot string) (types.WizardAnswers, error) {
+	return answers.LoadFromDir(projectRoot, answers.PrimaryDir(), answers.PrimaryFilename(), "claude init")
+}
+
+// normalizeAnswers applies the answers invariants the way devinit's update
+// does: answers without a tier first adopt the tier committed in .qsdev.yaml,
+// so the invariants only infer a tier when the project records none and a
+// claude regeneration never replaces the team's committed tier.
+func normalizeAnswers(projectRoot string, a *types.WizardAnswers) {
+	qsdevconfig.AdoptCommittedTier(projectRoot, a)
+	answers.EnforceInvariants(a)
 }
 
 // overlayInitAnswers merges the answers `claude init` builds from its flags
@@ -67,12 +85,17 @@ func loadAnswers(projectRoot string) (types.WizardAnswers, error) {
 //
 // The permission preset and the confirmation are always taken from the flags;
 // skills and MCP servers only when the flags name some. The saved hooks are
-// kept, so a `disable attach-guard --force` opt-out survives a re-init.
+// kept, so a `disable attach-guard --force` opt-out survives a re-init. The
+// answers invariants are applied last, so the answers claude init persists
+// record what it generates.
 func overlayInitAnswers(projectRoot string, flags types.WizardAnswers) (types.WizardAnswers, error) {
 	if _, err := os.Stat(answersPath(projectRoot)); errors.Is(err, fs.ErrNotExist) {
+		normalizeAnswers(projectRoot, &flags)
 		return flags, nil
 	}
-	merged, err := loadAnswers(projectRoot)
+	// Normalised once, after the flags are applied, so an inferred tier
+	// reflects the new permission preset and MCP servers.
+	merged, err := loadSavedAnswers(projectRoot)
 	if err != nil {
 		return types.WizardAnswers{}, err
 	}
@@ -90,5 +113,6 @@ func overlayInitAnswers(projectRoot string, flags types.WizardAnswers) (types.Wi
 	if len(flags.MCPServers) > 0 {
 		merged.MCPServers = flags.MCPServers
 	}
+	normalizeAnswers(projectRoot, &merged)
 	return merged, nil
 }

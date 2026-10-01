@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -107,13 +108,14 @@ enforces (tool-gates with no .qsdev.yaml hooks.tool_gates lists) is shown as
 
 // loadHookAnswers loads the saved answers, treating a missing answers file as
 // empty answers. Any other failure (unreadable or corrupt file) is returned
-// rather than silently reported as "nothing configured". The addon's LSP
-// enforcement override is reconciled exactly as Generate does, so the listing
-// agrees with what generation deploys.
+// rather than silently reported as "nothing configured". The tools are
+// reconciled as regeneration does and the addon's LSP enforcement override is
+// applied exactly as Generate does, so the listing agrees with what
+// generation deploys.
 func loadHookAnswers(projectRoot string) (types.WizardAnswers, error) {
 	var answers types.WizardAnswers
 	if _, err := os.Stat(answersPath(projectRoot)); err == nil {
-		if answers, err = loadAnswers(projectRoot); err != nil {
+		if answers, err = loadReconciledAnswers(io.Discard, projectRoot); err != nil {
 			return types.WizardAnswers{}, err
 		}
 	} else if !errors.Is(err, fs.ErrNotExist) {

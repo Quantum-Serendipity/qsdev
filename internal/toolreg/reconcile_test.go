@@ -9,8 +9,8 @@ import (
 
 // TestReconcile verifies the one opt-out rule every regeneration path shares:
 // only the committed tools.disabled opts out of an always-on tool; an explicit
-// off it does not list is dropped and reported, and without a committed
-// config the answers' explicit off stands.
+// off it does not list is dropped and reported, also when the project has no
+// committed config at all.
 func TestReconcile(t *testing.T) {
 	t.Parallel()
 	reg := catalogRegistry(t)
@@ -40,9 +40,10 @@ func TestReconcile(t *testing.T) {
 			wantEnabled: false,
 		},
 		{
-			name:        "no committed config keeps the answers' off",
+			name:        "no committed config drops the answers' off",
 			enabled:     map[string]bool{ToolAttachGuard: false},
-			wantEnabled: false,
+			wantEnabled: true,
+			wantKept:    true,
 		},
 	}
 	for _, tt := range tests {

@@ -74,7 +74,7 @@ func TestIsProtected_ControlFilesAnyLocation(t *testing.T) {
 func TestProtectedSegmentsCoveredByCommandScan(t *testing.T) {
 	t.Parallel()
 
-	for _, seg := range protectedSegments {
+	for _, seg := range brandedTables().segments {
 		t.Run(seg.segment, func(t *testing.T) {
 			t.Parallel()
 			p := "/work/repo/" + seg.segment

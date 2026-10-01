@@ -545,11 +545,13 @@ func runDisable(cmd *cobra.Command, toolName string, opts disableOptions) error 
 	// Validate that the tool can be disabled.
 	if err := toolreg.ValidateDisable(registry, toolName, answers.EnabledTools); err != nil {
 		var alwaysOnErr *toolreg.AlwaysOnError
-		if errors.As(err, &alwaysOnErr) && opts.Force {
-			fmt.Fprintf(cmd.ErrOrStderr(), "Warning: disabling always-on tool %q.\n", toolName)
-		} else {
+		if !errors.As(err, &alwaysOnErr) || !opts.Force {
 			return err
 		}
+		if err := requireCommittedConfig(projectRoot, toolName); err != nil {
+			return err
+		}
+		fmt.Fprintf(cmd.ErrOrStderr(), "Warning: disabling always-on tool %q.\n", toolName)
 	}
 
 	stateFile := filepath.Join(projectRoot, stateFilePath())
@@ -606,6 +608,23 @@ func runDisable(cmd *cobra.Command, toolName string, opts disableOptions) error 
 	printWrittenFiles(cmd, result.written, "updated")
 	printChangeNotices(cmd, result)
 	return nil
+}
+
+// errOptOutNeedsCommittedConfig reports a forced disable of an always-on tool
+// in a project without a loadable committed config: the committed
+// tools.disabled is the only record of such an opt-out (toolreg.Reconcile),
+// so without one the next regeneration would silently turn the tool back on.
+var errOptOutNeedsCommittedConfig = errors.New("opting out of an always-on tool needs a committed project config")
+
+// requireCommittedConfig returns errOptOutNeedsCommittedConfig, with the way
+// to create the config, when projectRoot has no loadable committed config.
+func requireCommittedConfig(projectRoot, toolName string) error {
+	if qsdevconfig.CommittedTools(projectRoot) != nil {
+		return nil
+	}
+	b := branding.Get()
+	return fmt.Errorf("disabling %q: %w (%s); run '%s init' to create it, then retry",
+		toolName, errOptOutNeedsCommittedConfig, b.ConfigFile, b.AppName)
 }
 
 // planToolDisable regenerates the tool's shared files with the tool disabled.

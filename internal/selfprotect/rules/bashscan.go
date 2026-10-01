@@ -95,9 +95,12 @@ func (st *dirState) apply(sc scannedCommand) {
 		(sc.Name == "pushd" && (len(operands) == 0 || strings.HasPrefix(target, "+"))) ||
 		(st.cdpath && usesCDPATH(target)) {
 		// The destination is not statically known. Keep any protected
-		// directory the literal part names (`cd "$HOME/.claude"`, `cd .c*e`).
+		// directory the literal part names (`cd "$HOME/.claude"`, `cd .c*e`),
+		// or that a rooted target names once $HOME is rendered
+		// (`cd $HOME/.config/<app>`).
 		st.cwd, st.unknown = "", true
-		st.inProtected = st.inProtected || lexicalProtected(target) || globProtected(target)
+		st.inProtected = st.inProtected || lexicalProtected(target) || globProtected(target) ||
+			(isRooted(expandTilde(target)) && isProtectedDir(filepath.Clean(expandTilde(target))))
 		return
 	}
 	expanded := expandTilde(target)
@@ -131,16 +134,6 @@ func expandTilde(p string) string {
 	}
 	return p
 }
-
-// protectedDirNames are the protected directory names that can appear in any
-// location (home config or project checkout). They mirror the dot-directory
-// entries of canon's protected substring table and are used to decide whether
-// a glob segment such as `.c*e` can expand to one of them.
-var protectedDirNames = []string{".claude", ".qsdev", ".gdev"}
-
-// protectedSystemDirs are the absolute protected directories that are not
-// reached through a protected dot-directory, split into path segments.
-var protectedSystemDirs = [][]string{{"etc", "gdev"}, {"etc", "claude-code"}}
 
 // isProtectedDir reports whether dir is a protected directory or lies inside
 // one, i.e. whether a file directly inside it is protected. It is precise
@@ -210,45 +203,55 @@ func shellSegMatch(pattern, name string) bool {
 }
 
 // globProtected reports whether a glob word can expand to a protected path: a
-// glob segment that matches a protected directory name (`.c*e`, `.clau?e`), or
-// an absolute pattern whose leading segments match a protected system
-// directory (`/etc/g?ev/...`).
+// glob segment that matches a name protected in any location (`.c*e`,
+// `.env?c`), or an absolute pattern whose leading segments match a home- or
+// system-anchored protected location (`/etc/g?ev/...`, `~/.config/q*/x`).
+// Both tables come from canon, so a newly protected location is covered here
+// without a second list.
 func globProtected(p string) bool {
 	if !hasGlobMeta(p) {
 		return false
 	}
-	cleaned := filepath.ToSlash(filepath.Clean(expandTilde(p)))
-	segs := strings.Split(cleaned, "/")
+	cleaned := filepath.Clean(expandTilde(p))
+	segs := strings.Split(filepath.ToSlash(cleaned), "/")
+	names := canon.ProtectedNames()
 	for _, seg := range segs {
 		if !hasGlobMeta(seg) {
 			continue
 		}
-		for _, name := range protectedDirNames {
+		for _, name := range names {
 			if shellSegMatch(seg, name) {
 				return true
 			}
 		}
 	}
-	if !strings.HasPrefix(cleaned, "/") {
+	if !isRooted(cleaned) {
 		return false
 	}
-	segs = segs[1:]
-	for _, dir := range protectedSystemDirs {
-		if len(segs) < len(dir) {
-			continue
-		}
-		matched := true
-		for i, want := range dir {
-			if !shellSegMatch(segs[i], want) {
-				matched = false
-				break
-			}
-		}
-		if matched {
+	key := strings.Split(canon.PathKey(cleaned), "/")
+	for _, loc := range canon.ProtectedLocations() {
+		if globReaches(key, canon.PathKey(loc)) {
 			return true
 		}
 	}
 	return false
+}
+
+// globReaches reports whether the glob pattern, split into slash-separated
+// segments, can name the protected location loc (a path key; a directory ends
+// in "/"): every segment of loc is matched by the pattern segment in the same
+// position, and a file location must be the whole pattern.
+func globReaches(pattern []string, loc string) bool {
+	locSegs := strings.Split(strings.TrimSuffix(loc, "/"), "/")
+	if len(pattern) < len(locSegs) || (!strings.HasSuffix(loc, "/") && len(pattern) != len(locSegs)) {
+		return false
+	}
+	for i, want := range locSegs {
+		if !shellSegMatch(pattern[i], want) {
+			return false
+		}
+	}
+	return true
 }
 
 // maxBraceVariants caps brace expansion so a hostile word cannot blow up the
@@ -508,18 +511,50 @@ func scanMentionsProtected(ctx *EvalContext) bool {
 // bashMutatesProtected is the shared protected-mutation predicate behind the
 // Bash self-protection rules: the line references a protected path and either
 // cannot be parsed (fail closed) or one of its commands mutates one (see
-// protectedMutation). The result is memoized on ctx.
+// protectedMutation), a command deletes or replaces a directory holding a
+// home-anchored protected location (see replacesProtectedAncestor), or a
+// command relocates a protected location (see setsProtectedEnv). The result
+// is memoized on ctx.
 func bashMutatesProtected(ctx *EvalContext) bool {
 	if ctx.mutatesDone {
 		return ctx.mutates
 	}
 	ctx.mutatesDone = true
-	if !lineMentionsProtected(ctx) {
-		return false
-	}
 	scs, err := ctx.scannedCommands()
-	ctx.mutates = err != nil || protectedMutation(scs)
+	if err != nil {
+		ctx.mutates = lineMentionsProtected(ctx)
+		return ctx.mutates
+	}
+	ctx.mutates = (lineMentionsProtected(ctx) && protectedMutation(scs)) ||
+		replacesProtectedAncestor(scs) || setsProtectedEnv(scs)
 	return ctx.mutates
+}
+
+// setsProtectedEnv reports whether a command sets a variable that relocates a
+// protected location (canon.ProtectedEnvVars): as a prefix or bare assignment
+// (`QSDEV_ORG_CONFIG=/tmp/x qsdev claude update`), or as a NAME=value word of
+// export, declare or env. Protection covers the location the hook process
+// sees, so the relocated file would be unprotected. Names are compared
+// case-insensitively, as Windows environment names are.
+func setsProtectedEnv(scs []scannedCommand) bool {
+	vars := canon.ProtectedEnvVars()
+	names := func(sc scannedCommand) []string {
+		out := slices.Clone(sc.Assigns)
+		for _, w := range sc.Args {
+			if name, _, ok := strings.Cut(w, "="); ok {
+				out = append(out, name)
+			}
+		}
+		return out
+	}
+	for _, sc := range scs {
+		for _, name := range names(sc) {
+			if slices.ContainsFunc(vars, func(v string) bool { return strings.EqualFold(v, name) }) {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // hasVerb reports whether the command invokes one of verbs, judged from the
@@ -591,9 +626,9 @@ func operandArgs(sc scannedCommand) []string {
 }
 
 // copySourcesAndDest returns the source operands and the destination of a
-// cp/rsync command. The destination is cp's -t/--target-directory directory
-// when given, else the last positional operand (a lone operand is treated as
-// the destination).
+// cp/mv/ln/rsync command. The destination is the -t/--target-directory
+// directory (targetDirVerbs) when given, else the last positional operand (a lone operand is
+// treated as the destination).
 func copySourcesAndDest(sc scannedCommand) (sources []string, dest string) {
 	var positionals []string
 	targetDir := ""
@@ -606,7 +641,7 @@ func copySourcesAndDest(sc scannedCommand) (sources []string, dest string) {
 			positionals = append(positionals, a)
 		case a == "--":
 			endOfOpts = true
-		case sc.Name != "cp":
+		case !targetDirVerbs[sc.Name]:
 			// rsync has no target-directory option (its -t preserves times).
 		case a == "-t" || a == "--target-directory":
 			if i+1 < len(args) {

@@ -12,6 +12,7 @@ import (
 	"github.com/spf13/pflag"
 
 	"github.com/Quantum-Serendipity/qsdev/addons/devenv"
+	qsdevanswers "github.com/Quantum-Serendipity/qsdev/internal/answers"
 	"github.com/Quantum-Serendipity/qsdev/internal/catalog"
 	qsdevconfig "github.com/Quantum-Serendipity/qsdev/internal/config"
 	"github.com/Quantum-Serendipity/qsdev/internal/detect"
@@ -187,7 +188,7 @@ func buildJoinAnswers(cmd *cobra.Command, opts InitOptions, projectRoot string) 
 	// only the committed tools.disabled opts out of an always-on tool, not
 	// an --answers-file overlay.
 	toolreg.Reconcile(&answers, registry, &policy.Committed.Tools)
-	enforceAnswerInvariants(&answers)
+	qsdevanswers.EnforceInvariants(&answers)
 
 	return answers, nil
 }

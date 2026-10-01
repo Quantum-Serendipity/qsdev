@@ -16,6 +16,7 @@ import (
 
 	"github.com/Quantum-Serendipity/qsdev/addons/claudecode"
 	"github.com/Quantum-Serendipity/qsdev/addons/devenv"
+	qsdevanswers "github.com/Quantum-Serendipity/qsdev/internal/answers"
 	"github.com/Quantum-Serendipity/qsdev/internal/catalog"
 	"github.com/Quantum-Serendipity/qsdev/internal/cmdutil"
 	qsdevconfig "github.com/Quantum-Serendipity/qsdev/internal/config"
@@ -314,7 +315,7 @@ func buildAnswersFromInputs(cmd *cobra.Command, opts InitOptions, projectRoot st
 	}
 	reconcileTools(cmd.ErrOrStderr(), projectRoot, &answers, treg)
 
-	enforceAnswerInvariants(&answers)
+	qsdevanswers.EnforceInvariants(&answers)
 	return answers, nil
 }
 
@@ -329,12 +330,11 @@ func buildAnswersFromInputs(cmd *cobra.Command, opts InitOptions, projectRoot st
 // loaded.
 func reconcileTools(w io.Writer, projectRoot string, a *types.WizardAnswers, reg *toolreg.Registry) {
 	committed := qsdevconfig.CommittedTools(projectRoot)
+	kept := toolreg.Reconcile(a, reg, committed)
 	if committed == nil {
-		kept := toolreg.Reconcile(a, reg, &types.ToolsConfig{})
 		toolreg.WarnAlwaysOnRestored(w, kept)
 		return
 	}
-	kept := toolreg.Reconcile(a, reg, committed)
 	for _, tool := range reg.All() {
 		name := tool.Name
 		if tool.EnforcedFor(a) && a.EnabledTools[name] &&

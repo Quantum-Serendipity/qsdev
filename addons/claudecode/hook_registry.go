@@ -180,6 +180,13 @@ func (r *HookRegistry) Definitions() []HookDefinition {
 // same command sent through PowerShell or Monitor.
 var shellToolMatcher = strings.Join(cmdscan.ShellTools, "|")
 
+// packageGuardEnabled reports whether the package-guard hook is registered
+// and its script generated: always, unless the answers record a safety-block
+// opt-out (`disable attach-guard --force`, honoured only when committed).
+func packageGuardEnabled(a types.WizardAnswers) bool {
+	return !a.Hooks.SafetyBlockOptOut
+}
+
 // defaultHookRegistry returns a registry pre-populated with the built-in hooks
 // (package-guard and audit-log).
 func defaultHookRegistry() *HookRegistry {
@@ -187,6 +194,11 @@ func defaultHookRegistry() *HookRegistry {
 
 	selfprotectApp := branding.Get().AppName
 
+	// Self-protection guards the guardrails themselves, so it has no
+	// EnabledFunc: every generated settings.json carries it whatever the
+	// answers say. The answers file is agent-writable, and an opt-out read
+	// from it would let an agent edit the file and regenerate the hook away
+	// (U18-01). HookChoices.SelfProtection is ignored here.
 	r.Register(HookDefinition{
 		Owner:         "self-protection",
 		Event:         "PreToolUse",
@@ -194,10 +206,12 @@ func defaultHookRegistry() *HookRegistry {
 		Command:       selfprotectApp + " selfprotect",
 		Timeout:       10,
 		StatusMessage: "Checking self-protection rules...",
-		EnabledFunc:   func(a types.WizardAnswers) bool { return a.Hooks.SelfProtection },
 		FailClosed:    true,
 	})
 
+	// Package-guard derives from the one opt-out bit, not the
+	// Hooks.SafetyBlock mirror, so no hook-choice subset handed to the
+	// registry can drop it unless the opt-out is recorded.
 	guardCmd := `"${CLAUDE_PROJECT_DIR}"/.claude/hooks/package-guard.py`
 
 	r.Register(HookDefinition{
@@ -208,7 +222,7 @@ func defaultHookRegistry() *HookRegistry {
 		Timeout:         30,
 		StatusMessage:   "Checking package install safety...",
 		SandboxCategory: "linter",
-		EnabledFunc:     func(a types.WizardAnswers) bool { return a.Hooks.SafetyBlock },
+		EnabledFunc:     packageGuardEnabled,
 		FailClosed:      true,
 	})
 

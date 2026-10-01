@@ -12,6 +12,8 @@ import (
 	"strings"
 	"sync"
 	"syscall"
+
+	"github.com/Quantum-Serendipity/qsdev/pkg/branding"
 )
 
 var (
@@ -45,7 +47,7 @@ func ensureInit() error {
 		// Home- and system-anchored locations. A directory entry ends in a
 		// separator and protects everything below it; a file entry matches
 		// exactly. Locations protected wherever they live (home config or
-		// project checkout) are in protectedSegments instead.
+		// project checkout) are in the segment tables (pathTables) instead.
 		protectedPrefixes = installedBinaryEntries(runtime.GOOS, home, os.Getenv("LOCALAPPDATA"), runningExecutable())
 		protectedPrefixes = append(protectedPrefixes, []protectedEntry{
 			{filepath.Join(home, ".claude", "managed-settings.json"), "claude-settings"},
@@ -58,6 +60,7 @@ func ensureInit() error {
 			protectedPrefixes = append(protectedPrefixes, protectedEntry{dir + string(filepath.Separator), "system-config"})
 		}
 		protectedPrefixes = append(protectedPrefixes, claudeConfigDirEntries(os.Getenv(ClaudeConfigDirEnv))...)
+		protectedPrefixes = append(protectedPrefixes, orgOverlayEntries(branding.Get(), home, os.Getenv)...)
 
 		protectedSuffixes = []protectedEntry{
 			{string(filepath.Separator) + ".mcp.json", "mcp-config"},
@@ -74,7 +77,7 @@ const ClaudeConfigDirEnv = "CLAUDE_CONFIG_DIR"
 
 // claudeConfigFiles are the entries of a Claude Code configuration directory
 // that register or steer enforcement, mirroring the .claude entries of
-// protectedSegments (a directory entry ends in "/"), plus .claude.json, which
+// staticSegments (a directory entry ends in "/"), plus .claude.json, which
 // Claude Code keeps inside a relocated configuration directory.
 var claudeConfigFiles = []string{
 	"settings.json", "settings.local.json", ".claude.json",
@@ -92,17 +95,9 @@ func claudeConfigDirEntries(dir string) []protectedEntry {
 	if dir == "" {
 		return nil
 	}
-	abs, err := filepath.Abs(expandTildeOrSelf(dir))
-	if err != nil {
-		return nil
-	}
-	roots := []string{abs}
-	if resolved, err := filepath.EvalSymlinks(abs); err == nil && resolved != abs {
-		roots = append(roots, resolved)
-	}
 	sep := string(filepath.Separator)
 	var entries []protectedEntry
-	for _, root := range roots {
+	for _, root := range spellings(dir) {
 		for _, f := range claudeConfigFiles {
 			p := filepath.Join(root, strings.TrimSuffix(f, "/"))
 			if strings.HasSuffix(f, "/") {
@@ -110,6 +105,65 @@ func claudeConfigDirEntries(dir string) []protectedEntry {
 			}
 			entries = append(entries, protectedEntry{p, "claude-settings"})
 		}
+	}
+	return entries
+}
+
+// spellings returns p (tilde-expanded) made absolute and, when it differs,
+// its canonical form with every existing symlink resolved, including a
+// dangling final one. Rules compare canonical paths, so a location configured
+// through a symlink must be protected under both. It returns nil when p is
+// empty or cannot be made absolute.
+func spellings(p string) []string {
+	if p == "" {
+		return nil
+	}
+	abs, err := filepath.Abs(expandTildeOrSelf(p))
+	if err != nil {
+		return nil
+	}
+	out := []string{abs}
+	if resolved, err := Canonicalize(abs); err == nil && resolved != abs {
+		out = append(out, resolved)
+	}
+	return out
+}
+
+// orgConfigEnv names the environment variable that points the org overlay at
+// a file other than ~/.config/<app>/defaults.yaml (catalog.OrgConfigPath).
+func orgConfigEnv(cfg branding.Config) string {
+	return cfg.EnvPrefix + "ORG_CONFIG"
+}
+
+// ShellPathVars returns the shell variables that name a home-anchored
+// protected location, with the values a command the agent runs sees: HOME
+// (the home directory) and <EnvPrefix>ORG_CONFIG when it is set. A command
+// scan renders them (cmdscan.ParseWithVars) so `$HOME/.config/<app>/x` and
+// `"$QSDEV_ORG_CONFIG"` are checked as the paths they expand to.
+func ShellPathVars() map[string]string {
+	vars := make(map[string]string, 2)
+	if home, err := userHomeDir(); err == nil {
+		vars["HOME"] = home
+	}
+	env := orgConfigEnv(branding.Get())
+	if v := os.Getenv(env); v != "" {
+		vars[env] = v
+	}
+	return vars
+}
+
+// orgOverlayEntries returns the protected entries for the user-level org
+// overlay the catalog merges into every generation: the ~/.config/<app>/
+// directory, and the file named by <EnvPrefix>ORG_CONFIG when getenv sets it.
+// Both are protected under their absolute and symlink-resolved spellings.
+func orgOverlayEntries(cfg branding.Config, home string, getenv func(string) string) []protectedEntry {
+	sep := string(filepath.Separator)
+	var entries []protectedEntry
+	for _, dir := range spellings(filepath.Join(home, ".config", cfg.AppName)) {
+		entries = append(entries, protectedEntry{dir + sep, "config"})
+	}
+	for _, file := range spellings(getenv(orgConfigEnv(cfg))) {
+		entries = append(entries, protectedEntry{file, "config"})
 	}
 	return entries
 }
@@ -455,10 +509,8 @@ func isProtected(canonicalPath string, opts matchOptions) (bool, string) {
 	// or .qsdev/ canonicalizes OUTSIDE $HOME, so an anchored prefix cannot catch
 	// it; the segment match does, so SP-001/SP-013 guard Write/Edit to them in
 	// both the home config and a project checkout.
-	for _, seg := range protectedSegments {
-		if hasPathSegment(key, seg.segment) {
-			return true, seg.category
-		}
+	if category := brandedTables().segmentCategory(key, opts.foldCase); category != "" {
+		return true, category
 	}
 
 	// Check suffix-based protected paths.
@@ -485,7 +537,7 @@ type segmentEntry struct {
 	category string
 }
 
-// protectedSegments are the qsdev and Claude Code control files protected in
+// staticSegments are the qsdev and Claude Code control files protected in
 // any location — home config or project checkout. More specific entries come
 // first so the first match yields the most precise category.
 //
@@ -497,10 +549,11 @@ type segmentEntry struct {
 // Other .claude content (e.g. Claude Code's own .claude/worktrees/ checkouts)
 // stays writable.
 //
-// Every segment starts with one of protectedSubstringPatterns, so the
+// Every segment starts with one of staticSubstringPatterns, so the
 // raw-command check (ContainsProtectedPath) covers every location this table
-// protects; TestProtectedSegmentsCoveredByCommandScan enforces that.
-var protectedSegments = []segmentEntry{
+// protects; TestProtectedSegmentsCoveredByCommandScan enforces that. The
+// branding-derived entries are added by newPathTables.
+var staticSegments = []segmentEntry{
 	{".qsdev/audit/", "audit"},
 	// Hook audit logs and the SOC 2 session trail (~/.claude/audit).
 	{".claude/logs/", "audit"},
@@ -576,12 +629,13 @@ func stripWindowsAliases(s string) string {
 	return strings.Join(parts, "/")
 }
 
-// protectedSubstringPatterns are path fragments used by ContainsProtectedPath
+// staticSubstringPatterns are path fragments used by ContainsProtectedPath
 // to detect protected path references in raw command strings. This is the
 // union of all patterns previously in evasion.containsProtectedPath and
 // rules.containsProtectedPathStr. Each carries a trailing separator, so a
 // protected path FOLLOWED by more path (`.claude/settings.json`) is matched.
-var protectedSubstringPatterns = []string{
+// The branding-derived patterns are added by newPathTables.
+var staticSubstringPatterns = []string{
 	".claude/",
 	".qsdev/",
 	".gdev/",
@@ -589,28 +643,196 @@ var protectedSubstringPatterns = []string{
 	"/etc/claude-code/",
 }
 
-// protectedDirTokens are the bare protected directory names (no trailing
-// separator), derived from protectedSubstringPatterns so the two lists cannot
-// drift apart. ContainsProtectedPath matches these when they appear as a
-// complete path segment, so a whole-directory operation like `rm -rf .claude`
-// or `find .claude -delete` is caught. The boundary check prevents
-// over-matching a longer name that merely embeds a token (`my.claude.bak`,
-// `foo.claudex`, `my.claude`).
-var protectedDirTokens = func() []string {
-	tokens := make([]string, len(protectedSubstringPatterns))
-	for i, p := range protectedSubstringPatterns {
-		tokens[i] = strings.TrimSuffix(p, "/")
-	}
-	return tokens
-}()
-
-// protectedFileTokens are protected file names that sit directly in a
+// staticFileTokens are protected file names that sit directly in a
 // directory other code may legitimately touch (the home directory), so no
 // directory fragment above covers them. ContainsProtectedPath matches them as
-// complete path segments, like protectedDirTokens, so `~/.claude.json.bak` and
-// `my.claude.json` do not match.
-var protectedFileTokens = []string{
+// complete path segments, so `~/.claude.json.bak` and `my.claude.json` do not
+// match.
+var staticFileTokens = []string{
 	".claude.json",
+}
+
+// staticProbeMembers are names of files qsdev and Claude Code keep inside the
+// protected directories. A check that cannot see the filesystem (a find
+// expression's name patterns) tries them as representative contents of every
+// protected directory; anything below such a directory is protected, so
+// pairing any member with any directory is sound. The branding-derived names
+// are added by newPathTables.
+var staticProbeMembers = []string{
+	"config.yaml", "defaults.yaml", "package-guard.py", "audit-log.sh",
+	"agent.md", "audit.jsonl", "events.log",
+}
+
+// pathTables are the location-independent protection tables: the static
+// entries above plus those derived from the branding.
+type pathTables struct {
+	// segments are matched as whole path components by IsProtected.
+	segments []segmentEntry
+	// substrings are matched anywhere in a raw command.
+	substrings []string
+	// tokens are the bare protected directory names (substrings without the
+	// trailing separator) and the protected file names, matched in a raw
+	// command only as complete path segments, so a whole-directory operation
+	// like `rm -rf .claude` is caught while `my.claude.bak` is not.
+	tokens []string
+	// envVars are the variables that name a protected location, matched in a
+	// raw command as complete words like tokens (`"$QSDEV_ORG_CONFIG"`), but
+	// never file names (ProtectedNames).
+	envVars []string
+	// probeMembers are representative contents of a protected directory
+	// (see staticProbeMembers), relative to it.
+	probeMembers []string
+}
+
+// brandedTables returns the tables for the active branding. They are built on
+// first use rather than at package initialization, because a white-label
+// build sets its branding in main, after every package has initialized.
+var brandedTables = sync.OnceValue(func() *pathTables {
+	return newPathTables(branding.Get(), os.Getenv)
+})
+
+// newPathTables builds the tables for cfg. The branding-derived entries are
+// the inputs the Claude settings generator trusts:
+//   - the state directory (StateDir), which holds the answers and the state
+//     manifest that teardown and drift detection rely on;
+//   - the devenv addon's mirror of the answers, .devenv/.<app>-answers.yaml,
+//     protected as a file because the rest of .devenv/ is devenv's runtime
+//     directory;
+//   - .envrc, which direnv runs on every shell entry.
+//
+// Each segment is covered by a substring or a token, so the raw-command scan
+// sees every location IsProtected guards. The org overlay is home-anchored
+// (orgOverlayEntries), so it has no segment; its raw-command fragments are
+// added here so a spelling the scan cannot resolve statically (`U=~; echo x >
+// $U/.config/<app>/f`, `sh -c "..."`) still counts as a mention: the
+// home-relative directory .config/<app>/, the <EnvPrefix>ORG_CONFIG variable
+// name, and the file getenv says that variable names.
+func newPathTables(cfg branding.Config, getenv func(string) string) *pathTables {
+	stateDir := strings.Trim(filepath.ToSlash(cfg.StateDir), "/")
+	devenvCopy := "." + cfg.AppName + "-answers.yaml"
+	t := &pathTables{
+		segments: append(slices.Clone(staticSegments),
+			segmentEntry{stateDir + "/", "answers"},
+			segmentEntry{".devenv/" + devenvCopy, "answers"},
+			segmentEntry{".envrc", "config"},
+		),
+		substrings: append(slices.Clone(staticSubstringPatterns), stateDir+"/", ".config/"+cfg.AppName+"/"),
+	}
+	for _, p := range t.substrings {
+		t.tokens = append(t.tokens, strings.TrimSuffix(p, "/"))
+	}
+	t.tokens = append(t.tokens, staticFileTokens...)
+	t.tokens = append(t.tokens, devenvCopy, ".envrc")
+	t.envVars = []string{orgConfigEnv(cfg)}
+	t.substrings = append(t.substrings, commandSpellings(getenv(orgConfigEnv(cfg)))...)
+	t.probeMembers = append(slices.Clone(staticProbeMembers),
+		"."+cfg.AppName+"-init-answers.yaml", path.Join("bin", cfg.AppName))
+	return t
+}
+
+// commandSpellings returns the slash-separated forms a command may use to name
+// the file p: its absolute and symlink-resolved spellings (see spellings) and,
+// when rooted or home-relative, p as written (a Windows `\srv\x` has no drive
+// in its written form). A relative p is not included as written, since a bare
+// name would match unrelated text.
+func commandSpellings(p string) []string {
+	var out []string
+	for _, s := range spellings(p) {
+		out = append(out, filepath.ToSlash(s))
+	}
+	if isRooted(p) || strings.HasPrefix(p, "~") {
+		if raw := filepath.ToSlash(p); !slices.Contains(out, raw) {
+			out = append(out, raw)
+		}
+	}
+	return out
+}
+
+// ProtectedEnvVars returns the environment variables that relocate a
+// protected generator input (<EnvPrefix>ORG_CONFIG). Protection covers the
+// location the hook process sees, so a command that sets one can point a
+// regeneration at an unprotected file; the Bash rules deny setting them.
+func ProtectedEnvVars() []string {
+	return slices.Clone(brandedTables().envVars)
+}
+
+// ProtectedNames returns the single-component names protected wherever they
+// appear (.claude, the state directory, .envrc, ...), for a check that must
+// decide whether a glob segment can expand to one of them.
+func ProtectedNames() []string {
+	var names []string
+	for _, tok := range brandedTables().tokens {
+		if !strings.Contains(tok, "/") {
+			names = append(names, tok)
+		}
+	}
+	return names
+}
+
+// ProtectedLocations returns the home- and system-anchored protected
+// locations IsProtected checks, a directory ending in a separator, for a check
+// that must decide whether an absolute glob can expand to one of them. It
+// returns nil when the table cannot be built; IsProtected then fails closed.
+func ProtectedLocations() []string {
+	if ensureInit() != nil {
+		return nil
+	}
+	locs := make([]string, len(protectedPrefixes))
+	for i, e := range protectedPrefixes {
+		locs[i] = e.path
+	}
+	return locs
+}
+
+// FindProbes returns representative protected paths, slash-separated, for a
+// check that must decide whether a name or path pattern can select a
+// protected file without looking at the filesystem (a find expression).
+// relative holds the locations protected wherever they live, relative to the
+// directory holding them: every segment with its ancestors (a find can
+// select .claude itself), and below each directory segment every probe
+// member. absolute holds the home- and system-anchored locations
+// (ProtectedLocations) with their ancestors and, below each directory, every
+// probe member. absolute is nil when that table cannot be built; IsProtected
+// then fails closed.
+func FindProbes() (relative, absolute []string) {
+	t := brandedTables()
+	for _, seg := range t.segments {
+		relative = appendProbes(relative, seg.segment, t.probeMembers)
+	}
+	for _, loc := range ProtectedLocations() {
+		absolute = appendProbes(absolute, filepath.ToSlash(loc), t.probeMembers)
+	}
+	slices.Sort(relative)
+	slices.Sort(absolute)
+	return slices.Compact(relative), slices.Compact(absolute)
+}
+
+// appendProbes appends entry (slash-separated; a directory ends in "/") and
+// each of its ancestors to probes, and below a directory each member.
+func appendProbes(probes []string, entry string, members []string) []string {
+	dir := strings.HasSuffix(entry, "/")
+	p := strings.TrimSuffix(entry, "/")
+	if dir {
+		for _, m := range members {
+			probes = append(probes, p+"/"+m)
+		}
+	}
+	for ; p != "" && p != "." && p != "/"; p = path.Dir(p) {
+		probes = append(probes, p)
+	}
+	return probes
+}
+
+// segmentCategory returns the category of the first segment the
+// slash-separated path key (already case-folded when foldCase is set)
+// contains, or "" when none does.
+func (t *pathTables) segmentCategory(key string, foldCase bool) string {
+	for _, seg := range t.segments {
+		if hasPathSegment(key, foldIf(seg.segment, foldCase)) {
+			return seg.category
+		}
+	}
+	return ""
 }
 
 // ContainsProtectedPath reports whether s contains any protected path
@@ -625,21 +847,34 @@ func ContainsProtectedPath(s string) bool {
 }
 
 func containsProtectedPath(s string, foldCase bool) bool {
+	return brandedTables().containsProtectedPath(s, foldCase)
+}
+
+func (t *pathTables) containsProtectedPath(s string, foldCase bool) bool {
 	normalized := filepath.ToSlash(s)
 	if foldCase {
 		normalized = strings.ToLower(normalized)
 	}
-	for _, p := range protectedSubstringPatterns {
-		if strings.Contains(normalized, p) {
+	for _, p := range t.substrings {
+		if strings.Contains(normalized, foldIf(p, foldCase)) {
 			return true
 		}
 	}
-	for _, tok := range slices.Concat(protectedDirTokens, protectedFileTokens) {
-		if containsSegment(normalized, tok) {
+	for _, tok := range slices.Concat(t.tokens, t.envVars) {
+		if containsSegment(normalized, foldIf(tok, foldCase)) {
 			return true
 		}
 	}
 	return false
+}
+
+// foldIf lower-cases s when foldCase is set, so a branding-derived entry with
+// capitals still matches a folded command.
+func foldIf(s string, foldCase bool) string {
+	if foldCase {
+		return strings.ToLower(s)
+	}
+	return s
 }
 
 // containsSegment reports whether tok appears in s as a complete path segment:

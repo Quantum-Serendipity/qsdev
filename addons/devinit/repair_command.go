@@ -11,7 +11,6 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/Quantum-Serendipity/qsdev/internal/cmdutil"
-	"github.com/Quantum-Serendipity/qsdev/internal/detect"
 	"github.com/Quantum-Serendipity/qsdev/internal/posture/drift"
 	"github.com/Quantum-Serendipity/qsdev/internal/repair"
 	"github.com/Quantum-Serendipity/qsdev/internal/state"
@@ -54,13 +53,13 @@ func runRepairCommand(cmd *cobra.Command, opts repair.RepairOptions) error {
 		return err
 	}
 
-	// Load answers.
-	answers, err := loadAnswersOrEmpty(projectRoot)
+	// Load answers reconciled against the committed .qsdev.yaml, as update
+	// and enable/disable do, so an opt-out recorded only in the answers file
+	// (not by `disable --force`) cannot drop a guardrail from the repair.
+	answers, err := loadLifecycleAnswers(cmd.Context(), projectRoot)
 	if err != nil {
 		return err
 	}
-	answers.Detected = detect.Detect(cmd.Context(), projectRoot)
-	answers.ProjectRoot = projectRoot
 
 	// Load state.
 	stateFile := filepath.Join(projectRoot, stateFilePath())

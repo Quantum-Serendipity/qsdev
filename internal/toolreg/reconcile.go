@@ -19,17 +19,18 @@ import (
 // enable is disabled (its DisableFunc switches off what it backs and records
 // any opt-out, such as Hooks.SafetyBlockOptOut, that answers saved before
 // that record existed lack). A nil
-// committed means the project has no committed config, so the answers are
-// the only record and their explicit offs stand.
+// committed means the project has no committed config (or none that loads),
+// so no opt-out is recorded: like an empty tools block, every explicit off
+// for an always-on tool is dropped. The answers file alone never opts out.
 //
 // It returns, sorted, the always-on tools kept enabled against an answer
 // source, for callers to warn about.
 func Reconcile(answers *types.WizardAnswers, reg *Registry, committed *types.ToolsConfig) []string {
-	var kept []string
-	if committed != nil {
-		kept = dropUncommittedOptOuts(answers, reg, committed.Disabled)
-		adoptOptOuts(answers, reg, committed.Disabled)
+	if committed == nil {
+		committed = &types.ToolsConfig{}
 	}
+	kept := dropUncommittedOptOuts(answers, reg, committed.Disabled)
+	adoptOptOuts(answers, reg, committed.Disabled)
 	kept = append(kept, MergeInferredTools(answers, reg)...)
 	slices.Sort(kept)
 	return slices.Compact(kept)

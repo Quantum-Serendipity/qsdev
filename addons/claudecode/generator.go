@@ -5,6 +5,7 @@ import (
 	"slices"
 	"strings"
 
+	qsdevanswers "github.com/Quantum-Serendipity/qsdev/internal/answers"
 	"github.com/Quantum-Serendipity/qsdev/internal/catalog"
 	"github.com/Quantum-Serendipity/qsdev/internal/tier"
 	"github.com/Quantum-Serendipity/qsdev/internal/toolreg"
@@ -52,6 +53,12 @@ func resolveTier(answers types.WizardAnswers) tier.Tier {
 // toolreg.Tool.IsAgentTool) are produced by the devinit addon's tool-files
 // producer, so they do not depend on Claude Code being configured.
 func (g *ClaudeCodeGenerator) Generate(answers types.WizardAnswers) ([]types.GeneratedFile, error) {
+	// Apply the answers invariants here too, so every entry point (claude
+	// subcommands, init --update, repair, the MCP adapter) generates from
+	// answers that satisfy them. answers is a value copy; slices it shares
+	// with the caller are not touched.
+	qsdevanswers.EnforceInvariants(&answers)
+
 	var files []types.GeneratedFile
 	t := resolveTier(answers)
 

@@ -175,21 +175,23 @@ func TestDefaultHookRegistry_PackageGuardRegistered(t *testing.T) {
 	t.Parallel()
 	r := claudecode.ExportDefaultHookRegistry()
 	// Disable LSP enforcement so this test isolates the package-guard matcher;
-	// otherwise the always-on lsp-guard adds a second PreToolUse matcher.
+	// otherwise the always-on lsp-guard adds another PreToolUse matcher. The
+	// forced self-protection hook always comes first.
 	answers := types.WizardAnswers{
 		Hooks: types.HookChoices{SafetyBlock: true},
 		LSP:   types.LSPSettings{Enforcement: "off"},
 	}
 
 	matchers := r.HooksForEvent("PreToolUse", answers)
-	if len(matchers) != 1 {
-		t.Fatalf("expected 1 PreToolUse matcher, got %d", len(matchers))
+	if len(matchers) != 2 {
+		t.Fatalf("expected 2 PreToolUse matchers (self-protection, package-guard), got %d", len(matchers))
 	}
-	if matchers[0].Matcher != "Bash|PowerShell|Monitor" {
-		t.Errorf("matcher = %q, want Bash|PowerShell|Monitor", matchers[0].Matcher)
+	guard := matchers[1]
+	if guard.Matcher != "Bash|PowerShell|Monitor" {
+		t.Errorf("matcher = %q, want Bash|PowerShell|Monitor", guard.Matcher)
 	}
-	if matchers[0].Hooks[0].Timeout != 30 {
-		t.Errorf("timeout = %d, want 30", matchers[0].Hooks[0].Timeout)
+	if guard.Hooks[0].Timeout != 30 {
+		t.Errorf("timeout = %d, want 30", guard.Hooks[0].Timeout)
 	}
 }
 
@@ -226,19 +228,26 @@ func TestDefaultHookRegistry_BothEnabled(t *testing.T) {
 	}
 }
 
+// TestDefaultHookRegistry_BothDisabled verifies that with every optional hook
+// off and the safety block opted out only the forced self-protection hook
+// remains.
 func TestDefaultHookRegistry_BothDisabled(t *testing.T) {
 	t.Parallel()
 	r := claudecode.ExportDefaultHookRegistry()
 	// Also disable LSP enforcement: the always-on lsp-guard would otherwise
 	// register a PreToolUse matcher even with package-guard and audit-log off.
 	answers := types.WizardAnswers{
-		Hooks: types.HookChoices{SafetyBlock: false, AuditLog: false},
+		Hooks: types.HookChoices{SafetyBlock: false, SafetyBlockOptOut: true, AuditLog: false},
 		LSP:   types.LSPSettings{Enforcement: "off"},
 	}
 
 	m := r.BuildHooksMap(answers)
-	if m != nil {
-		t.Errorf("expected nil when both disabled, got %v", m)
+	if len(m) != 1 || len(m["PreToolUse"]) != 1 {
+		t.Fatalf("expected only the self-protection PreToolUse hook, got %v", m)
+	}
+	want := claudecode.ExportFailClosedCommand("self-protection", selfprotectCommand())
+	if got := m["PreToolUse"][0].Hooks[0].Command; got != want {
+		t.Errorf("remaining hook = %q, want %q", got, want)
 	}
 }
 
@@ -254,8 +263,10 @@ func TestBuildHookStatuses(t *testing.T) {
 		t.Fatalf("expected 17 statuses, got %d", len(statuses))
 	}
 
-	if statuses[0].Name != "self-protection" || statuses[0].Configured {
-		t.Errorf("statuses[0]: want self-protection/disabled (no ClaudeCode), got %s/%v", statuses[0].Name, statuses[0].Configured)
+	// self-protection is forced on by the generator whatever the answers say,
+	// so it is configured even without ClaudeCode or HookChoices.SelfProtection.
+	if statuses[0].Name != "self-protection" || !statuses[0].Configured {
+		t.Errorf("statuses[0]: want self-protection/enabled (forced), got %s/%v", statuses[0].Name, statuses[0].Configured)
 	}
 	if statuses[1].Name != "package-guard" || !statuses[1].Configured {
 		t.Errorf("statuses[1]: want package-guard/enabled, got %s/%v", statuses[1].Name, statuses[1].Configured)

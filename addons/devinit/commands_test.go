@@ -585,6 +585,30 @@ func TestReinit_RespectsExplicitAlwaysOnDisable(t *testing.T) {
 	}
 }
 
+// TestDisableAlwaysOn_RefusedWithoutCommittedConfig verifies `disable
+// --force` refuses an always-on opt-out in a project without a committed
+// .qsdev.yaml, since reconciliation would undo it on the next regeneration,
+// and changes nothing.
+func TestDisableAlwaysOn_RefusedWithoutCommittedConfig(t *testing.T) {
+	dir, _ := initGoProject(t)
+	if err := os.Remove(filepath.Join(dir, ".qsdev.yaml")); err != nil {
+		t.Fatal(err)
+	}
+
+	out, err := disableTool(t, dir, toolreg.ToolAttachGuard, "--force")
+	if !errors.Is(err, errOptOutNeedsCommittedConfig) {
+		t.Fatalf("disable --force without .qsdev.yaml: err = %v, want errOptOutNeedsCommittedConfig\n%s", err, out)
+	}
+	if _, statErr := os.Stat(filepath.Join(dir, ".qsdev.yaml")); !os.IsNotExist(statErr) {
+		t.Errorf(".qsdev.yaml written by a refused disable: %v", statErr)
+	}
+	a := loadProjectAnswers(t, dir)
+	if !a.EnabledTools[toolreg.ToolAttachGuard] || a.Hooks.SafetyBlockOptOut {
+		t.Errorf("answers enabled_tools[%s] = %v, safety_block_opt_out = %v; want the guard kept on",
+			toolreg.ToolAttachGuard, a.EnabledTools[toolreg.ToolAttachGuard], a.Hooks.SafetyBlockOptOut)
+	}
+}
+
 // TestUpdate_WarnsWhenAlwaysOnRestored verifies update restores an always-on
 // tool lost from a project and says so, whether the saved answers dropped it
 // (a U28-01 victim) or it was deleted from .qsdev.yaml tools.enabled by hand.

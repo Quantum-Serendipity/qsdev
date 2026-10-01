@@ -20,11 +20,11 @@ var ErrUnselectableHookPreset = errors.New("unknown or unimplemented hook preset
 // generator implements (e.g. one managed by devenv git hooks) is excluded.
 func SelectableHookPresets() []string {
 	defs := defaultHookRegistry().Definitions()
-	base := types.WizardAnswers{ClaudeCode: true}
+	base, _ := presetProbe() // no names, so no error
 	var out []string
 	for _, name := range validation.HookPresets() {
-		withPreset := base
-		if err := withPreset.Hooks.EnableHook(name); err != nil {
+		withPreset, err := presetProbe(name)
+		if err != nil {
 			continue
 		}
 		if enablesNewHook(defs, base, withPreset) {
@@ -32,6 +32,21 @@ func SelectableHookPresets() []string {
 		}
 	}
 	return out
+}
+
+// presetProbe returns Claude Code answers that select exactly the named hook
+// presets. The safety block's off state is its opt-out, which package-guard
+// follows (see packageGuardEnabled), so the probe records the opt-out unless
+// the safety-block preset is selected.
+func presetProbe(names ...string) (types.WizardAnswers, error) {
+	a := types.WizardAnswers{ClaudeCode: true}
+	for _, name := range names {
+		if err := a.Hooks.EnableHook(name); err != nil {
+			return a, fmt.Errorf("probing hook preset: %w", err)
+		}
+	}
+	a.Hooks.SetSafetyBlock(a.Hooks.SafetyBlock)
+	return a, nil
 }
 
 // enablesNewHook reports whether any definition is enabled for after but not

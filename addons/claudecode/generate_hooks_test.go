@@ -46,7 +46,8 @@ func TestGenerateHookFiles_AllEnabled(t *testing.T) {
 		t.Parallel()
 		answers := types.WizardAnswers{
 			Hooks: types.HookChoices{
-				AuditLog: true,
+				AuditLog:          true,
+				SafetyBlockOptOut: true,
 			},
 			LSP: types.LSPSettings{Enforcement: "off"},
 		}
@@ -83,10 +84,12 @@ func TestGenerateHookFiles_AllEnabled(t *testing.T) {
 
 	t.Run("none enabled", func(t *testing.T) {
 		t.Parallel()
-		// Disable LSP too so no hooks at all are generated; the lsp-guard is
-		// otherwise on by default (enforcement defaults to "block").
+		// Opt out of the safety block and disable LSP too so no hooks at all
+		// are generated; package-guard and the lsp-guard are otherwise on by
+		// default (enforcement defaults to "block").
 		answers := types.WizardAnswers{
-			LSP: types.LSPSettings{Enforcement: "off"},
+			Hooks: types.HookChoices{SafetyBlockOptOut: true},
+			LSP:   types.LSPSettings{Enforcement: "off"},
 		}
 		files, err := claudecode.GenerateHookFiles(answers)
 		if err != nil {

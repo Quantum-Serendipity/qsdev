@@ -193,6 +193,23 @@ func reconcileTools(w io.Writer, projectRoot string, answers *types.WizardAnswer
 	toolreg.WarnSafetyBlockOptOut(w, answers)
 }
 
+// loadReconciledAnswers loads the saved answers and reconciles their tools
+// (see reconcileTools), writing its warnings to w, so a command that
+// regenerates from them honours only the opt-outs the committed .qsdev.yaml
+// records, exactly as init and update do.
+func loadReconciledAnswers(w io.Writer, projectRoot string) (types.WizardAnswers, error) {
+	answers, err := loadAnswers(projectRoot)
+	if err != nil {
+		return types.WizardAnswers{}, err
+	}
+	treg, err := toolreg.Default()
+	if err != nil {
+		return types.WizardAnswers{}, fmt.Errorf("loading tool registry: %w", err)
+	}
+	reconcileTools(w, projectRoot, &answers, treg)
+	return answers, nil
+}
+
 func updateCmd() *cobra.Command {
 	var (
 		force  bool
@@ -326,7 +343,7 @@ func makeAddItemCmd(spec addItemSpec) *cobra.Command {
 				return err
 			}
 
-			answers, err := loadAnswers(projectRoot)
+			answers, err := loadReconciledAnswers(cmd.ErrOrStderr(), projectRoot)
 			if err != nil {
 				return err
 			}

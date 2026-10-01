@@ -216,6 +216,14 @@ func isWriteOp(op syntax.RedirOperator) bool {
 // it returns (nil, err); callers should treat that as "unparseable" and fall
 // back to conservative substring checks (fail closed), never fail open.
 func Parse(command string) ([]Command, error) {
+	return ParseWithVars(command, nil)
+}
+
+// ParseWithVars is Parse with the values of known variables: a plain `$NAME`
+// or `${NAME}` whose name is in vars renders as its value, so `$HOME/.x`
+// yields the path it names. The word still counts as an expansion
+// (Command.HasExpansion), since the line may reassign the variable.
+func ParseWithVars(command string, vars map[string]string) ([]Command, error) {
 	file, err := syntax.NewParser().Parse(strings.NewReader(command), "")
 	if err != nil {
 		return nil, err
@@ -240,17 +248,17 @@ func Parse(command string) ([]Command, error) {
 		switch cmd := stmt.Cmd.(type) {
 		case *syntax.CallExpr:
 			for _, a := range cmd.Assigns {
-				name, _, exp := assignText(a)
+				name, _, exp := assignText(a, vars)
 				c.Assigns = append(c.Assigns, name)
 				c.HasExpansion = c.HasExpansion || exp
 			}
 			if len(cmd.Args) > 0 {
 				hasWord = true
-				name, exp := wordText(cmd.Args[0])
+				name, exp := wordText(cmd.Args[0], vars)
 				c.Name = name
 				c.HasExpansion = c.HasExpansion || exp
 				for _, w := range cmd.Args[1:] {
-					t, e := wordText(w)
+					t, e := wordText(w, vars)
 					c.Args = append(c.Args, t)
 					c.HasExpansion = c.HasExpansion || e
 				}
@@ -261,7 +269,7 @@ func Parse(command string) ([]Command, error) {
 			hasWord = true
 			c.Name = cmd.Variant.Value
 			for _, a := range cmd.Args {
-				_, text, exp := assignText(a)
+				_, text, exp := assignText(a, vars)
 				c.Args = append(c.Args, text)
 				c.HasExpansion = c.HasExpansion || exp
 			}
@@ -271,7 +279,7 @@ func Parse(command string) ([]Command, error) {
 			if r.Word == nil {
 				continue
 			}
-			t, e := wordText(r.Word)
+			t, e := wordText(r.Word, vars)
 			c.HasExpansion = c.HasExpansion || e
 			if isWriteOp(r.Op) {
 				c.WriteRedirects = append(c.WriteRedirects, t)
@@ -279,7 +287,7 @@ func Parse(command string) ([]Command, error) {
 				c.ReadRedirects = append(c.ReadRedirects, t)
 			}
 			if r.Hdoc != nil {
-				body, _ := wordText(r.Hdoc)
+				body, _ := wordText(r.Hdoc, vars)
 				c.Heredocs = append(c.Heredocs, body)
 			}
 		}
@@ -349,11 +357,11 @@ func appendPipeStmt(s *syntax.Stmt, out *[]*syntax.Stmt) {
 // option word such as the -x in `declare -x`), its text as written
 // (`NAME=value`, or just the word), and whether any part used an expansion.
 // Array values count as an expansion: their elements are not rendered.
-func assignText(a *syntax.Assign) (name, text string, hasExpansion bool) {
+func assignText(a *syntax.Assign, vars map[string]string) (name, text string, hasExpansion bool) {
 	if a.Name != nil {
 		name = a.Name.Value
 	}
-	value, exp := wordText(a.Value)
+	value, exp := wordText(a.Value, vars)
 	switch {
 	case a.Index != nil || a.Array != nil:
 		exp = true
@@ -373,8 +381,9 @@ func assignText(a *syntax.Assign) (name, text string, hasExpansion bool) {
 // way the shell removes them (`.cl\aude` is `.claude`) and ANSI-C `$'..'`
 // strings are decoded (`$'\x2e'claude` is `.claude`), so a protected path cannot
 // hide behind an escape spelling. Glob and brace characters are left in the
-// text for callers to interpret.
-func wordText(w *syntax.Word) (string, bool) {
+// text for callers to interpret. A plain parameter named in vars renders as
+// its value (see ParseWithVars).
+func wordText(w *syntax.Word, vars map[string]string) (string, bool) {
 	if w == nil {
 		return "", false
 	}
@@ -394,19 +403,37 @@ func wordText(w *syntax.Word) (string, bool) {
 			}
 		case *syntax.DblQuoted:
 			for _, dp := range p.Parts {
-				if lit, ok := dp.(*syntax.Lit); ok {
-					b.WriteString(unescapeDoubleQuoted(lit.Value))
-				} else {
+				switch dp := dp.(type) {
+				case *syntax.Lit:
+					b.WriteString(unescapeDoubleQuoted(dp.Value))
+				case *syntax.ParamExp:
+					b.WriteString(knownParam(dp, vars))
+					hasExpansion = true
+				default:
 					hasExpansion = true
 				}
 			}
-		case *syntax.ParamExp, *syntax.CmdSubst, *syntax.ArithmExp:
+		case *syntax.ParamExp:
+			b.WriteString(knownParam(p, vars))
+			hasExpansion = true
+		case *syntax.CmdSubst, *syntax.ArithmExp:
 			hasExpansion = true
 		default:
 			hasExpansion = true
 		}
 	}
 	return b.String(), hasExpansion
+}
+
+// knownParam returns the value vars gives a plain parameter expansion ($NAME or
+// ${NAME}), and "" for any other expansion or an unknown name.
+func knownParam(p *syntax.ParamExp, vars map[string]string) string {
+	if p.Param == nil || p.Excl || p.Length || p.Width || p.IsSet || p.Flags != nil ||
+		p.NestedParam != nil || p.Index != nil || len(p.Modifiers) > 0 ||
+		p.Slice != nil || p.Repl != nil || p.Names != 0 || p.Exp != nil {
+		return ""
+	}
+	return vars[p.Param.Value]
 }
 
 // unescapeUnquoted performs the shell's quote removal on an unquoted literal: a

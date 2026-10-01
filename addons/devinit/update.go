@@ -14,12 +14,12 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/Quantum-Serendipity/qsdev/addons/claudecode"
+	qsdevanswers "github.com/Quantum-Serendipity/qsdev/internal/answers"
 	"github.com/Quantum-Serendipity/qsdev/internal/cmdutil"
 	qsdevconfig "github.com/Quantum-Serendipity/qsdev/internal/config"
 	"github.com/Quantum-Serendipity/qsdev/internal/detect"
 	"github.com/Quantum-Serendipity/qsdev/internal/merge"
 	"github.com/Quantum-Serendipity/qsdev/internal/state"
-	"github.com/Quantum-Serendipity/qsdev/internal/tier"
 	"github.com/Quantum-Serendipity/qsdev/internal/toolreg"
 	"github.com/Quantum-Serendipity/qsdev/internal/update"
 	"github.com/Quantum-Serendipity/qsdev/internal/version"
@@ -280,29 +280,10 @@ func loadAndRefreshForUpdate(ctx context.Context, w io.Writer, projectRoot strin
 
 	// Augment EnabledTools with inferred tools and keep always-on tools.
 	reconcileTools(w, projectRoot, &answers, toolreg.DefaultRegistry())
-	adoptCommittedTier(projectRoot, &answers)
-	enforceAnswerInvariants(&answers)
+	qsdevconfig.AdoptCommittedTier(projectRoot, &answers)
+	qsdevanswers.EnforceInvariants(&answers)
 
 	return answers, nil
-}
-
-// adoptCommittedTier gives answers saved before the tier was always recorded
-// the tier committed in .qsdev.yaml, so update never replaces the team's
-// recorded tier with an inferred one. Only when neither file records a valid
-// tier does enforceAnswerInvariants infer it. An unreadable config is left to
-// SyncProjectConfig, which reports it.
-func adoptCommittedTier(projectRoot string, a *types.WizardAnswers) {
-	if a.Tier != "" {
-		return
-	}
-	cfg, err := qsdevconfig.ParseQsdevConfig(filepath.Join(projectRoot, branding.Get().ConfigFile))
-	if err != nil || cfg.Tier == "" {
-		return
-	}
-	if _, err := tier.ParseTier(cfg.Tier); err != nil {
-		return
-	}
-	a.Tier = cfg.Tier
 }
 
 // saveUpdateResults persists the new state (merging written and skipped files)

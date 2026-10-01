@@ -20,6 +20,11 @@ import (
 // does. The startup helper process must observe package initialization alone,
 // so it skips this.
 func TestMain(m *testing.M) {
+	// The guardrail invariant tests run the test binary as qsdev itself.
+	if os.Getenv(cliHelperEnv) == "1" {
+		main()
+		return
+	}
 	if os.Getenv(startupHelperEnv) == "1" {
 		os.Exit(m.Run()) //nolint:forbidigo // test entrypoint
 	}

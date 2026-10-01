@@ -2,6 +2,7 @@ package claudecode_test
 
 import (
 	"bytes"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -867,16 +868,27 @@ func TestClaudeInit_NoSafetyBlockRejected(t *testing.T) {
 
 // TestClaudeInit_EnforcesAlwaysOnTools verifies `claude init` reconciles the
 // saved tools: an always-on tool lost from the answers is restored with a
-// warning, while an explicit `disable --force` opt-out is kept.
+// warning, an explicit `disable --force` opt-out is kept when the committed
+// .qsdev.yaml records it, and the same opt-out recorded only in the answers
+// (a claude-only project has no committed config) is undone with a warning.
 func TestClaudeInit_EnforcesAlwaysOnTools(t *testing.T) {
 	tests := []struct {
 		name        string
 		saved       map[string]bool
+		optOut      bool
+		committed   string // .qsdev.yaml content; "" writes none
 		wantEnabled bool
-		wantWarning bool
+		warnTool    string // always-on tool expected in the restore warning
 	}{
-		{name: "dropped tool restored", saved: map[string]bool{}, wantEnabled: true, wantWarning: true},
-		{name: "explicit opt-out kept", saved: map[string]bool{toolreg.ToolAttachGuard: false}},
+		{name: "dropped tool restored", saved: map[string]bool{}, wantEnabled: true, warnTool: toolreg.ToolAgentPostmortem},
+		{
+			name: "committed opt-out kept", saved: map[string]bool{toolreg.ToolAttachGuard: false}, optOut: true,
+			committed: "version: 2\ntools:\n  disabled: [attach-guard]\n",
+		},
+		{
+			name: "uncommitted opt-out restored", saved: map[string]bool{toolreg.ToolAttachGuard: false}, optOut: true,
+			wantEnabled: true, warnTool: toolreg.ToolAttachGuard,
+		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -889,8 +901,17 @@ func TestClaudeInit_EnforcesAlwaysOnTools(t *testing.T) {
 				Confirmed:    true,
 				EnabledTools: tt.saved,
 			}
+			if tt.optOut {
+				// What `disable attach-guard --force` records.
+				saved.Hooks.SetSafetyBlock(false)
+			}
 			if err := claudecode.ExportSaveAnswers(tmpDir, saved); err != nil {
 				t.Fatal(err)
+			}
+			if tt.committed != "" {
+				if err := os.WriteFile(filepath.Join(tmpDir, ".qsdev.yaml"), []byte(tt.committed), 0o644); err != nil {
+					t.Fatal(err)
+				}
 			}
 
 			cmd := claudecode.ExportClaudeCmd()
@@ -911,9 +932,13 @@ func TestClaudeInit_EnforcesAlwaysOnTools(t *testing.T) {
 				t.Errorf("enabled_tools[attach-guard] = %v (set %v), hooks.safety_block = %v; want %v",
 					enabled, set, answers.Hooks.SafetyBlock, tt.wantEnabled)
 			}
-			const warning = `always-on tool "attach-guard" kept enabled`
-			if got := strings.Contains(stderr.String(), warning); got != tt.wantWarning {
-				t.Errorf("stderr contains %q = %v, want %v:\n%s", warning, got, tt.wantWarning, stderr.String())
+			if tt.warnTool != "" {
+				if warning := fmt.Sprintf("always-on tool %q kept enabled", tt.warnTool); !strings.Contains(stderr.String(), warning) {
+					t.Errorf("stderr lacks %q:\n%s", warning, stderr.String())
+				}
+			}
+			if warning := fmt.Sprintf("always-on tool %q kept enabled", toolreg.ToolAttachGuard); tt.warnTool != toolreg.ToolAttachGuard && strings.Contains(stderr.String(), warning) {
+				t.Errorf("stderr contains %q:\n%s", warning, stderr.String())
 			}
 		})
 	}

@@ -3,6 +3,7 @@ package rules
 import (
 	"encoding/json"
 
+	"github.com/Quantum-Serendipity/qsdev/internal/selfprotect/canon"
 	"github.com/Quantum-Serendipity/qsdev/internal/selfprotect/cmdscan"
 )
 
@@ -77,7 +78,7 @@ type EvalContext struct {
 func (ctx *EvalContext) ParsedCommands() ([]cmdscan.Command, error) {
 	if !ctx.commandsParsed {
 		if ctx.Command != "" {
-			ctx.commands, ctx.parseErr = cmdscan.Parse(ctx.Command)
+			ctx.commands, ctx.parseErr = cmdscan.ParseWithVars(ctx.Command, canon.ShellPathVars())
 		}
 		ctx.commandsParsed = true
 	}

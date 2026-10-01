@@ -7,7 +7,7 @@ catalog-mustdefault	addons/claudecode	1
 catalog-mustdefault	addons/devinit	7
 catalog-mustdefault	internal/validation	20
 config-parseqsdevconfig	addons/devenv	2
-config-parseqsdevconfig	addons/devinit	3
+config-parseqsdevconfig	addons/devinit	2
 config-parseqsdevconfig	internal/info	1
 config-parseqsdevconfig	internal/mcpserve	1
 config-parseqsdevconfig	internal/mcpserve/adapters/claudecode	1
@@ -120,7 +120,7 @@ literal-marker	internal/mcpregistry	1
 literal-marker	internal/mcpserve	1
 literal-marker	internal/selfprotect/canon	4
 literal-marker	internal/selfprotect/gatedodge	1
-literal-marker	internal/selfprotect/rules	12
+literal-marker	internal/selfprotect/rules	4
 literal-settings-json	addons/claudecode	3
 literal-settings-json	addons/devinit	1
 literal-settings-json	internal/cloudisolation	1
@@ -131,7 +131,7 @@ literal-settings-json	internal/policyengine/trust	1
 literal-settings-json	internal/posture	1
 literal-settings-json	internal/posture/render	1
 literal-settings-json	internal/selfprotect/canon	2
-literal-settings-json	internal/selfprotect/rules	3
+literal-settings-json	internal/selfprotect/rules	2
 literal-settings-json	internal/teardown	2
 literal-settings-json	pkg/ecosystem	1
 logging-walkup	addons/devinit	1

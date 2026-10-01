@@ -579,7 +579,7 @@ func TestGenerateSettings_NoSandbox(t *testing.T) {
 func TestGenerateSettings_HooksSection(t *testing.T) {
 	reg := ecosystem.NewRegistry()
 	// Disable LSP enforcement so this test isolates the package-guard matcher;
-	// the always-on lsp-guard would otherwise add a second PreToolUse matcher.
+	// the always-on lsp-guard would otherwise add another PreToolUse matcher.
 	answers := types.WizardAnswers{
 		PermissionLevel: "standard",
 		Hooks: types.HookChoices{
@@ -598,16 +598,18 @@ func TestGenerateSettings_HooksSection(t *testing.T) {
 	if !ok {
 		t.Fatal("hooks should contain PreToolUse")
 	}
-	if len(preToolUse) != 1 {
-		t.Fatalf("PreToolUse should have 1 matcher, got %d", len(preToolUse))
+	// The forced self-protection matcher comes first, then package-guard.
+	if len(preToolUse) != 2 {
+		t.Fatalf("PreToolUse should have 2 matchers, got %d", len(preToolUse))
 	}
-	if preToolUse[0].Matcher != "Bash|PowerShell|Monitor" {
-		t.Errorf("PreToolUse matcher should cover every shell tool, got %q", preToolUse[0].Matcher)
+	guard := preToolUse[1]
+	if guard.Matcher != "Bash|PowerShell|Monitor" {
+		t.Errorf("PreToolUse matcher should cover every shell tool, got %q", guard.Matcher)
 	}
-	if len(preToolUse[0].Hooks) != 1 {
-		t.Fatalf("PreToolUse Bash matcher should have 1 hook, got %d", len(preToolUse[0].Hooks))
+	if len(guard.Hooks) != 1 {
+		t.Fatalf("PreToolUse Bash matcher should have 1 hook, got %d", len(guard.Hooks))
 	}
-	hook := preToolUse[0].Hooks[0]
+	hook := guard.Hooks[0]
 	if hook.Type != "command" {
 		t.Errorf("hook type should be 'command', got %q", hook.Type)
 	}
@@ -619,28 +621,29 @@ func TestGenerateSettings_HooksSection(t *testing.T) {
 	}
 }
 
-func TestGenerateSettings_NoHooksWhenSafetyBlockFalse(t *testing.T) {
+// TestGenerateSettings_OnlySelfprotectWhenSafetyBlockOptedOut verifies that
+// with every optional hook off and the safety block opted out the hooks
+// section holds only the forced self-protection hook.
+func TestGenerateSettings_OnlySelfprotectWhenSafetyBlockOptedOut(t *testing.T) {
 	reg := ecosystem.NewRegistry()
-	// Disable LSP enforcement too: the always-on lsp-guard would otherwise keep
-	// the hooks section populated even with SafetyBlock off.
+	// Disable LSP enforcement too: the always-on lsp-guard would otherwise add
+	// its own matcher even with the safety block opted out.
 	answers := types.WizardAnswers{
 		PermissionLevel: "standard",
 		Hooks: types.HookChoices{
-			SafetyBlock: false,
+			SafetyBlockOptOut: true,
 		},
 		LSP: types.LSPSettings{Enforcement: "off"},
 	}
 	gf := mustGenerateSettings(t, answers, reg)
 	s := mustUnmarshalSettings(t, gf)
 
-	if s.Hooks != nil {
-		t.Errorf("hooks should be nil when SafetyBlock is false, got %+v", s.Hooks)
+	if len(s.Hooks) != 1 || len(s.Hooks["PreToolUse"]) != 1 {
+		t.Fatalf("hooks should hold only the self-protection hook, got %+v", s.Hooks)
 	}
-
-	// Verify the "hooks" key is omitted from JSON output.
-	content := string(gf.Content)
-	if containsStr(content, `"hooks"`) {
-		t.Error("hooks key should not appear in JSON when SafetyBlock is false")
+	want := claudecode.ExportFailClosedCommand("self-protection", selfprotectCommand())
+	if got := s.Hooks["PreToolUse"][0].Hooks[0].Command; got != want {
+		t.Errorf("remaining hook = %q, want %q", got, want)
 	}
 }
 

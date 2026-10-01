@@ -9,7 +9,7 @@ import (
 func GenerateHookFiles(answers types.WizardAnswers) ([]types.GeneratedFile, error) {
 	specs := []hookFileSpec{
 		{
-			enabled:      answers.Hooks.SafetyBlock,
+			enabled:      packageGuardEnabled(answers),
 			templatePath: "templates/hooks/package-guard.py",
 			outputPath:   ".claude/hooks/package-guard.py",
 			mode:         fileutil.ModeExecutable,

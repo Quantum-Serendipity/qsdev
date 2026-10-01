@@ -11,6 +11,7 @@ import (
 	"github.com/charmbracelet/huh"
 
 	"github.com/Quantum-Serendipity/qsdev/addons/claudecode"
+	qsdevanswers "github.com/Quantum-Serendipity/qsdev/internal/answers"
 	"github.com/Quantum-Serendipity/qsdev/internal/catalog"
 	"github.com/Quantum-Serendipity/qsdev/internal/termutil"
 	"github.com/Quantum-Serendipity/qsdev/internal/toolreg"
@@ -625,7 +626,7 @@ func confirmStep(fs *formState) wizardStep {
 func quickPathAnswers(partial types.WizardAnswers, detected types.DetectedProject) types.WizardAnswers {
 	answers := cloneAnswers(partial)
 	answers.FillDefaults(detected, catalog.MustDefault())
-	enforceAnswerInvariants(&answers)
+	qsdevanswers.EnforceInvariants(&answers)
 	return answers
 }
 
@@ -643,7 +644,7 @@ func mapFormToAnswers(fs *formState, projectRoot, projectName string, detected t
 	answers := quickPathAnswers(partial, detected)
 	if fs.quickChoice != "yes" {
 		applyFormChoices(&answers, fs, detected)
-		enforceAnswerInvariants(&answers)
+		qsdevanswers.EnforceInvariants(&answers)
 	}
 
 	answers.ProjectName = projectName

@@ -73,7 +73,7 @@ and unauthorized network access during CI builds.
 
 ## Runtime Protection
 
-Agent self-protection blocks the direct ways an agent edits qsdev's guardrails. It is a best-effort syntactic tripwire, not a sandbox. When its PreToolUse hook is generated, it is fail-closed within its deadline: an evaluation error blocks the call, but a hook that times out or cannot start lets it through. The policy engine (`qsdev enforce`) exists but no tier or preset enables it yet; it is planned for the full tier. Package risk scoring is not yet available.
+Agent self-protection blocks the direct ways an agent edits qsdev's guardrails. It is a best-effort syntactic tripwire, not a sandbox. Its PreToolUse hook is always generated and is fail-closed: an evaluation error, a missing binary or interpreter, and an evaluation that overruns its deadline all block the call, since the generated wrapper turns a hook that cannot start into a block and the hook denies before its registered timeout. The policy engine (`qsdev enforce`) exists but no tier or preset enables it yet; it is planned for the full tier. Package risk scoring is not yet available.
 
 For details on rule categories, bypass tiers, and evasion detection, see [Security Architecture](security-architecture.md).
 

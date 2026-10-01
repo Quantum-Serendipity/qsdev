@@ -822,8 +822,8 @@ Self-protection (Layer 14) and the permission deny rules match how a command is 
 | Git plumbing | `git update-index` / `checkout-index` rewriting a protected file without naming it, `>> .git/config`, `rm .git/hooks/pre-commit` | GIT-001 and the permission deny rules cover `git config`, `-c`, `--no-verify` and `--output`; the rest: none yet (planned: XS-WS3) |
 | PowerShell | `Remove-Item .claude\settings.json`, `Stop-Process -Name qsdev` (PowerShell text is parsed as POSIX shell) | none yet (planned: XS-WS4) |
 | Nested sessions | a `claude` session started from another directory, which loads that directory's project settings | SP-008 covers the flags and variables listed under Layer 14; the rest: none yet (planned: XS-WS4) |
-| Hook timeout | a command that keeps evaluation running past the hook timeout; Claude Code then lets the call through | none yet (planned: XS-WS1) |
-| Missing binary | `qsdev` not on the hook shell's `PATH`; the hook exits 127, which Claude Code treats as non-blocking | none yet (planned: XS-WS1) |
+| Hook timeout | a command that keeps evaluation running past the hook timeout, which Claude Code treats as non-blocking | generated hooks: the self-protection run denies at its 7-second deadline, inside its 10-second registered timeout, and each Python hook blocks 2 seconds before its own; only a hand-written hook without such a deadline still lets the call through |
+| Missing binary | `qsdev` or `python3` not on the hook shell's `PATH`, so the hook exits 127, which Claude Code treats as non-blocking | generated hooks: the fail-closed wrapper turns any exit other than 0 or 2 into 2, a block; only a hand-written hook without the wrapper still lets the call through |
 
 ### Environment Hardening
 

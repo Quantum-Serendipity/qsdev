@@ -142,10 +142,12 @@ claims:
 
   - id: selfprotect-deadline
     text: >-
-      fail-closed within its deadline: an evaluation error blocks the call,
-      but a hook that times out or cannot start lets it through
+      fail-closed: an evaluation error, a missing binary or interpreter, and
+      an evaluation that overruns its deadline all block the call, since the
+      generated wrapper turns a hook that cannot start into a block and the
+      hook denies before its registered timeout
     files: [docs/roadmap.md, internal/profile/templates/security-overview.md.tmpl]
-    tests: [TestSelfprotectHook_Decisions]
+    tests: [TestBuildHooks_SecurityHooksFailClosed, TestRunSelfprotect_DeadlineDenies, TestSelfprotectHookTimeoutCoversDeadline, TestHookRegistry_FailClosedTimeouts]
     tiers: [standard, full]
 
   - id: age-gate-72h
@@ -241,7 +243,7 @@ retracted:
     reason: self-protection and deny rules are syntactic; enforce_always only means `qsdev session allow` cannot lift a rule (TR-4)
     finding: U18-14
   - pattern: '\b(with|uses?) fail[- ]closed semantics'
-    reason: a hook that times out or cannot start lets the call through (TR-3)
+    reason: fail-closed holds only through the generated wrapper and the hooks' own deadlines, so the bare phrase overclaims for hand-written hooks (TR-3)
     finding: U18-14
   - pattern: 'multiple denials[ ]are collected'
     reason: the self-protection hook reports only the first denial
@@ -261,3 +263,6 @@ retracted:
   - pattern: 'path-checked by the confused[- ]deputy'
     reason: the confused-deputy path check runs only inside `qsdev enforce`, which no tier or preset registers
     finding: U27-01
+  - pattern: 'times out or cannot start[ ]lets it through'
+    reason: the generated fail-closed wrapper blocks a hook that cannot start, and the hooks deny before their registered timeout
+    finding: XS-WS1

@@ -326,31 +326,6 @@ func TestMCPList(t *testing.T) {
 	}
 }
 
-// TestMCPListHealthSkipsPackageLaunchers is the regression test for mcp.list
-// health=true downloading and running unpinned packages: servers launched via a
-// package launcher (or qsdev's own server) must be reported as not probed
-// rather than started.
-func TestMCPListHealthSkipsPackageLaunchers(t *testing.T) {
-	t.Parallel()
-	_, pc := newGoProject(t)
-	tests := []struct {
-		name string
-		def  mcpregistry.McpServerDefinition
-	}{
-		{"npx -y", mcpregistry.McpServerDefinition{Name: "context7", Command: "npx", Args: []string{"-y", "@upstash/context7-mcp"}}},
-		{"uvx", mcpregistry.McpServerDefinition{Name: "semble", Command: "uvx", Args: []string{"--from", "semble[mcp]", "semble"}}},
-		{"self", mcpregistry.McpServerDefinition{Name: "qsdev", Command: "qsdev", Args: []string{"mcp", "serve"}}},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			t.Parallel()
-			if got := pc.probeHealth(context.Background(), &tt.def); got["status"] != healthNotProbed {
-				t.Errorf("probeHealth(%s) = %v, want status %q", tt.def.Name, got, healthNotProbed)
-			}
-		})
-	}
-}
-
 // assertNotConfigured checks the canonical graceful-degradation contract (the
 // shared toolutil.NotConfigured shape): a tool-level error carrying a structured
 // payload whose status is not_configured.

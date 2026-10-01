@@ -52,6 +52,9 @@ type ProjectContext struct {
 
 	toolReg *toolreg.Registry
 	mcpReg  *mcpregistry.McpServerRegistry
+	// trustedExtra are the MCP server definitions configured into the binary,
+	// trusted for health probes alongside the catalog's.
+	trustedExtra map[string][]mcpregistry.LaunchSpec
 
 	// workspace is the monorepo workspace graph (Unit 32.7). It is populated when
 	// the project root carries a recognized workspace configuration with at least
@@ -65,7 +68,7 @@ type ProjectContext struct {
 // initialized still yields a usable engine (handlers then report not_configured
 // where appropriate). It returns an error only for unrecoverable wiring problems
 // (an empty root, or a tool catalog that fails to load).
-func NewProjectContext(projectRoot string) (*ProjectContext, error) {
+func NewProjectContext(projectRoot string, opts ...Option) (*ProjectContext, error) {
 	if projectRoot == "" {
 		return nil, fmt.Errorf("project context: project root is required")
 	}
@@ -87,7 +90,7 @@ func NewProjectContext(projectRoot string) (*ProjectContext, error) {
 		return nil, fmt.Errorf("project context: loading tool registry: %w", err)
 	}
 
-	return &ProjectContext{
+	pc := &ProjectContext{
 		projectRoot: projectRoot,
 		detection:   detection,
 		ledger:      ledger,
@@ -95,7 +98,21 @@ func NewProjectContext(projectRoot string) (*ProjectContext, error) {
 		toolReg:     reg,
 		mcpReg:      mcpregistry.DefaultRegistry(),
 		workspace:   detectWorkspaceGraph(projectRoot),
-	}, nil
+	}
+	for _, o := range opts {
+		o(pc)
+	}
+	return pc, nil
+}
+
+// Option configures a ProjectContext.
+type Option func(*ProjectContext)
+
+// WithTrustedServers adds the MCP server definitions configured into the
+// binary to those mcp.list trusts for health probes, beside the catalog's
+// (mcpregistry.TrustedDefinitions).
+func WithTrustedServers(specs map[string][]mcpregistry.LaunchSpec) Option {
+	return func(pc *ProjectContext) { pc.trustedExtra = specs }
 }
 
 // workspaceConfigFiles are the root configuration filenames whose presence marks

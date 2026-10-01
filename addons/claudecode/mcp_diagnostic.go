@@ -1,29 +1,25 @@
 package claudecode
 
 import (
-	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
-	"maps"
-	"os"
-	"path/filepath"
-	"slices"
-	"strings"
 	"time"
 
 	"github.com/spf13/cobra"
 
-	"github.com/Quantum-Serendipity/qsdev/internal/catalog"
 	"github.com/Quantum-Serendipity/qsdev/internal/cmdutil"
 	"github.com/Quantum-Serendipity/qsdev/internal/mcphealth"
 	"github.com/Quantum-Serendipity/qsdev/internal/mcpregistry"
 )
 
-// statusNotProbed marks a server that was not started or dialed because it does
-// not match a trusted definition.
-const statusNotProbed = "not-probed"
+// probeTimeout bounds each live probe of a configured server.
+const probeTimeout = 10 * time.Second
+
+// probeUntrustedHint is appended to a not-probed reason that --probe-untrusted
+// would lift.
+const probeUntrustedHint = "; rerun with --probe-untrusted to probe it anyway"
 
 // errMCPUnhealthy is returned by `mcp health` when any configured server is not
 // healthy, so CI health gates fail.
@@ -72,7 +68,7 @@ func runMCPProbe(cmd *cobra.Command, opts mcpProbeOptions) error {
 		return err
 	}
 
-	servers, err := loadMCPServers(projectRoot)
+	servers, err := mcpregistry.ConfiguredServers(projectRoot, mcpregistry.DefaultRegistry())
 	if err != nil {
 		return err
 	}
@@ -82,21 +78,13 @@ func runMCPProbe(cmd *cobra.Command, opts mcpProbeOptions) error {
 		return nil
 	}
 
-	probe, skipped := mcpregistry.PartitionTrusted(servers, trustedMCPDefinitions())
-	if opts.probeUntrusted {
-		// Untrusted entries run as configured but keep ExpandEnv unset, so a
-		// remote endpoint receives its ${VAR} references literally.
-		for name := range skipped {
-			probe[name] = servers[name]
-		}
-		skipped = nil
-	}
-
-	ctx, cancel := context.WithTimeout(cmd.Context(), 10*time.Second)
-	defer cancel()
-
-	report := mcphealth.CheckAll(ctx, probe)
-	addNotProbed(report, skipped)
+	// Untrusted entries probed under --probe-untrusted keep ExpandEnv unset, so
+	// a remote endpoint receives its ${VAR} references literally.
+	report := mcpregistry.ProbeAll(cmd.Context(), servers, mcpregistry.TrustedDefinitions(configuredServerSpecs()), mcpregistry.ProbeOptions{
+		AllowUntrusted: opts.probeUntrusted,
+		Timeout:        probeTimeout,
+		OverrideHint:   probeUntrustedHint,
+	})
 
 	if opts.jsonOutput {
 		data, err := json.MarshalIndent(report, "", "  ")
@@ -136,58 +124,15 @@ func writeProbeReport(w io.Writer, report *mcphealth.HealthReport, opts mcpProbe
 	_, _ = fmt.Fprintf(w, "\n%d/%d healthy\n", report.HealthyCount, report.TotalCount)
 }
 
-// addNotProbed appends a not-probed entry for each skipped server, giving the
-// reason it was skipped, and keeps the report sorted by name.
-func addNotProbed(report *mcphealth.HealthReport, skipped map[string]string) {
-	for name, reason := range skipped {
-		report.Servers = append(report.Servers, mcphealth.ServerHealth{
-			Name:   name,
-			Status: statusNotProbed,
-			Error:  reason + "; rerun with --probe-untrusted to probe it anyway",
-		})
-	}
-	report.TotalCount = len(report.Servers)
-	slices.SortFunc(report.Servers, func(a, b mcphealth.ServerHealth) int {
-		return strings.Compare(a.Name, b.Name)
-	})
-}
-
-// trustedMCPDefinitions returns the server definitions qsdev itself vouches
-// for, keyed by server name: the embedded catalog plus the user's organization
-// overlay (including the variants generation derives from it), and servers
-// configured into the binary. The project catalog overlay is deliberately
-// excluded — like .mcp.json, it is repository content.
-func trustedMCPDefinitions() map[string][]mcpregistry.LaunchSpec {
-	trusted := make(map[string][]mcpregistry.LaunchSpec)
-	var opts []catalog.LoadOption
-	if org := catalog.OrgConfigFile(); org != "" {
-		opts = append(opts, catalog.WithOrgConfigFile(org))
-	}
-	if cat, err := catalog.Load(opts...); err == nil {
-		for name, def := range cat.MCPServers() {
-			for _, e := range catalogServerVariants(def) {
-				trusted[name] = append(trusted[name], entryLaunchSpec(e))
-				if name == sembleServerName {
-					// Generation writes this variant when text-file indexing is on.
-					trusted[name] = append(trusted[name], configLaunchSpec(sembleTextFilesServer(e)))
-				}
-			}
-		}
-	}
+// configuredServerSpecs returns the launch definitions of the servers
+// configured into this binary, the extra trusted set passed to
+// mcpregistry.TrustedDefinitions.
+func configuredServerSpecs() map[string][]mcpregistry.LaunchSpec {
+	specs := make(map[string][]mcpregistry.LaunchSpec, len(addon.Config.MCPServers))
 	for _, srv := range addon.Config.MCPServers {
-		trusted[srv.Name] = append(trusted[srv.Name], configLaunchSpec(srv))
+		specs[srv.Name] = append(specs[srv.Name], mcpregistry.LaunchSpec{Command: srv.Command, Args: srv.Args, Env: srv.Env})
 	}
-	return trusted
-}
-
-// entryLaunchSpec is the trusted definition a generated .mcp.json entry makes.
-func entryLaunchSpec(e MCPServerEntry) mcpregistry.LaunchSpec {
-	return mcpregistry.LaunchSpec{Command: e.Command, Args: e.Args, Env: e.Env, URL: e.URL, Headers: e.Headers}
-}
-
-// configLaunchSpec is the trusted definition of a configured stdio server.
-func configLaunchSpec(c MCPServerConfig) mcpregistry.LaunchSpec {
-	return mcpregistry.LaunchSpec{Command: c.Command, Args: c.Args, Env: c.Env}
+	return specs
 }
 
 func mcpListCmd() *cobra.Command {
@@ -202,16 +147,18 @@ func mcpListCmd() *cobra.Command {
 				return err
 			}
 
-			servers, err := loadMCPServers(projectRoot)
+			servers, err := mcpregistry.ConfiguredServers(projectRoot, mcpregistry.DefaultRegistry())
 			if err != nil {
 				return err
 			}
 
 			if jsonOutput {
-				if servers == nil {
-					servers = map[string]mcphealth.ServerConfig{}
+				// Keyed by name, as this output has always been.
+				byName := make(map[string]mcphealth.ServerConfig, len(servers))
+				for _, cfg := range servers {
+					byName[cfg.Name] = cfg
 				}
-				data, err := json.MarshalIndent(servers, "", "  ")
+				data, err := json.MarshalIndent(byName, "", "  ")
 				if err != nil {
 					return fmt.Errorf("marshaling servers: %w", err)
 				}
@@ -226,12 +173,11 @@ func mcpListCmd() *cobra.Command {
 
 			_, _ = fmt.Fprintf(cmd.OutOrStdout(), "Configured MCP Servers (%d)\n", len(servers))
 			_, _ = fmt.Fprintln(cmd.OutOrStdout(), "----------------------------------------")
-			for _, name := range slices.Sorted(maps.Keys(servers)) {
-				cfg := servers[name]
+			for _, cfg := range servers {
 				if cfg.URL != "" {
-					_, _ = fmt.Fprintf(cmd.OutOrStdout(), "  %-20s  http %s\n", name, cfg.URL)
+					_, _ = fmt.Fprintf(cmd.OutOrStdout(), "  %-20s  http %s\n", cfg.Name, cfg.URL)
 				} else {
-					_, _ = fmt.Fprintf(cmd.OutOrStdout(), "  %-20s  %s %v\n", name, cfg.Command, cfg.Args)
+					_, _ = fmt.Fprintf(cmd.OutOrStdout(), "  %-20s  %s %v\n", cfg.Name, cfg.Command, cfg.Args)
 				}
 				if len(cfg.RequiredEnv) > 0 {
 					_, _ = fmt.Fprintf(cmd.OutOrStdout(), "    required env: %v\n", cfg.RequiredEnv)
@@ -245,42 +191,4 @@ func mcpListCmd() *cobra.Command {
 	cmd.Flags().BoolVar(&jsonOutput, "json", false, "Output in JSON format")
 
 	return cmd
-}
-
-func loadMCPServers(projectRoot string) (map[string]mcphealth.ServerConfig, error) {
-	mcpPath := filepath.Join(projectRoot, ".mcp.json")
-	data, err := os.ReadFile(mcpPath)
-	if os.IsNotExist(err) {
-		return nil, nil
-	}
-	if err != nil {
-		return nil, fmt.Errorf("reading .mcp.json: %w", err)
-	}
-
-	var mcp McpJSON
-	if err := json.Unmarshal(data, &mcp); err != nil {
-		return nil, fmt.Errorf("parsing .mcp.json: %w", err)
-	}
-
-	cat, catErr := catalog.Default()
-
-	servers := make(map[string]mcphealth.ServerConfig, len(mcp.MCPServers))
-	for name, entry := range mcp.MCPServers {
-		cfg := mcphealth.ServerConfig{
-			Name:    name,
-			Command: entry.Command,
-			Args:    entry.Args,
-			URL:     entry.URL,
-			Env:     entry.Env,
-			Headers: entry.Headers,
-		}
-		if catErr == nil {
-			if def, ok := cat.MCPServer(name); ok {
-				cfg.RequiredEnv = def.RequiredEnv
-			}
-		}
-		servers[name] = cfg
-	}
-
-	return servers, nil
 }

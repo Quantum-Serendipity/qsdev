@@ -1,11 +1,10 @@
 package mcpregistry
 
 import (
-	"fmt"
 	"maps"
 	"slices"
-	"strings"
 
+	"github.com/Quantum-Serendipity/qsdev/internal/catalog"
 	"github.com/Quantum-Serendipity/qsdev/internal/mcphealth"
 )
 
@@ -18,10 +17,6 @@ type LaunchSpec struct {
 	Headers map[string]string
 	URL     string
 }
-
-// untrustedRemoteReason explains why an HTTP entry matching no trusted
-// definition is not probed.
-const untrustedRemoteReason = "untrusted remote endpoint: not probed (env references would be sent to it)"
 
 // MatchesTrusted reports whether cfg is exactly one of specs, comparing the
 // templates before expansion. A stdio entry must match the command, args and
@@ -45,24 +40,68 @@ func MatchesTrusted(cfg mcphealth.ServerConfig, specs []LaunchSpec) bool {
 	return false
 }
 
-// PartitionTrusted splits servers into those matching a trusted definition of
-// the same name, returned with ExpandEnv set so they are probed as Claude Code
-// would run them, and the rest, mapped to a human-readable reason they were
-// not probed. The input map is not modified.
-func PartitionTrusted(servers map[string]mcphealth.ServerConfig, trusted map[string][]LaunchSpec) (probe map[string]mcphealth.ServerConfig, skipped map[string]string) {
-	probe = make(map[string]mcphealth.ServerConfig, len(servers))
-	skipped = make(map[string]string)
-	for name, cfg := range servers {
-		switch {
-		case MatchesTrusted(cfg, trusted[name]):
-			cfg.ExpandEnv = true
-			probe[name] = cfg
-		case cfg.URL != "":
-			skipped[name] = untrustedRemoteReason
-		default:
-			cmdline := strings.Join(append([]string{cfg.Command}, cfg.Args...), " ")
-			skipped[name] = fmt.Sprintf("command %q matches no trusted definition", cmdline)
+// LauncherSpec is the definition generation writes for def when no installed
+// binary is used: the remote endpoint of an HTTP server, otherwise the pinned
+// stdio launcher.
+func LauncherSpec(def catalog.MCPServerDef) LaunchSpec {
+	if def.Transport == "http" && def.URL != "" {
+		return LaunchSpec{URL: def.URL, Env: def.Env}
+	}
+	return LaunchSpec{Command: def.Command, Args: def.Args, Env: def.Env}
+}
+
+// InstalledSpec is the definition generation writes for def once `qsdev mcp
+// install` has installed its pinned release. It reports false when def's
+// install method provides no binary or pins no version.
+func InstalledSpec(def catalog.MCPServerDef) (LaunchSpec, bool) {
+	if def.Bin == "" || def.Version == "" {
+		return LaunchSpec{}, false
+	}
+	return LaunchSpec{Command: def.Bin, Args: def.BinArgs, Env: def.Env}, true
+}
+
+// LaunchVariants returns every definition generation may write for def: the
+// launcher and, when available, the installed binary, each as is and with
+// each of def.OptionalArgs appended.
+func LaunchVariants(def catalog.MCPServerDef) []LaunchSpec {
+	bases := []LaunchSpec{LauncherSpec(def)}
+	if spec, ok := InstalledSpec(def); ok {
+		bases = append(bases, spec)
+	}
+	variants := make([]LaunchSpec, 0, len(bases)*(1+len(def.OptionalArgs)))
+	for _, base := range bases {
+		variants = append(variants, base)
+		if base.Command == "" {
+			continue // optional arguments apply to stdio servers only
+		}
+		for _, opt := range def.OptionalArgs {
+			v := base
+			v.Args = slices.Concat(base.Args, opt)
+			variants = append(variants, v)
 		}
 	}
-	return probe, skipped
+	return variants
+}
+
+// TrustedDefinitions returns the server definitions qsdev itself vouches for,
+// keyed by server name: every LaunchVariants of the embedded catalog plus the
+// user's organization overlay, followed by extra (the servers configured into
+// the binary). The project catalog overlay is deliberately excluded — like
+// .mcp.json, it is repository content. A catalog that fails to load
+// contributes nothing, so its servers are treated as untrusted.
+func TrustedDefinitions(extra map[string][]LaunchSpec) map[string][]LaunchSpec {
+	trusted := make(map[string][]LaunchSpec)
+	var opts []catalog.LoadOption
+	if org := catalog.OrgConfigFile(); org != "" {
+		opts = append(opts, catalog.WithOrgConfigFile(org))
+	}
+	if cat, err := catalog.Load(opts...); err == nil {
+		for name, def := range cat.MCPServers() {
+			trusted[name] = LaunchVariants(def)
+		}
+	}
+	for name, specs := range extra {
+		trusted[name] = append(trusted[name], specs...)
+	}
+	return trusted
 }

@@ -46,6 +46,13 @@ func pinnedSpec(def *McpServerDefinition) (string, error) {
 	return "", fmt.Errorf("%s has no exact pinned version (got %q); refusing to install an unpinned package", def.PackageName, def.Version)
 }
 
+// installable reports whether Install can provision def's pinned release as a
+// binary .mcp.json can run instead of a package launcher.
+func installable(def *McpServerDefinition) bool {
+	_, err := pinnedSpec(def)
+	return err == nil && def.Bin != ""
+}
+
 // packageCommand builds the package-manager command that installs spec. The
 // same command installs and updates: spec pins an exact version, so updating
 // means installing the release the catalog now pins. Every command is

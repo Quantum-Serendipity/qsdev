@@ -20,6 +20,7 @@ import (
 
 	qsdevconfig "github.com/Quantum-Serendipity/qsdev/internal/config"
 	"github.com/Quantum-Serendipity/qsdev/internal/logging"
+	"github.com/Quantum-Serendipity/qsdev/internal/mcpregistry"
 	"github.com/Quantum-Serendipity/qsdev/internal/mcpserve/container"
 	"github.com/Quantum-Serendipity/qsdev/internal/mcpserve/middleware"
 	"github.com/Quantum-Serendipity/qsdev/internal/mcpserve/projectctx"
@@ -70,12 +71,28 @@ type serveOptions struct {
 	// modules restricts the server to the named tool modules (tools.Select);
 	// empty serves the full universal surface.
 	modules []string
+	// trustedServers are the MCP server definitions configured into the binary,
+	// trusted for mcp.list health probes alongside the catalog's.
+	trustedServers map[string][]mcpregistry.LaunchSpec
+}
+
+// CommandOption configures the serve command.
+type CommandOption func(*serveOptions)
+
+// WithTrustedServers adds the MCP server definitions configured into the
+// binary to the set the project context surface trusts for health probes, so
+// mcp.list probes exactly what `qsdev mcp status` would.
+func WithTrustedServers(specs map[string][]mcpregistry.LaunchSpec) CommandOption {
+	return func(o *serveOptions) { o.trustedServers = specs }
 }
 
 // Command returns the `serve` subcommand for the `qsdev mcp` command group. It
 // launches the universal qsdev MCP server over the selected transport.
-func Command() *cobra.Command {
+func Command(cmdOpts ...CommandOption) *cobra.Command {
 	var opts serveOptions
+	for _, o := range cmdOpts {
+		o(&opts)
+	}
 
 	cmd := &cobra.Command{
 		Use:   "serve",
@@ -291,7 +308,7 @@ func newServeServer(root string, mode container.DeployMode, policy *middleware.P
 	// Mount the generic project context surface (tools/resources/prompts). A
 	// failure here must not prevent the server from starting: log and continue so
 	// adapter-contributed tooling and the protocol itself still work.
-	if pc, err := projectctx.NewProjectContext(root); err != nil {
+	if pc, err := projectctx.NewProjectContext(root, projectctx.WithTrustedServers(opts.trustedServers)); err != nil {
 		slog.Warn("project context engine unavailable; generic tools not mounted", "error", err)
 	} else {
 		srv.MountProjectContext(pc)

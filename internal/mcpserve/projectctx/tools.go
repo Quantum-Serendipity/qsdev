@@ -90,8 +90,8 @@ func (pc *ProjectContext) Tools() []spi.ToolRegistration {
 		},
 		{
 			Name:        toolMCPList,
-			Description: "List the MCP servers known to qsdev with their category, transport, and compliance grade. Optionally probe each server's live health.",
-			InputSchema: optionalBoolSchema("health", "Probe each registered MCP server for live health (starts each server; slower)."),
+			Description: "List the MCP servers known to qsdev with their category, transport, and compliance grade. Optionally probe the live health of the servers the project's .mcp.json configures: others report health.status not_configured, and configured servers the probe gate declines report not-probed with the reason in health.error.",
+			InputSchema: optionalBoolSchema("health", "Probe the configured MCP servers that match a trusted definition for live health (starts them; slower). Package launchers are never started."),
 			Category:    middleware.CategoryStatus,
 			Tier:        int(TierExtended),
 			Handler:     pc.handleMCPList,
@@ -221,6 +221,11 @@ func (pc *ProjectContext) handleMCPList(ctx context.Context, _ *spi.ToolCallCont
 	defs := pc.mcpReg.All()
 	withHealth := boolArg(req.Arguments, "health")
 
+	var health map[string]map[string]any
+	if withHealth {
+		health = pc.configuredHealth(ctx)
+	}
+
 	servers := make([]map[string]any, 0, len(defs))
 	for _, d := range defs {
 		entry := map[string]any{
@@ -229,7 +234,11 @@ func (pc *ProjectContext) handleMCPList(ctx context.Context, _ *spi.ToolCallCont
 			"grade": mcpregistry.GradeServer(d).Level.String(), "source": string(d.Source),
 		}
 		if withHealth {
-			entry["health"] = pc.probeHealth(ctx, d)
+			h, ok := health[d.Name]
+			if !ok {
+				h = map[string]any{"status": healthNotConfigured}
+			}
+			entry["health"] = h
 		}
 		servers = append(servers, entry)
 	}
@@ -239,27 +248,42 @@ func (pc *ProjectContext) handleMCPList(ctx context.Context, _ *spi.ToolCallCont
 	return &spi.ToolResult{Text: text, Structured: structured}, nil
 }
 
-// probeHealth runs a bounded live health check for a single server. It is only
-// reached behind the health flag because it starts the server process. Servers
-// that are unsafe to start from a tool call (package launchers that would
-// download and run a package, or qsdev's own server) are reported as not probed.
-func (pc *ProjectContext) probeHealth(ctx context.Context, d *mcpregistry.McpServerDefinition) map[string]any {
-	cfg := mcphealth.ServerConfig{
-		Name: d.Name, Command: d.Command, Args: d.Args, URL: d.URL,
-		Env: d.Env, RequiredEnv: d.RequiredEnv,
-	}
-	if reason := mcpregistry.ProbeSkipReason(cfg); reason != "" {
-		return map[string]any{"status": healthNotProbed, "tool_count": 0, "error": "not probed: " + reason}
-	}
-	cctx, cancel := context.WithTimeout(ctx, 5*time.Second)
-	defer cancel()
-	h := mcphealth.CheckServer(cctx, cfg)
-	return map[string]any{"status": h.Status, "tool_count": h.ToolCount, "error": h.Error}
-}
+// healthNotConfigured is the mcp.list health status of a registry entry the
+// project's .mcp.json does not configure, spelled like the surface's other
+// not_configured results; a declined probe reports mcphealth.StatusNotProbed.
+const healthNotConfigured = "not_configured"
 
-// healthNotProbed is the mcp.list health status for a server probeHealth
-// declined to start.
-const healthNotProbed = "not_probed"
+// mcpListProbeTimeout bounds each mcp.list health probe.
+const mcpListProbeTimeout = 5 * time.Second
+
+// configuredHealth probes the registry servers the project's .mcp.json
+// configures, through the shared probe gate: only entries matching a trusted
+// definition are started or dialed (never package launchers or qsdev's own
+// server), concurrently and each with its own timeout. MCP tools never probe
+// untrusted entries. It returns each configured server's health payload by
+// name; an unreadable .mcp.json reports every registry server as not probed.
+func (pc *ProjectContext) configuredHealth(ctx context.Context) map[string]map[string]any {
+	health := make(map[string]map[string]any)
+	configured, err := mcpregistry.ConfiguredServers(pc.projectRoot, pc.mcpReg)
+	if err != nil {
+		for _, d := range pc.mcpReg.All() {
+			health[d.Name] = map[string]any{"status": mcphealth.StatusNotProbed, "error": err.Error()}
+		}
+		return health
+	}
+	known := make([]mcphealth.ServerConfig, 0, len(configured))
+	for _, cfg := range configured {
+		if _, ok := pc.mcpReg.ByName(cfg.Name); ok {
+			known = append(known, cfg)
+		}
+	}
+	report := mcpregistry.ProbeAll(ctx, known, mcpregistry.TrustedDefinitions(pc.trustedExtra),
+		mcpregistry.ProbeOptions{Timeout: mcpListProbeTimeout})
+	for _, h := range report.Servers {
+		health[h.Name] = map[string]any{"status": h.Status, "tool_count": h.ToolCount, "error": h.Error}
+	}
+	return health
+}
 
 // handleToolList delegates to the tool lifecycle registry, layering on the
 // enabled/disabled state recorded in the project's state ledger as it is now

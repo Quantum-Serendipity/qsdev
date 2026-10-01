@@ -17,6 +17,16 @@ All notable changes to qsdev are recorded in this file. The format is based on
   toplevel (monorepos), resolve as before. If you relied on an outer project's
   configuration governing a nested repository, run `qsdev init` inside it.
 
+- The `qsdev_mcp_list` MCP tool's `health` option now probes only the servers
+  the project's `.mcp.json` configures that match a trusted definition, through
+  the same gate as `qsdev mcp status`. A registry server the project does not
+  configure reports `health.status` `not_configured`; a configured server that
+  is not probed (a package launcher, qsdev's own server, an untrusted entry or a
+  plain-http non-local URL) reports `not-probed`, the spelling `qsdev mcp
+  status --json` already uses, replacing the tool's former `not_probed`.
+- MCP health probes no longer follow HTTP redirects; an endpoint that answers
+  with one is reported as failing, naming the refused target.
+
 ### Security
 
 - A stray or planted qsdev marker in a parent directory (for example a shared

@@ -828,6 +828,8 @@ mcp_servers:
         package_name: "semble[mcp]"
         version: "0.6.0"
         bin: semble
+        # Appended when text-file indexing is enabled (agent_tools.semble_text_files).
+        optional_args: [["--include-text-files"]]
     context7:
         display_name: "Context7"
         category: agent

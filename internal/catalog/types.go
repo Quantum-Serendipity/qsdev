@@ -215,6 +215,10 @@ type MCPServerDef struct {
 	Bin        string   `yaml:"bin,omitempty"`
 	BinArgs    []string `yaml:"bin_args,omitempty"`
 	NixPackage string   `yaml:"nix_package,omitempty"`
+	// OptionalArgs are argument groups generation may append to the server's
+	// launcher or installed binary (e.g. a feature flag the wizard toggles);
+	// each group is a separate trusted variant.
+	OptionalArgs [][]string `yaml:"optional_args,omitempty"`
 }
 
 // BootstrapToolDef pins a tool that the qsdev bootstrap installs onto the

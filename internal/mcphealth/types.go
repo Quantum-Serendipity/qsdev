@@ -15,7 +15,7 @@ type ServerConfig struct {
 	RequiredEnv []string
 	// ExpandEnv permits expanding references in URL and Headers values, which
 	// sends host environment values to the remote endpoint. Only a trust gate
-	// (mcpregistry.PartitionTrusted) sets it; the zero value keeps them literal.
+	// (mcpregistry.PlanProbes) sets it; the zero value keeps them literal.
 	// Stdio fields are always expanded: the child inherits the environment anyway.
 	ExpandEnv bool `json:"-"`
 }
@@ -58,6 +58,8 @@ const (
 	StatusDegraded      = "degraded"
 	StatusUnreachable   = "unreachable"
 	StatusMisconfigured = "misconfigured"
+	// StatusNotProbed marks a server the probe gate declined to start or dial.
+	StatusNotProbed = "not-probed"
 )
 
 // ConfigWarning severities.

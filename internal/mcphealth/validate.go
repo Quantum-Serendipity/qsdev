@@ -1,6 +1,7 @@
 package mcphealth
 
 import (
+	"errors"
 	"fmt"
 	"maps"
 	"net"
@@ -62,27 +63,42 @@ func validateCommand(server, command string) []ConfigWarning {
 	return nil
 }
 
-// validateURL checks a remote server URL: it must be absolute with a host, and
-// use https, or plain http only for a loopback host.
-func validateURL(server, raw string) []ConfigWarning {
+// Reasons ProbeableURL rejects a URL.
+var (
+	errNotHTTPURL        = errors.New("not a valid http(s) URL")
+	errPlainHTTPNonLocal = errors.New("plain http to a non-local host")
+)
+
+// ProbeableURL reports whether a remote server URL may be contacted: it must be
+// absolute with a host, and use https, or plain http only for a loopback host.
+// ValidateConfig and the live-probe gate share this one rule.
+func ProbeableURL(raw string) error {
 	u, err := url.Parse(raw)
 	if err != nil || u.Host == "" || (u.Scheme != "https" && u.Scheme != "http") {
-		return []ConfigWarning{{
-			Server:      server,
-			Severity:    SeverityError,
-			Message:     fmt.Sprintf("url %q is not a valid http(s) URL", raw),
-			Remediation: "specify an absolute https:// URL for this MCP server",
-		}}
+		return fmt.Errorf("url %q is %w", raw, errNotHTTPURL)
 	}
 	if u.Scheme == "http" && !isLoopbackHost(u.Hostname()) {
-		return []ConfigWarning{{
-			Server:      server,
-			Severity:    SeverityError,
-			Message:     fmt.Sprintf("url %q uses plain http to a non-local host", raw),
-			Remediation: "use https:// (plain http is only acceptable for localhost)",
-		}}
+		return fmt.Errorf("url %q uses %w", raw, errPlainHTTPNonLocal)
 	}
 	return nil
+}
+
+// validateURL reports a remote server URL that ProbeableURL rejects.
+func validateURL(server, raw string) []ConfigWarning {
+	err := ProbeableURL(raw)
+	if err == nil {
+		return nil
+	}
+	remediation := "specify an absolute https:// URL for this MCP server"
+	if errors.Is(err, errPlainHTTPNonLocal) {
+		remediation = "use https:// (plain http is only acceptable for localhost)"
+	}
+	return []ConfigWarning{{
+		Server:      server,
+		Severity:    SeverityError,
+		Message:     err.Error(),
+		Remediation: remediation,
+	}}
 }
 
 // isLoopbackHost reports whether host is localhost or a loopback IP address.

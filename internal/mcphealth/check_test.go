@@ -7,6 +7,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -75,7 +76,7 @@ func TestCheckAll_EmptyServers(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
-	report := CheckAll(ctx, map[string]ServerConfig{})
+	report := CheckAll(ctx, nil, time.Second)
 
 	if report.TotalCount != 0 {
 		t.Errorf("total = %d, want 0", report.TotalCount)
@@ -94,12 +95,12 @@ func TestCheckAll_EmptyServers(t *testing.T) {
 func TestCheckAll_MixedResults(t *testing.T) {
 	t.Parallel()
 
-	servers := map[string]ServerConfig{
-		"missing-binary": {
+	servers := []ServerConfig{
+		{
 			Name:    "missing-binary",
 			Command: "this-binary-does-not-exist-xyz-999",
 		},
-		"missing-prereq": {
+		{
 			Name:        "missing-prereq",
 			Command:     "bash",
 			RequiredEnv: []string{"QSDEV_TEST_MISSING_MIX_12345"},
@@ -109,7 +110,7 @@ func TestCheckAll_MixedResults(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
-	report := CheckAll(ctx, servers)
+	report := CheckAll(ctx, servers, 5*time.Second)
 
 	if report.TotalCount != 2 {
 		t.Errorf("total = %d, want 2", report.TotalCount)
@@ -131,6 +132,85 @@ func TestCheckAll_MixedResults(t *testing.T) {
 	}
 	if statuses["missing-prereq"] != StatusDegraded {
 		t.Errorf("missing-prereq status = %q, want %q", statuses["missing-prereq"], StatusDegraded)
+	}
+}
+
+// blockingProbeTarget is an HTTP endpoint whose handler holds every request
+// open until the client gives up, recording how many requests arrived and the
+// largest number that were in flight at once.
+// blockingProbeTarget holds each probe request for hold, then fails it. It
+// leaves the in-flight count before replying, so the decrement happens before
+// the client sees the reply and frees its slot; waiting for the client to time
+// out instead would let the server notice the hangup only after the next
+// queued probe had already arrived, overcounting concurrency.
+type blockingProbeTarget struct {
+	hold        time.Duration
+	mu          sync.Mutex
+	inFlight    int
+	maxInFlight int
+	arrived     int
+}
+
+func (b *blockingProbeTarget) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	_, _ = io.Copy(io.Discard, r.Body)
+	b.mu.Lock()
+	b.arrived++
+	b.inFlight++
+	b.maxInFlight = max(b.maxInFlight, b.inFlight)
+	b.mu.Unlock()
+	select {
+	case <-time.After(b.hold):
+	case <-r.Context().Done():
+	}
+	b.mu.Lock()
+	b.inFlight--
+	b.mu.Unlock()
+	w.WriteHeader(http.StatusServiceUnavailable)
+}
+
+// TestCheckAll_Bounded guards U22-12: CheckAll never has more than
+// maxConcurrentProbes probes running, and every probe gets its own timeout
+// (counted from when it starts), so queued probes still run instead of being
+// starved by a deadline shared with the probes before them.
+func TestCheckAll_Bounded(t *testing.T) {
+	t.Parallel()
+
+	// Each probe is held for most of its timeout: with a deadline shared
+	// across the queue, the third wave of probes would never start.
+	const timeout = 300 * time.Millisecond
+	target := &blockingProbeTarget{hold: 200 * time.Millisecond}
+	srv := httptest.NewServer(target)
+	t.Cleanup(srv.Close)
+
+	const n = 10
+	servers := make([]ServerConfig, n)
+	for i := range servers {
+		servers[i] = ServerConfig{Name: fmt.Sprintf("s%02d", i), URL: srv.URL}
+	}
+
+	report := CheckAll(context.Background(), servers, timeout)
+
+	if report.TotalCount != n || len(report.Servers) != n {
+		t.Fatalf("total = %d, servers = %d, want %d", report.TotalCount, len(report.Servers), n)
+	}
+	for i, s := range report.Servers {
+		if s.Name != servers[i].Name {
+			t.Errorf("servers[%d] = %q, want %q (input order)", i, s.Name, servers[i].Name)
+		}
+		if s.Status != StatusUnreachable {
+			t.Errorf("%s status = %q, want %q", s.Name, s.Status, StatusUnreachable)
+		}
+	}
+	target.mu.Lock()
+	defer target.mu.Unlock()
+	if target.maxInFlight > maxConcurrentProbes {
+		t.Errorf("max concurrent probes = %d, want at most %d", target.maxInFlight, maxConcurrentProbes)
+	}
+	if target.maxInFlight < 2 {
+		t.Errorf("max concurrent probes = %d, want probes to run concurrently", target.maxInFlight)
+	}
+	if target.arrived != n {
+		t.Errorf("%d of %d probes reached the server; queued probes must get their own timeout", target.arrived, n)
 	}
 }
 
@@ -516,4 +596,60 @@ func TestCheckServer_NoExpandByDefault(t *testing.T) {
 			}
 		})
 	}
+}
+
+// TestCheckServer_RefusesRedirect guards the U22-02 residual: the probe gate
+// vets only the configured URL, so the HTTP probe must not follow a redirect
+// to plain http on a non-local host, nor to any other endpoint (which would
+// also receive the probe's headers).
+func TestCheckServer_RefusesRedirect(t *testing.T) {
+	t.Parallel()
+
+	var redirected sync.Mutex
+	hits := 0
+	other := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		redirected.Lock()
+		hits++
+		redirected.Unlock()
+		w.WriteHeader(http.StatusOK)
+	}))
+	t.Cleanup(other.Close)
+
+	tests := []struct {
+		name     string
+		location string
+	}{
+		{name: "plain http non-local", location: "http://example.invalid/mcp"},
+		{name: "other loopback endpoint", location: other.URL + "/mcp"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				http.Redirect(w, r, tt.location, http.StatusTemporaryRedirect)
+			}))
+			t.Cleanup(srv.Close)
+
+			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+			h := CheckServer(ctx, ServerConfig{Name: "redir", URL: srv.URL + "/mcp", Headers: map[string]string{"X-Api-Key": "k"}})
+
+			if h.Status == StatusHealthy {
+				t.Fatalf("status = %q, want a failure", h.Status)
+			}
+			if !strings.Contains(h.Error, errRedirectRefused.Error()) || !strings.Contains(h.Error, tt.location) {
+				t.Errorf("error = %q, want it to name the refused redirect to %s", h.Error, tt.location)
+			}
+			if strings.Contains(h.Error, "no such host") || strings.Contains(h.Error, "lookup") {
+				t.Errorf("error = %q: the redirect target was resolved", h.Error)
+			}
+		})
+	}
+	t.Cleanup(func() {
+		redirected.Lock()
+		defer redirected.Unlock()
+		if hits != 0 {
+			t.Errorf("redirect target received %d requests, want 0", hits)
+		}
+	})
 }

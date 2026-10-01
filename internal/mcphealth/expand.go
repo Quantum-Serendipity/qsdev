@@ -2,6 +2,7 @@ package mcphealth
 
 import (
 	"maps"
+	"os"
 	"regexp"
 	"slices"
 	"strings"
@@ -33,6 +34,14 @@ func expandVars(s string, lookup envLookup) string {
 		}
 		return ref
 	})
+}
+
+// ProbeTarget returns cfg as CheckServer will start or dial it: with the
+// references expanded from the current environment exactly as the probe
+// expands them (see expandConfig). A probe gate inspects this, not the
+// templates, so an environment value cannot smuggle in what the gate refuses.
+func ProbeTarget(cfg ServerConfig) ServerConfig {
+	return expandConfig(cfg, os.LookupEnv)
 }
 
 // expandConfig returns a copy of cfg with variable references expanded in

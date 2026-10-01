@@ -205,3 +205,42 @@ func TestValidateConfig_EmptyServerName(t *testing.T) {
 		t.Errorf("expected warning about empty server name, got %+v", warnings)
 	}
 }
+
+// TestProbeableURL covers the https-or-loopback rule shared by ValidateConfig
+// and the live-probe gate: a probe never dials plain http to a remote host.
+func TestProbeableURL(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name    string
+		raw     string
+		wantErr string
+	}{
+		{name: "https", raw: "https://mcp.example.com/mcp"},
+		{name: "http loopback v4", raw: "http://127.0.0.1:8080/mcp"},
+		{name: "http localhost", raw: "http://localhost:3000/mcp"},
+		{name: "http localhost upper case", raw: "http://LOCALHOST/mcp"},
+		{name: "http loopback v6", raw: "http://[::1]:9000/mcp"},
+		{name: "http non-loopback", raw: "http://example.com/mcp", wantErr: "plain http to a non-local host"},
+		{name: "http private address", raw: "http://10.0.0.1/mcp", wantErr: "plain http to a non-local host"},
+		{name: "no host", raw: "https:///mcp", wantErr: "not a valid http(s) URL"},
+		{name: "relative", raw: "/mcp", wantErr: "not a valid http(s) URL"},
+		{name: "other scheme", raw: "ftp://example.com/mcp", wantErr: "not a valid http(s) URL"},
+		{name: "unparsable", raw: "http://[::1", wantErr: "not a valid http(s) URL"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			err := ProbeableURL(tc.raw)
+			if tc.wantErr == "" {
+				if err != nil {
+					t.Fatalf("ProbeableURL(%q) = %v, want nil", tc.raw, err)
+				}
+				return
+			}
+			if err == nil || !strings.Contains(err.Error(), tc.wantErr) {
+				t.Fatalf("ProbeableURL(%q) = %v, want error containing %q", tc.raw, err, tc.wantErr)
+			}
+		})
+	}
+}

@@ -707,7 +707,10 @@ tools:
               section_id: version-sentinel
               section_content: |-
                 {{ if .Covered }}- **Version-Sentinel** MCP tools give advisory (non-blocking) dependency version checks for: {{ join ", " .Covered }}. Use them when changing dependencies.{{ end }}
-                {{- if and .Covered .Uncovered }}
+                {{- if and .Covered (or .PresenceOnly .Uncovered) }}
+                {{ end }}
+                {{- if .PresenceOnly }}- Version-Sentinel only checks that a lockfile exists for: {{ join ", " .PresenceOnly }}. Their versions are not compared; review them manually.{{ end }}
+                {{- if and .PresenceOnly .Uncovered }}
                 {{ end }}
                 {{- if .Uncovered }}- Version-Sentinel does NOT cover: {{ join ", " .Uncovered }}. Review these manually.{{ end }}
     local-docs-devdocs:

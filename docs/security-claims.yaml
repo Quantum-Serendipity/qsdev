@@ -199,9 +199,10 @@ claims:
 
   - id: version-sentinel-advisory
     text: >-
-      Version-Sentinel does NOT cover: go.mod. Review these manually.
+      MCP tools give advisory (non-blocking) dependency version checks for:
+      go.mod. Use them when changing dependencies.
     files: [CLAUDE.md]
-    tests: [TestVersionSentinelClaudeMdSection]
+    tests: [TestVersionSentinelClaudeMdSection, TestManifestCoverage_AgreesWithClaudeMdSection]
     tiers: [standard, full]
 
 # Overclaims withdrawn by H0-1. The claims test fails if any comes back.
@@ -234,7 +235,7 @@ retracted:
     reason: provenance is attested in the job that builds and signs, which is Build L2
     finding: U26-06
   - pattern: 'guards[ ]dependency changes'
-    reason: Version-Sentinel is advisory and does not cover go.mod (TR-6)
+    reason: Version-Sentinel is advisory; it checks versions and blocks nothing (TR-6)
     finding: U22-03
   - pattern: '\b(168|336) ?h(ours?|rs?)?\b'
     reason: the compliance level does not select the age gate; every level generates at least 72 hours (3 days)

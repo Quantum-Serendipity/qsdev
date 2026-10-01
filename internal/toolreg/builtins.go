@@ -5,6 +5,7 @@ import (
 
 	"github.com/Quantum-Serendipity/qsdev/internal/sectools"
 	"github.com/Quantum-Serendipity/qsdev/internal/sliceutil"
+	"github.com/Quantum-Serendipity/qsdev/internal/vsentinel"
 	"github.com/Quantum-Serendipity/qsdev/pkg/ecosystem"
 	"github.com/Quantum-Serendipity/qsdev/pkg/types"
 )
@@ -33,19 +34,14 @@ func coreBehaviors() map[string]ToolBehavior {
 			DisableFunc: func(a *types.WizardAnswers) {
 				a.AgentTools.VersionSentinel = false
 			},
+			// The section states the coverage manifest_coverage reports:
+			// both come from vsentinel.ClassifyManifests.
 			SectionDataFunc: func(answers types.WizardAnswers, ecoReg *ecosystem.Registry) map[string]any {
-				report := ecosystem.LanguageManifestCoverage(answers.Languages, ecoReg)
-				covered := make([]string, len(report.Covered))
-				for i, m := range report.Covered {
-					covered[i] = m.Path
-				}
-				uncovered := make([]string, len(report.Uncovered))
-				for i, m := range report.Uncovered {
-					uncovered[i] = m.Path
-				}
+				c := vsentinel.ClassifyManifests(ecosystem.LanguageManifestCoverage(answers.Languages, ecoReg).AllManifests)
 				return map[string]any{
-					"Covered":   covered,
-					"Uncovered": uncovered,
+					"Covered":      vsentinel.ManifestPaths(c.Diffed),
+					"PresenceOnly": vsentinel.ManifestPaths(c.PresenceOnly),
+					"Uncovered":    vsentinel.ManifestPaths(c.Uncovered),
 				}
 			},
 		},

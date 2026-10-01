@@ -71,7 +71,8 @@ func Tools(projectRoot string) []spi.ToolRegistration {
 			Name: "manifest_coverage",
 			Description: "Report, for the languages in the project's qsdev answers, which manifests Version-Sentinel version-diffs against their lockfile (diffed) and which it only checks for lockfile presence (presence_only). " +
 				"coverage is \"complete\" only when every manifest is diffed, \"none\" when the languages declare no manifest, and otherwise \"partial\", with not_version_checked naming each presence-only manifest. " +
-				"A manifest earlier versions reported as covered but now listed as presence_only is a correction (its versions were never compared), not a regression.",
+				"A manifest earlier versions reported as covered but now listed as presence_only is a correction (its versions were never compared), not a regression. " +
+				"The generated CLAUDE.md Version-Sentinel section and .version-sentinel/ignore state this same classification.",
 			InputSchema: toolutil.EmptyObjectSchema(),
 			Category:    middleware.CategoryStatus,
 			Tier:        tierStandard,
@@ -211,29 +212,22 @@ type manifestCoverageEntry struct {
 	LockFile  string `json:"lock_file,omitempty"`
 }
 
-// classifyCoverage sorts manifests by what vsentinel can actually check
-// (vsentinel.Coverage). The modules' VSSupported flag is deliberately ignored:
-// it does not reflect which manifests have a drift checker.
+// classifyCoverage builds the report from vsentinel.ClassifyManifests, the
+// classification the generated CLAUDE.md section also uses. The modules'
+// VSSupported flag is deliberately ignored: it does not reflect which
+// manifests have a drift checker.
 func classifyCoverage(manifests []ecosystem.ManifestFileInfo) manifestCoverageReport {
+	c := vsentinel.ClassifyManifests(manifests)
 	report := manifestCoverageReport{
-		Diffed:       []manifestCoverageEntry{},
-		PresenceOnly: []manifestCoverageEntry{},
-		Uncovered:    []manifestCoverageEntry{},
+		Diffed:       coverageEntries(c.Diffed),
+		PresenceOnly: coverageEntries(c.PresenceOnly),
+		Uncovered:    coverageEntries(c.Uncovered),
 		Coverage:     vsentinel.CoverageComplete,
 	}
-	for _, m := range manifests {
-		entry := manifestCoverageEntry{Path: m.Path, Ecosystem: m.Ecosystem, LockFile: m.LockFile}
-		var reason string
-		switch vsentinel.Coverage(m.Path, m.LockFile) {
-		case vsentinel.VerificationDiffed:
-			report.Diffed = append(report.Diffed, entry)
-			continue
-		case vsentinel.VerificationPresenceOnly:
-			report.PresenceOnly = append(report.PresenceOnly, entry)
+	for _, m := range c.NotDiffed {
+		reason := "no drift check: neither versions nor lockfile presence verified"
+		if slices.Contains(c.PresenceOnly, m) {
 			reason = "lockfile presence only, versions not compared"
-		default:
-			report.Uncovered = append(report.Uncovered, entry)
-			reason = "no drift check: neither versions nor lockfile presence verified"
 		}
 		report.Coverage = vsentinel.CoveragePartial
 		report.NotVersionChecked = append(report.NotVersionChecked,
@@ -243,6 +237,15 @@ func classifyCoverage(manifests []ecosystem.ManifestFileInfo) manifestCoverageRe
 		report.Coverage = vsentinel.CoverageNone
 	}
 	return report
+}
+
+// coverageEntries converts manifests to report entries, never nil.
+func coverageEntries(manifests []ecosystem.ManifestFileInfo) []manifestCoverageEntry {
+	out := make([]manifestCoverageEntry, 0, len(manifests))
+	for _, m := range manifests {
+		out = append(out, manifestCoverageEntry{Path: m.Path, Ecosystem: m.Ecosystem, LockFile: m.LockFile})
+	}
+	return out
 }
 
 func (m *module) versionHistory(_ context.Context, _ *spi.ToolCallContext, req *spi.ToolRequest) (*spi.ToolResult, error) {

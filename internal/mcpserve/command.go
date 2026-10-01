@@ -81,7 +81,7 @@ type CommandOption func(*serveOptions)
 
 // WithTrustedServers adds the MCP server definitions configured into the
 // binary to the set the project context surface trusts for health probes, so
-// mcp.list probes exactly what `qsdev mcp status` would.
+// mcp.list probes exactly what `qsdev mcp status --probe` would.
 func WithTrustedServers(specs map[string][]mcpregistry.LaunchSpec) CommandOption {
 	return func(o *serveOptions) { o.trustedServers = specs }
 }

@@ -55,6 +55,7 @@ func TestSymbolRules(t *testing.T) {
 		{"aliased module import caught", Key{"catalog-mustdefault", "internal/user"}, 1},
 		{"owner package allowed", Key{"exec-command", "internal/procexec"}, 0},
 		{"owner of os.Stderr allowed", Key{"os-stderr", "internal/procexec"}, 0},
+		{"procexec guard may panic", Key{"panic", "internal/procexec"}, 0},
 		{"instance may create root contexts", Key{"context-background", "instance"}, 0},
 		{"instance may use singletons", Key{"catalog-mustdefault", "instance"}, 0},
 		{"unqualified call in defining package ignored", Key{"catalog-mustdefault", "internal/catalog"}, 0},

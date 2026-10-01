@@ -6,6 +6,8 @@ import (
 	"os/exec"
 	"strings"
 	"time"
+
+	"github.com/Quantum-Serendipity/qsdev/internal/procexec"
 )
 
 const (
@@ -48,7 +50,7 @@ func Detect(ctx context.Context, name, versionArg string) Info {
 	ctx, cancel := context.WithTimeout(ctx, probeTimeout)
 	defer cancel()
 
-	cmd := exec.CommandContext(ctx, path, versionArg)
+	cmd := procexec.VersionProbe(ctx, path, versionArg)
 	cmd.WaitDelay = probeWaitDelay
 	stdout := &limitedBuffer{max: maxProbeOutput}
 	stderr := &limitedBuffer{max: maxProbeOutput}

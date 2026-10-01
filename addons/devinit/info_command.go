@@ -31,7 +31,7 @@ Instant response — reads cached state only, no evaluation.`,
 	cmd.Flags().BoolVar(&oneline, "oneline", false, "Single-line output for prompts and scripts")
 	cmd.Flags().BoolVar(&jsonOutput, "json", false, "JSON output for machine consumption")
 
-	return cmd
+	return cmdutil.MarkReadOnly(cmd, "")
 }
 
 func runInfo(cmd *cobra.Command, oneline, jsonOutput bool) error {

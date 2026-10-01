@@ -46,7 +46,7 @@ exit code (suitable for CI).`,
 	cmd.Flags().BoolVar(&jsonOutput, "json", false, "Output machine-readable JSON")
 	cmd.Flags().BoolVar(&checkMode, "check", false, "Exit 0 if all required tools present, exit 1 if any missing")
 
-	return cmd
+	return cmdutil.MarkReadOnly(cmd, "")
 }
 
 func runDoctor(cmd *cobra.Command, jsonOutput, checkMode bool) error {

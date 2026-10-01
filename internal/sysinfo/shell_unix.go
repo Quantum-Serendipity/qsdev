@@ -8,6 +8,8 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+
+	"github.com/Quantum-Serendipity/qsdev/internal/procexec"
 )
 
 // detectCurrentShell detects the current shell on Unix systems.
@@ -24,7 +26,7 @@ func detectCurrentShell() (name, path string) {
 
 	// 2. If that didn't yield a shell (e.g. macOS, or parent is go test), try ps.
 	if name == "" {
-		out, err := exec.Command("ps", "-p", fmt.Sprint(os.Getppid()), "-o", "comm=").Output()
+		out, err := procexec.Command("ps", "-p", fmt.Sprint(os.Getppid()), "-o", "comm=").Output()
 		if err == nil {
 			candidate := cleanShellName(strings.TrimSpace(string(out)))
 			if isKnownShell(candidate) {

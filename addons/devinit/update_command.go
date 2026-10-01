@@ -16,6 +16,7 @@ import (
 	"github.com/Quantum-Serendipity/qsdev/internal/cmdutil"
 	qsdevconfig "github.com/Quantum-Serendipity/qsdev/internal/config"
 	"github.com/Quantum-Serendipity/qsdev/internal/extlog/capture"
+	"github.com/Quantum-Serendipity/qsdev/internal/procexec"
 	"github.com/Quantum-Serendipity/qsdev/internal/selfupdate"
 	"github.com/Quantum-Serendipity/qsdev/internal/version"
 	"github.com/Quantum-Serendipity/qsdev/pkg/branding"
@@ -132,7 +133,7 @@ Use stage-specific flags to run only one stage.`,
 	cmd.Flags().BoolVar(&opts.Changelog, "changelog", false, "Show release notes (use with --check)")
 	cmd.Flags().BoolVar(&opts.NoStrict, "no-strict", false, "Allow installing a release that has no signature bundle (escape hatch for dev/self-built releases)")
 	cmd.Flags().BoolVar(&opts.SkipContainer, "skip-container", false, "Skip generating Gateway container config for hookless frameworks")
-	return cmd
+	return cmdutil.MarkReadOnly(cmd, "dry-run")
 }
 
 func runCheckOnly(cmd *cobra.Command, opts FullUpdateOptions) error {
@@ -416,7 +417,7 @@ func runConfigStageInBinary(cmd *cobra.Command, exePath string, opts FullUpdateO
 	if ctx == nil {
 		ctx = context.Background()
 	}
-	child := exec.CommandContext(ctx, exePath, configStageArgs(opts)...)
+	child := procexec.CommandContext(ctx, exePath, configStageArgs(opts)...)
 	child.Stdin = cmd.InOrStdin()
 	child.Stdout = cmd.OutOrStdout()
 	child.Stderr = cmd.ErrOrStderr()
@@ -446,8 +447,19 @@ func selfUpdateConfig(opts FullUpdateOptions) selfupdate.Config {
 	return cfg
 }
 
+// The binary stage's release API. Tests replace them to run the stage as a
+// release build against a stub release.
+var (
+	binaryVersion  = func() string { return version.Info().Version }
+	checkForUpdate = selfupdate.CheckForUpdate
+	doSelfUpdate   = selfupdate.DoUpdate
+)
+
+// runSelfUpdateStage checks for and installs a newer binary. Under --dry-run
+// it still queries the release metadata endpoint, which is what the preview
+// reports, but downloads and installs nothing.
 func runSelfUpdateStage(cmd *cobra.Command, opts FullUpdateOptions) StageResult {
-	currentVersion := strings.TrimPrefix(version.Info().Version, "v")
+	currentVersion := strings.TrimPrefix(binaryVersion(), "v")
 
 	if currentVersion == "" || currentVersion == "dev" || currentVersion == "(devel)" {
 		return StageResult{
@@ -466,7 +478,7 @@ func runSelfUpdateStage(cmd *cobra.Command, opts FullUpdateOptions) StageResult 
 	if opts.Force {
 		release, err = selfupdate.ResolveForcedUpdate(ctx, cfg, currentVersion)
 	} else {
-		release, err = selfupdate.CheckForUpdate(ctx, cfg, currentVersion)
+		release, err = checkForUpdate(ctx, cfg, currentVersion)
 	}
 	if errors.Is(err, selfupdate.ErrDowngrade) {
 		// --force also forces config regeneration; refusing to downgrade the
@@ -503,7 +515,7 @@ func runSelfUpdateStage(cmd *cobra.Command, opts FullUpdateOptions) StageResult 
 	}
 
 	fmt.Fprintf(cmd.OutOrStdout(), "  Updating v%s → v%s...\n", currentVersion, release.Version)
-	if err := selfupdate.DoUpdate(ctx, cfg, release); err != nil {
+	if err := doSelfUpdate(ctx, cfg, release); err != nil {
 		return StageResult{
 			Name:    stageSelfUpdate,
 			Status:  StageFailed,
@@ -595,7 +607,7 @@ func runDevenvInputStage(cmd *cobra.Command, opts FullUpdateOptions) StageResult
 		}
 	}
 
-	devenvCmd := exec.Command("devenv", "update")
+	devenvCmd := procexec.Command("devenv", "update")
 	devenvCmd.Dir = projectRoot
 	devenvCmd.Stdout = cmd.OutOrStdout()
 	devenvCmd.Stderr = cmd.ErrOrStderr()

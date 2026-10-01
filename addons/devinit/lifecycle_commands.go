@@ -5,6 +5,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/Quantum-Serendipity/qsdev/internal/cmdutil"
 	"github.com/Quantum-Serendipity/qsdev/pkg/branding"
 )
 
@@ -79,7 +80,7 @@ devex, infrastructure).`,
 
 	cmd.Flags().StringVar(&opts.Category, "category", "", "Filter by category (security, ai-agent, devex, infrastructure)")
 
-	return cmd
+	return cmdutil.MarkReadOnly(cmd, "")
 }
 
 type enableOptions struct {

@@ -22,7 +22,7 @@ import (
 // .mcp.json, which is repository content, and expanded ${VAR} references into
 // the URL and headers it sent. It must validate the file statically: no
 // process starts, the listener sees no request, and the result points at
-// `qsdev mcp status` for liveness.
+// `qsdev mcp status --probe` for liveness.
 func TestDevenvDoctor_HostileMCPJSON_ExecutesNothing(t *testing.T) {
 	t.Setenv("U21_T", "s3cr3t")
 
@@ -65,7 +65,7 @@ func TestDevenvDoctor_HostileMCPJSON_ExecutesNothing(t *testing.T) {
 		t.Errorf("the doctor sent %d request(s) to a URL from .mcp.json", n)
 	}
 	got := checks[0].Detail + " " + checks[0].Remediation
-	for _, want := range []string{"configured", "qsdev mcp status"} {
+	for _, want := range []string{"configured", "qsdev mcp status --probe"} {
 		if !strings.Contains(got, want) {
 			t.Errorf("mcp check = %+v, want it to mention %q", checks[0], want)
 		}

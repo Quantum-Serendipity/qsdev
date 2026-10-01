@@ -209,7 +209,7 @@ MCP servers are configured by default or activated based on project detection:
 
 These are included automatically during `qsdev init`. No additional flags are needed.
 
-Use `qsdev mcp grade` to check compliance levels and `qsdev mcp health` to verify connectivity:
+Use `qsdev mcp grade` to check compliance levels and `qsdev mcp health` to check the configuration (add `--probe` to start the trusted servers and verify connectivity):
 
 ```bash
 qsdev mcp grade                # Grade the servers configured in .mcp.json
@@ -217,7 +217,8 @@ qsdev mcp grade --all          # Also grade registry servers not configured
 qsdev mcp grade context7       # Grade a specific server
 qsdev mcp install <name>       # Install a server's pinned release; .mcp.json then runs the binary
 qsdev mcp update --all         # After cloning: install the pinned releases the project state records
-qsdev mcp health               # Health check all configured servers
+qsdev mcp health               # Check the configured servers statically; starts nothing
+qsdev mcp health --probe       # Also start or dial the trusted servers to check liveness
 ```
 
 `qsdev devenv doctor` also lists the configured servers under **MCP Servers**. It checks each `.mcp.json` entry without starting the server: the command is on `PATH`, a remote URL uses `https://`, and the environment variables the server needs are set. See [Layer 13](security-architecture.md#layer-13-package-and-mcp-risk-scoring).
@@ -426,7 +427,7 @@ This ensures consistent security policies, tooling versions, and Claude Code per
 | `qsdev claude add-skill <name>` | Add a Claude Code skill |
 | `qsdev claude add-hook <name>` | Enable a hook preset |
 | `qsdev claude list-skills` | List available skills |
-| `qsdev mcp status` | MCP server health and connectivity |
+| `qsdev mcp status` | MCP server configuration; `--probe` adds health and connectivity |
 | `qsdev mcp grade` | MCP server compliance grading |
 | `qsdev mcp install <name>` | Install an MCP server |
 | `qsdev docs download` | Download local documentation sets |

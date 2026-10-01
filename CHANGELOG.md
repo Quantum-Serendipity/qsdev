@@ -26,6 +26,22 @@ All notable changes to qsdev are recorded in this file. The format is based on
   status --json` already uses, replacing the tool's former `not_probed`.
 - MCP health probes no longer follow HTTP redirects; an endpoint that answers
   with one is reported as failing, naming the refused target.
+- `qsdev mcp status` and `qsdev mcp health` no longer start or dial any server
+  by default. They check each `.mcp.json` entry statically, as `qsdev devenv
+  doctor` does, and report whether a probe would start or dial it, or why not.
+  `--json` output keeps the `servers` array, adds `"probed": false` and gives
+  each server `status` `ok`, `degraded` or `misconfigured` with
+  `probe_eligible` and `probe_skip_reason`. Pass `--probe` for the previous
+  live check, whose JSON now adds `"probed": true`. `--probe-untrusted` now
+  implies `--probe`. Without `--probe`, `mcp health` exits non-zero only when a
+  server is misconfigured; a CI job that gated on liveness must add `--probe`.
+- `qsdev outdated` no longer runs any ecosystem command by default. Those
+  commands query package registries, and some (`mvn`, `gradle`, `bundle`,
+  `mix`) download plugins or evaluate the project's build files. Without the
+  new `--online` flag it prints the command each ecosystem would run and exits
+  non-zero with an error naming `--online`, so a CI step cannot pass while
+  checking nothing. `qsdev outdated --online` behaves as `qsdev outdated` did.
+  A CI job that runs `qsdev outdated` must add `--online`.
 
 ### Security
 
@@ -84,3 +100,7 @@ All notable changes to qsdev are recorded in this file. The format is based on
   or temporary directory) can no longer capture root resolution, session logs
   or configuration for a git repository created beneath it (U01-01, XS-N5).
   Directories that are not inside a git repository are not yet covered.
+- A diagnostic no longer starts processes or goes to the network unasked
+  (XD-01): default `qsdev mcp status` and `qsdev mcp health` used to start the
+  trusted stdio servers and dial trusted remote endpoints, and the generated
+  lookup-docs skill runs `qsdev mcp status --json` every time it loads.

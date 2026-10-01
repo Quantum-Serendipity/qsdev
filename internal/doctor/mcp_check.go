@@ -50,10 +50,21 @@ func mcpFindings(projectRoot string, reg *mcpregistry.McpServerRegistry, catalog
 	if err != nil {
 		return nil, err // already names .mcp.json and the parse failure
 	}
-	if len(servers) == 0 {
-		return nil, nil
-	}
+	return mcpServerFindings(servers, catalogErr), nil
+}
 
+// MCPServerFindings is MCPFindings for servers already loaded from .mcp.json
+// (mcpregistry.ConfiguredServers with reg), for a caller that also needs the
+// servers themselves: it reads nothing, so its rows are servers' rows, one
+// per server in order. It returns nil when servers is empty.
+func MCPServerFindings(servers []mcphealth.ServerConfig, reg *mcpregistry.McpServerRegistry) *MCPSection {
+	return mcpServerFindings(servers, reg.CatalogErr())
+}
+
+func mcpServerFindings(servers []mcphealth.ServerConfig, catalogErr error) *MCPSection {
+	if len(servers) == 0 {
+		return nil
+	}
 	var warnings []string
 	if catalogErr != nil {
 		warnings = append(warnings, fmt.Sprintf("required environment of catalog-defined servers not checked: %v", catalogErr))
@@ -62,7 +73,7 @@ func mcpFindings(projectRoot string, reg *mcpregistry.McpServerRegistry, catalog
 	for _, s := range servers {
 		byName[s.Name] = s
 	}
-	return NewMCPSection(servers, mcphealth.ValidateConfig(byName), warnings), nil
+	return NewMCPSection(servers, mcphealth.ValidateConfig(byName), warnings)
 }
 
 // NewMCPSection builds the doctor's MCP section from the configured servers

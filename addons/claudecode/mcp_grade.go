@@ -107,7 +107,7 @@ when named explicitly, and are marked as not configured.`,
 	cmd.Flags().BoolVar(&jsonOutput, "json", false, "Output in JSON format")
 	cmd.Flags().BoolVar(&all, "all", false, "Also grade built-in registry servers the project does not configure")
 
-	return cmd
+	return cmdutil.MarkReadOnly(cmd, "")
 }
 
 // selectGradeTargets returns the servers to grade, sorted by name. Every

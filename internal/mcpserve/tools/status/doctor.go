@@ -249,8 +249,8 @@ func (d *doctorChecker) checkNix(_ context.Context) checkResult {
 }
 
 // mcpLivenessHint ends every MCP check result: the check is static, so
-// whether a server actually starts is left to `qsdev mcp status`.
-const mcpLivenessHint = "liveness: run `qsdev mcp status` (starts trusted definitions only)"
+// whether a server actually starts is left to `qsdev mcp status --probe`.
+const mcpLivenessHint = "liveness: run `qsdev mcp status --probe` (starts trusted definitions only)"
 
 // checkMCP validates the project's .mcp.json statically (see
 // doctor.MCPFindings). It starts no server and dials no URL: .mcp.json is

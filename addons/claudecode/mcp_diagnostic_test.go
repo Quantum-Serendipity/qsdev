@@ -6,6 +6,8 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"maps"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -14,13 +16,17 @@ import (
 	"slices"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 
 	"github.com/spf13/cobra"
 
 	"github.com/Quantum-Serendipity/qsdev/internal/catalog"
+	"github.com/Quantum-Serendipity/qsdev/internal/doctor"
 	"github.com/Quantum-Serendipity/qsdev/internal/mcphealth"
 	"github.com/Quantum-Serendipity/qsdev/internal/mcpregistry"
+	"github.com/Quantum-Serendipity/qsdev/internal/procexec"
+	"github.com/Quantum-Serendipity/qsdev/pkg/branding"
 	"github.com/Quantum-Serendipity/qsdev/pkg/types"
 )
 
@@ -95,33 +101,45 @@ func runMCPSubcommand(t *testing.T, dir string, cmd *cobra.Command, args ...stri
 	return out.String(), err
 }
 
+// untrustedCommandFixture writes a project whose .mcp.json runs a
+// repository-supplied shell command that creates the returned marker file.
+func untrustedCommandFixture(t *testing.T) (dir, marker string) {
+	t.Helper()
+	marker = filepath.Join(t.TempDir(), "pwned")
+	return writeMCPJSON(t, `{"mcpServers":{"x":{"command":"sh","args":["-c","touch `+marker+`"]}}}`), marker
+}
+
 // TestMCPProbe_UntrustedCommandNotRun guards F095: status and health must not
-// execute a repository-supplied command unless --probe-untrusted is given.
+// execute a repository-supplied command, by default or under --probe, unless
+// --probe-untrusted is given.
 func TestMCPProbe_UntrustedCommandNotRun(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("uses a POSIX shell as the untrusted command")
 	}
-	dir := t.TempDir()
-	marker := filepath.Join(dir, "pwned")
-	mcp := `{"mcpServers":{"x":{"command":"sh","args":["-c","touch ` + marker + `"]}}}`
-	if err := os.WriteFile(filepath.Join(dir, ".mcp.json"), []byte(mcp), 0o644); err != nil {
-		t.Fatal(err)
-	}
+	dir, marker := untrustedCommandFixture(t)
 
 	for _, newCmd := range []func() *cobra.Command{mcpStatusCmd, mcpHealthCmd} {
-		out, _ := runMCPSubcommand(t, dir, newCmd())
-		if _, err := os.Stat(marker); err == nil {
-			t.Fatalf("untrusted command was executed:\n%s", out)
-		}
-		if !strings.Contains(out, mcphealth.StatusNotProbed) || !strings.Contains(out, "--probe-untrusted") {
-			t.Errorf("expected a not-probed entry naming --probe-untrusted, got:\n%s", out)
+		for _, args := range [][]string{nil, {"--probe"}} {
+			out, _ := runMCPSubcommand(t, dir, newCmd(), args...)
+			if fileExists(marker) {
+				t.Fatalf("%s %v executed the untrusted command:\n%s", newCmd().Use, args, out)
+			}
+			if !strings.Contains(out, mcphealth.StatusNotProbed) || !strings.Contains(out, "--probe-untrusted") {
+				t.Errorf("%s %v: expected a not-probed entry naming --probe-untrusted, got:\n%s", newCmd().Use, args, out)
+			}
 		}
 	}
 
 	_, _ = runMCPSubcommand(t, dir, mcpStatusCmd(), "--probe-untrusted")
-	if _, err := os.Stat(marker); err != nil {
-		t.Errorf("--probe-untrusted should run the command: %v", err)
+	if !fileExists(marker) {
+		t.Error("--probe-untrusted should run the command")
 	}
+}
+
+// fileExists reports whether path exists.
+func fileExists(path string) bool {
+	_, err := os.Stat(path)
+	return err == nil
 }
 
 // requestRecorder is an HTTP endpoint that records the Authorization header
@@ -165,8 +183,8 @@ func writeMCPJSON(t *testing.T, content string) string {
 
 // assertUntrustedEndpointLiteral runs status and health against an untrusted
 // remote entry using secretVar and checks that the endpoint is not contacted
-// by default, and that under --probe-untrusted it receives the reference
-// unexpanded.
+// by default or under --probe, and that under --probe-untrusted it receives
+// the reference unexpanded.
 func assertUntrustedEndpointLiteral(t *testing.T, secretVar string) {
 	t.Helper()
 	rec, base := newRequestRecorder(t)
@@ -174,13 +192,15 @@ func assertUntrustedEndpointLiteral(t *testing.T, secretVar string) {
 	dir := writeMCPJSON(t, `{"mcpServers":{"h":{"type":"http","url":"`+base+`/mcp?leak=${`+secretVar+`}","headers":{"Authorization":"Bearer ${`+secretVar+`}"}}}}`)
 
 	for name, newCmd := range map[string]func() *cobra.Command{"status": mcpStatusCmd, "health": mcpHealthCmd} {
-		out, _ := runMCPSubcommand(t, dir, newCmd())
-		if auth, _ := rec.snapshot(); len(auth) != 0 {
-			t.Fatalf("%s dialed an untrusted endpoint (%d requests):\n%s", name, len(auth), out)
-		}
-		for _, want := range []string{mcphealth.StatusNotProbed, "untrusted remote endpoint", "--probe-untrusted"} {
-			if !strings.Contains(out, want) {
-				t.Errorf("%s output missing %q:\n%s", name, want, out)
+		for _, args := range [][]string{nil, {"--probe"}} {
+			out, _ := runMCPSubcommand(t, dir, newCmd(), args...)
+			if auth, _ := rec.snapshot(); len(auth) != 0 {
+				t.Fatalf("%s %v dialed an untrusted endpoint (%d requests):\n%s", name, args, len(auth), out)
+			}
+			for _, want := range []string{mcphealth.StatusNotProbed, "untrusted remote endpoint", "--probe-untrusted"} {
+				if !strings.Contains(out, want) {
+					t.Errorf("%s %v output missing %q:\n%s", name, args, want, out)
+				}
 			}
 		}
 	}
@@ -219,7 +239,7 @@ func TestMCPStatus_UntrustedURLNoSecret(t *testing.T) {
 // does not suggest an override that cannot help.
 func TestMCPStatus_ProbeUntrustedPlainHTTPRefused(t *testing.T) {
 	dir := writeMCPJSON(t, `{"mcpServers":{"h":{"type":"http","url":"http://example.invalid/mcp"}}}`)
-	for _, args := range [][]string{nil, {"--probe-untrusted"}} {
+	for _, args := range [][]string{nil, {"--probe"}, {"--probe-untrusted"}} {
 		out, err := runMCPSubcommand(t, dir, mcpStatusCmd(), args...)
 		if err != nil {
 			t.Fatalf("status %v: %v", args, err)
@@ -237,14 +257,11 @@ func TestMCPStatus_ProbeUntrustedPlainHTTPRefused(t *testing.T) {
 	}
 }
 
-// TestMCPStatus_TrustedLauncherNotStarted is the U22-08 regression: the
-// catalog's own context7 entry runs through npx, which would download and run
-// the package, so no probe starts it, with or without --probe-untrusted, and
-// the reason points at `qsdev mcp install`.
-func TestMCPStatus_TrustedLauncherNotStarted(t *testing.T) {
-	if runtime.GOOS == "windows" {
-		t.Skip("the stub npx is a POSIX shell script")
-	}
+// context7LauncherFixture writes a project configuring the catalog's own
+// context7 entry, which runs through npx, and puts a stub npx on PATH that
+// creates the returned marker file when run.
+func context7LauncherFixture(t *testing.T) (dir, marker string) {
+	t.Helper()
 	cat, err := catalog.Load()
 	if err != nil {
 		t.Fatal(err)
@@ -259,7 +276,7 @@ func TestMCPStatus_TrustedLauncherNotStarted(t *testing.T) {
 	}
 
 	binDir := t.TempDir()
-	marker := filepath.Join(t.TempDir(), "npx-ran")
+	marker = filepath.Join(t.TempDir(), "npx-ran")
 	stub := "#!/bin/sh\ntouch '" + marker + "'\n"
 	if err := os.WriteFile(filepath.Join(binDir, "npx"), []byte(stub), 0o755); err != nil {
 		t.Fatal(err)
@@ -270,7 +287,18 @@ func TestMCPStatus_TrustedLauncherNotStarted(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	dir := writeMCPJSON(t, string(data))
+	return writeMCPJSON(t, string(data)), marker
+}
+
+// TestMCPStatus_TrustedLauncherNotStarted is the U22-08 regression: the
+// catalog's own context7 entry runs through npx, which would download and run
+// the package, so no probe starts it, with or without --probe or
+// --probe-untrusted, and the reason points at `qsdev mcp install`.
+func TestMCPStatus_TrustedLauncherNotStarted(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("the stub npx is a POSIX shell script")
+	}
+	dir, marker := context7LauncherFixture(t)
 
 	runs := []struct {
 		newCmd func() *cobra.Command
@@ -278,11 +306,13 @@ func TestMCPStatus_TrustedLauncherNotStarted(t *testing.T) {
 	}{
 		{mcpStatusCmd, nil},
 		{mcpHealthCmd, nil},
+		{mcpStatusCmd, []string{"--probe"}},
+		{mcpHealthCmd, []string{"--probe"}},
 		{mcpStatusCmd, []string{"--probe-untrusted"}},
 	}
 	for _, run := range runs {
 		out, _ := runMCPSubcommand(t, dir, run.newCmd(), run.args...)
-		if _, err := os.Stat(marker); err == nil {
+		if fileExists(marker) {
 			t.Fatalf("%s %v started the package launcher:\n%s", run.newCmd().Use, run.args, out)
 		}
 		for _, want := range []string{mcphealth.StatusNotProbed, "package launcher npx", "qsdev mcp install context7"} {
@@ -293,6 +323,340 @@ func TestMCPStatus_TrustedLauncherNotStarted(t *testing.T) {
 		if strings.Contains(out, "--probe-untrusted") {
 			t.Errorf("%s %v suggests --probe-untrusted, which cannot lift the launcher rule:\n%s", run.newCmd().Use, run.args, out)
 		}
+	}
+}
+
+// trustedFixture is a project whose .mcp.json configures two servers that an
+// organization catalog overlay vouches for: a stdio server whose command
+// creates marker when started, and an https endpoint counting the connections
+// it accepts.
+type trustedFixture struct {
+	dir    string
+	marker string
+	conns  *atomic.Int64
+}
+
+// newTrustedFixture writes the trusted fixture, adding extra entries (by name)
+// to its .mcp.json.
+func newTrustedFixture(t *testing.T, extra map[string]any) *trustedFixture {
+	t.Helper()
+	f := &trustedFixture{marker: filepath.Join(t.TempDir(), "started"), conns: &atomic.Int64{}}
+
+	srv := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		http.Error(w, "stub", http.StatusInternalServerError)
+	}))
+	srv.Config.ConnState = func(_ net.Conn, state http.ConnState) {
+		if state == http.StateNew {
+			f.conns.Add(1)
+		}
+	}
+	srv.StartTLS()
+	t.Cleanup(srv.Close)
+	url := srv.URL + "/mcp"
+
+	script := filepath.Join(t.TempDir(), "marker-mcp")
+	if err := os.WriteFile(script, []byte("#!/bin/sh\ntouch '"+f.marker+"'\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	org := filepath.Join(t.TempDir(), "org.yaml")
+	orgYAML := "mcp_servers:\n" +
+		"  markersrv:\n    command: \"" + script + "\"\n    transport: stdio\n" +
+		"  httpsrv:\n    url: \"" + url + "\"\n    transport: http\n"
+	if err := os.WriteFile(org, []byte(orgYAML), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv(branding.Get().EnvPrefix+"ORG_CONFIG", org)
+
+	entries := map[string]any{
+		"markersrv": map[string]any{"command": script},
+		"httpsrv":   map[string]any{"type": "http", "url": url},
+	}
+	maps.Copy(entries, extra)
+	data, err := json.Marshal(map[string]any{"mcpServers": entries})
+	if err != nil {
+		t.Fatal(err)
+	}
+	f.dir = writeMCPJSON(t, string(data))
+	return f
+}
+
+// probe reports which trusted servers were started or dialed.
+func (f *trustedFixture) probe() probeOutcome {
+	started, dialed := fileExists(f.marker), f.conns.Load() > 0
+	return probeOutcome{any: started || dialed, all: started && dialed}
+}
+
+// probeOutcome says whether any, and whether all, of a fixture's servers were
+// started or dialed.
+type probeOutcome struct{ any, all bool }
+
+// staticJSONReport is the part of the default `--json` output the tests read.
+type staticJSONReport struct {
+	Probed  *bool `json:"probed"`
+	Servers []struct {
+		Name            string `json:"name"`
+		Status          string `json:"status"`
+		ProbeEligible   bool   `json:"probe_eligible"`
+		ProbeSkipReason string `json:"probe_skip_reason"`
+	} `json:"servers"`
+}
+
+// TestMcpStatusNoExecByDefault is the XD-WS9 guard: without --probe, `mcp
+// status` and `mcp health` start no server and dial no endpoint, even trusted
+// ones, and run no exec at all outside the declared local probes.
+func TestMcpStatusNoExecByDefault(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("the trusted stdio server is a POSIX shell script")
+	}
+	f := newTrustedFixture(t, nil)
+	t.Setenv(procexec.ForbidExecEnv, "1")
+
+	for _, newCmd := range []func() *cobra.Command{mcpStatusCmd, mcpHealthCmd} {
+		for _, args := range [][]string{nil, {"--json"}} {
+			out, err := runMCPSubcommand(t, f.dir, newCmd(), args...)
+			if err != nil {
+				t.Errorf("%s %v: %v\n%s", newCmd().Use, args, err, out)
+			}
+			if fileExists(f.marker) {
+				t.Fatalf("%s %v started the trusted stdio server:\n%s", newCmd().Use, args, out)
+			}
+			if n := f.conns.Load(); n != 0 {
+				t.Fatalf("%s %v dialed the trusted endpoint (%d connections):\n%s", newCmd().Use, args, n, out)
+			}
+			if len(args) == 0 {
+				continue
+			}
+			var report staticJSONReport
+			if err := json.Unmarshal([]byte(out), &report); err != nil {
+				t.Fatalf("%s --json is not JSON: %v\n%s", newCmd().Use, err, out)
+			}
+			if report.Probed == nil || *report.Probed || len(report.Servers) != 2 {
+				t.Errorf("%s --json = %s, want probed:false and two servers", newCmd().Use, out)
+			}
+		}
+	}
+}
+
+// TestMCPStatus_StaticJSONShape: the default JSON keeps the top-level servers
+// array the lookup-docs skill reads, marks the report probed:false and gives
+// each server its static status and whether --probe would probe it, or why not.
+func TestMCPStatus_StaticJSONShape(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("the stub npx is a POSIX shell script")
+	}
+	launcherDir, _ := context7LauncherFixture(t)
+	var launcher McpJSON
+	data, err := os.ReadFile(filepath.Join(launcherDir, ".mcp.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := json.Unmarshal(data, &launcher); err != nil {
+		t.Fatal(err)
+	}
+	f := newTrustedFixture(t, map[string]any{
+		"context7": launcher.MCPServers["context7"],
+		"x":        map[string]any{"command": "definitely-not-a-trusted-cmd"},
+	})
+
+	out, err := runMCPSubcommand(t, f.dir, mcpStatusCmd(), "--json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var report staticJSONReport
+	if err := json.Unmarshal([]byte(out), &report); err != nil {
+		t.Fatalf("not JSON: %v\n%s", err, out)
+	}
+	if report.Probed == nil || *report.Probed {
+		t.Errorf("probed = %v, want false", report.Probed)
+	}
+
+	tests := []struct {
+		name       string
+		status     string
+		eligible   bool
+		reasonHas  []string
+		reasonLack string
+	}{
+		{name: "context7", status: doctor.MCPStatusOK, reasonHas: []string{"package launcher npx", "qsdev mcp install context7"}, reasonLack: "--probe-untrusted"},
+		{name: "httpsrv", status: doctor.MCPStatusOK, eligible: true},
+		{name: "markersrv", status: doctor.MCPStatusOK, eligible: true},
+		{name: "x", status: doctor.MCPStatusMisconfigured, reasonHas: []string{"no trusted definition", "--probe-untrusted"}},
+	}
+	if len(report.Servers) != len(tests) {
+		t.Fatalf("servers = %d, want %d:\n%s", len(report.Servers), len(tests), out)
+	}
+	for i, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := report.Servers[i]
+			if got.Name != tt.name || got.Status != tt.status || got.ProbeEligible != tt.eligible {
+				t.Errorf("server = %+v, want name %s status %s eligible %v", got, tt.name, tt.status, tt.eligible)
+			}
+			for _, want := range tt.reasonHas {
+				if !strings.Contains(got.ProbeSkipReason, want) {
+					t.Errorf("skip reason %q missing %q", got.ProbeSkipReason, want)
+				}
+			}
+			if tt.reasonLack != "" && strings.Contains(got.ProbeSkipReason, tt.reasonLack) {
+				t.Errorf("skip reason %q contains %q", got.ProbeSkipReason, tt.reasonLack)
+			}
+			if tt.eligible && got.ProbeSkipReason != "" {
+				t.Errorf("eligible server has skip reason %q", got.ProbeSkipReason)
+			}
+		})
+	}
+}
+
+// TestBuildStaticReport_RowsFollowTheirServer: each row's finding and probe
+// plan belong to the same server, whatever the order of .mcp.json, since both
+// evaluate the one slice that was read.
+func TestBuildStaticReport_RowsFollowTheirServer(t *testing.T) {
+	t.Parallel()
+	exe, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
+	}
+	servers := []mcphealth.ServerConfig{
+		{Name: "zeta", Command: exe},
+		{Name: "alpha", Command: exe},
+		{Name: "mid", Command: "definitely-not-on-path-xyz"},
+	}
+	trusted := map[string][]mcpregistry.LaunchSpec{"alpha": {{Command: exe}}}
+
+	report := buildStaticReport(servers, mcpregistry.NewRegistry(), trusted)
+	tests := []struct {
+		name     string
+		status   string
+		eligible bool
+	}{
+		{"zeta", doctor.MCPStatusOK, false},
+		{"alpha", doctor.MCPStatusOK, true},
+		{"mid", doctor.MCPStatusMisconfigured, false},
+	}
+	if len(report.Servers) != len(tests) {
+		t.Fatalf("rows = %d, want %d", len(report.Servers), len(tests))
+	}
+	for i, tt := range tests {
+		got := report.Servers[i]
+		if got.Name != tt.name || got.Status != tt.status || got.ProbeEligible != tt.eligible {
+			t.Errorf("row %d = %+v, want %s status %s eligible %v", i, got, tt.name, tt.status, tt.eligible)
+		}
+	}
+	if report.MisconfiguredCount != 1 || report.TotalCount != 3 {
+		t.Errorf("counts = %d/%d, want 1/3", report.MisconfiguredCount, report.TotalCount)
+	}
+}
+
+// TestMCPHealthStaticByDefault: without --probe, `mcp health` stays a CI gate
+// on configuration: a statically misconfigured server fails it, a valid
+// configuration passes, and neither starts anything.
+func TestMCPHealthStaticByDefault(t *testing.T) {
+	self, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
+	}
+	tests := []struct {
+		name    string
+		command string
+		wantErr bool
+	}{
+		{name: "misconfigured fails", command: "definitely-not-on-path-xd-ws9", wantErr: true},
+		{name: "valid passes", command: self},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			data, err := json.Marshal(map[string]any{"mcpServers": map[string]any{"s": map[string]any{"command": tt.command}}})
+			if err != nil {
+				t.Fatal(err)
+			}
+			dir := writeMCPJSON(t, string(data))
+			t.Setenv(procexec.ForbidExecEnv, "1")
+			for _, args := range [][]string{nil, {"--json"}} {
+				out, err := runMCPSubcommand(t, dir, mcpHealthCmd(), args...)
+				if got := errors.Is(err, errMCPUnhealthy); got != tt.wantErr {
+					t.Errorf("health %v: err = %v, want unhealthy %v\n%s", args, err, tt.wantErr, out)
+				}
+				if len(args) > 0 && !json.Valid([]byte(out)) {
+					t.Errorf("health --json output is not JSON: %q", out)
+				}
+			}
+		})
+	}
+}
+
+// TestMCPStatus_ProbeFlag: --probe starts or dials the trusted servers only,
+// --probe-untrusted alone implies --probe and also runs untrusted entries, and
+// no flag starts a package launcher.
+func TestMCPStatus_ProbeFlag(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("the fixtures' servers are POSIX shell scripts")
+	}
+	trusted := func(t *testing.T) (string, func() probeOutcome) {
+		t.Helper()
+		f := newTrustedFixture(t, nil)
+		return f.dir, f.probe
+	}
+	markerFixture := func(fixture func(*testing.T) (string, string)) func(*testing.T) (string, func() probeOutcome) {
+		return func(t *testing.T) (string, func() probeOutcome) {
+			t.Helper()
+			dir, marker := fixture(t)
+			return dir, func() probeOutcome {
+				started := fileExists(marker)
+				return probeOutcome{any: started, all: started}
+			}
+		}
+	}
+	untrusted, launcher := markerFixture(untrustedCommandFixture), markerFixture(context7LauncherFixture)
+
+	tests := []struct {
+		name       string
+		fixture    func(*testing.T) (dir string, probe func() probeOutcome)
+		args       []string
+		wantProbed bool
+	}{
+		{name: "trusted without flag", fixture: trusted},
+		{name: "trusted with --probe", fixture: trusted, args: []string{"--probe"}, wantProbed: true},
+		{name: "trusted with --probe-untrusted", fixture: trusted, args: []string{"--probe-untrusted"}, wantProbed: true},
+		{name: "untrusted with --probe", fixture: untrusted, args: []string{"--probe"}},
+		{name: "untrusted with --probe-untrusted alone", fixture: untrusted, args: []string{"--probe-untrusted"}, wantProbed: true},
+		{name: "launcher with --probe", fixture: launcher, args: []string{"--probe"}},
+		{name: "launcher with --probe-untrusted", fixture: launcher, args: []string{"--probe", "--probe-untrusted"}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			dir, probe := tt.fixture(t)
+			out, _ := runMCPSubcommand(t, dir, mcpStatusCmd(), tt.args...)
+			// A wanted probe must reach every server in the fixture (the
+			// trusted stdio server and the https endpoint); an unwanted one
+			// must reach none.
+			got := probe()
+			if tt.wantProbed && !got.all {
+				t.Errorf("status %v probed only some servers (%+v), want all:\n%s", tt.args, got, out)
+			}
+			if !tt.wantProbed && got.any {
+				t.Errorf("status %v probed a server, want none:\n%s", tt.args, out)
+			}
+		})
+	}
+}
+
+// TestMCPStatus_ProbeJSONMarksProbed: the --probe JSON report keeps the
+// servers array and says it probed.
+func TestMCPStatus_ProbeJSONMarksProbed(t *testing.T) {
+	dir := writeMCPJSON(t, `{"mcpServers":{"x":{"command":"definitely-not-a-trusted-cmd"}}}`)
+	out, err := runMCPSubcommand(t, dir, mcpStatusCmd(), "--probe", "--json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var report struct {
+		Probed  bool              `json:"probed"`
+		Servers []json.RawMessage `json:"servers"`
+	}
+	if err := json.Unmarshal([]byte(out), &report); err != nil {
+		t.Fatalf("not JSON: %v\n%s", err, out)
+	}
+	if !report.Probed || len(report.Servers) != 1 {
+		t.Errorf("--probe --json = %s, want probed:true and one server", out)
 	}
 }
 

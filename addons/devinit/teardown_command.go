@@ -54,7 +54,7 @@ Use --archive to create a backup before removal.`,
 	cmd.Flags().BoolVar(&archive, "archive", false, "Create archive of managed files before removal")
 	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "Preview the teardown plan without executing")
 
-	return cmd
+	return cmdutil.MarkReadOnly(cmd, "dry-run")
 }
 
 func runTeardown(cmd *cobra.Command, quick, compliance, force, archive, dryRun bool) error {

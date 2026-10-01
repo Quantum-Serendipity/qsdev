@@ -4,9 +4,10 @@ package sysinfo
 
 import (
 	"os"
-	"os/exec"
 	"regexp"
 	"strings"
+
+	"github.com/Quantum-Serendipity/qsdev/internal/procexec"
 )
 
 // versionRe extracts the version number from the output of "cmd /c ver",
@@ -18,7 +19,7 @@ func detectPlatform(info *OSInfo) {
 	info.Family = "windows"
 	info.Distro = "windows"
 
-	out, err := exec.Command("cmd", "/c", "ver").Output()
+	out, err := procexec.Command("cmd", "/c", "ver").Output()
 	if err == nil {
 		full := strings.TrimSpace(string(out))
 		info.PrettyName = full

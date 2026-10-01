@@ -4,8 +4,21 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/Quantum-Serendipity/qsdev/internal/procexec"
 	"github.com/Quantum-Serendipity/qsdev/pkg/types"
 )
+
+// TestDefaultChecks_VersionFlagsProbeable keeps the catalog inside the
+// version-probe contract: a flag procexec.VersionProbe rejects would make the
+// tool look installed with no version.
+func TestDefaultChecks_VersionFlagsProbeable(t *testing.T) {
+	t.Parallel()
+	for _, tc := range DefaultChecks() {
+		if !procexec.IsVersionFlag(tc.VersionFlag) {
+			t.Errorf("check %s: VersionFlag %q is not accepted by procexec.VersionProbe", tc.Name, tc.VersionFlag)
+		}
+	}
+}
 
 // TestRequiredChecks verifies the required set is the devenv environment's
 // prerequisites, and that language toolchains (provided per project by

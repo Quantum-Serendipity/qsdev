@@ -11,6 +11,8 @@ import (
 	"os/exec"
 	"sync"
 	"time"
+
+	"github.com/Quantum-Serendipity/qsdev/internal/procexec"
 )
 
 // MCPProcess is a stdio MCP server started for a health probe.
@@ -82,7 +84,7 @@ type jsonRPCError struct {
 }
 
 func startServer(command string, args []string, env map[string]string) (*MCPProcess, error) {
-	cmd := exec.Command(command, args...) //nolint:gosec // argv is an explicit array; no shell interpolation
+	cmd := procexec.Command(command, args...) //nolint:gosec // argv is an explicit array; no shell interpolation
 	cmd.Env = buildProcessEnv(env)
 	// Run the server in its own process group so launchers (npx, uvx, sh) and
 	// the real server they spawn can be killed together.

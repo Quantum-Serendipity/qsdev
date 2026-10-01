@@ -4,10 +4,10 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"os/exec"
 	"strings"
 	"time"
 
+	"github.com/Quantum-Serendipity/qsdev/internal/procexec"
 	"github.com/Quantum-Serendipity/qsdev/pkg/ecosystem"
 )
 
@@ -83,7 +83,10 @@ func (m *Module) ToolchainWarnings(ctx context.Context, projectRoot string, conf
 func pathGHCVersion(ctx context.Context) (string, error) {
 	ctx, cancel := context.WithTimeout(ctx, ghcProbeTimeout)
 	defer cancel()
-	out, err := exec.CommandContext(ctx, "ghc", "--numeric-version").Output()
+	cmd := procexec.CommandContext(ctx, "ghc", "--numeric-version")
+	// A ghcup or Stack shim run from the project would follow its pins.
+	cmd.Dir = procexec.NeutralDir()
+	out, err := cmd.Output()
 	if err != nil {
 		return "", fmt.Errorf("running ghc --numeric-version: %w", err)
 	}

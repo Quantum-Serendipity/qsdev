@@ -918,8 +918,9 @@ qsdev logs list --json | jq '.[0]'
 
 **A5-27:**
 ```bash
-qsdev outdated
-qsdev outdated --ecosystem javascript
+qsdev outdated                     # plans only: names each command, exits non-zero asking for --online
+qsdev outdated --online
+qsdev outdated --online --ecosystem javascript
 ```
 
 ### Info

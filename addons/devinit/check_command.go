@@ -64,7 +64,7 @@ dependencies.totals can pass (without one they fail as inconclusive).`,
 	cmd.Flags().BoolVar(&scan, "scan", false,
 		"Run a fresh dependency vulnerability scan for custom conformance requirements")
 
-	return cmd
+	return cmdutil.MarkReadOnly(cmd, "")
 }
 
 func runCheck(cmd *cobra.Command, format check.OutputFormat, auditLevel check.AuditLevel, autoFix, scan bool) error {

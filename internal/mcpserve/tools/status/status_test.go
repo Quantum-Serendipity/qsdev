@@ -244,7 +244,7 @@ func TestDevenvDoctorSingleCheck(t *testing.T) {
 // TestSummarizeMCP verifies how the static MCP findings map onto the doctor's
 // check: a broken .mcp.json fails, misconfigured or degraded servers and
 // section warnings (such as an unloadable catalog, F279) warn, and every
-// result points at `qsdev mcp status` for liveness.
+// result points at `qsdev mcp status --probe` for liveness.
 func TestSummarizeMCP(t *testing.T) {
 	t.Parallel()
 
@@ -273,13 +273,13 @@ func TestSummarizeMCP(t *testing.T) {
 		{name: "nothing configured", wantStatus: checkPass, want: []string{"no MCP servers configured"}},
 		{name: "no servers", ms: &doctor.MCPSection{Detected: true}, wantStatus: checkPass, want: []string{"no MCP servers configured"}},
 		{name: "all valid", ms: &doctor.MCPSection{Servers: []doctor.MCPServerInfo{ok, ok}}, wantStatus: checkPass,
-			want: []string{"2 configured; 0 misconfigured, 0 degraded", "liveness: run `qsdev mcp status`"}},
+			want: []string{"2 configured; 0 misconfigured, 0 degraded", "liveness: run `qsdev mcp status --probe`"}},
 		{name: "problems", ms: &doctor.MCPSection{Servers: []doctor.MCPServerInfo{ok, broken, noenv}}, wantStatus: checkWarn,
 			want: []string{
 				"3 configured; 1 misconfigured, 1 degraded",
 				`broken (command "missing-mcp" not found on PATH)`,
 				`noenv (required environment variable "TOKEN" is not set)`,
-				"liveness: run `qsdev mcp status` (starts trusted definitions only)",
+				"liveness: run `qsdev mcp status --probe` (starts trusted definitions only)",
 			},
 			notWant: []string{"good", "second issue"}},
 		{name: "catalog warning", ms: &doctor.MCPSection{Servers: []doctor.MCPServerInfo{ok}, Warnings: []string{"catalog: bad yaml"}},

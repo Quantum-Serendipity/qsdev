@@ -98,3 +98,37 @@ func TestDetect_Output(t *testing.T) {
 		})
 	}
 }
+
+// TestDetect_RunsOutsideProject verifies a version probe does not run in the
+// project: there `go version` under GOTOOLCHAIN=auto would follow go.mod's
+// go line and download and run that toolchain.
+func TestDetect_RunsOutsideProject(t *testing.T) {
+	project := t.TempDir()
+	if err := os.WriteFile(filepath.Join(project, "go.mod"), []byte("module x\n\ngo 1.99.0\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	bin := t.TempDir()
+	cwdFile := filepath.Join(t.TempDir(), "cwd")
+	stub := "#!/bin/sh\npwd -P > '" + cwdFile + "'\necho 'go version go1.0 stub'\n"
+	if err := os.WriteFile(filepath.Join(bin, "go"), []byte(stub), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", bin)
+	t.Chdir(project)
+
+	info := toolcheck.Detect(context.Background(), "go", "version")
+	if !info.Found || info.Version == "" {
+		t.Fatalf("Detect = %+v, want the stub found with a version", info)
+	}
+	got, err := os.ReadFile(cwdFile)
+	if err != nil {
+		t.Fatalf("stub did not record its cwd: %v", err)
+	}
+	projectReal, err := filepath.EvalSymlinks(project)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cwd := strings.TrimSpace(string(got)); cwd == projectReal {
+		t.Errorf("version probe ran in the project %q", cwd)
+	}
+}

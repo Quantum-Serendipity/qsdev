@@ -11,6 +11,8 @@ import (
 	"slices"
 	"strings"
 	"time"
+
+	"github.com/Quantum-Serendipity/qsdev/internal/procexec"
 )
 
 // lookPathFunc is overridable for testing.
@@ -27,8 +29,14 @@ var ErrUnknownEcosystem = errors.New("unknown ecosystem")
 // supported ecosystem that is not among the project's ecosystems.
 var ErrEcosystemNotConfigured = errors.New("ecosystem not configured for this project")
 
+// ErrOnlineRequired is returned by callers when RunOutdated only planned its
+// checks: every outdated command queries a package registry, and some evaluate
+// project build code, so they run only when the user opts in with --online.
+var ErrOnlineRequired = errors.New("outdated checks contact package registries; rerun with --online to run them")
+
 // RunOutdated checks for outdated dependencies across detected ecosystems.
-// Output is streamed to w with ecosystem headers.
+// Output is streamed to w with ecosystem headers. Unless opts.Online is set it
+// runs nothing: each selected command is reported as Planned instead.
 func RunOutdated(ctx context.Context, w io.Writer, projectRoot string, ecosystems []string, opts OutdatedOptions) (*OutdatedResult, error) {
 	// A filter that matches nothing must fail loudly: silently checking
 	// nothing is indistinguishable from "nothing outdated".
@@ -69,6 +77,12 @@ func RunOutdated(ctx context.Context, w io.Writer, projectRoot string, ecosystem
 		}
 
 		fmt.Fprintf(w, "=== %s ===\n", eco)
+		if !opts.Online {
+			check := EcosystemCheck{Name: eco, Command: selectedCmd.String(), Planned: true}
+			result.Ecosystems = append(result.Ecosystems, check)
+			fmt.Fprintf(w, "would run: %s (contacts the package registry and may run project build code)\n\n", check.Command)
+			continue
+		}
 		result.Ecosystems = append(result.Ecosystems, runCommand(ctx, w, projectRoot, eco, selectedCmd))
 		fmt.Fprintln(w)
 	}
@@ -131,14 +145,14 @@ func hasMarker(projectRoot string, markers []string) bool {
 func runCommand(ctx context.Context, w io.Writer, projectRoot, eco string, selected *EcosystemCommand) EcosystemCheck {
 	timeoutCtx, cancel := context.WithTimeout(ctx, commandTimeout)
 	defer cancel()
-	cmd := exec.CommandContext(timeoutCtx, selected.Binary, selected.Args...)
+	cmd := procexec.CommandContext(timeoutCtx, selected.Binary, selected.Args...)
 	cmd.Dir = projectRoot
 	cmd.Stdout = w
 	cmd.Stderr = w
 
 	check := EcosystemCheck{
 		Name:    eco,
-		Command: selected.Binary + " " + strings.Join(selected.Args, " "),
+		Command: selected.String(),
 	}
 
 	err := cmd.Run()

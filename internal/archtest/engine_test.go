@@ -110,6 +110,7 @@ func TestLayerRules(t *testing.T) {
 		{"windows-only file edge", Key{"pkg-public-leaf", "pkg/types -> addons/claudecode"}, true},
 		{"test file exempt", Key{"pkg-public-leaf", "pkg/types -> internal/shelltest"}, false},
 		{"pkg->pkg allowed", Key{"pkg-public-leaf", "pkg/clean -> pkg/types"}, false},
+		{"pkg->procexec allowed", Key{"pkg-public-leaf", "pkg/clean -> internal/procexec"}, false},
 		{"skipped trees contribute nothing", Key{"pkg-public-leaf", "pkg/nested -> internal/catalog"}, false},
 		{"transitive foundation->catalog", Key{"foundation-leaf", "internal/secrets -> internal/catalog"}, true},
 		{"transitive foundation->net/http", Key{"foundation-leaf", "internal/secrets -> net/http"}, true},

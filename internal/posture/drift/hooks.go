@@ -5,11 +5,12 @@ import (
 	"errors"
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strings"
 	"time"
+
+	"github.com/Quantum-Serendipity/qsdev/internal/procexec"
 )
 
 const categoryHookDrift = "Pre-Commit Hook Drift"
@@ -130,7 +131,7 @@ func gitHooksDir(projectDir string) (string, error) {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), gitHooksDirTimeout)
 	defer cancel()
-	cmd := exec.CommandContext(ctx, "git", "-C", absDir,
+	cmd := procexec.CommandContext(ctx, "git", "-C", absDir,
 		"rev-parse", "--path-format=absolute", "--git-path", "hooks")
 	cmd.Env = append(repoScopedEnv(os.Environ()), "GIT_CEILING_DIRECTORIES="+filepath.Dir(absDir))
 	out, err := cmd.Output()

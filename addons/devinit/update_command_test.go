@@ -2,6 +2,7 @@ package devinit
 
 import (
 	"bytes"
+	"context"
 	"errors"
 	"fmt"
 	"os"
@@ -12,6 +13,8 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/Quantum-Serendipity/qsdev/internal/procexec"
+	"github.com/Quantum-Serendipity/qsdev/internal/selfupdate"
 	"github.com/Quantum-Serendipity/qsdev/pkg/branding"
 	"github.com/Quantum-Serendipity/qsdev/pkg/types"
 )
@@ -553,5 +556,97 @@ func TestPrintStageSummary_PropagatesStageExitCode(t *testing.T) {
 				t.Errorf("err %v does not carry exit code %d", err, tc.wantCode)
 			}
 		})
+	}
+}
+
+// TestUpdateDryRunNoLockChange is the U14 regression test: `update --dry-run`
+// in an initialized project previews the devenv-input stage without running
+// `devenv update`, so devenv.lock stays byte-identical and devenv is never
+// started, even though it is on PATH.
+func TestUpdateDryRunNoLockChange(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "go.mod"), []byte("module example.com/dry\n\ngo 1.24\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	binDir := t.TempDir()
+	marker := filepath.Join(t.TempDir(), "devenv-ran")
+	writeFakeExecutable(t, binDir, "devenv", fmt.Sprintf("echo \"$@\" > %q\necho bumped > devenv.lock\n", marker))
+	t.Setenv("PATH", binDir)
+	if out, err := executeInitCmd(t, dir, "--yes", "--lang", "go"); err != nil {
+		t.Fatalf("init: %v\n%s", err, out)
+	}
+	// init may probe `devenv version`; only what update does is under test.
+	if err := os.Remove(marker); err != nil && !errors.Is(err, os.ErrNotExist) {
+		t.Fatal(err)
+	}
+	lockPath := filepath.Join(dir, "devenv.lock")
+	lock := []byte(`{"nodes":{"root":{}},"root":"root","version":7}` + "\n")
+	if err := os.WriteFile(lockPath, lock, 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	t.Chdir(dir)
+	t.Setenv(procexec.ForbidExecEnv, "1")
+	cmd := updateCmd()
+	var out bytes.Buffer
+	cmd.SetOut(&out)
+	cmd.SetErr(&out)
+	cmd.SetArgs([]string{"--dry-run"})
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("update --dry-run: %v\n%s", err, out.String())
+	}
+
+	if _, err := os.Stat(marker); err == nil {
+		ran, _ := os.ReadFile(marker)
+		t.Errorf("update --dry-run started devenv %s", ran)
+	}
+	got, err := os.ReadFile(lockPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(got, lock) {
+		t.Errorf("devenv.lock changed by update --dry-run:\n got %q\nwant %q", got, lock)
+	}
+	if !strings.Contains(out.String(), "would run: devenv update") {
+		t.Errorf("dry-run did not preview the devenv stage:\n%s", out.String())
+	}
+}
+
+// TestUpdateDryRun_ReleaseBuildOnlyQueriesRelease pins what the read-only
+// contract allows `update --dry-run` on a release build: one release metadata
+// query, which the preview reports, and no download, install or exec.
+func TestUpdateDryRun_ReleaseBuildOnlyQueriesRelease(t *testing.T) {
+	t.Chdir(t.TempDir())
+	t.Setenv(procexec.ForbidExecEnv, "1")
+
+	origVersion, origCheck, origDo := binaryVersion, checkForUpdate, doSelfUpdate
+	t.Cleanup(func() { binaryVersion, checkForUpdate, doSelfUpdate = origVersion, origCheck, origDo })
+	binaryVersion = func() string { return "v0.7.9" }
+	checks := 0
+	checkForUpdate = func(_ context.Context, _ selfupdate.Config, current string) (*selfupdate.Release, error) {
+		checks++
+		if current != "0.7.9" {
+			t.Errorf("checked for updates from %q, want 0.7.9", current)
+		}
+		return &selfupdate.Release{Version: "0.8.0"}, nil
+	}
+	doSelfUpdate = func(context.Context, selfupdate.Config, *selfupdate.Release) error {
+		t.Error("update --dry-run installed a binary")
+		return nil
+	}
+
+	cmd := updateCmd()
+	var out bytes.Buffer
+	cmd.SetOut(&out)
+	cmd.SetErr(&out)
+	cmd.SetArgs([]string{"--dry-run", "--self-only"})
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("update --dry-run: %v\n%s", err, out.String())
+	}
+	if checks != 1 {
+		t.Errorf("release metadata queried %d times, want 1", checks)
+	}
+	if !strings.Contains(out.String(), "would update v0.7.9 → v0.8.0") {
+		t.Errorf("dry-run did not preview the binary stage:\n%s", out.String())
 	}
 }

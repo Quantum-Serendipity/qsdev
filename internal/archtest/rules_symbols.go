@@ -42,6 +42,10 @@ var symbolTable = []symbolBan{
 	{ID: "test-os-chdir", Pkg: "os", Name: "Chdir", Tests: true},
 }
 
+// panicOwners may panic: procexec's forbid-exec guard is a test-only trap
+// for a programmer error that an error return could let callers swallow.
+var panicOwners = []string{"internal/procexec"}
+
 // initOwners may self-register from init(): the ecosystem SPI modules and
 // the extlog providers. Everywhere else registration is explicit.
 var initOwners = []string{"pkg/ecosystem/modules", "internal/extlog/providers"}
@@ -78,9 +82,10 @@ func (b symbolBan) check(repo *Repo) []Violation {
 	})
 }
 
-// checkPanic counts calls of the panic builtin in library code.
+// checkPanic counts calls of the panic builtin in library code outside
+// panicOwners.
 func checkPanic(repo *Repo) []Violation {
-	return countPerPkg(repo, "panic", nil, false, func(_ *File, n ast.Node) bool {
+	return countPerPkg(repo, "panic", panicOwners, false, func(_ *File, n ast.Node) bool {
 		call, ok := n.(*ast.CallExpr)
 		if !ok {
 			return false

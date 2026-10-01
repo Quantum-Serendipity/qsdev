@@ -41,7 +41,7 @@ The devenv.nix file is never auto-modified regardless of flags.`,
 	cmd.Flags().BoolVar(&opts.Force, "force", false, "Fix files even when user modifications detected (backup first)")
 	cmd.Flags().StringVar(&opts.TargetFile, "file", "", "Repair a specific file only")
 	cmd.Flags().BoolVar(&opts.Reset, "reset", false, "Regenerate all files from saved answers (nuclear option)")
-	return cmd
+	return cmdutil.MarkReadOnly(cmd, "dry-run")
 }
 
 func runRepairCommand(cmd *cobra.Command, opts repair.RepairOptions) error {

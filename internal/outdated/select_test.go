@@ -6,8 +6,11 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"strings"
 	"testing"
+
+	"github.com/Quantum-Serendipity/qsdev/internal/procexec"
 )
 
 // TestSelectCommand proves the package manager is chosen from the project, not
@@ -105,7 +108,7 @@ func TestRunOutdated_FailureIsReported(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			writeFakeTool(t, tt.binary, tt.exitStatus)
 			var buf bytes.Buffer
-			result, err := RunOutdated(context.Background(), &buf, t.TempDir(), []string{tt.eco}, OutdatedOptions{})
+			result, err := RunOutdated(context.Background(), &buf, t.TempDir(), []string{tt.eco}, OutdatedOptions{Online: true})
 			if err != nil {
 				t.Fatalf("RunOutdated: %v", err)
 			}
@@ -141,5 +144,26 @@ func TestRunOutdated_YarnBerrySkipped(t *testing.T) {
 	}
 	if len(result.Ecosystems) != 1 || !result.Ecosystems[0].Skipped || result.HasAnyOutdated() {
 		t.Errorf("result = %+v, want javascript skipped and nothing outdated", result.Ecosystems)
+	}
+}
+
+// TestRunOutdated_OfflinePlansOnly proves that without Online the selected
+// command is reported as planned and never started.
+func TestRunOutdated_OfflinePlansOnly(t *testing.T) {
+	writeFakeTool(t, "go", "0")
+	t.Setenv(procexec.ForbidExecEnv, "1")
+	var buf bytes.Buffer
+	result, err := RunOutdated(context.Background(), &buf, t.TempDir(), []string{"go"}, OutdatedOptions{})
+	if err != nil {
+		t.Fatalf("RunOutdated: %v", err)
+	}
+	if got := result.PlannedEcosystems(); !slices.Equal(got, []string{"go"}) {
+		t.Errorf("PlannedEcosystems() = %v, want [go]", got)
+	}
+	if strings.Contains(buf.String(), "fake go") {
+		t.Errorf("offline run started the tool: %q", buf.String())
+	}
+	if !strings.Contains(buf.String(), "would run: go list -m -u all") {
+		t.Errorf("plan not printed: %q", buf.String())
 	}
 }

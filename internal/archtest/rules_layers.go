@@ -13,14 +13,16 @@ func Rules() []Rule {
 // layerRule forbids import edges from packages under From (minus Except)
 // to packages under Deny. Patterns are module-relative directories
 // ("internal/catalog") or external import paths ("net/http"), each matching
-// itself and everything below it. Transitive rules follow the importer's
-// module-internal dependency closure, so a denied package reached through a
-// helper still counts. Test files are exempt.
+// itself and everything below it; Allow carves targets back out of Deny.
+// Transitive rules follow the importer's module-internal dependency closure,
+// so a denied package reached through a helper still counts. Test files are
+// exempt.
 type layerRule struct {
 	ID         string
 	From       []string
 	Except     []string
 	Deny       []string
+	Allow      []string
 	Transitive bool
 }
 
@@ -36,7 +38,9 @@ var foundationPkgs = []string{
 // layerTable is the §3.1 layer matrix. Import cycles need no rule: the
 // compiler rejects them.
 var layerTable = []layerRule{
-	{ID: "pkg-public-leaf", From: []string{"pkg"}, Deny: []string{"internal", "addons", "instance"}},
+	// procexec is the sole owner of os/exec (exec-command), so a pkg package
+	// that starts a process can only satisfy both rules by importing it.
+	{ID: "pkg-public-leaf", From: []string{"pkg"}, Deny: []string{"internal", "addons", "instance"}, Allow: []string{"internal/procexec"}},
 	{ID: "internal-no-adapters", From: []string{"internal"}, Except: []string{"internal/app"}, Deny: []string{"addons", "instance"}},
 	{ID: "internal-no-app", From: []string{"internal"}, Except: []string{"internal/app"}, Deny: []string{"internal/app"}},
 	{ID: "app-no-adapters", From: []string{"internal/app"}, Deny: []string{"addons", "instance"}},
@@ -70,7 +74,7 @@ func (lr layerRule) check(repo *Repo) []Violation {
 			targets = closureImports(graph, pkg)
 		}
 		for _, to := range targets {
-			if underAny(to, lr.Deny) {
+			if underAny(to, lr.Deny) && !underAny(to, lr.Allow) {
 				out = append(out, Violation{Rule: lr.ID, Subject: pkg + " -> " + to, Count: 1})
 			}
 		}

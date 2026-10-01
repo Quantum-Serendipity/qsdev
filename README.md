@@ -206,7 +206,7 @@ qsdev trial                   # Evaluate in an isolated git worktree
 | `info` | Project status at a glance (cached, instant) |
 | `repair` | Fix corrupted or drifted config files |
 | `update` | Update binary + configs + devenv inputs. Flags: `--check`, `--changelog`, `--dry-run`, `--force` (reinstall the binary only), `--overwrite-modified` (replace config files you edited), `--allow-downgrade`, `--no-strict` (install a release that has no signature bundle), `--self-only`, `--configs-only`, `--deps-only` |
-| `outdated` | Check for outdated dependencies across ecosystems |
+| `outdated` | Show the outdated-dependency command for each ecosystem; `--online` runs them (contacts registries) |
 | `teardown` | Remove all qsdev configuration from project |
 | `enable <tool>` | Enable a tool |
 | `disable <tool>` | Disable a tool |
@@ -260,13 +260,13 @@ qsdev trial                   # Evaluate in an isolated git worktree
 
 | Command | Description |
 |---------|-------------|
-| `mcp status` | Health and connectivity check for configured MCP servers |
+| `mcp status` | Check the configuration of MCP servers without starting any; `--probe` checks liveness |
 | `mcp list` | List configured MCP servers |
 | `mcp grade [name]` | Compliance grade (basic/standard/secure/verified/attested) |
 | `mcp install <name>` | Install an MCP server from the registry |
 | `mcp update [name]` | Move an installed MCP server to its pinned release (`--all` for all) |
 | `mcp remove <name>` | Remove an MCP server |
-| `mcp health` | Run health probes on all configured servers |
+| `mcp health` | CI gate: fail on a misconfigured MCP server; `--probe` also fails on an unhealthy one |
 
 ### docs subcommands
 

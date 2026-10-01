@@ -58,7 +58,7 @@ project-type profiles, and writes all files atomically.`,
 
 	RegisterInitFlags(cmd, &opts)
 
-	return cmd
+	return cmdutil.MarkReadOnly(cmd, "dry-run")
 }
 
 // updateOptionsFromInit maps init flags onto the update flow. For init,

@@ -9,6 +9,7 @@ import (
 
 	"github.com/Quantum-Serendipity/qsdev/internal/claudesettings"
 	"github.com/Quantum-Serendipity/qsdev/internal/state"
+	"github.com/Quantum-Serendipity/qsdev/pkg/branding"
 	"github.com/Quantum-Serendipity/qsdev/pkg/types"
 )
 
@@ -599,5 +600,38 @@ func writeProjectFile(t *testing.T, root, rel, content string) {
 	}
 	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
 		t.Fatal(err)
+	}
+}
+
+// TestVerifyGeneratedFiles_UnjoinedCheckoutJoinsFirst pins the remediation in
+// a checkout with a committed config but no local init state: repair, update
+// and auto-fix all refuse or fail there, so the advice is to join first and
+// the result is not offered for auto-fix.
+func TestVerifyGeneratedFiles_UnjoinedCheckoutJoinsFirst(t *testing.T) {
+	t.Parallel()
+	for _, joined := range []bool{false, true} {
+		dir := t.TempDir()
+		if err := os.WriteFile(filepath.Join(dir, branding.Get().ConfigFile), []byte("version: 2\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		if joined {
+			if err := state.SaveProjectState(dir, state.InitStateFile(), types.GeneratedState{}); err != nil {
+				t.Fatal(err)
+			}
+		}
+		expected := state.RecordFiles([]types.GeneratedFile{{Path: "deleted.txt", Content: []byte("x"), Mode: 0o644}})
+		var r *CheckResult
+		for _, res := range verifyGeneratedFiles(dir, expected, nil) {
+			if res.Name == "file_exists_deleted.txt" {
+				r = &res
+			}
+		}
+		if r == nil {
+			t.Fatalf("joined=%v: deleted file not reported", joined)
+		}
+		joinsFirst := strings.HasPrefix(r.Remediation, joinFirstRemediation)
+		if joinsFirst == joined || r.AutoFixable == !joined {
+			t.Errorf("joined=%v: remediation %q, auto-fixable %v", joined, r.Remediation, r.AutoFixable)
+		}
 	}
 }

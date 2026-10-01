@@ -75,3 +75,25 @@ func TestFreshClone_ClaudeAndDevenvCommandsRequireJoin(t *testing.T) {
 		})
 	}
 }
+
+// TestJoin_RenamedCloneRegeneratesCommittedFiles is the join regression for a
+// clone checked out under another directory name: joining regenerates
+// exactly the committed files (the project name comes from .qsdev.yaml, not
+// the directory), reports no false local change, and keeps the gitignored
+// .qsdev.local.yaml out of the committed manifest.
+func TestJoin_RenamedCloneRegeneratesCommittedFiles(t *testing.T) {
+	t.Parallel()
+	env := guardrailEnv(t)
+	dir, _ := initialisedProject(t, env, false)
+	clone := cloneOf(t, env, dir)
+	out, code := runQsdev(t, env, clone, nil, "init", "--yes")
+	if code != 0 {
+		t.Fatalf("join: exit %d\n%s", code, out)
+	}
+	if strings.Contains(out, "local changes") {
+		t.Errorf("join reported a local change in a pristine clone:\n%s", out)
+	}
+	if status := gitStatus(t, env, clone); status != "" {
+		t.Errorf("join changed the committed tree:\n%s", status)
+	}
+}

@@ -11,6 +11,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/Quantum-Serendipity/qsdev/pkg/branding"
 	"github.com/Quantum-Serendipity/qsdev/pkg/types"
 )
 
@@ -25,6 +26,8 @@ func TestBuildManifest_MachineOwnedOnly(t *testing.T) {
 		{Path: "devenv.nix", Content: []byte("{}"), Strategy: types.ManualMerge},
 		{Path: ".claude/settings.json", Content: []byte("{}"), Strategy: types.ThreeWayMerge},
 		{Path: "merged.yaml", Content: []byte("a: 1"), Strategy: types.Merge},
+		// Gitignored and per-checkout: never in the committed manifest.
+		{Path: branding.Get().LocalConfig, Content: []byte("# local"), Strategy: types.Overwrite},
 	})
 
 	got := BuildManifest(st)
@@ -223,5 +226,32 @@ func TestExpectedState(t *testing.T) {
 				t.Error("ExpectedState modified the local state")
 			}
 		})
+	}
+}
+
+// TestLoadManifest_DropsLocalOnlyEntry pins that a committed manifest listing
+// the developer's gitignored local config (as earlier joins wrote) does not
+// make every other checkout report it deleted.
+func TestLoadManifest_DropsLocalOnlyEntry(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	m := Manifest{
+		".envrc":                   ComputeHash([]byte("use devenv")),
+		branding.Get().LocalConfig: ComputeHash([]byte("# local")),
+	}
+	data, err := m.Marshal()
+	if err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(dir, ManifestFile())
+	if err := os.WriteFile(path, data, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	got, err := LoadManifest(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := (Manifest{".envrc": ComputeHash([]byte("use devenv"))}); !maps.Equal(got, want) {
+		t.Errorf("LoadManifest() = %v, want %v", got, want)
 	}
 }

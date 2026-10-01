@@ -193,6 +193,17 @@ func projectConfigured(ctx CheckContext) bool {
 // unchecked.
 func verifyGeneratedFiles(projectRoot string, expected types.GeneratedState, guards []string) []CheckResult {
 	statuses := state.CheckModified(expected, projectRoot)
+	// In an un-joined checkout (a fresh clone or CI) repair and update
+	// refuse to run until the checkout is joined, and auto-fix has no local
+	// generation to restore from, so the remediation joins first.
+	needsJoin, _ := state.NeedsJoin(projectRoot)
+	remediate := func(r CheckResult) CheckResult {
+		if needsJoin {
+			r.Remediation = joinFirstRemediation + r.Remediation
+			r.AutoFixable = false
+		}
+		return r
+	}
 
 	var results []CheckResult
 	hasIssues := false
@@ -226,7 +237,7 @@ func verifyGeneratedFiles(projectRoot string, expected types.GeneratedState, gua
 				r.Message = fmt.Sprintf("Guard script %s, run by a PreToolUse hook, has been modified", relPath)
 				r.Remediation = guardRemediation(relPath)
 			}
-			results = append(results, r)
+			results = append(results, remediate(r))
 		case types.Deleted:
 			hasIssues = true
 			r := CheckResult{
@@ -245,7 +256,7 @@ func verifyGeneratedFiles(projectRoot string, expected types.GeneratedState, gua
 				r.Message = fmt.Sprintf("Guard script %s, run by a PreToolUse hook, has been deleted", relPath)
 				r.Remediation = guardRemediation(relPath) + ", or 'qsdev check --auto-fix'"
 			}
-			results = append(results, r)
+			results = append(results, remediate(r))
 		case types.Unknown:
 			if status.Error != nil {
 				results = append(results, CheckResult{
@@ -277,6 +288,10 @@ func verifyGeneratedFiles(projectRoot string, expected types.GeneratedState, gua
 
 	return append(results, checkGeneratedSyntax(projectRoot, statuses)...)
 }
+
+// joinFirstRemediation prefixes a restore remediation in an un-joined
+// checkout, where the restoring commands refuse to run until it is joined.
+const joinFirstRemediation = "Run 'qsdev init --yes' to join this checkout, then: "
 
 // guardRemediation restores the generated version of the guard script at
 // relPath. --configs-only keeps the update from replacing the binary.

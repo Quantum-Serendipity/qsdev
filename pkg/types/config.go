@@ -19,7 +19,12 @@ const (
 type QsdevConfig struct {
 	Version      int    `yaml:"version"`
 	QsdevVersion string `yaml:"qsdev_version,omitempty"`
-	Tier         string `yaml:"tier,omitempty"`
+	// ProjectName is the name generated files carry (QSDEV_PROJECT_NAME in
+	// devenv.nix, CLAUDE.md). It is recorded once, by the checkout that
+	// created the project, so a clone under another directory name
+	// regenerates the same files.
+	ProjectName string `yaml:"project_name,omitempty"`
+	Tier        string `yaml:"tier,omitempty"`
 	// Profile is the project-type profile (go-web, ts-fullstack, ...) the
 	// project was created from; `qsdev init --profile` records it.
 	Profile string `yaml:"profile,omitempty"`

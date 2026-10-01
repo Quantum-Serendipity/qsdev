@@ -32,11 +32,12 @@ type Manifest map[string]string
 // BuildManifest returns the manifest entries for st: every tracked file whose
 // strategy is machine-owned. Human-edited files (see
 // MergeStrategy.IsHumanEdited) are left out, because their divergence from the
-// generated content is expected rather than drift.
+// generated content is expected rather than drift, and so are local-only
+// files (isLocalOnly), which no other checkout has.
 func BuildManifest(st types.GeneratedState) Manifest {
 	m := make(Manifest, len(st.Files))
 	for relPath, fs := range st.Files {
-		if fs.Strategy.IsHumanEdited() {
+		if fs.Strategy.IsHumanEdited() || isLocalOnly(relPath) {
 			continue
 		}
 		m[relPath] = fs.Hash
@@ -95,7 +96,10 @@ func ParseManifest(data []byte) (Manifest, error) {
 }
 
 // LoadManifest reads and parses the manifest at path. A missing file is
-// returned as an error wrapping os.ErrNotExist.
+// returned as an error wrapping os.ErrNotExist. An entry for a local-only
+// file, which earlier releases recorded, is dropped: no other checkout has
+// that file, so verifying it would fail everywhere but the machine that
+// wrote it.
 func LoadManifest(path string) (Manifest, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
@@ -105,7 +109,14 @@ func LoadManifest(path string) (Manifest, error) {
 	if err != nil {
 		return nil, fmt.Errorf("parsing manifest %s: %w", path, err)
 	}
+	maps.DeleteFunc(m, func(relPath, _ string) bool { return isLocalOnly(relPath) })
 	return m, nil
+}
+
+// isLocalOnly reports whether relPath is a file each checkout keeps for
+// itself and gitignores: the developer's local config overrides.
+func isLocalOnly(relPath string) bool {
+	return relPath == branding.Get().LocalConfig
 }
 
 // ExpectedState overlays the committed manifest on the local state: a

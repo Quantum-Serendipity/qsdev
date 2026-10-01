@@ -50,6 +50,7 @@ func AnswersToConfig(answers types.WizardAnswers, binaryVersion string) types.Qs
 	cfg := types.QsdevConfig{
 		Version:      types.ConfigVersionCurrent,
 		QsdevVersion: MinimumVersionConstraint(binaryVersion),
+		ProjectName:  answers.ProjectName,
 		Tier:         answers.Tier,
 		Profile:      answers.ProjectTypeProfile,
 		InfraProfile: answers.ProfileName,
@@ -212,6 +213,11 @@ func SyncProjectConfig(projectRoot string, answers types.WizardAnswers) error {
 
 	fresh := AnswersToConfig(answers, "")
 	synced := *current
+	// The recorded name is the team's: only a config without one adopts
+	// this checkout's.
+	if synced.ProjectName == "" {
+		synced.ProjectName = fresh.ProjectName
+	}
 	if fresh.Tier != "" {
 		synced.Tier = fresh.Tier
 	}

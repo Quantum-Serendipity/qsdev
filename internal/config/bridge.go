@@ -9,6 +9,15 @@ import (
 	"github.com/Quantum-Serendipity/qsdev/pkg/types"
 )
 
+// ProjectNameFor returns the project name cfg records, or, for a config
+// written before it recorded one, the name of the directory at projectRoot.
+func ProjectNameFor(cfg *types.QsdevConfig, projectRoot string) string {
+	if cfg != nil && cfg.ProjectName != "" {
+		return cfg.ProjectName
+	}
+	return filepath.Base(projectRoot)
+}
+
 // ConfigToAnswers maps a QsdevConfig to WizardAnswers for downstream generators.
 // It is the single config-to-answers converter: `qsdev init` join mode uses it
 // to rebuild a teammate's answers from the committed .qsdev.yaml, so every
@@ -19,7 +28,7 @@ import (
 func ConfigToAnswers(cfg *types.QsdevConfig, detected types.DetectedProject, projectRoot string) types.WizardAnswers {
 	answers := types.WizardAnswers{
 		ProjectRoot: projectRoot,
-		ProjectName: filepath.Base(projectRoot),
+		ProjectName: ProjectNameFor(cfg, projectRoot),
 		Detected:    detected,
 		Direnv:      true, // Default: direnv is always on.
 		Confirmed:   true,

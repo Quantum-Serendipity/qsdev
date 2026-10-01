@@ -160,7 +160,7 @@ func buildJoinAnswers(cmd *cobra.Command, opts InitOptions, projectRoot string) 
 		}
 	}
 	answers.ProjectRoot = projectRoot
-	answers.ProjectName = filepath.Base(projectRoot)
+	answers.ProjectName = qsdevconfig.ProjectNameFor(policy.Committed, projectRoot)
 	answers.Detected = detected
 	answers.Confirmed = true
 	// .qsdev.yaml records no module extras (a JavaScript UI in frontend/,

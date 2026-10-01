@@ -117,7 +117,46 @@ func NewRuleSet(rules ...Rule) *RuleSet {
 // EvaluateAll evaluates all rules against the context.
 // Returns (Deny, matches) if any rule denies, (Allow, nil) if all allow.
 // All rules are evaluated and all denials are collected (deny-overrides combining).
+//
+// A shell command that does not parse is also judged by the lines bash still
+// runs before the syntax error (cmdscan.ExecutedPrefix), so a mutation
+// followed by a stray `fi` cannot hide behind the rules' substring fallback.
 func (rs *RuleSet) EvaluateAll(ctx *EvalContext) (Verdict, []RuleMatch) {
+	if verdict, matches := rs.evaluate(ctx); verdict == Deny {
+		return verdict, matches
+	}
+	if !cmdscan.IsShellTool(ctx.ToolName) {
+		return Allow, nil
+	}
+	if _, err := ctx.ParsedCommands(); err == nil {
+		return Allow, nil
+	}
+	prefix := cmdscan.ExecutedPrefix(ctx.Command)
+	if prefix == "" {
+		return Allow, nil
+	}
+	return rs.evaluate(ctx.withCommand(prefix))
+}
+
+// withCommand returns a fresh context for the same tool call with command in
+// place of ctx.Command; nothing memoized on ctx carries over.
+func (ctx *EvalContext) withCommand(command string) *EvalContext {
+	return &EvalContext{
+		ToolName:          ctx.ToolName,
+		FilePath:          ctx.FilePath,
+		CanonicalPath:     ctx.CanonicalPath,
+		Command:           command,
+		Content:           ctx.Content,
+		CWD:               ctx.CWD,
+		Edits:             ctx.Edits,
+		ToolInput:         ctx.ToolInput,
+		SensitiveCommands: ctx.SensitiveCommands,
+		hookEnv:           ctx.hookEnv,
+	}
+}
+
+// evaluate runs every rule against ctx with deny-overrides combining.
+func (rs *RuleSet) evaluate(ctx *EvalContext) (Verdict, []RuleMatch) {
 	var matches []RuleMatch
 	for _, r := range rs.rules {
 		verdict, reason := r.Evaluate(ctx)

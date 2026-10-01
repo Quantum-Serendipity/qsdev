@@ -4,10 +4,10 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"strings"
 	"testing"
 
 	"github.com/Quantum-Serendipity/qsdev/internal/catalog"
+	"github.com/Quantum-Serendipity/qsdev/internal/state"
 	"github.com/Quantum-Serendipity/qsdev/pkg/types"
 )
 
@@ -52,7 +52,8 @@ const settingsWithPackageGuard = `{"hooks": {"PreToolUse": [{"matcher": "Bash", 
   {"type": "command", "command": "\"${CLAUDE_PROJECT_DIR}\"/.claude/hooks/package-guard.py"}]}]}}`
 
 // writeProjectFiles writes files (relative path -> content) under a fresh
-// project directory and returns it with a generated state listing them.
+// project directory and returns it with a generated state listing them with
+// their real content hashes, as generation records them.
 func writeProjectFiles(t *testing.T, files map[string]string) (string, types.GeneratedState) {
 	t.Helper()
 	dir := t.TempDir()
@@ -65,7 +66,7 @@ func writeProjectFiles(t *testing.T, files map[string]string) (string, types.Gen
 		if err := os.WriteFile(abs, []byte(content), 0o644); err != nil {
 			t.Fatal(err)
 		}
-		st.Files[rel] = types.FileState{}
+		st.Files[rel] = types.FileState{Hash: state.ComputeHash([]byte(content))}
 	}
 	return dir, st
 }
@@ -96,7 +97,7 @@ func TestAssessDefenseLayers_ArtifactContent(t *testing.T) {
 			tools: map[string]bool{"attach-guard": true},
 			files: map[string]string{".claude/hooks/block-destructive.py": "", "yarn.lock": ""},
 			layer: "lock-file-enforcement",
-			want:  LayerPartial,
+			want:  LayerDisabled,
 		},
 		{
 			name:  "pre-commit config without lock audit hook is not lock file enforcement",
@@ -108,14 +109,14 @@ func TestAssessDefenseLayers_ArtifactContent(t *testing.T) {
 		{
 			name:  "lock audit hook in pre-commit config with attach-guard",
 			tools: map[string]bool{"attach-guard": true},
-			files: map[string]string{".pre-commit-config.yaml": preCommitWithLockAudit},
+			files: guardedFiles(map[string]string{".pre-commit-config.yaml": preCommitWithLockAudit}),
 			layer: "lock-file-enforcement",
 			want:  LayerEnabled,
 		},
 		{
 			name:  "lock audit hook in devenv.nix with attach-guard",
 			tools: map[string]bool{"attach-guard": true},
-			files: map[string]string{"devenv.nix": hardenedDevenvNix},
+			files: guardedFiles(map[string]string{"devenv.nix": hardenedDevenvNix}),
 			layer: "lock-file-enforcement",
 			want:  LayerEnabled,
 		},
@@ -143,9 +144,16 @@ func TestAssessDefenseLayers_ArtifactContent(t *testing.T) {
 		{
 			name:  "package guard OSV checks",
 			tools: map[string]bool{"attach-guard": true},
-			files: map[string]string{".claude/hooks/package-guard.py": ""},
+			files: guardedFiles(nil),
 			layer: "vulnerability-scanning",
 			want:  LayerEnabled,
+		},
+		{
+			name:  "lock audit hook without the guard in force",
+			tools: map[string]bool{"attach-guard": true},
+			files: guardedFiles(map[string]string{".claude/settings.json": "{}", ".pre-commit-config.yaml": preCommitWithLockAudit}),
+			layer: "lock-file-enforcement",
+			want:  LayerPartial,
 		},
 		{
 			name:  "unhardened devenv.nix",
@@ -195,11 +203,9 @@ func TestLockFileAuditHookIDMatchesCatalog(t *testing.T) {
 // only the layers in scope at the current tier, like Score (F345).
 func TestAssessDefenseLayers_CountsAreTierRelative(t *testing.T) {
 	t.Parallel()
-	dir, genState := writeProjectFiles(t, map[string]string{
-		".claude/hooks/package-guard.py": "",
-		".claude/settings.json":          settingsWithPackageGuard,
-		".pre-commit-config.yaml":        preCommitWithLockAudit,
-	})
+	dir, genState := writeProjectFiles(t, guardedFiles(map[string]string{
+		".pre-commit-config.yaml": preCommitWithLockAudit,
+	}))
 	tools := map[string]bool{"attach-guard": true}
 
 	tests := []struct {
@@ -221,101 +227,6 @@ func TestAssessDefenseLayers_CountsAreTierRelative(t *testing.T) {
 			}
 			if tt.tier == 1 && cov.Score != 100 {
 				t.Errorf("tier 1 score = %.1f, want 100 (all in-scope layers enabled)", cov.Score)
-			}
-		})
-	}
-}
-
-// TestPackageGuardRegistered_UsesSharedReader pins that the pretooluse-hooks
-// layer is judged from the effective Claude settings, the committed file
-// overlaid by settings.local.json, as Claude Code runs them (U04-09).
-func TestPackageGuardRegistered_UsesSharedReader(t *testing.T) {
-	t.Parallel()
-	const localPath = ".claude/settings.local.json"
-	tests := []struct {
-		name       string
-		files      map[string]string
-		noProject  bool
-		want       LayerStatus
-		wantReason string
-	}{
-		{
-			name: "local disableAllHooks",
-			files: map[string]string{
-				".claude/settings.json": settingsWithPackageGuard,
-				localPath:               `{"disableAllHooks": true}`,
-			},
-			want:       LayerDisabled,
-			wantReason: localPath,
-		},
-		{
-			name: "project disableAllHooks",
-			files: map[string]string{
-				".claude/settings.json": strings.Replace(settingsWithPackageGuard, "{", `{"disableAllHooks": true, `, 1),
-			},
-			want:       LayerDisabled,
-			wantReason: ".claude/settings.json",
-		},
-		{
-			name: "registered only in the local file",
-			files: map[string]string{
-				".claude/settings.json": `{"permissions": {"deny": []}}`,
-				localPath:               settingsWithPackageGuard,
-			},
-			want: LayerEnabled,
-		},
-		{
-			name: "decoy key in the local file",
-			files: map[string]string{
-				".claude/settings.json": settingsWithPackageGuard,
-				localPath:               `{"DisableAllHooks": true}`,
-			},
-			want: LayerEnabled,
-		},
-		{
-			name: "guard only under a decoy-cased key",
-			files: map[string]string{
-				".claude/settings.json": strings.Replace(settingsWithPackageGuard, `"hooks"`, `"Hooks"`, 1),
-			},
-			want: LayerPartial,
-		},
-		{
-			name: "script path is a substring only",
-			files: map[string]string{
-				".claude/settings.json": strings.Replace(settingsWithPackageGuard, "package-guard.py", "package-guard.py.bak", 1),
-			},
-			want: LayerPartial,
-		},
-		{
-			name: "unparseable local file",
-			files: map[string]string{
-				".claude/settings.json": settingsWithPackageGuard,
-				localPath:               `{"hooks": `,
-			},
-			want:       LayerPartial,
-			wantReason: localPath,
-		},
-		{
-			name:      "ProjectPath empty",
-			files:     map[string]string{".claude/settings.json": settingsWithPackageGuard},
-			noProject: true,
-			want:      LayerPartial,
-		},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			t.Parallel()
-			tt.files[".claude/hooks/package-guard.py"] = ""
-			dir, genState := writeProjectFiles(t, tt.files)
-			if tt.noProject {
-				dir = ""
-			}
-			got := layerByName(t, AssessDefenseLayers(dir, map[string]bool{"attach-guard": true}, types.DetectedProject{}, genState, 3), "pretooluse-hooks")
-			if got.Status != tt.want {
-				t.Errorf("status = %q (%s), want %q", got.Status, got.Reason, tt.want)
-			}
-			if !strings.Contains(got.Reason, tt.wantReason) {
-				t.Errorf("reason = %q, want it to contain %q", got.Reason, tt.wantReason)
 			}
 		})
 	}

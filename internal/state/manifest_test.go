@@ -6,6 +6,7 @@ import (
 	"maps"
 	"os"
 	"path/filepath"
+	"reflect"
 	"runtime"
 	"strings"
 	"testing"
@@ -190,5 +191,37 @@ func TestSaveInitState_WritesStateAndManifest(t *testing.T) {
 	// as 0666, so the permission check is meaningful only elsewhere.
 	if runtime.GOOS != "windows" && info.Mode().Perm()&0o022 != 0 {
 		t.Errorf("manifest mode = %v, want no group/other write", info.Mode().Perm())
+	}
+}
+
+func TestExpectedState(t *testing.T) {
+	t.Parallel()
+	local := types.GeneratedState{Files: map[string]types.FileState{
+		"a": {Hash: "sha256:old", Strategy: types.Overwrite, Mode: 0o755},
+		"b": {Hash: "sha256:b", Strategy: types.Overwrite},
+	}}
+	tests := []struct {
+		name     string
+		manifest Manifest
+		want     map[string]types.FileState
+	}{
+		{"no manifest", nil, local.Files},
+		{"manifest overrides hash, keeps mode", Manifest{"a": "sha256:new", "c": "sha256:c"}, map[string]types.FileState{
+			"a": {Hash: "sha256:new", Strategy: types.Overwrite, Mode: 0o755},
+			"b": {Hash: "sha256:b", Strategy: types.Overwrite},
+			"c": {Hash: "sha256:c"},
+		}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			got := ExpectedState(local, tt.manifest)
+			if !reflect.DeepEqual(got.Files, tt.want) {
+				t.Errorf("ExpectedState = %+v, want %+v", got.Files, tt.want)
+			}
+			if local.Files["a"].Hash != "sha256:old" {
+				t.Error("ExpectedState modified the local state")
+			}
+		})
 	}
 }

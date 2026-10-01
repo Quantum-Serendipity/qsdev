@@ -12,6 +12,7 @@ import (
 
 	"github.com/Quantum-Serendipity/qsdev/internal/evidence"
 	"github.com/Quantum-Serendipity/qsdev/internal/posture"
+	"github.com/Quantum-Serendipity/qsdev/internal/state"
 	"github.com/Quantum-Serendipity/qsdev/pkg/types"
 )
 
@@ -193,18 +194,34 @@ func TestEvidenceCmd_ParityWithPostureAssess(t *testing.T) {
 }
 
 // TestEvidenceCmd_EnforcedLayerAddressed guards against a degenerate fix that
-// always reports not-addressed. When a tool is actually enabled in project
-// state (attach-guard), the layer it enforces (install-script-blocking) is
+// always reports not-addressed. When a tool is actually in force in the
+// project (attach-guard, its unmodified package guard registered as a
+// PreToolUse hook), the layer it enforces (install-script-blocking) is
 // enabled and its control (CC6.6) is legitimately Addressed.
 func TestEvidenceCmd_EnforcedLayerAddressed(t *testing.T) {
 	dir := t.TempDir()
 	writeInitialized(t, dir)
 
-	// Persist a real init-state manifest that enables attach-guard.
+	// Persist a real init-state manifest that enables attach-guard and records
+	// the generated guard files with their real hashes.
 	st := types.GeneratedState{
 		QsdevVersion: "0.8.0",
 		EnabledTools: map[string]bool{"attach-guard": true},
 		Files:        map[string]types.FileState{},
+	}
+	for rel, content := range map[string]string{
+		".claude/hooks/package-guard.py": "#!/usr/bin/env python3\n",
+		".claude/settings.json": `{"hooks": {"PreToolUse": [{"matcher": "Bash", "hooks": [` +
+			`{"type": "command", "command": "\"${CLAUDE_PROJECT_DIR}\"/.claude/hooks/package-guard.py"}]}]}}`,
+	} {
+		abs := filepath.Join(dir, filepath.FromSlash(rel))
+		if err := os.MkdirAll(filepath.Dir(abs), 0o755); err != nil {
+			t.Fatalf("mkdir: %v", err)
+		}
+		if err := os.WriteFile(abs, []byte(content), 0o644); err != nil {
+			t.Fatalf("writing %s: %v", rel, err)
+		}
+		st.Files[rel] = types.FileState{Hash: state.ComputeHash([]byte(content))}
 	}
 	data, err := yaml.Marshal(&st)
 	if err != nil {

@@ -108,6 +108,24 @@ func LoadManifest(path string) (Manifest, error) {
 	return m, nil
 }
 
+// ExpectedState overlays the committed manifest on the local state: a
+// manifest entry sets the expected hash of its file (keeping the strategy and
+// mode the local state records, if any), so a file matching the committed
+// manifest is not reported as modified just because the local state is older.
+func ExpectedState(genState types.GeneratedState, manifest Manifest) types.GeneratedState {
+	if len(manifest) == 0 {
+		return genState
+	}
+	expected := types.GeneratedState{Files: make(map[string]types.FileState, len(genState.Files)+len(manifest))}
+	maps.Copy(expected.Files, genState.Files)
+	for relPath, hash := range manifest {
+		entry := expected.Files[relPath]
+		entry.Hash = hash
+		expected.Files[relPath] = entry
+	}
+	return expected
+}
+
 // WriteManifest writes m to ManifestFile under projectRoot atomically.
 func WriteManifest(projectRoot string, m Manifest) error {
 	data, err := m.Marshal()

@@ -167,19 +167,15 @@ func checkHookScripts(projectRoot string, actual claudesettings.Settings) []Chec
 		if event == claudesettings.EventPreToolUse {
 			severity = SeverityHigh
 		}
-		for _, m := range actual.Hooks[event] {
-			for _, h := range m.Hooks {
-				for _, script := range claudesettings.ScriptRe.FindAllString(h.Command, -1) {
-					if _, err := os.Stat(filepath.Join(projectRoot, filepath.FromSlash(script))); err == nil {
-						continue
-					}
-					r := postureResult("claude_hook_script_missing", StatusFail, severity,
-						fmt.Sprintf("%s hook %q runs %s, which does not exist", event, h.Command, script),
-						"Run 'qsdev repair' to restore the hook script")
-					r.FilePath = script
-					results = append(results, r)
-				}
+		for _, ref := range actual.ScriptRefs(event) {
+			if _, err := os.Stat(filepath.Join(projectRoot, filepath.FromSlash(ref.Script))); err == nil {
+				continue
 			}
+			r := postureResult("claude_hook_script_missing", StatusFail, severity,
+				fmt.Sprintf("%s hook %q runs %s, which does not exist", event, ref.Command, ref.Script),
+				"Run 'qsdev repair' to restore the hook script")
+			r.FilePath = ref.Script
+			results = append(results, r)
 		}
 	}
 	return results

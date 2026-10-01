@@ -83,56 +83,53 @@ func OrphanedFiles(oldState types.GeneratedState, newFiles []types.GeneratedFile
 // CheckModified compares each file in stored against its current on-disk
 // state under projectRoot and returns a map of path to FileStatus.
 func CheckModified(stored types.GeneratedState, projectRoot string) map[string]FileStatus {
-	if len(stored.Files) == 0 {
-		return map[string]FileStatus{}
-	}
-
 	results := make(map[string]FileStatus, len(stored.Files))
 	for relPath, fs := range stored.Files {
-		absPath := filepath.Join(projectRoot, relPath)
-		status := FileStatus{
-			Path:       relPath,
-			StoredHash: fs.Hash,
-		}
+		results[relPath] = CheckFile(projectRoot, relPath, fs)
+	}
+	return results
+}
 
-		info, err := os.Stat(absPath)
-		if err != nil {
-			if errors.Is(err, os.ErrNotExist) {
-				status.Status = types.Deleted
-			} else {
-				status.Status = types.Unknown
-				status.Error = err
-			}
-			results[relPath] = status
-			continue
-		}
-
-		hash, err := ComputeFileHash(absPath)
-		if err != nil {
-			status.Status = types.Unknown
-			status.Error = err
-			results[relPath] = status
-			continue
-		}
-		status.CurrentHash = hash
-
-		hashMatch := hash == fs.Hash
-		// A zero stored mode means the mode was never recorded (legacy state or a
-		// generator that relied on the pipeline default), so only the hash can
-		// be compared.
-		modeMatch := runtime.GOOS == "windows" || fs.Mode == 0 || info.Mode().Perm() == fs.Mode.Perm()
-
-		switch {
-		case hashMatch && modeMatch:
-			status.Status = types.Unmodified
-		default:
-			status.Status = types.Modified
-		}
-
-		results[relPath] = status
+// CheckFile compares the generated file at relPath under projectRoot with its
+// recorded state: it is unmodified only when both the content hash and, where
+// recorded and meaningful, the permission bits match. An empty file is
+// content like any other.
+func CheckFile(projectRoot, relPath string, fs types.FileState) FileStatus {
+	absPath := filepath.Join(projectRoot, relPath)
+	status := FileStatus{
+		Path:       relPath,
+		StoredHash: fs.Hash,
 	}
 
-	return results
+	info, err := os.Stat(absPath)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			status.Status = types.Deleted
+		} else {
+			status.Status = types.Unknown
+			status.Error = err
+		}
+		return status
+	}
+
+	hash, err := ComputeFileHash(absPath)
+	if err != nil {
+		status.Status = types.Unknown
+		status.Error = err
+		return status
+	}
+	status.CurrentHash = hash
+
+	// A zero stored mode means the mode was never recorded (legacy state or a
+	// generator that relied on the pipeline default), so only the hash can
+	// be compared.
+	modeMatch := runtime.GOOS == "windows" || fs.Mode == 0 || info.Mode().Perm() == fs.Mode.Perm()
+	if hash == fs.Hash && modeMatch {
+		status.Status = types.Unmodified
+	} else {
+		status.Status = types.Modified
+	}
+	return status
 }
 
 // RecordFragments converts a fragment set into ledger entries grouped by target path.

@@ -3,6 +3,7 @@ package claudecode
 import (
 	"strings"
 
+	"github.com/Quantum-Serendipity/qsdev/internal/claudesettings"
 	"github.com/Quantum-Serendipity/qsdev/internal/selfprotect/cmdscan"
 	"github.com/Quantum-Serendipity/qsdev/internal/tier"
 	"github.com/Quantum-Serendipity/qsdev/pkg/branding"
@@ -67,18 +68,11 @@ func (h HookDefinition) emittedCommand(answers types.WizardAnswers, app string) 
 	return cmd
 }
 
-// failClosedCommand wraps a hook command so that any exit other than 0 or 2
-// becomes 2, a block. Claude Code treats every other code (1 for a crash, 126
-// or 127 for a missing interpreter or binary) as a non-blocking error, which
-// would let the tool call through unchecked. Exit 0 passes through with its
-// stdout, and exit 2 keeps the hook's own stderr reason. The wrapper uses only
-// POSIX sh: settings.json is shared across the team's OSes, and Claude Code
-// runs hooks through sh (Git Bash on Windows). cmd must be one simple command:
-// the exit status of a list or pipeline is only its last part's, so an
-// earlier part's failure could not be caught here.
+// failClosedCommand wraps a hook command so that a crash blocks the tool call
+// instead of letting it through (see claudesettings.FailClosedCommand, which
+// also defines the shape posture recognizes).
 func failClosedCommand(owner, cmd string) string {
-	return cmd + ` || { rc=$?; [ "$rc" -eq 2 ] || echo "qsdev: ` + owner +
-		` hook could not run (exit $rc: interpreter/binary missing or crashed); blocking" >&2; exit 2; }`
+	return claudesettings.FailClosedCommand(owner, cmd)
 }
 
 // HookRegistry collects hook definitions and produces the hooks map for
@@ -219,7 +213,7 @@ func defaultHookRegistry() *HookRegistry {
 		Event:           "PreToolUse",
 		Matcher:         shellToolMatcher,
 		Command:         guardCmd,
-		Timeout:         30,
+		Timeout:         claudesettings.GuardHookTimeout,
 		StatusMessage:   "Checking package install safety...",
 		SandboxCategory: "linter",
 		EnabledFunc:     packageGuardEnabled,

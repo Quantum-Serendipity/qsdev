@@ -6,6 +6,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"slices"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -374,5 +375,27 @@ func writeTestFile(t *testing.T, dir, rel, content string) {
 	}
 	if err := os.WriteFile(abs, []byte(content), 0o644); err != nil {
 		t.Fatal(err)
+	}
+}
+
+// TestCheckHookScripts_NamesCommand checks that a missing hook script is
+// reported once per hook command that runs it, quoting that command.
+func TestCheckHookScripts_NamesCommand(t *testing.T) {
+	t.Parallel()
+	actual, err := claudesettings.Parse([]byte(generatedSettings))
+	if err != nil {
+		t.Fatal(err)
+	}
+	results := checkHookScripts(t.TempDir(), actual)
+	if len(results) != 1 {
+		t.Fatalf("got %d results, want 1: %+v", len(results), results)
+	}
+	r := results[0]
+	const cmd = `"${CLAUDE_PROJECT_DIR}"/.claude/hooks/package-guard.py`
+	if r.Name != "claude_hook_script_missing" || r.Severity != SeverityHigh || r.FilePath != ".claude/hooks/package-guard.py" {
+		t.Errorf("result = %+v, want claude_hook_script_missing at high for the guard", r)
+	}
+	if want := strconv.Quote(cmd); !strings.Contains(r.Message, want) {
+		t.Errorf("message %q does not quote the hook command %s", r.Message, want)
 	}
 }

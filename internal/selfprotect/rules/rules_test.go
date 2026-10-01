@@ -4,6 +4,8 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+
+	"github.com/Quantum-Serendipity/qsdev/internal/selfprotect/cmdscan"
 )
 
 func homeDir(t *testing.T) string {
@@ -1618,96 +1620,97 @@ func TestSP013_AuditTrailWriteBlock(t *testing.T) {
 	}
 }
 
+// sensitiveFixture mirrors the shape of the sensitive commands the CLI marks
+// (cmdutil.MarkSensitive): unconditional ones, flag-conditioned ones, one
+// conditioned on a positional argument, and one with a read-only flag.
+var sensitiveFixture = []cmdscan.CommandSpec{
+	{Path: [][]string{{"teardown"}}, ReadOnly: []string{"--dry-run"}},
+	{Path: [][]string{{"session"}, {"allow"}}},
+	{Path: [][]string{{"sandbox"}, {"approve"}}},
+	{Path: [][]string{{"defaults"}, {"reset"}}},
+	{Path: [][]string{{"repair"}}, ReadOnly: []string{"--dry-run"}, Flags: []cmdscan.FlagCond{{Spellings: []string{"--force"}, Value: true}}},
+	{Path: [][]string{{"claude", "cc"}, {"init"}}, Flags: []cmdscan.FlagCond{{Spellings: []string{"--force", "-f"}, Value: true}}},
+	{Path: [][]string{{"self-update"}}, Flags: []cmdscan.FlagCond{
+		{Spellings: []string{"--no-strict"}, Value: true},
+		{Spellings: []string{"--strict"}, Value: false},
+	}},
+	{Path: [][]string{{"disable"}}, Args: func() []string { return []string{"attach-guard", "gitleaks"} }},
+}
+
+// TestSP014_CLISecurityControlBlock pins that SP-014 blocks exactly the
+// invocations the command tree marks sensitive, however they are spelled.
 func TestSP014_CLISecurityControlBlock(t *testing.T) {
 	t.Parallel()
-
 	tests := []struct {
-		name    string
-		ctx     EvalContext
+		command string
 		verdict Verdict
 	}{
-		{
-			name: "deny qsdev disable hooks",
-			ctx: EvalContext{
-				ToolName: "Bash",
-				Command:  "qsdev disable hooks",
-			},
-			verdict: Deny,
-		},
-		{
-			name: "deny qsdev enable hooks --force",
-			ctx: EvalContext{
-				ToolName: "Bash",
-				Command:  "qsdev enable hooks --force",
-			},
-			verdict: Deny,
-		},
-		{
-			name: "deny qsdev session allow (agent self-granted policy bypass)",
-			ctx: EvalContext{
-				ToolName: "Bash",
-				Command:  "qsdev session allow SC-001",
-			},
-			verdict: Deny,
-		},
-		{
-			name: "deny qsdev session allow via --rules",
-			ctx: EvalContext{
-				ToolName: "Bash",
-				Command:  "cd /repo && qsdev  session   allow --rules SC-001,SC-002",
-			},
-			verdict: Deny,
-		},
-		{
-			name: "deny qsdev sandbox approve (agent self-approved sandbox policy)",
-			ctx: EvalContext{
-				ToolName: "Bash",
-				Command:  "qsdev sandbox approve --policy .qsdev/policy.nix",
-			},
-			verdict: Deny,
-		},
-		{
-			name: "allow qsdev sandbox status",
-			ctx: EvalContext{
-				ToolName: "Bash",
-				Command:  "qsdev sandbox status",
-			},
-			verdict: Allow,
-		},
-		{
-			name: "allow qsdev session list",
-			ctx: EvalContext{
-				ToolName: "Bash",
-				Command:  "qsdev session list",
-			},
-			verdict: Allow,
-		},
-		{
-			name: "allow qsdev enable tool",
-			ctx: EvalContext{
-				ToolName: "Bash",
-				Command:  "qsdev enable semgrep",
-			},
-			verdict: Allow,
-		},
-		{
-			name: "allow qsdev status",
-			ctx: EvalContext{
-				ToolName: "Bash",
-				Command:  "qsdev status",
-			},
-			verdict: Allow,
-		},
+		{"qsdev teardown --force", Deny},
+		{"qsdev teardown", Deny},
+		{"qsdev teardown --dry-run", Allow},
+		{"qsdev session allow SC-001", Deny},
+		{"cd /repo && qsdev  session   allow --rules SC-001,SC-002", Deny},
+		{"qsdev sandbox approve --policy .qsdev/policy.nix", Deny},
+		{"qsdev defaults reset --yes", Deny},
+		{"qsdev repair --force", Deny},
+		{"qsdev repair --force=false", Allow},
+		{"qsdev repair", Allow},
+		{"qsdev repair --force --dry-run", Allow},
+		{"qsdev claude init --yes --force", Deny},
+		{"qsdev cc init -f", Deny},
+		{"qsdev claude init --yes", Allow},
+		{"qsdev self-update --no-strict", Deny},
+		{"qsdev self-update --strict=false", Deny},
+		{"qsdev self-update --strict=true", Allow},
+		{"qsdev self-update", Allow},
+		{"qsdev disable attach-guard --force", Deny},
+		{"qsdev disable gitleaks", Deny},
+		{"qsdev disable context7", Allow},
+		// Spellings that must not hide the program or the subcommand.
+		{`"qsdev" teardown --force`, Deny},
+		{`q''sdev teardown --force`, Deny},
+		{`q\sdev teardown --force`, Deny},
+		{`qsdev "session" allow X`, Deny},
+		{"/usr/local/bin/qsdev teardown --force", Deny},
+		{`C:\Users\me\bin\qsdev.exe teardown --force`, Deny},
+		{"env FOO=1 qsdev teardown --force", Deny},
+		{`bash -c "qsdev disable attach-guard --force"`, Deny},
+		{"eval 'qsdev teardown --force'", Deny},
+		{"qsdev status; qsdev teardown --force", Deny},
+		{"echo ok\nqsdev teardown --force", Deny},
+		{"qsdev --debug teardown --force", Deny},
+		{"QSDEV teardown --force", Deny},
+		// Look-alikes and read-only commands stay open.
+		{"qsdev sandbox status", Allow},
+		{"qsdev session list", Allow},
+		{"qsdev enable semgrep", Allow},
+		{"qsdev status", Allow},
+		{"qsdevx teardown --force", Allow},
+		{"git commit -m 'teardown'", Allow},
 	}
-
 	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
+		t.Run(tt.command, func(t *testing.T) {
 			t.Parallel()
-			v, _ := sp014.Evaluate(&tt.ctx)
+			ctx := EvalContext{ToolName: "Bash", Command: tt.command, SensitiveCommands: sensitiveFixture}
+			v, reason := sp014.Evaluate(&ctx)
 			if v != tt.verdict {
-				t.Errorf("got %v, want %v", v, tt.verdict)
+				t.Errorf("SP-014(%q) = %v (%s), want %v", tt.command, v, reason, tt.verdict)
 			}
 		})
+	}
+}
+
+// TestSP014_NoTreeAllows pins that SP-014 has no list of its own: with no
+// sensitive commands it blocks nothing, and a non-shell tool is never judged.
+func TestSP014_NoTreeAllows(t *testing.T) {
+	t.Parallel()
+	for _, ctx := range []EvalContext{
+		{ToolName: "Bash", Command: "qsdev teardown --force"},
+		{ToolName: "Write", Command: "qsdev teardown --force", SensitiveCommands: sensitiveFixture},
+	} {
+		if v, reason := sp014.Evaluate(&ctx); v != Allow {
+			t.Errorf("SP-014(%s %q) = %v (%s), want allow", ctx.ToolName, ctx.Command, v, reason)
+		}
 	}
 }
 

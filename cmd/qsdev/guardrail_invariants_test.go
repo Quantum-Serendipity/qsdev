@@ -36,7 +36,9 @@ const cliHelperEnv = "QSDEV_GUARDRAIL_CLI_HELPER"
 // qsdev setting, with HOME, TMPDIR and the user config directories (XDG and
 // the Windows APPDATA/LOCALAPPDATA) pointed at
 // fresh temp dirs and system setup skipped, so the commands see no state
-// from the machine running the tests.
+// from the machine running the tests. The commands run as a human at a
+// terminal (humanHelperEnv), as the documented commands are; agentEnv turns
+// that off.
 func guardrailEnv(t *testing.T) []string {
 	t.Helper()
 	b := branding.Get()
@@ -64,7 +66,17 @@ func guardrailEnv(t *testing.T) []string {
 		b.EnvPrefix+"SKIP_SETUP=1",
 		b.EnvNoUpdate+"=1",
 		cliHelperEnv+"=1",
+		humanHelperEnv+"=1",
 	)
+}
+
+// agentEnv returns env as an AI agent's tool call sees it: inside a Claude
+// Code session (CLAUDECODE=1) with no terminal.
+func agentEnv(env []string) []string {
+	out := slices.DeleteFunc(slices.Clone(env), func(kv string) bool {
+		return strings.HasPrefix(kv, humanHelperEnv+"=")
+	})
+	return append(out, "CLAUDECODE=1")
 }
 
 // newGuardrailProject returns a fresh Go project with its own git repository,

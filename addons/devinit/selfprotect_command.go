@@ -11,7 +11,9 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/Quantum-Serendipity/qsdev/internal/cmdutil"
 	"github.com/Quantum-Serendipity/qsdev/internal/selfprotect/canon"
+	"github.com/Quantum-Serendipity/qsdev/internal/selfprotect/cmdscan"
 	"github.com/Quantum-Serendipity/qsdev/internal/selfprotect/evasion"
 	"github.com/Quantum-Serendipity/qsdev/internal/selfprotect/gatedodge"
 	"github.com/Quantum-Serendipity/qsdev/internal/selfprotect/hookio"
@@ -40,7 +42,15 @@ var errSelfprotectDeny = &ExitError{Code: 2}
 // runSelfprotect evaluates the self-protection rules for the hook payload on
 // stdin within hookio.EvalDeadline.
 func runSelfprotect(cmd *cobra.Command) error {
-	return runSelfprotectWith(cmd, hookio.EvalDeadline, evaluateSelfprotect)
+	return runSelfprotectWith(cmd, hookio.EvalDeadline, selfprotectEvaluatorFor(cmdutil.SensitiveCommands(cmd.Root())))
+}
+
+// selfprotectEvaluatorFor returns the production selfprotectEvaluator, with
+// SP-014 blocking the sensitive commands described by sensitive.
+func selfprotectEvaluatorFor(sensitive []cmdscan.CommandSpec) selfprotectEvaluator {
+	return func(ctx context.Context, stdin io.Reader, stderr io.Writer) error {
+		return evaluateSelfprotect(ctx, stdin, stderr, sensitive)
+	}
 }
 
 // selfprotectEvaluator reads a hook payload from stdin and evaluates it,
@@ -75,8 +85,9 @@ func runSelfprotectWith(cmd *cobra.Command, deadline time.Duration, evaluate sel
 	return nil
 }
 
-// evaluateSelfprotect is the production selfprotectEvaluator.
-func evaluateSelfprotect(ctx context.Context, stdin io.Reader, stderr io.Writer) error {
+// evaluateSelfprotect evaluates the hook payload on stdin, with SP-014
+// blocking the sensitive commands described by sensitive.
+func evaluateSelfprotect(ctx context.Context, stdin io.Reader, stderr io.Writer, sensitive []cmdscan.CommandSpec) error {
 	call, err := hookio.ParseToolCall(ctx, stdin)
 	if err != nil {
 		hookio.WriteError(stderr, err.Error())
@@ -96,6 +107,7 @@ func evaluateSelfprotect(ctx context.Context, stdin io.Reader, stderr io.Writer)
 		evalCtx.CWD = call.CWD
 	}
 	evalCtx.ToolInput = call.ToolInput
+	evalCtx.SensitiveCommands = sensitive
 
 	// Parse the Bash command once here (memoized on evalCtx); the rules below
 	// reuse the same parse via ctx.ParsedCommands().

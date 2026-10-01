@@ -46,6 +46,10 @@ type EvalContext struct {
 	// beyond file_path (the path/paths/source/destination arguments of MCP
 	// filesystem tools).
 	ToolInput json.RawMessage
+	// SensitiveCommands are the CLI's subcommands that only a human may run
+	// (cmdutil.SensitiveCommands of the running command tree); SP-014 blocks
+	// a shell command invoking one.
+	SensitiveCommands []cmdscan.CommandSpec
 
 	// Parsed Bash command, memoized by ParsedCommands. Do not read directly.
 	commands       []cmdscan.Command

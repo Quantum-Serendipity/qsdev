@@ -10,6 +10,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/Quantum-Serendipity/qsdev/internal/cmdutil"
 	"github.com/Quantum-Serendipity/qsdev/internal/sandbox/policy"
 )
 
@@ -46,15 +47,12 @@ confirms the prompt.`,
 		},
 	}
 	addPolicyFlag(cmd, &policyPath)
-	return cmd
+	// The approval lets repository content configure the sandbox that
+	// contains the repository's hooks, so it must come from a human.
+	return cmdutil.MarkSensitive(cmd, cmdutil.Sensitivity{})
 }
 
 func runSandboxApprove(ctx context.Context, cmd *cobra.Command, policyPath string, openStore approvalStoreFunc) error {
-	// The approval lets repository content configure the sandbox that
-	// contains the repository's hooks, so it must come from a human.
-	if err := requireHuman(cmd, "sandbox approve", "a sandbox policy must be reviewed and approved by a human"); err != nil {
-		return err
-	}
 	projectDir, err := sandboxProjectDir()
 	if err != nil {
 		return err

@@ -110,10 +110,14 @@ func exitCode(err error) int {
 // skill exits 0 as if it had succeeded. The walk runs after construction so it
 // also covers commands the framework builds itself (the root, `config`).
 //
+// It also installs the human gate (cmdutil.InstallHumanGate), which refuses
+// every command marked sensitive unless a human runs it.
+//
 // It must be called after customizations are locked down, as [Main] does.
 func NewRootCommand() *cobra.Command {
 	root := gdevcmd.Root()
 	cmdutil.RejectUnknownSubcommands(root)
+	cmdutil.InstallHumanGate(root)
 	return root
 }
 

@@ -1,12 +1,14 @@
 package rules
 
 import (
+	"fmt"
 	"path/filepath"
 	"regexp"
 	"strings"
 
 	"github.com/Quantum-Serendipity/qsdev/internal/selfprotect/canon"
 	"github.com/Quantum-Serendipity/qsdev/internal/selfprotect/cmdscan"
+	"github.com/Quantum-Serendipity/qsdev/pkg/branding"
 )
 
 var (
@@ -16,7 +18,6 @@ var (
 	reProcessTarget = regexp.MustCompile(`\b(qsdev|claude|gdev)\b`)
 	reMcpInjection  = regexp.MustCompile(`(?i)(system\s*prompt|ignore\s*previous|you\s+are\s+now|<\s*system\s*>|<\s*/?\s*instructions?\s*>)`)
 	reBypassCmd     = regexp.MustCompile(`\bqsdev\s+hook\s+bypass`)
-	reCliControl    = regexp.MustCompile(`\bqsdev\s+(disable\s+hooks|enable\s+hooks\s+--force|session\s+allow\b|sandbox\s+approve\b)`)
 	reSystemctl     = regexp.MustCompile(`\bsystemctl\s+(stop|disable)\b.*\b(qsdev|gdev)\b`)
 	// reProcInfo matches the per-process /proc entries that expose a process's
 	// environment, command line, open files, or root: under any pid spelling
@@ -511,6 +512,9 @@ var sp013 = Rule{
 	},
 }
 
+// sp014 blocks the CLI's own commands that weaken or remove a guardrail: the
+// commands marked sensitive in the command tree (ctx.SensitiveCommands), so
+// the set follows the tree rather than a list kept here.
 var sp014 = Rule{
 	ID:       "SP-014",
 	Name:     "CLI security control block",
@@ -519,10 +523,17 @@ var sp014 = Rule{
 		if !cmdscan.IsShellTool(ctx.ToolName) {
 			return Allow, ""
 		}
-		if reCliControl.MatchString(ctx.Command) {
-			return Deny, "CLI command modifying security configuration"
+		app := branding.Get().AppName
+		hits := cmdscan.InvokedSpecs(ctx.Command, app, ctx.SensitiveCommands)
+		if len(hits) == 0 {
+			return Allow, ""
 		}
-		return Allow, ""
+		path := make([]string, len(hits[0].Path))
+		for i, names := range hits[0].Path {
+			path[i] = names[0]
+		}
+		return Deny, fmt.Sprintf("'%s %s' weakens a guardrail and requires a human at their own terminal",
+			app, strings.Join(path, " "))
 	},
 }
 

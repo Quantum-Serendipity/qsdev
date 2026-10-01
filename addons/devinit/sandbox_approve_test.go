@@ -2,13 +2,14 @@ package devinit
 
 import (
 	"bytes"
-	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/spf13/cobra"
 
 	"github.com/Quantum-Serendipity/qsdev/internal/sandbox/policy"
 )
@@ -57,19 +58,8 @@ func writeProjectPolicy(t *testing.T, project, content string) string {
 // as the confirmation answer, simulating a human at a terminal.
 func runApproveCmd(t *testing.T, stdin string) (string, error) {
 	t.Helper()
-	orig := humanAtTerminal
-	t.Cleanup(func() { humanAtTerminal = orig })
-	humanAtTerminal = func(io.Reader) bool { return true }
 	t.Setenv("CLAUDECODE", "")
-
-	cmd := newSandboxApproveCmd(policy.DefaultApprovalStore)
-	var out bytes.Buffer
-	cmd.SetIn(strings.NewReader(stdin))
-	cmd.SetOut(&out)
-	cmd.SetErr(&out)
-	cmd.SilenceErrors = true
-	err := cmd.Execute()
-	return out.String(), err
+	return runApprove(newSandboxApproveCmd(policy.DefaultApprovalStore), true, stdin)
 }
 
 // policyApproved reports whether the policy's current content is approved in
@@ -141,22 +131,13 @@ func TestSandboxApprove_Refusals(t *testing.T) {
 				policyPath = writeProjectPolicy(t, project, tt.policy)
 			}
 
-			orig := humanAtTerminal
-			t.Cleanup(func() { humanAtTerminal = orig })
-			humanAtTerminal = func(io.Reader) bool { return tt.interactive }
 			agent := ""
 			if tt.agent {
 				agent = "1"
 			}
 			t.Setenv("CLAUDECODE", agent)
 
-			cmd := newSandboxApproveCmd(policy.DefaultApprovalStore)
-			var out bytes.Buffer
-			cmd.SetIn(strings.NewReader(tt.stdin))
-			cmd.SetOut(&out)
-			cmd.SetErr(&out)
-			cmd.SilenceErrors = true
-			err := cmd.Execute()
+			_, err := runApprove(newSandboxApproveCmd(policy.DefaultApprovalStore), tt.interactive, tt.stdin)
 
 			if tt.wantErr == "" {
 				if err != nil {
@@ -215,4 +196,18 @@ func TestSandboxApprove_EndToEnd(t *testing.T) {
 	if got := requireExitCode(t, err); got != hookBlockExitCode {
 		t.Errorf("exec after editing the approved policy: exit code = %d, want %d (err: %v)", got, hookBlockExitCode, err)
 	}
+}
+
+// runApprove runs the approve command under a gated root, with stdin
+// presented as an interactive terminal when interactive is set.
+func runApprove(approve *cobra.Command, interactive bool, stdin string) (string, error) {
+	root := gatedRoot(approve)
+	var out bytes.Buffer
+	root.SetIn(ttyInput{Reader: strings.NewReader(stdin), tty: interactive})
+	root.SetOut(&out)
+	root.SetErr(&out)
+	root.SilenceErrors = true
+	root.SetArgs([]string{"approve"})
+	err := root.Execute()
+	return out.String(), err
 }

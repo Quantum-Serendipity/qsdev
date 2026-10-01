@@ -63,7 +63,8 @@ func runEnable(cmd *cobra.Command, toolName string, opts enableOptions) error {
 		return err
 	}
 
-	answers, tool, err := loadToolForEnable(cmdContext(cmd), projectRoot, toolName)
+	registry := toolreg.DefaultRegistry()
+	answers, tool, err := loadToolForEnable(cmdContext(cmd), registry, projectRoot, toolName)
 	if err != nil {
 		return err
 	}
@@ -75,7 +76,7 @@ func runEnable(cmd *cobra.Command, toolName string, opts enableOptions) error {
 	}
 
 	// Validate prerequisites and conflicts.
-	if err := toolreg.ValidateEnable(toolreg.DefaultRegistry(), toolName, answers.EnabledTools); err != nil {
+	if err := toolreg.ValidateEnable(registry, toolName, answers.EnabledTools); err != nil {
 		return err
 	}
 
@@ -128,14 +129,14 @@ func runEnable(cmd *cobra.Command, toolName string, opts enableOptions) error {
 }
 
 // loadToolForEnable loads saved answers, infers enabled tools, and looks up
-// the named tool in the registry.
-func loadToolForEnable(ctx context.Context, projectRoot, toolName string) (types.WizardAnswers, *toolreg.Tool, error) {
+// the named tool in registry.
+func loadToolForEnable(ctx context.Context, registry *toolreg.Registry, projectRoot, toolName string) (types.WizardAnswers, *toolreg.Tool, error) {
 	answers, err := loadLifecycleAnswers(ctx, projectRoot)
 	if err != nil {
 		return types.WizardAnswers{}, nil, err
 	}
 
-	tool, ok := toolreg.DefaultRegistry().ByName(toolName)
+	tool, ok := registry.ByName(toolName)
 	if !ok {
 		return types.WizardAnswers{}, nil, fmt.Errorf("unknown tool %q; use '%s list' to see available tools", toolName, branding.Get().AppName)
 	}

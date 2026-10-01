@@ -2,7 +2,6 @@ package devinit
 
 import (
 	"bytes"
-	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -56,7 +55,7 @@ const testSessionID = "0f8e2c1a-5b7d-4e3f-9a6b-1c2d3e4f5a6b"
 // with a session-tier, a command-tier and an enforce_always rule, chdirs into
 // the project and returns the session state path and the canonical project
 // root.
-func setupSessionTest(t *testing.T, interactive, inAgent bool) (statePath, project string) {
+func setupSessionTest(t *testing.T, inAgent bool) (statePath, project string) {
 	t.Helper()
 	home := t.TempDir()
 	t.Setenv("HOME", home)
@@ -76,22 +75,20 @@ func setupSessionTest(t *testing.T, interactive, inAgent bool) (statePath, proje
 	}
 	t.Chdir(project)
 
-	orig := humanAtTerminal
-	t.Cleanup(func() { humanAtTerminal = orig })
-	humanAtTerminal = func(io.Reader) bool { return interactive }
-
 	return filepath.Join(home, ".qsdev", "session-state.json"), project
 }
 
-func runSessionAllowCmd(t *testing.T, stdin string, args ...string) (string, error) {
+// runSessionAllowCmd runs `session allow args` under a gated root, with stdin
+// presented as an interactive terminal when interactive is set.
+func runSessionAllowCmd(t *testing.T, interactive bool, stdin string, args ...string) (string, error) {
 	t.Helper()
-	cmd := sessionCmd()
+	root := gatedRoot(sessionCmd())
 	var out bytes.Buffer
-	cmd.SetOut(&out)
-	cmd.SetErr(&out)
-	cmd.SetIn(strings.NewReader(stdin))
-	cmd.SetArgs(append([]string{"allow"}, args...))
-	err := cmd.Execute()
+	root.SetOut(&out)
+	root.SetErr(&out)
+	root.SetIn(ttyInput{Reader: strings.NewReader(stdin), tty: interactive})
+	root.SetArgs(append([]string{"session", "allow"}, args...))
+	err := root.Execute()
 	return out.String(), err
 }
 
@@ -117,7 +114,7 @@ func TestSessionAllow(t *testing.T) {
 			interactive: false,
 			stdin:       "y\n",
 			args:        append([]string{"SESSION-OK"}, session...),
-			wantErr:     "requires an interactive terminal",
+			wantErr:     "requires a human at an interactive terminal",
 		},
 		{
 			name:        "caller inside an agent session is refused even on a terminal",
@@ -193,8 +190,8 @@ func TestSessionAllow(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			statePath, project := setupSessionTest(t, tt.interactive, tt.inAgent)
-			out, err := runSessionAllowCmd(t, tt.stdin, tt.args...)
+			statePath, project := setupSessionTest(t, tt.inAgent)
+			out, err := runSessionAllowCmd(t, tt.interactive, tt.stdin, tt.args...)
 			if tt.wantErr != "" {
 				if err == nil || !strings.Contains(err.Error(), tt.wantErr) {
 					t.Fatalf("want error containing %q, got %v\n%s", tt.wantErr, err, out)
@@ -228,14 +225,14 @@ func TestSessionAllow(t *testing.T) {
 // --project, resolved to its qsdev project root, instead of the current
 // directory's project.
 func TestSessionAllow_ProjectFlag(t *testing.T) {
-	statePath, project := setupSessionTest(t, true, false)
+	statePath, project := setupSessionTest(t, false)
 	sub := filepath.Join(project, "internal", "pkg")
 	if err := os.MkdirAll(sub, 0o755); err != nil {
 		t.Fatal(err)
 	}
 	t.Chdir(t.TempDir())
 
-	out, err := runSessionAllowCmd(t, "y\n", "SESSION-OK", "--session", testSessionID, "--project", sub)
+	out, err := runSessionAllowCmd(t, true, "y\n", "SESSION-OK", "--session", testSessionID, "--project", sub)
 	if err != nil {
 		t.Fatalf("session allow: %v\n%s", err, out)
 	}

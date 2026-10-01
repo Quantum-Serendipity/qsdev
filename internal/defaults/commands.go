@@ -13,6 +13,7 @@ import (
 	"gopkg.in/yaml.v3"
 
 	"github.com/Quantum-Serendipity/qsdev/internal/catalog"
+	"github.com/Quantum-Serendipity/qsdev/internal/cmdutil"
 	"github.com/Quantum-Serendipity/qsdev/pkg/fileutil"
 )
 
@@ -257,7 +258,8 @@ func resetCmd() *cobra.Command {
 
 	cmd.Flags().BoolVar(&yes, "yes", false, "Skip confirmation prompt")
 
-	return cmd
+	// The defaults file can carry the organisation's guardrail overlay.
+	return cmdutil.MarkSensitive(cmd, cmdutil.Sensitivity{})
 }
 
 func runReset(cmd *cobra.Command, yes bool) error {

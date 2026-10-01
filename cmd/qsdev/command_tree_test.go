@@ -22,6 +22,9 @@ import (
 func TestMain(m *testing.M) {
 	// The guardrail invariant tests run the test binary as qsdev itself.
 	if os.Getenv(cliHelperEnv) == "1" {
+		if os.Getenv(humanHelperEnv) == "1" {
+			mainAsHuman()
+		}
 		main()
 		return
 	}

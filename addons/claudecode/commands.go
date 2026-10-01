@@ -182,7 +182,8 @@ func initCmd() *cobra.Command {
 	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "Preview changes without writing files")
 	cmd.Flags().BoolVar(&noSafetyBlock, "no-safety-block", false, "Not supported: the safety block is always on; opt out with 'qsdev disable attach-guard --force'")
 
-	return cmd
+	// --force overwrites the generated settings and hooks, edits included.
+	return cmdutil.MarkSensitive(cmd, cmdutil.Sensitivity{Flags: map[string]bool{"force": true}})
 }
 
 // reconcileTools settles answers' enabled tools against the committed
@@ -297,7 +298,8 @@ func updateCmd() *cobra.Command {
 	cmd.Flags().BoolVar(&force, "force", false, "Overwrite even if files have been modified")
 	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "Preview changes without writing files")
 
-	return cmd
+	// --force overwrites the generated settings and hooks, edits included.
+	return cmdutil.MarkSensitive(cmd, cmdutil.Sensitivity{Flags: map[string]bool{"force": true}})
 }
 
 // addItemSpec parameterizes the differences between add-skill and add-hook

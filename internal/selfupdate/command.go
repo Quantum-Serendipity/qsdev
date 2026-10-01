@@ -9,6 +9,8 @@ import (
 	"github.com/spf13/cobra"
 
 	"fastcat.org/go/gdev/instance"
+
+	"github.com/Quantum-Serendipity/qsdev/internal/cmdutil"
 )
 
 // Command returns the "self-update" cobra command.
@@ -95,5 +97,6 @@ Prefer 'qsdev update' which coordinates binary updates with config regeneration.
 	cmd.Flags().BoolVar(&strict, "strict", true, "Require a verified release signature before updating")
 	cmd.Flags().BoolVar(&noStrict, "no-strict", false, "Allow installing a release that has no signature bundle (escape hatch for dev/self-built releases)")
 
-	return cmd
+	// Either spelling installs a binary whose signature was not verified.
+	return cmdutil.MarkSensitive(cmd, cmdutil.Sensitivity{Flags: map[string]bool{"no-strict": true, "strict": false}})
 }

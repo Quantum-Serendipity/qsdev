@@ -124,6 +124,12 @@ func runCheck(cmd *cobra.Command, format check.OutputFormat, auditLevel check.Au
 		answers.HookPolicy = ctx.QsdevConfig.Hooks.Clone()
 	}
 
+	// Settle the answers against the committed config, as every generation
+	// path does, before deciding what is required: the always-on scope and
+	// the opt-outs come from .qsdev.yaml, never from the local answers file
+	// alone, so a local edit cannot narrow what check enforces.
+	settleCommittedScope(&answers, toolRegistry, ctx.QsdevConfig)
+
 	// The required-tools check covers the always-on tools that apply to the
 	// project: those that configure Claude Code only when it is enabled.
 	for _, tool := range toolRegistry.All() {
@@ -151,20 +157,13 @@ func runCheck(cmd *cobra.Command, format check.OutputFormat, auditLevel check.Au
 	}
 	ctx.ExpectedConflictKeys = claudecode.ExpectedConflicts()
 
-	// The generator's output for the saved answers is what the on-disk
-	// settings.json must still enforce (hook registrations, bypass mode).
-	// The tools are reconciled against the committed tools block first, as
-	// every generation path does, so an opt-out the answers file records but
-	// .qsdev.yaml does not (e.g. attach-guard: false) still expects the
-	// guard's hook registrations.
+	// The generator's output for the settled answers is what the on-disk
+	// settings.json must still enforce (hook registrations, bypass mode), so
+	// an opt-out the answers file records but .qsdev.yaml does not (e.g.
+	// attach-guard: false) still expects the guard's hook registrations.
 	var freshFiles map[string]types.GeneratedFile
 	var genErr error
 	if answers.ProjectName != "" {
-		var committed *types.ToolsConfig
-		if ctx.QsdevConfig != nil {
-			committed = &ctx.QsdevConfig.Tools
-		}
-		toolreg.Reconcile(&answers, toolRegistry, committed)
 		freshFiles, _, genErr = regenerateFreshFiles(answers)
 		if genErr != nil {
 			_, _ = fmt.Fprintf(cmd.ErrOrStderr(), "Warning: could not regenerate expected files: %v\n", genErr)
@@ -309,4 +308,22 @@ func effectivePermissionPreset(answers types.WizardAnswers, cfg *types.QsdevConf
 		level, tierName = cfg.ClaudeCode.PermissionLevel, cfg.Tier
 	}
 	return qsdevconfig.EffectivePermissionLevel(level, tierName, mcp)
+}
+
+// settleCommittedScope settles answers against cfg, the committed
+// .qsdev.yaml (nil when it did not load): Claude Code and the tier, which
+// decide which always-on tools apply (see toolreg.Tool.EnforcedFor), are
+// taken from cfg, and the tools are reconciled against its tools block (see
+// toolreg.Reconcile).
+func settleCommittedScope(answers *types.WizardAnswers, reg *toolreg.Registry, cfg *types.QsdevConfig) {
+	if answers.ProjectName == "" {
+		return
+	}
+	var committed *types.ToolsConfig
+	if cfg != nil {
+		answers.ClaudeCode = qsdevconfig.ClaudeCodeEnabled(cfg)
+		answers.Tier = qsdevconfig.ConfigTier(cfg)
+		committed = &cfg.Tools
+	}
+	toolreg.Reconcile(answers, reg, committed)
 }

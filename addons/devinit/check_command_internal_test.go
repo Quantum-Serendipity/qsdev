@@ -574,3 +574,67 @@ func stripHookCommands(settings map[string]any, substr string) int {
 	}
 	return removed
 }
+
+// TestRunCheck_LocalAnswersCannotNarrowRequiredTools verifies check takes
+// the always-on scope (Claude Code on, the tier) from the committed
+// .qsdev.yaml, not from the local answers file: answers that switch Claude
+// Code off or lower the tier must not hide a hand-removed always-on tool.
+func TestRunCheck_LocalAnswersCannotNarrowRequiredTools(t *testing.T) {
+	tests := []struct {
+		name   string
+		tool   string
+		hook   string // a registration to strip, which check must report
+		tamper func(a *types.WizardAnswers)
+	}{
+		{name: "claude code off locally", tool: toolreg.ToolAttachGuard, hook: "package-guard.py", tamper: func(a *types.WizardAnswers) { a.ClaudeCode = false }},
+		{name: "tier lowered locally", tool: toolreg.ToolTrailOfBitsSkills, tamper: func(a *types.WizardAnswers) {
+			a.Tier = "supply-chain-only"
+			a.PermissionLevel = "supply-chain-only"
+		}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			dir := initLifecycleProject(t)
+
+			saved, err := answers.LoadPrimary(dir)
+			if err != nil {
+				t.Fatal(err)
+			}
+			tt.tamper(&saved)
+			if err := answers.SavePrimary(dir, saved); err != nil {
+				t.Fatal(err)
+			}
+			cfgPath := filepath.Join(dir, ".qsdev.yaml")
+			cfg := readProjectFile(t, dir, ".qsdev.yaml")
+			stripped := strings.ReplaceAll(cfg, "        - "+tt.tool+"\n", "")
+			stripped = strings.ReplaceAll(stripped, "    - "+tt.tool+"\n", "")
+			if stripped == cfg {
+				t.Fatalf(".qsdev.yaml has no %s entry:\n%s", tt.tool, cfg)
+			}
+			if err := os.WriteFile(cfgPath, []byte(stripped), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			if tt.hook != "" {
+				editSettings(t, dir, func(settings map[string]any) {
+					if stripHookCommands(settings, tt.hook) == 0 {
+						t.Fatalf("generated settings.json registers no %s hook", tt.hook)
+					}
+				})
+			}
+
+			report := runCheckJSON(t, dir)
+			if tt.hook != "" && !slices.ContainsFunc(report.Checks, func(c check.CheckResult) bool {
+				return c.Name == "claude_hook_missing" && c.Status == check.StatusFail &&
+					strings.Contains(c.Metadata["command"], tt.hook)
+			}) {
+				t.Errorf("check did not report the stripped %s registration: %+v", tt.hook, report.Checks)
+			}
+			want := "tool_missing_" + tt.tool
+			if !slices.ContainsFunc(report.Checks, func(c check.CheckResult) bool {
+				return c.Name == want && c.Status == check.StatusFail
+			}) {
+				t.Errorf("check did not fail %s: %+v", want, report.Checks)
+			}
+		})
+	}
+}

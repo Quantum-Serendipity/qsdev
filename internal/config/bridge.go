@@ -73,12 +73,7 @@ func ConfigToAnswers(cfg *types.QsdevConfig, detected types.DetectedProject, pro
 	answers.ComplianceLevel = level
 	answers.HookTier = level
 
-	// Set tier (infer from legacy fields if not explicit).
-	if cfg.Tier != "" {
-		answers.Tier = cfg.Tier
-	} else {
-		answers.Tier = tier.Infer(cfg.ClaudeCode.PermissionLevel, cfg.ClaudeCode.MCPServers).String()
-	}
+	answers.Tier = ConfigTier(cfg)
 
 	// `profile` is the project-type profile and `infra_profile` the
 	// infrastructure profile. A version 1 file that held the infra profile
@@ -93,6 +88,15 @@ func ConfigToAnswers(cfg *types.QsdevConfig, detected types.DetectedProject, pro
 	answers.Cloud = cfg.Cloud
 
 	return answers
+}
+
+// ConfigTier returns cfg's tier, inferred from its legacy fields when the
+// file predates the always-persisted tier field.
+func ConfigTier(cfg *types.QsdevConfig) string {
+	if cfg.Tier != "" {
+		return cfg.Tier
+	}
+	return tier.Infer(cfg.ClaudeCode.PermissionLevel, cfg.ClaudeCode.MCPServers).String()
 }
 
 // cloneJava returns a deep copy of a JavaConfig.

@@ -104,7 +104,7 @@ func cloneJava(in types.JavaConfig) types.JavaConfig {
 func mapClaudeCode(cfg *types.QsdevConfig, answers *types.WizardAnswers) {
 	// An absent claude_code.enabled predates the key always being written,
 	// when Claude Code was on by default; an explicit false is honoured.
-	answers.ClaudeCode = cfg.ClaudeCode.Enabled == nil || *cfg.ClaudeCode.Enabled
+	answers.ClaudeCode = ClaudeCodeEnabled(cfg)
 	answers.PermissionLevel = cfg.ClaudeCode.PermissionLevel
 	// Like FillDefaults on the create path, default the permission level only
 	// when no tier is set: an explicit tier supplies its own preset.

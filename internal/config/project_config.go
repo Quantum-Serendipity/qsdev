@@ -18,17 +18,32 @@ import (
 	"github.com/Quantum-Serendipity/qsdev/pkg/types"
 )
 
-// AdoptCommittedTier gives answers saved before the tier was always recorded
-// the tier committed in .qsdev.yaml, so a regeneration never replaces the
-// team's recorded tier with an inferred one. Only when neither file records a
-// valid tier does answers.EnforceInvariants infer it. An unreadable config is
-// left to SyncProjectConfig, which reports it.
-func AdoptCommittedTier(projectRoot string, a *types.WizardAnswers) {
-	if a.Tier != "" {
+// AdoptCommitted gives answers being regenerated the choices the committed
+// .qsdev.yaml records and the saved answers file must not override. The saved
+// answers file is local and writable by an AI agent; .qsdev.yaml is the team's
+// reviewed record, so:
+//
+//   - answers saved before the tier was always recorded take the committed
+//     tier, so a regeneration never replaces the team's recorded tier with an
+//     inferred one (only when neither file records a valid tier does
+//     answers.EnforceInvariants infer it);
+//   - Claude Code stays configured while the committed file enables it, so an
+//     answers file that says otherwise cannot make a regeneration drop the
+//     Claude Code settings and with them the self-protection hook (U18-01).
+//     Turning Claude Code off is a committed change (claude_code.enabled:
+//     false), never a local one.
+//
+// An unreadable config is left to the caller's policy load and
+// SyncProjectConfig, which report it.
+func AdoptCommitted(projectRoot string, a *types.WizardAnswers) {
+	cfg, err := ParseQsdevConfig(filepath.Join(projectRoot, branding.Get().ConfigFile))
+	if err != nil {
 		return
 	}
-	cfg, err := ParseQsdevConfig(filepath.Join(projectRoot, branding.Get().ConfigFile))
-	if err != nil || cfg.Tier == "" {
+	if ClaudeCodeEnabled(cfg) {
+		a.ClaudeCode = true
+	}
+	if a.Tier != "" || cfg.Tier == "" {
 		return
 	}
 	if _, err := tier.ParseTier(cfg.Tier); err != nil {

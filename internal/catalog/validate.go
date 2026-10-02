@@ -7,6 +7,7 @@ import (
 	"slices"
 	"strings"
 
+	"github.com/Quantum-Serendipity/qsdev/internal/claudesettings"
 	"github.com/Quantum-Serendipity/qsdev/internal/tmpl"
 )
 
@@ -432,7 +433,10 @@ func (c *Catalog) validateComplianceHooks() []CatalogError {
 // org and project overlays, and the tool registry turns their owned files
 // into what enable writes and disable deletes, so closed-set fields are
 // rejected rather than silently defaulted (a mis-cased "Shared" must not
-// become an exclusive file) and owned paths must stay inside the project.
+// become an exclusive file) and owned paths must stay inside the project. No
+// tool may own the Claude Code settings file, or a directory holding it,
+// exclusively: disabling the tool would delete the file that registers the
+// self-protection hook, which only teardown may remove (U18-01).
 func (c *Catalog) validateTools() []CatalogError {
 	var errs []CatalogError
 
@@ -454,6 +458,10 @@ func (c *Catalog) validateTools() []CatalogError {
 			}
 			switch f.Ownership {
 			case "exclusive":
+				if claudesettings.HoldsProjectSettings(f.Path) {
+					addErr("owned file %q cannot be exclusive: it is or holds %s, which registers the self-protection hook",
+						f.Path, claudesettings.ProjectRelPath)
+				}
 			case "shared":
 				if f.SectionID == "" {
 					addErr("shared owned file %q has no section_id", f.Path)

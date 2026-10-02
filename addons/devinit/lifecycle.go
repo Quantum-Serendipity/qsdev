@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
+	"maps"
 	"os"
 	"path/filepath"
 	"sort"
@@ -14,6 +15,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/Quantum-Serendipity/qsdev/internal/claudesettings"
 	"github.com/Quantum-Serendipity/qsdev/internal/cmdutil"
 	qsdevconfig "github.com/Quantum-Serendipity/qsdev/internal/config"
 	"github.com/Quantum-Serendipity/qsdev/internal/detect"
@@ -658,7 +660,10 @@ type exclusiveRemoval struct {
 // the tool — and refuses, before anything is deleted, when any was modified by
 // the user (unless force). Files qsdev never recorded are always left in place,
 // whatever force says. Files that are shared with other tools are never
-// candidates, whatever owner an older state recorded for them.
+// candidates, whatever owner an older state recorded for them, and neither is
+// the Claude Code settings file (or a directory holding it), which registers
+// the self-protection hook: the catalog rejects such an exclusive declaration,
+// and the state file that records owners is no authority to delete it.
 func planExclusiveRemoval(
 	registry *toolreg.Registry, tool *toolreg.Tool, toolName, projectRoot string,
 	st types.GeneratedState, force bool,
@@ -679,6 +684,7 @@ func planExclusiveRemoval(
 			candidates[p] = true
 		}
 	}
+	maps.DeleteFunc(candidates, func(p string, _ bool) bool { return claudesettings.HoldsProjectSettings(p) })
 	paths := make([]string, 0, len(candidates))
 	for p := range candidates {
 		paths = append(paths, p)

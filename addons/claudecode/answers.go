@@ -69,11 +69,13 @@ func loadSavedAnswers(projectRoot string) (types.WizardAnswers, error) {
 }
 
 // normalizeAnswers applies the answers invariants the way devinit's update
-// does: answers without a tier first adopt the tier committed in .qsdev.yaml,
-// so the invariants only infer a tier when the project records none and a
-// claude regeneration never replaces the team's committed tier.
+// does: the answers first adopt the choices committed in .qsdev.yaml (see
+// config.AdoptCommitted), so the invariants only infer a tier when the
+// project records none, a claude regeneration never replaces the team's
+// committed tier, and the answers it persists keep Claude Code on while the
+// committed file enables it.
 func normalizeAnswers(projectRoot string, a *types.WizardAnswers) {
-	qsdevconfig.AdoptCommittedTier(projectRoot, a)
+	qsdevconfig.AdoptCommitted(projectRoot, a)
 	answers.EnforceInvariants(a)
 }
 

@@ -45,6 +45,19 @@ All notable changes to qsdev are recorded in this file. The format is based on
 
 ### Security
 
+- An agent can no longer remove the self-protection hook by switching Claude
+  Code off. Before this fix, an answers file rewritten to `claude_code: false`
+  (or emptied) by a command the hook cannot read made the next
+  `qsdev init --update`, `qsdev update --configs-only` or `qsdev claude update`
+  delete `.claude/settings.json`. Regeneration now takes Claude Code from the
+  committed `.qsdev.yaml`, so only a committed `claude_code.enabled: false`
+  turns it off. The hook denies an Edit or Write that makes that change
+  (GD-001). Turning Claude Code off with a regeneration now leaves
+  `.claude/settings.json` in place and untracked, as `init --claude-code=false`
+  already did. Only `qsdev teardown` deletes it. A tool can no longer own
+  `.claude/settings.json`, or a directory that holds it, exclusively: the
+  catalog rejects such a declaration from an org or project overlay, and
+  `disable` never deletes the file (U18-01).
 - A project without a committed `.qsdev.yaml` (one set up with only
   `qsdev claude init`) no longer honours an always-on opt-out recorded only in
   the answers file. `claude update`, `claude add-hook`/`add-skill`

@@ -15,7 +15,7 @@ import (
 //
 // Load does not call it: loaded answers are still changed by policy, overlays
 // and flags before use, so only the last step can guarantee the invariant,
-// and inferring the tier at load would pre-empt config.AdoptCommittedTier,
+// and inferring the tier at load would pre-empt config.AdoptCommitted,
 // replacing a team's committed tier with an inferred one. Load-time
 // normalisation belongs to projectmodel.Resolve (XA-WS3).
 func EnforceInvariants(a *types.WizardAnswers) {

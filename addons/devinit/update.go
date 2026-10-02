@@ -15,6 +15,7 @@ import (
 
 	"github.com/Quantum-Serendipity/qsdev/addons/claudecode"
 	qsdevanswers "github.com/Quantum-Serendipity/qsdev/internal/answers"
+	"github.com/Quantum-Serendipity/qsdev/internal/claudesettings"
 	"github.com/Quantum-Serendipity/qsdev/internal/cmdutil"
 	qsdevconfig "github.com/Quantum-Serendipity/qsdev/internal/config"
 	"github.com/Quantum-Serendipity/qsdev/internal/detect"
@@ -269,6 +270,9 @@ func loadAndRefreshForUpdate(ctx context.Context, w io.Writer, projectRoot strin
 	if err != nil {
 		return types.WizardAnswers{}, err
 	}
+	// The committed choices come first: the policy and tool reconciliation
+	// below depend on whether Claude Code is configured.
+	qsdevconfig.AdoptCommitted(projectRoot, &answers)
 
 	// Refresh detection.
 	answers.Detected = detect.Detect(ctx, projectRoot)
@@ -280,7 +284,6 @@ func loadAndRefreshForUpdate(ctx context.Context, w io.Writer, projectRoot strin
 
 	// Augment EnabledTools with inferred tools and keep always-on tools.
 	reconcileTools(w, projectRoot, &answers, toolreg.DefaultRegistry())
-	qsdevconfig.AdoptCommittedTier(projectRoot, &answers)
 	qsdevanswers.EnforceInvariants(&answers)
 
 	return answers, nil
@@ -484,7 +487,10 @@ func fileHasContent(path string, content []byte) bool {
 // planOrphans plans cleanup for tracked files the generators no longer
 // produce (language removed, ecosystem no longer detected, tier lowered,
 // template retired). Unmodified orphans are removed; ones the user modified
-// or already deleted are left alone and simply no longer tracked.
+// or already deleted are left alone and simply no longer tracked. The Claude
+// Code settings file is never removed: it registers the self-protection hook,
+// so a regeneration that stops producing it (Claude Code switched off) leaves
+// it in place and untracked, as init does, and only teardown deletes it.
 func planOrphans(
 	storedState types.GeneratedState,
 	newFiles []types.GeneratedFile,
@@ -512,6 +518,10 @@ func planOrphans(
 			fp.Status = types.Unknown
 			fp.Action = UpdateActionSkip
 			fp.Reason = "no longer generated, status unknown"
+		case claudesettings.HoldsProjectSettings(path):
+			fp.Status = st.Status
+			fp.Action = UpdateActionUntrack
+			fp.Reason = "no longer generated, but it registers the self-protection hook; left in place and untracked (teardown removes it)"
 		case !filepath.IsLocal(filepath.FromSlash(path)):
 			// Never delete outside the project, whatever the state file says.
 			fp.Status = st.Status

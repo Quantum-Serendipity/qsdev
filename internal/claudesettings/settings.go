@@ -2,6 +2,7 @@ package claudesettings
 
 import (
 	"encoding/json"
+	"path"
 	"regexp"
 	"slices"
 	"strings"
@@ -13,6 +14,34 @@ const (
 	ProjectRelPath = ".claude/settings.json"
 	LocalRelPath   = ".claude/settings.local.json"
 )
+
+// HoldsProjectSettings reports whether rel, a project-relative path in either
+// separator style, names the project settings file (ProjectRelPath) or a
+// directory holding it. That file registers the self-protection hook, so only
+// teardown may delete it: a tool's exclusive files and the orphans an update
+// cleans up are checked with this. Names are compared the way the most lenient
+// host filesystem resolves them (case-insensitively, without trailing dots or
+// spaces or an alternate-data-stream suffix), so no spelling that opens the
+// same file on macOS or Windows gets past it on any platform.
+func HoldsProjectSettings(rel string) bool {
+	p := hostFoldedPath(rel)
+	target := hostFoldedPath(ProjectRelPath)
+	return p == "." || p == target || strings.HasPrefix(target, p+"/")
+}
+
+// hostFoldedPath cleans rel to slash form and folds each component as the
+// most lenient host filesystem does (see HoldsProjectSettings).
+func hostFoldedPath(rel string) string {
+	parts := strings.Split(path.Clean(strings.ReplaceAll(rel, `\`, "/")), "/")
+	for i, part := range parts {
+		if part == "." || part == ".." {
+			continue
+		}
+		part, _, _ = strings.Cut(part, ":")
+		parts[i] = strings.ToLower(strings.TrimRight(part, ". "))
+	}
+	return strings.Join(parts, "/")
+}
 
 // Settings keys, as Claude Code spells them. KeyDefaultMode, KeyDeny and
 // KeyDisableBypassPermissionsMode live under KeyPermissions.

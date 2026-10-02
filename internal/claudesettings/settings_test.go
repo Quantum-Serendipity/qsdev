@@ -365,3 +365,43 @@ func TestIsFailClosed(t *testing.T) {
 		}
 	}
 }
+
+// TestHoldsProjectSettings covers the paths a deletion must never reach: the
+// project settings file, which registers the self-protection hook, and the
+// directories holding it, in every spelling that opens it on some host.
+func TestHoldsProjectSettings(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		rel  string
+		want bool
+	}{
+		{ProjectRelPath, true},
+		{"./.claude/settings.json", true},
+		{".claude//settings.json", true},
+		{".claude/x/../settings.json", true},
+		{`.claude\settings.json`, true},
+		{".Claude/SETTINGS.json", true},
+		{".claude/settings.json.", true},
+		{".claude /settings.json", true},
+		{".claude/settings.json::$DATA", true},
+		{".claude", true},
+		{".claude/", true},
+		{".", true},
+		{"./", true},
+		{".claude/settings.local.json", false},
+		{".claude/hooks/package-guard.py", false},
+		{".claude/hooks", false},
+		{".claude/settings.json.bak", false},
+		{"sub/.claude/settings.json", false},
+		{".claudex", false},
+		{"cliff.toml", false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.rel, func(t *testing.T) {
+			t.Parallel()
+			if got := HoldsProjectSettings(tt.rel); got != tt.want {
+				t.Errorf("HoldsProjectSettings(%q) = %v, want %v", tt.rel, got, tt.want)
+			}
+		})
+	}
+}

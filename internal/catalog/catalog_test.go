@@ -1271,6 +1271,30 @@ func TestValidate_Tools(t *testing.T) {
 			wantErr: "must be a relative path inside the project",
 		},
 		{
+			// Disable deletes exclusive files: an overlay tool must not be
+			// able to delete the settings that register selfprotect (U18-01).
+			name:    "exclusive claude settings",
+			def:     ToolDef{OwnedFiles: []ToolOwnedFileDef{{Path: ".claude/settings.json", Ownership: "exclusive"}}},
+			wantErr: "registers the self-protection hook",
+		},
+		{
+			name:    "exclusive claude settings respelled",
+			def:     ToolDef{OwnedFiles: []ToolOwnedFileDef{{Path: "./.Claude//settings.json", Ownership: "exclusive"}}},
+			wantErr: "registers the self-protection hook",
+		},
+		{
+			name:    "exclusive directory holding claude settings",
+			def:     ToolDef{OwnedFiles: []ToolOwnedFileDef{{Path: ".claude/", Ownership: "exclusive"}}},
+			wantErr: "registers the self-protection hook",
+		},
+		{
+			name: "shared claude settings and an exclusive hook script",
+			def: ToolDef{OwnedFiles: []ToolOwnedFileDef{
+				{Path: ".claude/settings.json", Ownership: "shared", SectionID: "custom"},
+				{Path: ".claude/hooks/custom.py", Ownership: "exclusive"},
+			}},
+		},
+		{
 			name:    "unknown prerequisite",
 			def:     ToolDef{Prerequisites: []string{"ghost"}},
 			wantErr: `references unknown tool "ghost"`,

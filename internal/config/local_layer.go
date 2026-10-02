@@ -72,7 +72,7 @@ func sanitizeLocal(base *types.QsdevConfig, local *LocalConfig) (*types.QsdevCon
 		})
 	}
 
-	if local.ClaudeCode.Enabled != nil && *local.ClaudeCode.Enabled != claudeCodeEnabled(base) {
+	if local.ClaudeCode.Enabled != nil && *local.ClaudeCode.Enabled != ClaudeCodeEnabled(base) {
 		violations = append(violations, FloorViolation{
 			Field:     "claude_code.enabled",
 			Attempted: *local.ClaudeCode.Enabled,
@@ -153,9 +153,9 @@ func sanitizeLocalServices(base, local []types.ServiceConfig) ([]types.ServiceCo
 	return out, violations
 }
 
-// claudeCodeEnabled reports whether cfg enables Claude Code; an absent key is
+// ClaudeCodeEnabled reports whether cfg enables Claude Code; an absent key is
 // enabled (the legacy default ConfigToAnswers also applies).
-func claudeCodeEnabled(cfg *types.QsdevConfig) bool {
+func ClaudeCodeEnabled(cfg *types.QsdevConfig) bool {
 	return cfg.ClaudeCode.Enabled == nil || *cfg.ClaudeCode.Enabled
 }
 

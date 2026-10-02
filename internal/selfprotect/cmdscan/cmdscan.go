@@ -75,7 +75,27 @@ type Command struct {
 	// have Pipeline == 0. Rules use this to reason about dataflow across a pipe
 	// (e.g. a protected file read upstream and exfiltrated downstream).
 	Pipeline int
+	// Guard says whether the statement runs whenever the shell reaches it
+	// or only depending on how other commands exit.
+	Guard Guard
 }
+
+// Guard says whether a statement runs whenever the shell reaches it, or only
+// depending on how other commands exit. Guards are ordered: a statement
+// nested in a guarded one is guarded at least as much.
+type Guard uint8
+
+const (
+	// Unguarded statements run whenever the shell reaches them.
+	Unguarded Guard = iota
+	// GuardedByAnd statements run only when the simple commands or pipelines
+	// before them in && lists succeed (`cd "$dir" && prog`).
+	GuardedByAnd
+	// Guarded statements run only depending on anything else: a command
+	// failing (`a || b`, `! a && b`), a test or arithmetic clause, a branch,
+	// a loop or a function call.
+	Guarded
+)
 
 // safeReadVerbs are commands that only read or inspect their arguments whatever
 // those arguments are — they never write a named operand, delete, copy,
@@ -265,6 +285,7 @@ func ParseWithVars(command string, vars map[string]string) ([]Command, error) {
 	}
 
 	pipelineIDs := assignPipelines(file)
+	guards := assignGuards(file)
 
 	var cmds []Command
 	syntax.Walk(file, func(node syntax.Node) bool {
@@ -275,6 +296,7 @@ func ParseWithVars(command string, vars map[string]string) ([]Command, error) {
 
 		var c Command
 		c.Pipeline = pipelineIDs[stmt]
+		c.Guard = guards[stmt]
 		// A simple command contributes its command word and arguments. Compound
 		// commands (blocks, subshells, loops) have no CallExpr here — Walk still
 		// descends into their inner statements — but redirects on the compound
@@ -375,6 +397,77 @@ func assignPipelines(root syntax.Node) map[*syntax.Stmt]int {
 		return true
 	})
 	return ids
+}
+
+// assignGuards maps each guarded statement to its Guard; a lookup of any
+// other yields Unguarded. Walk visits a statement before the statements
+// nested in it, so each passes its own guard down, raised by && or || for
+// the right operand and to Guarded inside any compound command other than a
+// block, a subshell or time.
+func assignGuards(root syntax.Node) map[*syntax.Stmt]Guard {
+	guards := make(map[*syntax.Stmt]Guard)
+	simple := simpleSuccess{}
+	raise := func(s *syntax.Stmt, g Guard) {
+		if s != nil && g > guards[s] {
+			guards[s] = g
+		}
+	}
+	// raiseChildren raises the statements nearest under node, nested in
+	// stmt, to g; each passes it on when the walk below reaches it, so every
+	// node is visited a bounded number of times however deep the nesting.
+	raiseChildren := func(stmt *syntax.Stmt, node syntax.Node, g Guard) {
+		syntax.Walk(node, func(n syntax.Node) bool {
+			if s, ok := n.(*syntax.Stmt); ok && s != stmt {
+				raise(s, g)
+				return false
+			}
+			return true
+		})
+	}
+	syntax.Walk(root, func(n syntax.Node) bool {
+		stmt, ok := n.(*syntax.Stmt)
+		if !ok {
+			return true
+		}
+		g := guards[stmt]
+		raiseChildren(stmt, stmt, g) // command substitutions run with the statement
+		switch cmd := stmt.Cmd.(type) {
+		case nil, *syntax.CallExpr, *syntax.DeclClause, *syntax.Block, *syntax.Subshell, *syntax.TimeClause:
+		case *syntax.BinaryCmd:
+			switch {
+			case cmd.Op == syntax.OrStmt, cmd.Op == syntax.AndStmt && !simple.of(cmd.X):
+				raise(cmd.Y, Guarded)
+			case cmd.Op == syntax.AndStmt:
+				raise(cmd.Y, GuardedByAnd)
+			}
+		default:
+			raiseChildren(stmt, cmd, Guarded)
+		}
+		return true
+	})
+	return guards
+}
+
+// simpleSuccess memoizes whether a statement, the left operand of &&,
+// succeeds exactly when its simple commands do: it is a simple command, a
+// pipeline or an && list of those, and not negated. The memo keeps a long
+// && chain, which nests to the left, linear.
+type simpleSuccess map[*syntax.Stmt]bool
+
+func (m simpleSuccess) of(s *syntax.Stmt) bool {
+	if v, ok := m[s]; ok {
+		return v
+	}
+	v := false
+	switch cmd := s.Cmd.(type) {
+	case *syntax.CallExpr, *syntax.DeclClause:
+		v = true
+	case *syntax.BinaryCmd:
+		v = cmd.Op != syntax.OrStmt && m.of(cmd.X) && m.of(cmd.Y)
+	}
+	v = v && !s.Negated
+	m[s] = v
+	return v
 }
 
 // collectPipeStmts flattens a (possibly nested) pipe chain into its ordered leaf

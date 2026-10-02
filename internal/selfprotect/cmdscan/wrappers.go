@@ -36,6 +36,12 @@ var wrapperCommandStrings = map[string][]string{
 	"env": {"-S", "--split-string"},
 }
 
+// wrapperLookups are options with which a wrapper only looks its operands up
+// instead of running them (`command -v git` prints where git is).
+var wrapperLookups = map[string][]string{
+	"command": {"-v", "-V"},
+}
+
 // scriptShells run a script string passed with -c.
 var scriptShells = map[string]bool{
 	"sh": true, "bash": true, "zsh": true, "dash": true, "ksh": true, "mksh": true, "ash": true,
@@ -82,15 +88,33 @@ func CommandWordIndexes(words []string) []int {
 // python3): a wrapper's options and their arguments, numeric operands
 // (durations, priorities, CPU masks) and VAR=value assignments are skipped up
 // to the next command word. It returns -1 when no single word names the
-// program (no words, or a wrapper that takes the command as one string).
-// Unlike CommandWordIndexes, which over-approximates for blocking rules, it
-// names exactly one word.
+// program (no words, a wrapper given no command, `command -v`, which only
+// looks its operands up, or a wrapper that takes the command as one string;
+// RunsNoProgram tells the last apart). Unlike CommandWordIndexes, which
+// over-approximates for blocking rules, it names exactly one word.
 func ProgramWordIndex(words []string) int {
+	i, _ := programWord(words)
+	return i
+}
+
+// RunsNoProgram reports whether words run no program at all: there are no
+// words, a wrapper is given no command (`exec 2>/dev/null`, `timeout 30`), or
+// `command -v`/`-V` only looks names up. A wrapper that takes its command as
+// one string (`env -S 'python3 -u'`) runs a program, though ProgramWordIndex
+// cannot name it.
+func RunsNoProgram(words []string) bool {
+	i, commandString := programWord(words)
+	return i < 0 && !commandString
+}
+
+// programWord is ProgramWordIndex, also reporting whether it returned -1
+// because a wrapper takes the command as one string.
+func programWord(words []string) (index int, commandString bool) {
 	i := 0
 	for i < len(words) {
 		name := wrapperName(words[i])
 		if !commandWrappers[name] {
-			return i
+			return i, false
 		}
 		i++
 	operands:
@@ -103,7 +127,10 @@ func ProgramWordIndex(words []string) int {
 			case isOptionWord(w):
 				opts, n := parseWrapperOption(name, words, i)
 				if slices.ContainsFunc(opts, func(o WrapperOption) bool { return o.Is(wrapperCommandStrings[name]...) }) {
-					return -1
+					return -1, true
+				}
+				if slices.ContainsFunc(opts, func(o WrapperOption) bool { return o.Is(wrapperLookups[name]...) }) {
+					return -1, false
 				}
 				i += n
 			case w != "" && w[0] >= '0' && w[0] <= '9', isAssignment(w):
@@ -113,7 +140,7 @@ func ProgramWordIndex(words []string) int {
 			}
 		}
 	}
-	return -1
+	return -1, false
 }
 
 // WrapperOption is one option given to a wrapper command: its name as

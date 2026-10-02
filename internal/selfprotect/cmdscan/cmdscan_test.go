@@ -191,3 +191,46 @@ func TestParse_MalformedReturnsError(t *testing.T) {
 		t.Error("expected parse error for malformed command, got nil")
 	}
 }
+
+func TestParse_Guard(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		command string
+		want    map[string]Guard // by command name; unnamed ones are Unguarded
+	}{
+		{"a; b", map[string]Guard{}},
+		{"a && b", map[string]Guard{"b": GuardedByAnd}},
+		{"a && b && c", map[string]Guard{"b": GuardedByAnd, "c": GuardedByAnd}},
+		{"a | b && c", map[string]Guard{"c": GuardedByAnd}},
+		{"a || b", map[string]Guard{"b": Guarded}},
+		{"a && b || c", map[string]Guard{"b": GuardedByAnd, "c": Guarded}},
+		{"a || b && c", map[string]Guard{"b": Guarded, "c": Guarded}},
+		{"! a && b", map[string]Guard{"b": Guarded}},
+		{"[[ -x p ]] && b", map[string]Guard{"b": Guarded}},
+		{"a && { b; c; }; d", map[string]Guard{"b": GuardedByAnd, "c": GuardedByAnd}},
+		{"a || (b; c)", map[string]Guard{"b": Guarded, "c": Guarded}},
+		{"time a && b", map[string]Guard{"b": Guarded}},
+		{"if a; then b; fi; c", map[string]Guard{"a": Guarded, "b": Guarded}},
+		{"for x in 1; do a; done", map[string]Guard{"a": Guarded}},
+		{"f() { a; }; b", map[string]Guard{"a": Guarded}},
+		{"a && echo $(b)", map[string]Guard{"echo": GuardedByAnd, "b": GuardedByAnd}},
+		{"a || x=$(b)", map[string]Guard{"b": Guarded}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.command, func(t *testing.T) {
+			t.Parallel()
+			cmds, err := Parse(tt.command)
+			if err != nil {
+				t.Fatal(err)
+			}
+			for _, c := range cmds {
+				if c.Name == "" {
+					continue
+				}
+				if want := tt.want[c.Name]; c.Guard != want {
+					t.Errorf("%s: Guard = %d, want %d", c.Name, c.Guard, want)
+				}
+			}
+		})
+	}
+}

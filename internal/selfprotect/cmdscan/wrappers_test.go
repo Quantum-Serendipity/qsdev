@@ -53,12 +53,40 @@ func TestProgramWordIndex(t *testing.T) {
 		{"env chdir then unset", []string{"env", "-C", "/tmp", "-u", "HOME", "x.py"}, 5},
 		{"env abbreviated chdir", []string{"env", "--ch", "/tmp", "x.py"}, 3},
 		{"wrapper only", []string{"timeout", "30"}, -1},
+		{"command lookup", []string{"command", "-v", "git"}, -1},
+		{"command verbose lookup", []string{"command", "-V", "git"}, -1},
+		{"command default path", []string{"command", "-p", "git"}, 2},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 			if got := ProgramWordIndex(tt.words); got != tt.want {
 				t.Errorf("ProgramWordIndex(%q) = %d, want %d", tt.words, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestRunsNoProgram(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name  string
+		words []string
+		want  bool
+	}{
+		{"empty", nil, true},
+		{"exec with no command", []string{"exec"}, true},
+		{"wrapper only", []string{"timeout", "30"}, true},
+		{"command lookup", []string{"command", "-v", "git"}, true},
+		{"env split string", []string{"env", "-S", "python3 -u"}, false},
+		{"plain program", []string{"git", "status"}, false},
+		{"wrapped program", []string{"exec", "git"}, false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			if got := RunsNoProgram(tt.words); got != tt.want {
+				t.Errorf("RunsNoProgram(%q) = %v, want %v", tt.words, got, tt.want)
 			}
 		})
 	}

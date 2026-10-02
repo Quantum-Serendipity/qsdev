@@ -1,8 +1,11 @@
 package rules
 
 import (
+	"maps"
 	"os"
+	"path"
 	"path/filepath"
+	"slices"
 	"strings"
 
 	"github.com/Quantum-Serendipity/qsdev/internal/selfprotect/canon"
@@ -10,12 +13,20 @@ import (
 
 // replaceVerbs delete, move, copy or link a path operand as a whole, so an
 // operand that is a directory holding a protected location removes or
-// replaces that location without naming it. Other commands are left to the
-// named-path analysis: `du -sh ~` or `tar czf x.tgz ~` only read the tree.
-var replaceVerbs = map[string]bool{
-	"rm": true, "rmdir": true, "unlink": true, "shred": true,
-	"mv": true, "cp": true, "rsync": true, "ln": true, "link": true,
-}
+// replaces that location without naming it: the delete and link verbs, and
+// the copy verbs that take whole trees. Other commands are left to the
+// named-path analysis: `du -sh ~` or `tar czf x.tgz ~` only read the tree, and
+// find removes its start points only through its expression, which
+// findMutatesProtected judges.
+var replaceVerbs = func() map[string]bool {
+	verbs := maps.Clone(deleteVerbs)
+	maps.Copy(verbs, linkVerbs)
+	for _, v := range []string{"cp", "mv", "rsync"} {
+		verbs[v] = copyVerbs[v]
+	}
+	delete(verbs, "find")
+	return verbs
+}()
 
 // replacesProtectedAncestor reports whether a command deletes, moves or
 // replaces a directory that holds a home- or system-anchored protected
@@ -103,6 +114,9 @@ func isDir(p string) bool {
 // after brace and glob expansion and cwd resolution. A relative word from an
 // unknown directory is left to the relative-write analysis.
 func wordReachesProtectedAncestor(sc scannedCommand, p string) bool {
+	if expandedReachesAncestor(sc, p) {
+		return true
+	}
 	variants, ok := expandBraces(p)
 	if !ok {
 		return true
@@ -168,6 +182,41 @@ func globReachesAncestor(pattern string) bool {
 		}
 		if matched {
 			return true
+		}
+	}
+	return false
+}
+
+// expandedReachesAncestor reports whether word, an argument of sc built from
+// an expansion the scan cannot render (`"$(echo ~)/.config"`, `$H/.config`
+// after `H=~`), can still name a directory at or above a protected location
+// below the home directory: the expansion may be the home directory, so the
+// word fails closed when its literal tail is the home-relative path of such a
+// directory (it ends in /.config or /.config/<app>, say). Directories at or
+// above the home directory are not tails: `rm -rf "$tmp"` stays allowed.
+func expandedReachesAncestor(sc scannedCommand, word string) bool {
+	if !slices.Contains(sc.ExpandedArgs, word) {
+		return false
+	}
+	locs := canon.ProtectedLocations()
+	if locs == nil {
+		return true // the table could not be built: fail closed
+	}
+	home := expandTilde("~")
+	if !isRooted(home) {
+		return false
+	}
+	homeKey := strings.TrimSuffix(canon.PathKey(home), "/") + "/"
+	key := canon.PathKey(filepath.Clean(word))
+	for _, loc := range locs {
+		rel, ok := strings.CutPrefix(canon.PathKey(loc), homeKey)
+		if !ok {
+			continue
+		}
+		for dir := strings.TrimSuffix(rel, "/"); dir != "" && dir != "."; dir = path.Dir(dir) {
+			if key == dir || strings.HasSuffix(key, "/"+dir) {
+				return true
+			}
 		}
 	}
 	return false

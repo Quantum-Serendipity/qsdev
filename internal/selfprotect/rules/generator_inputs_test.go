@@ -125,6 +125,22 @@ func TestGeneratorInputsVerdicts(t *testing.T) {
 		{"export org config", bash("export " + orgEnv + "=/tmp/evil.yaml; " + b.AppName + " claude update --force"), Deny},
 		{"env org config", bash("env " + orgEnv + "=/tmp/evil.yaml " + b.AppName + " claude update --force"), Deny},
 		{"sh -c assign org config", bash(`sh -c "` + orgEnv + `=/tmp/evil.yaml ` + b.AppName + ` claude update"`), Deny},
+		// The home overlay lives under the home directory, so a home variable
+		// set for the CLI relocates it as surely as the org-config variable.
+		{"prefix-assign home for cli", bash("HOME=/tmp/e " + b.AppName + " claude update --force"), Deny},
+		{"prefix-assign home for init update", bash("HOME=/tmp/e " + b.AppName + " init --update"), Deny},
+		{"export home then cli", bash("export HOME=/tmp/e; " + b.AppName + " init --update"), Deny},
+		{"bare assign home then cli", bash("HOME=/tmp/e; " + b.AppName + " init --update"), Deny},
+		{"env home for cli", bash("env HOME=/tmp/e " + b.AppName + " claude update"), Deny},
+		{"env home for cli path", bash("env HOME=/tmp/e ./bin/" + b.AppName + " enable gitleaks"), Deny},
+		{"userprofile for cli", bash("USERPROFILE=/tmp/e " + b.AppName + " claude update"), Deny},
+		{"lowercase userprofile for cli exe", bash("userprofile=/tmp/e " + b.AppName + ".exe claude update"), Deny},
+		{"sh -c home for cli", bash(`HOME=/tmp/e sh -c "` + b.AppName + ` init --update"`), Deny},
+		{"sh -c assign home inside", bash(`sh -c "HOME=/tmp/e ` + b.AppName + ` init --update"`), Deny},
+		{"unset home then cli", bash("unset HOME; " + b.AppName + " init --update"), Deny},
+		{"env -u home for cli", bash("env -u HOME " + b.AppName + " init --update"), Deny},
+		{"env -i for cli", bash("env -i " + b.AppName + " init --update"), Deny},
+		{"home for expanded program", bash("HOME=/tmp/e $Q init --update"), Deny},
 		// Deleting, moving or replacing a directory above the overlay removes
 		// or plants it without naming it.
 		{"remove overlay parent", bash("rm -rf ~/.config"), Deny},
@@ -136,6 +152,17 @@ func TestGeneratorInputsVerdicts(t *testing.T) {
 		{"rsync tree contents onto overlay parent", bash("rsync -a /tmp/o/ ~/.config"), Deny},
 		{"move app-named tree into home config", bash("mv -t ~/.config /tmp/" + b.AppName), Deny},
 		{"glob overlay parent", bash("rm -rf ~/.conf*"), Deny},
+		// An expansion the scan cannot render (a command substitution, a
+		// variable set earlier on the line) can still be the home directory,
+		// so an operand ending in the overlay's ancestor chain fails closed.
+		{"command substitution overlay parent", bash(`rm -rf "$(echo ~)/.config"`), Deny},
+		{"variable overlay parent", bash("H=~; rm -rf $H/.config"), Deny},
+		{"variable overlay dir", bash(`rm -rf "$X/.config/` + b.AppName + `"`), Deny},
+		{"move command substitution overlay parent", bash(`mv "$(echo ~)/.config" /tmp/x`), Deny},
+		{"find starting at expanded overlay parent", bash(`find "$(echo ~)/.config" -delete`), Deny},
+		{"find delete overlay parent", bash("find ~/.config -delete"), Deny},
+		{"find exec rm overlay parent", bash("find ~/.config -exec rm -rf {} +"), Deny},
+		{"find exec mv overlay parent entries", bash(`find ~/.config -mindepth 1 -maxdepth 1 -exec mv {} /tmp/ \;`), Deny},
 		// A find selects a generator input by name pattern without naming
 		// its path.
 		{"find exec sed answers", bash("find . -name '*init-answers.yaml' -exec sed -i s/true/false/ {} +"), Deny},
@@ -156,6 +183,13 @@ func TestGeneratorInputsVerdicts(t *testing.T) {
 		{"Read answers", file("Read", answersFile), Allow},
 		{"cat envrc", bash("cat .envrc"), Allow},
 		{"direnv allow", bash("direnv allow"), Allow},
+		{"direnv allow envrc", bash("direnv allow .envrc"), Allow},
+		{"direnv allow dot", bash("direnv allow ."), Allow},
+		{"direnv deny envrc", bash("direnv deny .envrc"), Allow},
+		{"direnv status", bash("direnv status"), Allow},
+		{"printenv org config variable", bash("printenv " + orgEnv), Allow},
+		{"direnv edit envrc", bash("direnv edit .envrc"), Deny},
+		{"direnv allow then append envrc", bash("direnv allow .envrc && echo x >> .envrc"), Deny},
 		{"git status", bash("git status"), Allow},
 		{"git diff envrc", bash("git diff .envrc"), Allow},
 		{"cat devenv answers copy", bash("cat .devenv/." + b.AppName + "-answers.yaml"), Allow},
@@ -175,10 +209,20 @@ func TestGeneratorInputsVerdicts(t *testing.T) {
 		{"copy file into home", bash("cp notes.txt ~"), Allow},
 		{"remove sibling config dir", bash("rm -rf ~/.config/other"), Allow},
 		{"remove lookalike of overlay parent", bash("rm -rf ~/.conf"), Allow},
+		{"remove expanded build dir", bash(`rm -rf "$TMPDIR/build"`), Allow},
+		{"remove expanded variable", bash(`rm -rf "$tmp"`), Allow},
+		{"remove expanded sibling config dir", bash("rm -rf $X/.config/other"), Allow},
+		{"remove literal config dir beside expansion", bash("rm -rf $TMPDIR/x .config"), Allow},
 		// .devenv is devenv's runtime directory, routinely removed to reset
 		// the environment; its answers mirror is read only when the protected
 		// primary answers file is missing, so the directory stays removable.
 		{"remove devenv runtime dir", bash("rm -rf .devenv"), Allow},
+		// A home variable set for any other program does not move the
+		// overlay the CLI reads.
+		{"home for go test", bash("HOME=$(mktemp -d) go test ./..."), Allow},
+		{"export home then make", bash("export HOME=/tmp/e; make"), Allow},
+		{"cli without home change", bash(b.AppName + " status"), Allow},
+		{"echo home with cli name", bash("echo HOME is $HOME; " + b.AppName + " status"), Allow},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

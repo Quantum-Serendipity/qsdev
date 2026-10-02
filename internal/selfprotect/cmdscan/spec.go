@@ -108,24 +108,39 @@ func flagValue(word string, spellings []string, want bool) bool {
 // caller's rule errs towards the human gate. A program word built from an
 // expansion is not resolved.
 func InvokedSpecs(command, app string, specs []CommandSpec) []CommandSpec {
-	raw := strings.FieldsFunc(strings.NewReplacer(`'`, "", `"`, "").Replace(command), isWordBreak)
-	words := make([]string, len(raw))
-	for i, w := range raw {
-		words[i] = strings.ReplaceAll(w, `\`, "")
-	}
 	var hit []CommandSpec
-	for i, w := range raw {
-		// Case-folded: Windows and macOS resolve QSDEV to qsdev.
-		if !strings.EqualFold(programName(w), app) && !strings.EqualFold(programName(words[i]), app) {
-			continue
-		}
+	for _, args := range appInvocations(command, app) {
 		for _, s := range specs {
-			if s.Matches(words[i+1:]) {
+			if s.Matches(args) {
 				hit = append(hit, s)
 			}
 		}
 	}
 	return hit
+}
+
+// InvokesProgram reports whether command may run the program app, judged on
+// the raw text the way InvokedSpecs judges it.
+func InvokesProgram(command, app string) bool {
+	return len(appInvocations(command, app)) > 0
+}
+
+// appInvocations returns, for each word of command that names the program
+// app, the words that follow it (see InvokedSpecs for how the text is split).
+func appInvocations(command, app string) [][]string {
+	raw := strings.FieldsFunc(strings.NewReplacer(`'`, "", `"`, "").Replace(command), isWordBreak)
+	words := make([]string, len(raw))
+	for i, w := range raw {
+		words[i] = strings.ReplaceAll(w, `\`, "")
+	}
+	var out [][]string
+	for i, w := range raw {
+		// Case-folded: Windows and macOS resolve QSDEV to qsdev.
+		if strings.EqualFold(programName(w), app) || strings.EqualFold(programName(words[i]), app) {
+			out = append(out, words[i+1:])
+		}
+	}
+	return out
 }
 
 // isWordBreak reports whether r separates words for InvokedSpecs.

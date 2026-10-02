@@ -513,7 +513,7 @@ func scanMentionsProtected(ctx *EvalContext) bool {
 // cannot be parsed (fail closed) or one of its commands mutates one (see
 // protectedMutation), a command deletes or replaces a directory holding a
 // home-anchored protected location (see replacesProtectedAncestor), or a
-// command relocates a protected location (see setsProtectedEnv). The result
+// command relocates a protected location (see relocatesProtected). The result
 // is memoized on ctx.
 func bashMutatesProtected(ctx *EvalContext) bool {
 	if ctx.mutatesDone {
@@ -522,39 +522,12 @@ func bashMutatesProtected(ctx *EvalContext) bool {
 	ctx.mutatesDone = true
 	scs, err := ctx.scannedCommands()
 	if err != nil {
-		ctx.mutates = lineMentionsProtected(ctx)
+		ctx.mutates = lineMentionsProtected(ctx) || unparsedRelocatesHome(ctx.Command)
 		return ctx.mutates
 	}
 	ctx.mutates = (lineMentionsProtected(ctx) && protectedMutation(scs)) ||
-		replacesProtectedAncestor(scs) || setsProtectedEnv(scs)
+		replacesProtectedAncestor(scs) || relocatesProtected(ctx.Command, scs)
 	return ctx.mutates
-}
-
-// setsProtectedEnv reports whether a command sets a variable that relocates a
-// protected location (canon.ProtectedEnvVars): as a prefix or bare assignment
-// (`QSDEV_ORG_CONFIG=/tmp/x qsdev claude update`), or as a NAME=value word of
-// export, declare or env. Protection covers the location the hook process
-// sees, so the relocated file would be unprotected. Names are compared
-// case-insensitively, as Windows environment names are.
-func setsProtectedEnv(scs []scannedCommand) bool {
-	vars := canon.ProtectedEnvVars()
-	names := func(sc scannedCommand) []string {
-		out := slices.Clone(sc.Assigns)
-		for _, w := range sc.Args {
-			if name, _, ok := strings.Cut(w, "="); ok {
-				out = append(out, name)
-			}
-		}
-		return out
-	}
-	for _, sc := range scs {
-		for _, name := range names(sc) {
-			if slices.ContainsFunc(vars, func(v string) bool { return strings.EqualFold(v, name) }) {
-				return true
-			}
-		}
-	}
-	return false
 }
 
 // hasVerb reports whether the command invokes one of verbs, judged from the

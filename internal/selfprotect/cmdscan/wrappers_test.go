@@ -85,3 +85,28 @@ func TestShellScript(t *testing.T) {
 		t.Error("IsScriptShell misclassifies bash or python3")
 	}
 }
+
+func TestInvokesProgram(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		command string
+		want    bool
+	}{
+		{"qsdev init --update", true},
+		{"HOME=/tmp/e ./bin/qsdev status", true},
+		{`sh -c "qsdev claude update"`, true},
+		{`C:\tools\QSDEV.exe status`, true},
+		{"q''sdev status", true},
+		{"go test ./...", false},
+		{"cat qsdev.yaml", false},
+		{"ls ~/.config/qsdevx", false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.command, func(t *testing.T) {
+			t.Parallel()
+			if got := InvokesProgram(tt.command, "qsdev"); got != tt.want {
+				t.Errorf("InvokesProgram(%q) = %v, want %v", tt.command, got, tt.want)
+			}
+		})
+	}
+}

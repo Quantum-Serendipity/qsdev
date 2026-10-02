@@ -151,9 +151,10 @@ func splitFindArgs(args []string) (starts, exprs []string) {
 // findStartCanReachProtected reports whether a find start point can contain a
 // protected entry: it names one, it is the working directory or an ancestor of
 // it, it is an ancestor of the home directory or /etc, or it is at or above a
-// home- or system-anchored protected location (~/.config, say).
+// home- or system-anchored protected location (~/.config, say), also when an
+// expansion spells the home directory (see expandedReachesAncestor).
 func findStartCanReachProtected(sc scannedCommand, start string) bool {
-	if refersProtected(sc, start) {
+	if refersProtected(sc, start) || expandedReachesAncestor(sc, start) {
 		return true
 	}
 	p, known := resolveWord(sc, start)

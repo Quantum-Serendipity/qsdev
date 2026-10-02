@@ -49,6 +49,10 @@ type Command struct {
 	// NameHasExpansion is set when the command word itself is built from an
 	// expansion, so Name is not the program the shell runs.
 	NameHasExpansion bool
+	// ExpandedArgs holds the text of each argument word built from an
+	// expansion, as rendered in Args: an expansion of unknown value renders
+	// as nothing, so `"$(echo ~)/.config"` is "/.config" here.
+	ExpandedArgs []string
 	// Assigns names the variables this statement sets for the command or the
 	// rest of the shell line: prefix assignments (`GIT_EXTERNAL_DIFF=x git
 	// diff`) and bare assignment statements (`PATH=/tmp/x`, emitted as a
@@ -79,15 +83,16 @@ var safeReadVerbs = map[string]bool{
 	"ls": true, "head": true, "tail": true, "wc": true, "echo": true,
 	"printf": true, "test": true, "[": true, "true": true, "false": true,
 	"pwd": true, "stat": true, "file": true, "diff": true, "cmp": true,
-	"cut": true, "jq": true, "tac": true, "nl": true,
+	"cut": true, "jq": true, "tac": true, "nl": true, "printenv": true,
 }
 
 // argReadOnly holds, for commands whose effect depends on their arguments, a
 // predicate reporting whether a given argument list only reads.
 var argReadOnly = map[string]func(args []string) bool{
-	"git":  gitArgsReadOnly,
-	"sort": sortArgsReadOnly,
-	"rg":   rgArgsReadOnly,
+	"git":    gitArgsReadOnly,
+	"sort":   sortArgsReadOnly,
+	"rg":     rgArgsReadOnly,
+	"direnv": direnvArgsReadOnly,
 }
 
 // IsSafeReadVerb reports whether name is a command that is read-only for ANY
@@ -194,6 +199,24 @@ func rgArgsReadOnly(args []string) bool {
 	return true
 }
 
+// direnvTrustSubcommands are the direnv subcommands that leave the .envrc
+// they name untouched: allow and deny (with their aliases) only record
+// whether direnv may load it, in direnv's own data directory, and status,
+// version and help only print. edit opens an editor on the file, exec and
+// the hook/export family run it, and fetchurl downloads: not read-only.
+var direnvTrustSubcommands = map[string]bool{
+	"allow": true, "permit": true, "grant": true,
+	"deny": true, "block": true, "revoke": true,
+	"status": true, "version": true, "help": true,
+}
+
+// direnvArgsReadOnly reports whether a direnv invocation is a subcommand that
+// does not change the file it names (see direnvTrustSubcommands). The
+// subcommand must be the first argument.
+func direnvArgsReadOnly(args []string) bool {
+	return len(args) > 0 && direnvTrustSubcommands[args[0]]
+}
+
 // isLongOptionPrefix reports whether name (a long option without its leading
 // "--") abbreviates option, as getopt_long accepts. The empty name is "--",
 // the end-of-options marker, which is not an abbreviation.
@@ -265,6 +288,9 @@ func ParseWithVars(command string, vars map[string]string) ([]Command, error) {
 					t, e := wordText(w, vars)
 					c.Args = append(c.Args, t)
 					c.HasExpansion = c.HasExpansion || e
+					if e {
+						c.ExpandedArgs = append(c.ExpandedArgs, t)
+					}
 				}
 			}
 		case *syntax.DeclClause:

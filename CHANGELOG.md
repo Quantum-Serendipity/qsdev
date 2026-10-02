@@ -104,13 +104,27 @@ All notable changes to qsdev are recorded in this file. The format is based on
   or replacing a directory above the overlay (such as `rm -rf ~/.config`).
   An agent command that sets `QSDEV_ORG_CONFIG` (`QSDEV_ORG_CONFIG=... qsdev
   claude update`, `export QSDEV_ORG_CONFIG=...`) is denied too, since it
-  would point a regeneration at an unprotected file. The overlay is protected
-  at the location the hook process sees; a variable set outside the agent's
-  commands (for example in the environment Claude Code was started with)
-  moves it. Reading them is still allowed. An agent command that touches them, for
-  example `git add .envrc` or `cp .envrc /tmp/`, is now denied: make the
-  change yourself, or run the qsdev command that owns the file
-  (`qsdev init --update`, `qsdev claude update`).
+  would point a regeneration at an unprotected file. So is an agent command
+  line that runs qsdev and sets or clears `HOME` or `USERPROFILE`
+  (`HOME=/tmp/x qsdev init --update`, `export HOME=/tmp/x; qsdev ...`,
+  `env -u HOME qsdev ...`, `env -i qsdev ...`), which moves the default
+  overlay below another home directory; setting `HOME` for other programs
+  (`HOME=$(mktemp -d) go test ./...`) stays allowed. Deleting or moving a
+  directory above the overlay through an expansion the hook cannot resolve
+  (`rm -rf "$(echo ~)/.config"`, `H=~; rm -rf $H/.config`) is denied as well.
+  The overlay is protected at the location the hook process sees; a variable
+  set outside the agent's commands (for example in the environment Claude
+  Code was started with) moves it. Reading them is still allowed, as are
+  `direnv allow`/`direnv deny` (with or without `.envrc`) and `printenv`. An
+  agent command that touches them, for example `git add .envrc` or
+  `cp .envrc /tmp/`, is now denied: make the change yourself, or run the
+  qsdev command that owns the file (`qsdev init --update`,
+  `qsdev claude update`). The hook cannot yet prove every reader read-only,
+  so some reads of these files are denied too: `source .envrc` and
+  `. ./.envrc` (run `direnv allow`, or source it in your own shell),
+  `shellcheck .envrc`, `less`/`yq` on `.devinit/.qsdev-init-answers.yaml`
+  (use `cat`, `grep` or `jq`, which stay allowed, or run them yourself) and
+  `unset QSDEV_ORG_CONFIG`.
 - A stray or planted qsdev marker in a parent directory (for example a shared
   or temporary directory) can no longer capture root resolution, session logs
   or configuration for a git repository created beneath it (U01-01, XS-N5).

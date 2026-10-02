@@ -20,6 +20,15 @@ func TestIsSafeReadCommand(t *testing.T) {
 		{"cat .claude/settings.json", true},
 		{"grep -r deny .claude/", true},
 		{"jq . .claude/settings.json", true},
+		{"printenv QSDEV_ORG_CONFIG", true},
+
+		// direnv: trust and status subcommands leave the .envrc untouched.
+		{"direnv allow .envrc", true},
+		{"direnv deny .envrc", true},
+		{"direnv status", true},
+		{"direnv edit .envrc", false},
+		{"direnv exec . sh -c true", false},
+		{"direnv", false},
 
 		// git: only inspection subcommands, and only without output/pager options.
 		{"git status", true},

@@ -756,6 +756,22 @@ func ProtectedEnvVars() []string {
 	return slices.Clone(brandedTables().envVars)
 }
 
+// homeEnvVars are the variables os.UserHomeDir reads the home directory from:
+// HOME on Unix (and plan9's home, the same name case-folded), USERPROFILE on
+// Windows.
+var homeEnvVars = []string{"HOME", "USERPROFILE"}
+
+// HomeEnvVars returns the environment variables that relocate the protected
+// home-anchored generator inputs for the CLI: the CLI reads the org overlay
+// from below the home directory (see orgOverlayEntries), so setting or
+// clearing one of them for a run of the CLI points a regeneration at an
+// unprotected overlay, or at none. Unlike ProtectedEnvVars they are set for
+// ordinary programs (`HOME=$(mktemp -d) go test`), so only a line that runs
+// the CLI may not change them.
+func HomeEnvVars() []string {
+	return slices.Clone(homeEnvVars)
+}
+
 // ProtectedNames returns the single-component names protected wherever they
 // appear (.claude, the state directory, .envrc, ...), for a check that must
 // decide whether a glob segment can expand to one of them.

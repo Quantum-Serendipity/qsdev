@@ -55,6 +55,10 @@ const (
 	KeyEnv                          = "env"
 )
 
+// EnvShellPrefix is the env variable whose value Claude Code prepends to
+// every hook command: set, it decides whether the hook's own command runs.
+const EnvShellPrefix = "CLAUDE_CODE_SHELL_PREFIX"
+
 // ModeBypassPermissions is the permission mode that skips every permission
 // prompt.
 const ModeBypassPermissions = "bypassPermissions"
@@ -99,14 +103,23 @@ type Matcher struct {
 // that limits when the hook runs. Async is set by "async" or "asyncRewake":
 // such a hook runs in the background and cannot block the tool call. Timeout
 // is the "timeout" in seconds, 0 when absent (Claude Code's default then
-// applies); a value that is not a positive number reads as -1.
+// applies); a value that is not a positive number reads as -1. Extra lists,
+// sorted and comma-separated, the keys Parse does not interpret: keys such as
+// "args" (spawn the command as an executable with no shell), "shell" or
+// "once" change whether or how the command runs, so a hook carrying any key
+// qsdev does not know is never credited, including keys Claude Code adds
+// later.
 type Hook struct {
 	Type    string
 	Command string
 	If      string
 	Async   bool
 	Timeout float64
+	Extra   string
 }
+
+// hookKeys are the hook keys Parse interprets.
+var hookKeys = []string{"type", "command", "if", "async", "asyncRewake", "timeout", "statusMessage"}
 
 // Parse reads the posture keys of a settings document. Keys are matched
 // exactly, as Claude Code reads them: encoding/json matches struct fields
@@ -168,6 +181,14 @@ func parseMatcher(v any) Matcher {
 				he.Timeout = n
 			}
 		}
+		var extra []string
+		for k := range hm {
+			if !slices.Contains(hookKeys, k) {
+				extra = append(extra, k)
+			}
+		}
+		slices.Sort(extra)
+		he.Extra = strings.Join(extra, ",")
 		m.Hooks = append(m.Hooks, he)
 	}
 	return m
@@ -181,7 +202,7 @@ func isSet(m map[string]any, key string) bool {
 
 // Registered reports whether want is registered for event under matcher with
 // the same type, run condition (an added "if" narrows when a guard runs),
-// async mode and timeout.
+// async mode, timeout and uninterpreted keys (see Hook.Extra).
 func (s Settings) Registered(event, matcher string, want Hook) bool {
 	for _, m := range s.Hooks[event] {
 		if m.Matcher == matcher && slices.Contains(m.Hooks, want) {
@@ -306,11 +327,11 @@ func (s Settings) RunsScript(event, tool, script, app string, minTimeout float64
 	return false
 }
 
-// canBlock reports whether h runs in the foreground, every time its matcher
-// fires, for at least minTimeout seconds: the conditions under which its
-// decision reaches Claude Code.
+// canBlock reports whether h runs its command through the default shell in
+// the foreground, every time its matcher fires, for at least minTimeout
+// seconds: the conditions under which its decision reaches Claude Code.
 func (h Hook) canBlock(minTimeout float64) bool {
-	return h.Type == HookTypeCommand && h.If == "" && !h.Async &&
+	return h.Type == HookTypeCommand && h.If == "" && !h.Async && h.Extra == "" &&
 		(h.Timeout == 0 || h.Timeout >= minTimeout)
 }
 
@@ -318,18 +339,23 @@ var (
 	// exactMatcherRe matches a matcher Claude Code compares as an exact tool
 	// name, or a list of them separated by "|" or ",".
 	exactMatcherRe = regexp.MustCompile(`^[A-Za-z0-9_\-, |]+$`)
-	// divergentSyntaxRe matches regexp syntax that Go's RE2 accepts but
-	// JavaScript rejects or reads differently: flag and named groups, POSIX
-	// classes, Unicode classes, Go-only escapes and octal escapes.
-	divergentSyntaxRe = regexp.MustCompile(`\(\?|\[\[:|\\[pPzAQC0-9]|\\x\{`)
+	// portableRegexpRe matches a regexp matcher built only from syntax Go's
+	// RE2 and JavaScript read the same way: literals, ".", anchors,
+	// alternation, plain groups and the "*", "+" and "?" quantifiers.
+	// Brackets, escapes, braces and "(?" groups are left out: the engines
+	// differ on several of their forms (a leading "]" in a bracket, POSIX and
+	// Unicode classes, flag groups, Go-only escapes), so an allowlist fails
+	// safe where a list of known differences cannot.
+	portableRegexpRe = regexp.MustCompile(`^[A-Za-z0-9_\-, |.*+?^$()]+$`)
 )
 
 // matcherCovers reports whether a hook matcher selects tool under Claude
 // Code's semantics: "" and "*" match every tool; a matcher of only letters,
 // digits, "_", "-", spaces, "," and "|" is a list of exact names separated by
 // "|" or ","; anything else is a JavaScript regular expression tested
-// unanchored. A pattern Go would read differently from JavaScript, or cannot
-// compile, matches nothing, so it is never credited.
+// unanchored. A pattern outside the syntax both engines read alike (see
+// portableRegexpRe), or that Go cannot compile, matches nothing, so it is
+// never credited.
 func matcherCovers(matcher, tool string) bool {
 	if matcher == "" || matcher == "*" {
 		return true
@@ -342,7 +368,7 @@ func matcherCovers(matcher, tool string) bool {
 		}
 		return false
 	}
-	if divergentSyntaxRe.MatchString(matcher) {
+	if !portableRegexpRe.MatchString(matcher) || strings.Contains(matcher, "(?") {
 		return false
 	}
 	re, err := regexp.Compile(matcher)

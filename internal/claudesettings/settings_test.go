@@ -121,20 +121,33 @@ func TestRegistered(t *testing.T) {
 func TestRegistered_BlockingFields(t *testing.T) {
 	t.Parallel()
 	want := Hook{Type: HookTypeCommand, Command: guardCommand, Timeout: GuardHookTimeout}
+	withKey := func(key, value string) string {
+		return `{"hooks": {"PreToolUse": [{"matcher": "Bash", "hooks": [{"type": "command", "command": ` +
+			jsonString(guardCommand) + `, "timeout": 30, ` + jsonString(key) + `: ` + value + `}]}]}}`
+	}
 	tests := []struct {
 		name string
 		hook Hook
+		doc  string // overrides hook when set
 		ok   bool
 	}{
-		{"as generated", want, true},
-		{"async", Hook{Command: guardCommand, Timeout: GuardHookTimeout, Async: true}, false},
-		{"shorter timeout", Hook{Command: guardCommand, Timeout: 1}, false},
-		{"timeout removed", Hook{Command: guardCommand}, false},
+		{name: "as generated", hook: want, ok: true},
+		{name: "async", hook: Hook{Command: guardCommand, Timeout: GuardHookTimeout, Async: true}},
+		{name: "shorter timeout", hook: Hook{Command: guardCommand, Timeout: 1}},
+		{name: "timeout removed", hook: Hook{Command: guardCommand}},
+		{name: "status message", doc: withKey("statusMessage", `"Checking"`), ok: true},
+		{name: "args empty", doc: withKey("args", `[]`)},
+		{name: "args set", doc: withKey("args", `["--help"]`)},
+		{name: "shell powershell", doc: withKey("shell", `"powershell"`)},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
-			s, err := Parse([]byte(hooksDoc(t, "Bash", tt.hook)))
+			doc := tt.doc
+			if doc == "" {
+				doc = hooksDoc(t, "Bash", tt.hook)
+			}
+			s, err := Parse([]byte(doc))
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -234,6 +247,19 @@ func TestRunsScript(t *testing.T) {
 		{name: "matcher go end-of-text", matcher: `Bash\z`, command: guardCommand, want: false},
 		{name: "matcher go begin-of-text", matcher: `\ABash`, command: guardCommand, want: false},
 		{name: "matcher go hex brace", matcher: `\x{42}ash`, command: guardCommand, want: false},
+		// Bracket forms RE2 and JavaScript read differently: in RE2 a "]"
+		// right after "[" or "[^" is a literal and a POSIX class may appear
+		// anywhere in a bracket; JavaScript reads "[]" as matching nothing,
+		// "[^]" as any character and "[:upper:]" as a set of characters.
+		{name: "matcher leading close bracket", matcher: "[]]?Bash", command: guardCommand, want: false},
+		{name: "matcher negated leading close bracket", matcher: "[^]]?Bash", command: guardCommand, want: false},
+		{name: "matcher inner posix class", matcher: "x|[_[:upper:]]ash", command: guardCommand, want: false},
+		{name: "matcher trailing posix class", matcher: "[a[:alpha:]]+", command: guardCommand, want: false},
+		// Brackets, escapes and braces are never credited, even in forms
+		// both engines read alike: an allowlist fails safe.
+		{name: "matcher plain bracket", matcher: "[B]ash", command: guardCommand, want: false},
+		{name: "matcher escaped", matcher: `\w+`, command: guardCommand, want: false},
+		{name: "matcher repetition braces", matcher: "Bas{1}h", command: guardCommand, want: false},
 		{name: "matcher NeverMatchesAnything", matcher: "NeverMatchesAnything", command: guardCommand, want: false},
 		{name: "matcher Edit", matcher: "Edit", command: guardCommand, want: false},
 		{name: "matcher partial only", matcher: "Bas", command: guardCommand, want: false},
@@ -272,6 +298,15 @@ func TestRunsScript(t *testing.T) {
 		{name: "timeout 30", matcher: "Bash", hook: Hook{Command: guardCommand, Timeout: GuardHookTimeout}, want: true},
 		{name: "timeout 600", matcher: "Bash", hook: Hook{Command: guardCommand, Timeout: 600}, want: true},
 		{name: "timeout as string", settings: `{"hooks": {"PreToolUse": [{"matcher": "Bash", "hooks": [{"type": "command", "command": ` + jsonString(guardCommand) + `, "timeout": "30"}]}]}}`, want: false},
+		// Keys that change whether or how the command runs: "args" spawns
+		// the command as an executable path with no shell, "shell" picks
+		// another shell, "once" runs it once per session. A key the
+		// generator does not emit is never credited.
+		{name: "args empty", settings: `{"hooks": {"PreToolUse": [{"matcher": "Bash", "hooks": [{"type": "command", "command": ` + jsonString(failClosed) + `, "args": []}]}]}}`, want: false},
+		{name: "args set", settings: `{"hooks": {"PreToolUse": [{"matcher": "Bash", "hooks": [{"type": "command", "command": ` + jsonString(failClosed) + `, "args": ["x"]}]}]}}`, want: false},
+		{name: "shell powershell", settings: `{"hooks": {"PreToolUse": [{"matcher": "Bash", "hooks": [{"type": "command", "command": ` + jsonString(failClosed) + `, "shell": "powershell"}]}]}}`, want: false},
+		{name: "once", settings: `{"hooks": {"PreToolUse": [{"matcher": "Bash", "hooks": [{"type": "command", "command": ` + jsonString(failClosed) + `, "once": true}]}]}}`, want: false},
+		{name: "status message", settings: `{"hooks": {"PreToolUse": [{"matcher": "Bash", "hooks": [{"type": "command", "command": ` + jsonString(failClosed) + `, "statusMessage": "Checking", "timeout": 30}]}]}}`, want: true},
 		{name: "timeout zero", settings: `{"hooks": {"PreToolUse": [{"matcher": "Bash", "hooks": [{"type": "command", "command": ` + jsonString(guardCommand) + `, "timeout": 0}]}]}}`, want: false},
 	}
 	for _, tt := range tests {

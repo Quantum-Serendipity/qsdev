@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"path"
 	"regexp"
+	"regexp/syntax"
 	"slices"
 	"strings"
 )
@@ -59,6 +60,26 @@ const (
 // every hook command: set, it decides whether the hook's own command runs.
 const EnvShellPrefix = "CLAUDE_CODE_SHELL_PREFIX"
 
+// launchEnvNames and launchEnvPrefixes name the env variables that decide
+// which program a hook command runs or what code it loads before the hook's
+// own: the shell's command search and startup files, the dynamic loader's
+// preloads and search paths, the interpreters' module paths and options, and
+// Claude Code's hook shell settings (EnvShellPrefix among them). A settings
+// "env" that sets one can make a registered guard run something else.
+var (
+	launchEnvNames    = []string{"PATH", "BASH_ENV", "ENV", "SHELLOPTS", "BASHOPTS", "IFS", "NODE_OPTIONS", "PERL5LIB", "PERL5OPT", "RUBYOPT", "RUBYLIB"}
+	launchEnvPrefixes = []string{"CLAUDE_CODE_SHELL", "PYTHON", "LD_", "DYLD_"}
+)
+
+// IsLaunchEnv reports whether the env variable name decides which program a
+// hook command runs or what code it loads (see launchEnvNames). Names are
+// compared case-insensitively, as Windows reads them.
+func IsLaunchEnv(name string) bool {
+	upper := strings.ToUpper(name)
+	return slices.Contains(launchEnvNames, upper) ||
+		slices.ContainsFunc(launchEnvPrefixes, func(p string) bool { return strings.HasPrefix(upper, p) })
+}
+
 // ModeBypassPermissions is the permission mode that skips every permission
 // prompt.
 const ModeBypassPermissions = "bypassPermissions"
@@ -93,9 +114,12 @@ type Settings struct {
 	Env map[string]string
 }
 
-// Matcher is one matcher entry of a hook event.
+// Matcher is one matcher entry of a hook event. Invalid is set when the
+// "matcher" key is present but not a string: Claude Code's settings schema
+// rejects it, so none of the entry's hooks runs.
 type Matcher struct {
 	Matcher string
+	Invalid bool
 	Hooks   []Hook
 }
 
@@ -108,7 +132,11 @@ type Matcher struct {
 // "args" (spawn the command as an executable with no shell), "shell" or
 // "once" change whether or how the command runs, so a hook carrying any key
 // qsdev does not know is never credited, including keys Claude Code adds
-// later.
+// later. Invalid is set when a key Parse interprets holds a value of a type
+// Claude Code's settings schema does not accept (a non-string "if" or
+// "statusMessage", a non-boolean "async", ...): Claude Code then skips the
+// hook, or the whole settings file, so it never runs, whatever the other
+// fields read as.
 type Hook struct {
 	Type    string
 	Command string
@@ -116,10 +144,26 @@ type Hook struct {
 	Async   bool
 	Timeout float64
 	Extra   string
+	Invalid bool
 }
 
-// hookKeys are the hook keys Parse interprets.
-var hookKeys = []string{"type", "command", "if", "async", "asyncRewake", "timeout", "statusMessage"}
+// hookKeyTypes maps each hook key Parse interprets to the check of the value
+// type Claude Code's settings schema accepts for it.
+var hookKeyTypes = map[string]func(any) bool{
+	"type":          isString,
+	"command":       isString,
+	"if":            isString,
+	"statusMessage": isString,
+	"async":         isBool,
+	"asyncRewake":   isBool,
+	"timeout":       isPositiveNumber,
+}
+
+func isString(v any) bool { _, ok := v.(string); return ok }
+
+func isBool(v any) bool { _, ok := v.(bool); return ok }
+
+func isPositiveNumber(v any) bool { n, ok := v.(float64); return ok && n > 0 }
 
 // Parse reads the posture keys of a settings document. Keys are matched
 // exactly, as Claude Code reads them: encoding/json matches struct fields
@@ -167,6 +211,9 @@ func parseMatcher(v any) Matcher {
 	em, _ := v.(map[string]any)
 	var m Matcher
 	m.Matcher, _ = em["matcher"].(string)
+	if raw, ok := em["matcher"]; ok && !isString(raw) {
+		m.Invalid = true
+	}
 	hooks, _ := em["hooks"].([]any)
 	for _, h := range hooks {
 		hm, _ := h.(map[string]any)
@@ -182,9 +229,13 @@ func parseMatcher(v any) Matcher {
 			}
 		}
 		var extra []string
-		for k := range hm {
-			if !slices.Contains(hookKeys, k) {
+		for k, v := range hm {
+			valid, interpreted := hookKeyTypes[k]
+			switch {
+			case !interpreted:
 				extra = append(extra, k)
+			case !valid(v):
+				he.Invalid = true
 			}
 		}
 		slices.Sort(extra)
@@ -202,10 +253,12 @@ func isSet(m map[string]any, key string) bool {
 
 // Registered reports whether want is registered for event under matcher with
 // the same type, run condition (an added "if" narrows when a guard runs),
-// async mode, timeout and uninterpreted keys (see Hook.Extra).
+// async mode, timeout and uninterpreted keys (see Hook.Extra), under a
+// matcher and with fields of the types Claude Code accepts (see
+// Matcher.Invalid and Hook.Invalid).
 func (s Settings) Registered(event, matcher string, want Hook) bool {
 	for _, m := range s.Hooks[event] {
-		if m.Matcher == matcher && slices.Contains(m.Hooks, want) {
+		if !m.Invalid && m.Matcher == matcher && slices.Contains(m.Hooks, want) {
 			return true
 		}
 	}
@@ -312,7 +365,7 @@ func programRe(app string) *regexp.Regexp {
 func (s Settings) RunsScript(event, tool, script, app string, minTimeout float64) bool {
 	re := programRe(app)
 	for _, m := range s.Hooks[event] {
-		if !matcherCovers(m.Matcher, tool) {
+		if m.Invalid || !matcherCovers(m.Matcher, tool) {
 			continue
 		}
 		for _, h := range m.Hooks {
@@ -331,7 +384,7 @@ func (s Settings) RunsScript(event, tool, script, app string, minTimeout float64
 // the foreground, every time its matcher fires, for at least minTimeout
 // seconds: the conditions under which its decision reaches Claude Code.
 func (h Hook) canBlock(minTimeout float64) bool {
-	return h.Type == HookTypeCommand && h.If == "" && !h.Async && h.Extra == "" &&
+	return h.Type == HookTypeCommand && h.If == "" && !h.Async && h.Extra == "" && !h.Invalid &&
 		(h.Timeout == 0 || h.Timeout >= minTimeout)
 }
 
@@ -371,6 +424,26 @@ func matcherCovers(matcher, tool string) bool {
 	if !portableRegexpRe.MatchString(matcher) || strings.Contains(matcher, "(?") {
 		return false
 	}
+	parsed, err := syntax.Parse(matcher, syntax.Perl)
+	if err != nil || repeatsAssertion(parsed) {
+		return false
+	}
 	re, err := regexp.Compile(matcher)
 	return err == nil && re.MatchString(tool)
+}
+
+// repeatsAssertion reports whether re applies a quantifier directly to an
+// anchor ("^*", "$?", "(^+)"): RE2 accepts that, but JavaScript throws
+// "Nothing to repeat", and Claude Code treats a matcher that does not compile
+// as matching nothing.
+func repeatsAssertion(re *syntax.Regexp) bool {
+	switch re.Op {
+	case syntax.OpStar, syntax.OpPlus, syntax.OpQuest, syntax.OpRepeat:
+		switch re.Sub[0].Op {
+		case syntax.OpBeginLine, syntax.OpEndLine, syntax.OpBeginText, syntax.OpEndText,
+			syntax.OpWordBoundary, syntax.OpNoWordBoundary, syntax.OpEmptyMatch:
+			return true
+		}
+	}
+	return slices.ContainsFunc(re.Sub, repeatsAssertion)
 }

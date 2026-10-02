@@ -210,6 +210,62 @@ func TestGuardEffective(t *testing.T) {
 			wantReason: "not registered as a blocking PreToolUse hook matching Bash",
 		},
 		{
+			name: "matcher_quantified_anchor",
+			files: guardedFiles(map[string]string{
+				".claude/settings.json": strings.Replace(settingsWithPackageGuard, `"matcher": "Bash"`, `"matcher": "^?Bash|PowerShell|Monitor"`, 1),
+			}),
+			want: LayerDisabled,
+		},
+		{
+			name: "matcher_starred_end_anchor",
+			files: guardedFiles(map[string]string{
+				".claude/settings.json": strings.Replace(settingsWithPackageGuard, `"matcher": "Bash"`, `"matcher": "Bash|PowerShell|Monitor|$*"`, 1),
+			}),
+			want: LayerDisabled,
+		},
+		{
+			name: "matcher_number",
+			files: guardedFiles(map[string]string{
+				".claude/settings.json": strings.Replace(settingsWithPackageGuard, `"matcher": "Bash"`, `"matcher": 5`, 1),
+			}),
+			want: LayerDisabled,
+		},
+		{
+			name: "matcher_null",
+			files: guardedFiles(map[string]string{
+				".claude/settings.json": strings.Replace(settingsWithPackageGuard, `"matcher": "Bash"`, `"matcher": null`, 1),
+			}),
+			want: LayerDisabled,
+		},
+		{
+			name: "hook_if_number",
+			files: guardedFiles(map[string]string{
+				".claude/settings.json": strings.Replace(settingsWithPackageGuard, `{"type": "command",`, `{"type": "command", "if": 1,`, 1),
+			}),
+			want: LayerDisabled,
+		},
+		{
+			name: "hook_if_null",
+			files: guardedFiles(map[string]string{
+				".claude/settings.json": strings.Replace(settingsWithPackageGuard, `{"type": "command",`, `{"type": "command", "if": null,`, 1),
+			}),
+			want: LayerDisabled,
+		},
+		{
+			name: "hook_if_array",
+			files: guardedFiles(map[string]string{
+				".claude/settings.json": strings.Replace(settingsWithPackageGuard, `{"type": "command",`, `{"type": "command", "if": ["Bash(npm *)"],`, 1),
+			}),
+			want: LayerDisabled,
+		},
+		{
+			name: "hook_status_message_number",
+			files: guardedFiles(map[string]string{
+				".claude/settings.json": strings.Replace(settingsWithPackageGuard, `{"type": "command",`, `{"type": "command", "statusMessage": 5,`, 1),
+			}),
+			want: LayerDisabled,
+		},
+		{
 			name: "matcher_comma_list",
 			files: guardedFiles(map[string]string{
 				".claude/settings.json": strings.Replace(settingsWithPackageGuard, `"matcher": "Bash"`, `"matcher": "Edit, Bash"`, 1),
@@ -264,6 +320,35 @@ func TestGuardEffective(t *testing.T) {
 			files:      guardedFiles(map[string]string{localPath: `{"env": {"CLAUDE_CODE_SHELL_PREFIX": "true"}}`}),
 			want:       LayerDisabled,
 			wantReason: `CLAUDE_CODE_SHELL_PREFIX="true" (set in ` + localPath + ")",
+		},
+		{
+			name:       "pythonpath_in_settings_local",
+			files:      guardedFiles(map[string]string{localPath: `{"env": {"PYTHONPATH": ".claude/rules"}}`}),
+			want:       LayerDisabled,
+			wantReason: `PYTHONPATH=".claude/rules" (set in ` + localPath + ")",
+		},
+		{
+			name:       "bash_env_in_settings_local",
+			files:      guardedFiles(map[string]string{localPath: `{"env": {"BASH_ENV": "x"}}`}),
+			want:       LayerDisabled,
+			wantReason: `BASH_ENV="x" (set in ` + localPath + ")",
+		},
+		{
+			name:       "ld_preload_in_settings_local",
+			files:      guardedFiles(map[string]string{localPath: `{"env": {"LD_PRELOAD": "/tmp/x.so"}}`}),
+			want:       LayerDisabled,
+			wantReason: `LD_PRELOAD="/tmp/x.so" (set in ` + localPath + ")",
+		},
+		{
+			name:       "windows_path_spelling",
+			files:      guardedFiles(map[string]string{localPath: `{"env": {"Path": "/tmp/evil"}}`}),
+			want:       LayerDisabled,
+			wantReason: `Path="/tmp/evil" (set in ` + localPath + ")",
+		},
+		{
+			name:  "inert_env_in_settings_local",
+			files: guardedFiles(map[string]string{localPath: `{"env": {"TOOL_GATES_DENIED": "WebFetch"}}`}),
+			want:  LayerEnabled,
 		},
 		{
 			name:  "shell_prefix_empty",

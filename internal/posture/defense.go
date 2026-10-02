@@ -2,6 +2,7 @@ package posture
 
 import (
 	"fmt"
+	"maps"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -161,10 +162,11 @@ func (in assessmentInput) judgeGuard() guardState {
 	if reason := in.guardModified(); reason != "" {
 		return disabled(reason)
 	}
-	if prefix := settings.Env[claudesettings.EnvShellPrefix]; prefix != "" {
-		return disabled(fmt.Sprintf("hook commands are prefixed with %s=%q (set in %s), so the hook may never run package-guard.py",
-			claudesettings.EnvShellPrefix, prefix,
-			strings.Join(settings.Sources[claudesettings.EnvSourceKey(claudesettings.EnvShellPrefix)], ", ")))
+	for _, name := range slices.Sorted(maps.Keys(settings.Env)) {
+		if value := settings.Env[name]; value != "" && claudesettings.IsLaunchEnv(name) {
+			return disabled(fmt.Sprintf("hook commands run with %s=%q (set in %s), which decides what program or code a hook runs, so the hook may never run package-guard.py",
+				name, value, strings.Join(settings.Sources[claudesettings.EnvSourceKey(name)], ", ")))
+		}
 	}
 	if !settings.RunsScript(claudesettings.EventPreToolUse, "Bash", packageGuardPath, branding.Get().AppName, claudesettings.GuardHookTimeout) {
 		return disabled(fmt.Sprintf("package-guard.py not registered as a blocking PreToolUse hook matching Bash "+

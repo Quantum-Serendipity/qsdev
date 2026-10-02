@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"maps"
 	"slices"
+	"strings"
 	"testing"
 )
 
@@ -139,6 +140,16 @@ func TestRegistered_BlockingFields(t *testing.T) {
 		{name: "args empty", doc: withKey("args", `[]`)},
 		{name: "args set", doc: withKey("args", `["--help"]`)},
 		{name: "shell powershell", doc: withKey("shell", `"powershell"`)},
+		// Fields of a type Claude Code's schema rejects: the hook (or the
+		// whole file) is skipped, so it is not the generated registration.
+		{name: "if number", doc: withKey("if", `1`)},
+		{name: "if null", doc: withKey("if", `null`)},
+		{name: "if array", doc: withKey("if", `["Bash(npm *)"]`)},
+		{name: "status message number", doc: withKey("statusMessage", `5`)},
+		{name: "async string", doc: withKey("async", `"false"`)},
+		{name: "async null", doc: withKey("async", `null`)},
+		{name: "matcher number", doc: strings.Replace(withKey("statusMessage", `"x"`), `"matcher": "Bash"`, `"matcher": 5`, 1)},
+		{name: "matcher null", doc: strings.Replace(withKey("statusMessage", `"x"`), `"matcher": "Bash"`, `"matcher": null`, 1)},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -307,6 +318,25 @@ func TestRunsScript(t *testing.T) {
 		{name: "shell powershell", settings: `{"hooks": {"PreToolUse": [{"matcher": "Bash", "hooks": [{"type": "command", "command": ` + jsonString(failClosed) + `, "shell": "powershell"}]}]}}`, want: false},
 		{name: "once", settings: `{"hooks": {"PreToolUse": [{"matcher": "Bash", "hooks": [{"type": "command", "command": ` + jsonString(failClosed) + `, "once": true}]}]}}`, want: false},
 		{name: "status message", settings: `{"hooks": {"PreToolUse": [{"matcher": "Bash", "hooks": [{"type": "command", "command": ` + jsonString(failClosed) + `, "statusMessage": "Checking", "timeout": 30}]}]}}`, want: true},
+		// Quantifiers on an anchor: RE2 accepts them, JavaScript throws
+		// "Nothing to repeat", and Claude Code's matcher then matches nothing.
+		{name: "matcher quantified begin anchor", matcher: "^?Bash", command: guardCommand, want: false},
+		{name: "matcher starred end anchor", matcher: "$*Bash", command: guardCommand, want: false},
+		{name: "matcher plus begin anchor", matcher: "^+Bash", command: guardCommand, want: false},
+		{name: "matcher alternative starred anchor", matcher: "x|^*", command: guardCommand, want: false},
+		{name: "matcher grouped starred anchor", matcher: "(^*)Bash", command: guardCommand, want: false},
+		{name: "matcher trailing starred anchor", matcher: "Bash$*", command: guardCommand, want: false},
+		{name: "matcher list with starred anchor", matcher: "Bash|PowerShell|Monitor|$*", command: guardCommand, want: false},
+		// Mistyped fields: Claude Code's schema rejects the hook or matcher.
+		{name: "if number", settings: `{"hooks": {"PreToolUse": [{"matcher": "Bash", "hooks": [{"type": "command", "command": ` + jsonString(guardCommand) + `, "if": 1}]}]}}`, want: false},
+		{name: "if null", settings: `{"hooks": {"PreToolUse": [{"matcher": "Bash", "hooks": [{"type": "command", "command": ` + jsonString(guardCommand) + `, "if": null}]}]}}`, want: false},
+		{name: "if array", settings: `{"hooks": {"PreToolUse": [{"matcher": "Bash", "hooks": [{"type": "command", "command": ` + jsonString(guardCommand) + `, "if": ["Bash(npm *)"]}]}]}}`, want: false},
+		{name: "status message number", settings: `{"hooks": {"PreToolUse": [{"matcher": "Bash", "hooks": [{"type": "command", "command": ` + jsonString(guardCommand) + `, "statusMessage": 5}]}]}}`, want: false},
+		{name: "async string", settings: `{"hooks": {"PreToolUse": [{"matcher": "Bash", "hooks": [{"type": "command", "command": ` + jsonString(guardCommand) + `, "async": "false"}]}]}}`, want: false},
+		{name: "matcher number", settings: `{"hooks": {"PreToolUse": [{"matcher": 5, "hooks": [{"type": "command", "command": ` + jsonString(guardCommand) + `}]}]}}`, want: false},
+		{name: "matcher null", settings: `{"hooks": {"PreToolUse": [{"matcher": null, "hooks": [{"type": "command", "command": ` + jsonString(guardCommand) + `}]}]}}`, want: false},
+		{name: "matcher array", settings: `{"hooks": {"PreToolUse": [{"matcher": ["Bash"], "hooks": [{"type": "command", "command": ` + jsonString(guardCommand) + `}]}]}}`, want: false},
+		{name: "matcher absent", settings: `{"hooks": {"PreToolUse": [{"hooks": [{"type": "command", "command": ` + jsonString(guardCommand) + `}]}]}}`, want: true},
 		{name: "timeout zero", settings: `{"hooks": {"PreToolUse": [{"matcher": "Bash", "hooks": [{"type": "command", "command": ` + jsonString(guardCommand) + `, "timeout": 0}]}]}}`, want: false},
 	}
 	for _, tt := range tests {
@@ -436,6 +466,37 @@ func TestHoldsProjectSettings(t *testing.T) {
 			t.Parallel()
 			if got := HoldsProjectSettings(tt.rel); got != tt.want {
 				t.Errorf("HoldsProjectSettings(%q) = %v, want %v", tt.rel, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestIsLaunchEnv(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name string
+		want bool
+	}{
+		{EnvShellPrefix, true},
+		{"CLAUDE_CODE_SHELL", true},
+		{"PATH", true},
+		{"Path", true},
+		{"PYTHONPATH", true},
+		{"PYTHONHOME", true},
+		{"BASH_ENV", true},
+		{"ENV", true},
+		{"LD_PRELOAD", true},
+		{"DYLD_INSERT_LIBRARIES", true},
+		{"NODE_OPTIONS", true},
+		{"TOOL_GATES_DENIED", false},
+		{"ENVIRONMENT", false},
+		{"MYPATH", false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			if got := IsLaunchEnv(tt.name); got != tt.want {
+				t.Errorf("IsLaunchEnv(%q) = %v, want %v", tt.name, got, tt.want)
 			}
 		})
 	}

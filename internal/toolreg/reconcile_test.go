@@ -379,3 +379,42 @@ func TestReconcileProject(t *testing.T) {
 		}
 	})
 }
+
+// TestReconcile_UnknownToolNamesDropped verifies a decision whose key names
+// no catalog tool (tool names are case-sensitive, so a case variant of one
+// is unknown) is dropped and warned about, never carried into the answers
+// that SyncProjectConfig writes to the committed tools block, and that the
+// real always-on tool it resembles stays enforced.
+func TestReconcile_UnknownToolNamesDropped(t *testing.T) {
+	t.Parallel()
+	reg := catalogRegistry(t)
+	tests := []struct {
+		name    string
+		unknown string
+		value   bool
+	}{
+		{name: "case-variant off", unknown: "Attach-Guard", value: false},
+		{name: "upper-case off", unknown: strings.ToUpper(ToolAttachGuard), value: false},
+		{name: "misspelt on", unknown: "atach-guard", value: true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			answers := &types.WizardAnswers{ClaudeCode: true, Tier: "standard",
+				EnabledTools: map[string]bool{tt.unknown: tt.value}}
+			var buf strings.Builder
+
+			ReconcileAndWarn(&buf, answers, reg, &types.ToolsConfig{Enabled: []string{ToolAttachGuard}})
+
+			if _, ok := answers.EnabledTools[tt.unknown]; ok {
+				t.Errorf("EnabledTools still holds unknown key %q: %v", tt.unknown, answers.EnabledTools)
+			}
+			if !answers.EnabledTools[ToolAttachGuard] {
+				t.Errorf("EnabledTools[%s] = false, want enforced", ToolAttachGuard)
+			}
+			if want := "unknown tool \"" + tt.unknown + "\""; !strings.Contains(buf.String(), want) {
+				t.Errorf("output lacks %q:\n%s", want, buf.String())
+			}
+		})
+	}
+}

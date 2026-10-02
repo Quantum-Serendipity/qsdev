@@ -28,12 +28,18 @@ import (
 // so no opt-out is recorded: like an empty tools block, every explicit off
 // for an always-on tool is dropped. The answers file alone never opts out.
 //
+// A decision for a name the registry does not know (a misspelt or
+// case-variant key such as "Attach-Guard") is dropped first (see
+// DropUnknownTools), so it is never persisted into the committed tools
+// block, which only accepts catalog names.
+//
 // It returns, sorted, the always-on tools kept enabled against an answer
 // source, for callers to warn about.
 func Reconcile(answers *types.WizardAnswers, reg *Registry, committed *types.ToolsConfig) []string {
 	if committed == nil {
 		committed = &types.ToolsConfig{}
 	}
+	DropUnknownTools(answers, reg)
 	kept := dropUncommittedOptOuts(answers, reg, committed.Disabled)
 	adoptOptOuts(answers, reg, committed.Disabled)
 	kept = append(kept, MergeInferredTools(answers, reg)...)
@@ -50,8 +56,12 @@ func Reconcile(answers *types.WizardAnswers, reg *Registry, committed *types.Too
 // keeps the package guard off (see WarnSafetyBlockOptOut). restored names
 // tools the caller already found kept enabled against an earlier answer
 // source (see SwitchedOff); each tool is warned about once. Every path that
-// reconciles answers calls it, so they all warn alike.
+// reconciles answers calls it, so they all warn alike. Each tool decision
+// dropped for naming no catalog tool is warned about too.
 func ReconcileAndWarn(w io.Writer, a *types.WizardAnswers, reg *Registry, committed *types.ToolsConfig, restored ...string) {
+	for _, name := range DropUnknownTools(a, reg) {
+		_, _ = fmt.Fprintf(w, "Warning: ignoring unknown tool %q in the answers; run `qsdev list` to see available tools\n", name)
+	}
 	kept := append(Reconcile(a, reg, committed), restored...)
 	if committed != nil {
 		for _, tool := range reg.All() {
@@ -79,6 +89,23 @@ func ReconcileProject(w io.Writer, projectRoot string, a *types.WizardAnswers, r
 	}
 	ReconcileAndWarn(w, a, reg, committed)
 	return nil
+}
+
+// DropUnknownTools deletes each EnabledTools decision whose key is not a
+// tool name in reg and returns the deleted keys, sorted. Tool names are
+// case-sensitive, so a case variant of a catalog name is unknown too.
+func DropUnknownTools(a *types.WizardAnswers, reg *Registry) []string {
+	var unknown []string
+	for name := range a.EnabledTools {
+		if _, ok := reg.ByName(name); !ok {
+			unknown = append(unknown, name)
+		}
+	}
+	for _, name := range unknown {
+		delete(a.EnabledTools, name)
+	}
+	slices.Sort(unknown)
+	return unknown
 }
 
 // dropUncommittedOptOuts deletes the explicit off of each always-on tool that

@@ -369,3 +369,38 @@ func TestPreserveCommittedPolicy(t *testing.T) {
 		t.Errorf("nil committed changed fresh: %+v", fresh)
 	}
 }
+
+// TestCommittedTools verifies a missing committed config is not an error
+// (no opt-out is recorded) while one that cannot be loaded is reported, so
+// callers can tell the two apart.
+func TestCommittedTools(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name        string
+		dir         func(t *testing.T) string
+		wantErr     bool
+		wantNil     bool
+		wantEnabled []string
+	}{
+		{name: "missing", dir: func(t *testing.T) string { return t.TempDir() }, wantNil: true},
+		{name: "unparseable", dir: func(t *testing.T) string { return writeProjectFiles(t, "tools: [\n", "") }, wantErr: true, wantNil: true},
+		{name: "loaded", dir: func(t *testing.T) string {
+			return writeProjectFiles(t, "version: 2\ntools:\n  enabled: [attach-guard]\n", "")
+		}, wantEnabled: []string{"attach-guard"}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			tools, err := CommittedTools(tt.dir(t))
+			if (err != nil) != tt.wantErr {
+				t.Fatalf("err = %v, wantErr %v", err, tt.wantErr)
+			}
+			if (tools == nil) != tt.wantNil {
+				t.Fatalf("tools = %+v, want nil %v", tools, tt.wantNil)
+			}
+			if tools != nil && !slices.Equal(tools.Enabled, tt.wantEnabled) {
+				t.Errorf("enabled = %v, want %v", tools.Enabled, tt.wantEnabled)
+			}
+		})
+	}
+}

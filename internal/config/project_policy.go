@@ -1,7 +1,9 @@
 package config
 
 import (
+	"errors"
 	"fmt"
+	"io/fs"
 	"maps"
 	"path/filepath"
 	"slices"
@@ -49,13 +51,18 @@ func LoadProjectPolicy(projectRoot string) (*ProjectPolicy, error) {
 }
 
 // CommittedTools returns the tools block of projectRoot's committed
-// .qsdev.yaml, or nil when there is none or it cannot be loaded.
-func CommittedTools(projectRoot string) *types.ToolsConfig {
+// .qsdev.yaml. It returns nil and no error when there is no committed config
+// (no opt-out is recorded), and an error when one exists but cannot be loaded,
+// so callers do not mistake a broken config for a missing one.
+func CommittedTools(projectRoot string) (*types.ToolsConfig, error) {
 	policy, err := LoadProjectPolicy(projectRoot)
-	if err != nil {
-		return nil
+	if errors.Is(err, fs.ErrNotExist) {
+		return nil, nil
 	}
-	return &policy.Committed.Tools
+	if err != nil {
+		return nil, err
+	}
+	return &policy.Committed.Tools, nil
 }
 
 // ResolveProjectPolicy resolves an already-parsed project config and optional

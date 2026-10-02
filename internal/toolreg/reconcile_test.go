@@ -2,6 +2,7 @@ package toolreg
 
 import (
 	"slices"
+	"strings"
 	"testing"
 
 	"github.com/Quantum-Serendipity/qsdev/pkg/types"
@@ -198,6 +199,89 @@ func TestReconcile_CommittedOptOutSetsSafetyBlockOptOut(t *testing.T) {
 			answers.ApplyClaudeHookDefaults()
 			if answers.Hooks.SafetyBlock {
 				t.Error("ApplyClaudeHookDefaults turned the committed opt-out back on")
+			}
+		})
+	}
+}
+
+// TestReconcileAndWarn verifies the warnings every regeneration path shares:
+// an always-on tool kept enabled against an explicit off, or one a committed
+// config lists as neither enabled nor disabled, is named with its opt-out; a
+// new project (no committed config) that keeps its defaults draws none; and a
+// committed opt-out of the package guard is reported.
+func TestReconcileAndWarn(t *testing.T) {
+	t.Parallel()
+	reg := catalogRegistry(t)
+	const keptWarning = "always-on tool \"" + ToolAttachGuard + "\" kept enabled"
+	const optOutWarning = "package-install guard (" + ToolAttachGuard + ") is disabled"
+	tests := []struct {
+		name      string
+		enabled   map[string]bool
+		committed *types.ToolsConfig
+		restored  []string
+		want      string // "" means no warning
+	}{
+		{name: "restored by the caller and lacking from the committed config, warned once", enabled: map[string]bool{ToolAttachGuard: true},
+			committed: &types.ToolsConfig{Enabled: []string{}}, restored: []string{ToolAttachGuard}, want: keptWarning},
+		{name: "no committed config, defaults kept", enabled: map[string]bool{ToolAttachGuard: true}},
+		{name: "no committed config, off dropped", enabled: map[string]bool{ToolAttachGuard: false}, want: keptWarning},
+		{name: "committed config lists the tool", enabled: map[string]bool{ToolAttachGuard: true},
+			committed: &types.ToolsConfig{Enabled: []string{ToolAttachGuard}}},
+		{name: "committed config lacks the tool", enabled: map[string]bool{ToolAttachGuard: true},
+			committed: &types.ToolsConfig{Enabled: []string{}}, want: keptWarning},
+		{name: "committed opt-out", committed: &types.ToolsConfig{Disabled: []string{ToolAttachGuard}}, want: optOutWarning},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			answers := &types.WizardAnswers{ClaudeCode: true, Tier: "standard"}
+			SeedAlwaysOn(answers, reg) // the defaults an answers builder starts from
+			answers.EnabledTools = tt.enabled
+			var buf strings.Builder
+
+			ReconcileAndWarn(&buf, answers, reg, tt.committed, tt.restored...)
+
+			out := buf.String()
+			if n := strings.Count(out, keptWarning); n > 1 {
+				t.Errorf("warned %d times about the same tool:\n%s", n, out)
+			}
+			for _, w := range []string{keptWarning, optOutWarning} {
+				if got, want := strings.Contains(out, w), w == tt.want; got != want {
+					t.Errorf("output contains %q = %v, want %v:\n%s", w, got, want, out)
+				}
+			}
+		})
+	}
+}
+
+// TestSwitchedOff verifies only an always-on backing switched off between
+// before and after is named, and that neither argument is modified.
+func TestSwitchedOff(t *testing.T) {
+	t.Parallel()
+	reg := catalogRegistry(t)
+	before := types.WizardAnswers{ClaudeCode: true, Tier: "standard", EnabledTools: map[string]bool{}}
+	SeedAlwaysOn(&before, reg)
+	tests := []struct {
+		name  string
+		after func(a *types.WizardAnswers)
+		want  []string
+	}{
+		{name: "unchanged", after: func(*types.WizardAnswers) {}},
+		{name: "safety block switched off", after: func(a *types.WizardAnswers) { a.Hooks.SafetyBlock = false }, want: []string{ToolAttachGuard}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			after := before
+			after.EnabledTools = map[string]bool{}
+			tt.after(&after)
+			wasOn := after.Hooks.SafetyBlock
+
+			if got := SwitchedOff(before, after, reg); !slices.Equal(got, tt.want) {
+				t.Errorf("SwitchedOff = %v, want %v", got, tt.want)
+			}
+			if after.Hooks.SafetyBlock != wasOn || len(after.EnabledTools) != 0 {
+				t.Errorf("SwitchedOff modified its argument: %+v", after)
 			}
 		})
 	}

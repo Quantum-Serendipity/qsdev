@@ -112,7 +112,9 @@ func initCmd() *cobra.Command {
 				toolreg.SeedAlwaysOn(&answers, treg)
 			}
 			answers.Detected = detected
-			reconcileTools(cmd.ErrOrStderr(), projectRoot, &answers, treg)
+			if err := reconcileTools(cmd.ErrOrStderr(), projectRoot, &answers, treg); err != nil {
+				return err
+			}
 
 			// Generate files.
 			registry := ecosystem.DefaultRegistry()
@@ -187,11 +189,15 @@ func initCmd() *cobra.Command {
 }
 
 // reconcileTools settles answers' enabled tools against the committed
-// .qsdev.yaml (see toolreg.Reconcile) and writes to w a warning for each
-// always-on tool kept enabled and one when the package guard stays opted out.
-func reconcileTools(w io.Writer, projectRoot string, answers *types.WizardAnswers, reg *toolreg.Registry) {
-	toolreg.WarnAlwaysOnRestored(w, toolreg.Reconcile(answers, reg, qsdevconfig.CommittedTools(projectRoot)))
-	toolreg.WarnSafetyBlockOptOut(w, answers)
+// .qsdev.yaml, writing its warnings to w (see toolreg.ReconcileAndWarn). A
+// committed config that exists but cannot be loaded is an error.
+func reconcileTools(w io.Writer, projectRoot string, answers *types.WizardAnswers, reg *toolreg.Registry) error {
+	committed, err := qsdevconfig.CommittedTools(projectRoot)
+	if err != nil {
+		return fmt.Errorf("loading committed tools: %w", err)
+	}
+	toolreg.ReconcileAndWarn(w, answers, reg, committed)
+	return nil
 }
 
 // loadReconciledAnswers loads the saved answers and reconciles their tools
@@ -207,7 +213,9 @@ func loadReconciledAnswers(w io.Writer, projectRoot string) (types.WizardAnswers
 	if err != nil {
 		return types.WizardAnswers{}, fmt.Errorf("loading tool registry: %w", err)
 	}
-	reconcileTools(w, projectRoot, &answers, treg)
+	if err := reconcileTools(w, projectRoot, &answers, treg); err != nil {
+		return types.WizardAnswers{}, err
+	}
 	return answers, nil
 }
 
@@ -241,7 +249,9 @@ func updateCmd() *cobra.Command {
 			if err != nil {
 				return fmt.Errorf("loading tool registry: %w", err)
 			}
-			reconcileTools(cmd.ErrOrStderr(), projectRoot, &answers, treg)
+			if err := reconcileTools(cmd.ErrOrStderr(), projectRoot, &answers, treg); err != nil {
+				return err
+			}
 
 			// Load stored state.
 			stateFile := filepath.Join(projectRoot, statePath())

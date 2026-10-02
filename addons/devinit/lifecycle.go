@@ -157,7 +157,11 @@ func loadLifecycleAnswers(ctx context.Context, projectRoot string) (types.Wizard
 	}
 	answers.ProjectRoot = projectRoot
 	answers.Detected = detect.Detect(ctx, projectRoot)
-	toolreg.Reconcile(&answers, toolreg.DefaultRegistry(), qsdevconfig.CommittedTools(projectRoot))
+	committed, err := qsdevconfig.CommittedTools(projectRoot)
+	if err != nil {
+		return types.WizardAnswers{}, fmt.Errorf("loading committed tools: %w", err)
+	}
+	toolreg.Reconcile(&answers, toolreg.DefaultRegistry(), committed)
 	return answers, nil
 }
 
@@ -622,7 +626,11 @@ var errOptOutNeedsCommittedConfig = errors.New("opting out of an always-on tool 
 // requireCommittedConfig returns errOptOutNeedsCommittedConfig, with the way
 // to create the config, when projectRoot has no loadable committed config.
 func requireCommittedConfig(projectRoot, toolName string) error {
-	if qsdevconfig.CommittedTools(projectRoot) != nil {
+	committed, err := qsdevconfig.CommittedTools(projectRoot)
+	if err != nil {
+		return fmt.Errorf("disabling %q: %w", toolName, err)
+	}
+	if committed != nil {
 		return nil
 	}
 	b := branding.Get()

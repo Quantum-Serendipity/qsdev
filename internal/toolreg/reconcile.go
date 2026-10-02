@@ -1,6 +1,7 @@
 package toolreg
 
 import (
+	"io"
 	"slices"
 
 	"github.com/Quantum-Serendipity/qsdev/pkg/types"
@@ -34,6 +35,32 @@ func Reconcile(answers *types.WizardAnswers, reg *Registry, committed *types.Too
 	kept = append(kept, MergeInferredTools(answers, reg)...)
 	slices.Sort(kept)
 	return slices.Compact(kept)
+}
+
+// ReconcileAndWarn runs Reconcile and writes to w a warning for each
+// always-on tool kept enabled: one whose explicit off was dropped or
+// overridden, or, when there is a committed config, one that applies to a and
+// that committed lists as neither enabled nor disabled, so the regeneration
+// adds it back. A new project (nil committed) records nothing yet, so keeping
+// its defaults draws no warning. It also warns when the committed opt-out
+// keeps the package guard off (see WarnSafetyBlockOptOut). restored names
+// tools the caller already found kept enabled against an earlier answer
+// source (see SwitchedOff); each tool is warned about once. Every path that
+// reconciles answers calls it, so they all warn alike.
+func ReconcileAndWarn(w io.Writer, a *types.WizardAnswers, reg *Registry, committed *types.ToolsConfig, restored ...string) {
+	kept := append(Reconcile(a, reg, committed), restored...)
+	if committed != nil {
+		for _, tool := range reg.All() {
+			name := tool.Name
+			if tool.EnforcedFor(a) && a.EnabledTools[name] &&
+				!slices.Contains(committed.Enabled, name) && !slices.Contains(committed.Disabled, name) {
+				kept = append(kept, name)
+			}
+		}
+	}
+	slices.Sort(kept)
+	WarnAlwaysOnRestored(w, slices.Compact(kept))
+	WarnSafetyBlockOptOut(w, a)
 }
 
 // dropUncommittedOptOuts deletes the explicit off of each always-on tool that

@@ -8,7 +8,6 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
-	"slices"
 	"strings"
 
 	"github.com/charmbracelet/x/term"
@@ -313,38 +312,25 @@ func buildAnswersFromInputs(cmd *cobra.Command, opts InitOptions, projectRoot st
 	if err != nil {
 		return types.WizardAnswers{}, fmt.Errorf("loading tool registry: %w", err)
 	}
-	reconcileTools(cmd.ErrOrStderr(), projectRoot, &answers, treg)
+	if err := reconcileTools(cmd.ErrOrStderr(), projectRoot, &answers, treg); err != nil {
+		return types.WizardAnswers{}, err
+	}
 
 	qsdevanswers.EnforceInvariants(&answers)
 	return answers, nil
 }
 
 // reconcileTools settles the enabled tools once every answer source has run
-// (see toolreg.Reconcile) and writes a warning to w for each always-on tool
-// kept enabled: one whose explicit off was dropped or overridden, or one the
-// committed .qsdev.yaml lists as neither enabled nor disabled. It also warns
-// when the committed opt-out keeps the package guard off (see
-// toolreg.WarnSafetyBlockOptOut). Without a loadable committed config no
-// opt-out is recorded, so every explicit off for an always-on tool is
-// dropped; applyCommittedPolicy already reported a config that cannot be
-// loaded.
-func reconcileTools(w io.Writer, projectRoot string, a *types.WizardAnswers, reg *toolreg.Registry) {
-	committed := qsdevconfig.CommittedTools(projectRoot)
-	kept := toolreg.Reconcile(a, reg, committed)
-	if committed == nil {
-		toolreg.WarnAlwaysOnRestored(w, kept)
-		return
+// against the committed .qsdev.yaml, writing its warnings to w (see
+// toolreg.ReconcileAndWarn). A committed config that exists but cannot be
+// loaded is an error.
+func reconcileTools(w io.Writer, projectRoot string, a *types.WizardAnswers, reg *toolreg.Registry) error {
+	committed, err := qsdevconfig.CommittedTools(projectRoot)
+	if err != nil {
+		return fmt.Errorf("loading committed tools: %w", err)
 	}
-	for _, tool := range reg.All() {
-		name := tool.Name
-		if tool.EnforcedFor(a) && a.EnabledTools[name] &&
-			!slices.Contains(committed.Enabled, name) && !slices.Contains(committed.Disabled, name) {
-			kept = append(kept, name)
-		}
-	}
-	slices.Sort(kept)
-	toolreg.WarnAlwaysOnRestored(w, slices.Compact(kept))
-	toolreg.WarnSafetyBlockOptOut(w, a)
+	toolreg.ReconcileAndWarn(w, a, reg, committed)
+	return nil
 }
 
 // runInitWizard collects the remaining answers interactively and validates

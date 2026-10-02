@@ -138,6 +138,7 @@ func buildJoinAnswers(cmd *cobra.Command, opts InitOptions, projectRoot string) 
 	detected := detect.Detect(cmdContext(cmd), projectRoot)
 	answers := qsdevconfig.ConfigToAnswers(policy.Committed, detected, projectRoot)
 
+	committedAnswers := answers
 	if opts.AnswersFile != "" {
 		answers, err = OverlayAnswersFile(answers, opts.AnswersFile)
 		if err != nil {
@@ -150,6 +151,11 @@ func buildJoinAnswers(cmd *cobra.Command, opts InitOptions, projectRoot string) 
 		return types.WizardAnswers{}, err
 	}
 	answers = MergeFileWithFlags(answers, flagAnswers, flagSetToChangedMap(NewFlagSet(cmd), cmd))
+	// applyJoinDefaults replays the committed tool decisions, which switches
+	// an always-on tool's backing back on before reconciliation can see the
+	// overlay's off, so name those offs now.
+	registry := toolreg.DefaultRegistry()
+	switchedOff := toolreg.SwitchedOff(committedAnswers, answers, registry)
 	if opts.ProfileName != "" {
 		fmt.Fprintln(cmd.ErrOrStderr(), "Note: --profile applies only when creating a project; ignoring it in join mode (re-run with --mode create to apply it).")
 	}
@@ -175,7 +181,6 @@ func buildJoinAnswers(cmd *cobra.Command, opts InitOptions, projectRoot string) 
 	if err != nil {
 		return types.WizardAnswers{}, fmt.Errorf("loading catalog for defaults: %w", err)
 	}
-	registry := toolreg.DefaultRegistry()
 	applyJoinDefaults(&answers, cat, registry)
 	policy.Apply(&answers)
 
@@ -186,8 +191,8 @@ func buildJoinAnswers(cmd *cobra.Command, opts InitOptions, projectRoot string) 
 
 	// Augment EnabledTools with inferred tools (AlwaysOn, hooks-implied);
 	// only the committed tools.disabled opts out of an always-on tool, not
-	// an --answers-file overlay.
-	toolreg.Reconcile(&answers, registry, &policy.Committed.Tools)
+	// an --answers-file overlay, which is warned about like every other path.
+	toolreg.ReconcileAndWarn(cmd.ErrOrStderr(), &answers, registry, &policy.Committed.Tools, switchedOff...)
 	qsdevanswers.EnforceInvariants(&answers)
 
 	return answers, nil

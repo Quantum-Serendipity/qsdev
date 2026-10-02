@@ -3,6 +3,7 @@ package toolreg
 import (
 	"fmt"
 	"io"
+	"maps"
 	"slices"
 
 	"github.com/Quantum-Serendipity/qsdev/pkg/types"
@@ -67,6 +68,31 @@ func EnforceAlwaysOn(answers *types.WizardAnswers, registry *Registry) []string 
 	}
 	slices.Sort(overridden)
 	return overridden
+}
+
+// SwitchedOff returns, sorted, the always-on tools EnforceAlwaysOn would
+// switch back on for after but not for before: those whose backing an answer
+// source layered onto before (an answers file, flags) switched off. Neither
+// argument is modified. A caller whose later steps re-enable the backing
+// before reconciling uses it to warn like every other path.
+func SwitchedOff(before, after types.WizardAnswers, registry *Registry) []string {
+	was := EnforceAlwaysOn(probeCopy(before), registry)
+	var out []string
+	for _, name := range EnforceAlwaysOn(probeCopy(after), registry) {
+		if !slices.Contains(was, name) {
+			out = append(out, name)
+		}
+	}
+	return out
+}
+
+// probeCopy returns a copy of a that enforcement can modify without touching
+// a: the map and lists a ForceOnFunc may change are cloned.
+func probeCopy(a types.WizardAnswers) *types.WizardAnswers {
+	a.EnabledTools = maps.Clone(a.EnabledTools)
+	a.MCPServers = slices.Clone(a.MCPServers)
+	a.Skills = slices.Clone(a.Skills)
+	return &a
 }
 
 // SeedAlwaysOn switches on what backs every always-on tool EnforceAlwaysOn

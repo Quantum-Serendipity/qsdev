@@ -596,3 +596,28 @@ func TestJoin_JavaScriptSubprojectParity(t *testing.T) {
 		t.Error("join generated a root .npmrc for a frontend/ subproject")
 	}
 }
+
+// TestBuildJoinAnswers_WarnsWhenAlwaysOnKept verifies join warns like init,
+// update and claude init when an --answers-file overlay tries to switch off
+// an always-on tool: the safety block is kept on and the opt-out is named.
+func TestBuildJoinAnswers_WarnsWhenAlwaysOnKept(t *testing.T) {
+	dir := newGoProject(t)
+	commitConfig(t, dir, createAnswers(t, dir, "--lang", "go"))
+	answersFile := filepath.Join(t.TempDir(), "join.yaml")
+	if err := os.WriteFile(answersFile, []byte("hooks:\n  safety_block: false\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	cmd, opts, buf := newInitTestCmd(t, "--answers-file", answersFile)
+	answers, err := buildJoinAnswers(cmd, opts, dir)
+	if err != nil {
+		t.Fatalf("buildJoinAnswers: %v", err)
+	}
+	if !answers.Hooks.SafetyBlock {
+		t.Errorf("safety block switched off by the answers file overlay")
+	}
+	want := "always-on tool \"attach-guard\" kept enabled; opt out with `qsdev disable attach-guard --force`"
+	if !strings.Contains(buf.String(), want) {
+		t.Errorf("join output does not contain %q:\n%s", want, buf.String())
+	}
+}

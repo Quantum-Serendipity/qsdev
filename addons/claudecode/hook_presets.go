@@ -60,20 +60,30 @@ func enablesNewHook(defs []HookDefinition, before, after types.WizardAnswers) bo
 	return false
 }
 
+// gitPreCommitStage is git's pre-commit hook stage, the stage at which the
+// compliance level's required_pre_commit_hooks run as devenv git hooks. The
+// catalog hook preset of the same name registers no Claude Code hook.
+const gitPreCommitStage = "pre-commit"
+
 // ValidateHookPreset returns an error wrapping ErrUnselectableHookPreset,
-// listing the valid presets, when name is not selectable. For a preset the
-// catalog names but no Claude Code hook implements, it also says that
-// commit-time checks are devenv git hooks set by the compliance level.
+// listing the valid presets, when name is not selectable. A preset the
+// catalog names but no Claude Code hook implements is reported as not
+// implemented, to be removed from hooks; for the git pre-commit stage it also
+// says that commit-time checks are devenv git hooks set by the compliance
+// level, which is where a user selecting it should look.
 func ValidateHookPreset(name string) error {
 	valid := SelectableHookPresets()
 	if slices.Contains(valid, name) {
 		return nil
 	}
 	err := fmt.Errorf("%w %q; valid presets: %s", ErrUnselectableHookPreset, name, strings.Join(valid, ", "))
-	if validation.IsValidHookPreset(name) {
-		return fmt.Errorf("%w (it registers no Claude Code hook; commit-time checks such as pre-commit are devenv git hooks set by the compliance level's required_pre_commit_hooks)", err)
+	if !validation.IsValidHookPreset(name) {
+		return err
 	}
-	return err
+	if name == gitPreCommitStage {
+		return fmt.Errorf("%w (it is not implemented yet; remove it from hooks: commit-time checks are devenv git hooks set by the compliance level's required_pre_commit_hooks)", err)
+	}
+	return fmt.Errorf("%w (it is not implemented yet; remove it from hooks)", err)
 }
 
 // ValidateHookChoices rejects every catalog hook preset h turns on that is

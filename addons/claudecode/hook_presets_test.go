@@ -75,18 +75,22 @@ func TestCatalogProfiles_HooksAreSelectable(t *testing.T) {
 }
 
 // TestValidateHookPreset_NoDeadGitHooksPointer verifies a catalog preset
-// that registers no Claude Code hook names the compliance level's devenv git
-// hooks instead of the unwired --git-hooks flag, while a misspelled one gets
-// only the list of valid presets.
+// that registers no Claude Code hook is reported as not implemented, with
+// removal advice; only the git pre-commit stage also names the compliance
+// level's devenv git hooks (never the unwired --git-hooks flag), since the
+// commit-time hint would misdirect a post-edit preset such as auto-format. A
+// misspelled preset gets only the list of valid presets.
 func TestValidateHookPreset_NoDeadGitHooksPointer(t *testing.T) {
 	t.Parallel()
+	const notImplemented = "is not implemented yet; remove it from hooks"
 	tests := []struct {
-		name     string
-		wantHint bool
+		name               string
+		wantHint           bool
+		wantNotImplemented bool
 	}{
-		{name: "pre-commit", wantHint: true},
-		{name: "auto-format", wantHint: true},
-		{name: "not-a-preset", wantHint: false},
+		{name: "pre-commit", wantHint: true, wantNotImplemented: true},
+		{name: "auto-format", wantHint: false, wantNotImplemented: true},
+		{name: "not-a-preset", wantHint: false, wantNotImplemented: false},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -103,6 +107,9 @@ func TestValidateHookPreset_NoDeadGitHooksPointer(t *testing.T) {
 			}
 			if got := strings.Contains(err.Error(), "required_pre_commit_hooks"); got != tt.wantHint {
 				t.Errorf("error %q names required_pre_commit_hooks = %v, want %v", err, got, tt.wantHint)
+			}
+			if got := strings.Contains(err.Error(), notImplemented); got != tt.wantNotImplemented {
+				t.Errorf("error %q says %q = %v, want %v", err, notImplemented, got, tt.wantNotImplemented)
 			}
 			if want := `unknown or unimplemented hook preset "` + tt.name + `"`; !strings.Contains(err.Error(), want) {
 				t.Errorf("error %q does not contain %q", err, want)

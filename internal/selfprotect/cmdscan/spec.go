@@ -136,7 +136,7 @@ func appInvocations(command, app string) [][]string {
 	var out [][]string
 	for i, w := range raw {
 		// Case-folded: Windows and macOS resolve QSDEV to qsdev.
-		if strings.EqualFold(programName(w), app) || strings.EqualFold(programName(words[i]), app) {
+		if strings.EqualFold(ProgramName(w), app) || strings.EqualFold(ProgramName(words[i]), app) {
 			out = append(out, words[i+1:])
 		}
 	}
@@ -152,9 +152,11 @@ func isWordBreak(r rune) bool {
 	return false
 }
 
-// programName returns the program a command word names: its base name
-// without a Windows executable suffix.
-func programName(word string) string {
+// ProgramName returns the program a command word names: its base name (after
+// a / or \ separator) without a Windows executable suffix, so
+// `C:\bin\qsdev.exe` and `/usr/bin/qsdev` both name qsdev. Compare the result
+// case-insensitively: Windows and macOS file systems resolve QSDEV to qsdev.
+func ProgramName(word string) string {
 	base := path.Base(strings.ReplaceAll(word, `\`, "/"))
 	if ext := path.Ext(base); strings.EqualFold(ext, ".exe") {
 		base = strings.TrimSuffix(base, ext)

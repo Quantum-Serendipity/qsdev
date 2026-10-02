@@ -5,11 +5,13 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/Quantum-Serendipity/qsdev/internal/userhome"
 	"github.com/Quantum-Serendipity/qsdev/pkg/branding"
 )
 
 // OrgConfigPath returns the expected path for the user-level defaults file.
-// Priority: $QSDEV_ORG_CONFIG > ~/.config/qsdev/defaults.yaml
+// Priority: $QSDEV_ORG_CONFIG > ~/.config/qsdev/defaults.yaml, where ~ is the
+// account's home directory from the user database (see homeOrgConfigPath).
 //
 // Inside a test binary the home-directory fallback is not used, so tests
 // exercise the embedded catalog rather than whatever overlay the developer's
@@ -26,10 +28,20 @@ func OrgConfigPath() string {
 	return homeOrgConfigPath()
 }
 
-// homeOrgConfigPath returns ~/.config/<app>/defaults.yaml, or "" when the
-// home directory cannot be determined.
+// homeOrgConfigPath returns ~/.config/<app>/defaults.yaml below the home
+// directory the user database records for the account (userhome.Account),
+// or "" when no home directory can be determined. HOME and USERPROFILE do not
+// move it: a line such as `HOME=/tmp/e qsdev claude update`, however the
+// agent spells the assignment or whichever script it runs, would otherwise
+// point a regeneration at an overlay of its own making. Only an account
+// without a usable entry (an arbitrary container uid) falls back to
+// os.UserHomeDir; an agent cannot remove its account's entry to reach that
+// fallback. Set <EnvPrefix>ORG_CONFIG to use another file.
 func homeOrgConfigPath() string {
-	home, err := os.UserHomeDir()
+	home, err := userhome.Account()
+	if err != nil {
+		home, err = os.UserHomeDir()
+	}
 	if err != nil {
 		return ""
 	}

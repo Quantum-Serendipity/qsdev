@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"github.com/Quantum-Serendipity/qsdev/internal/selfprotect/canon"
+	"github.com/Quantum-Serendipity/qsdev/internal/selfprotect/cmdscan"
 )
 
 // replaceVerbs delete, move, copy or link a path operand as a whole, so an
@@ -28,6 +29,33 @@ var replaceVerbs = func() map[string]bool {
 	return verbs
 }()
 
+// trashVerbs move their operands to the trash, which removes them from where
+// they were as surely as rm.
+var trashVerbs = map[string]bool{
+	"trash-put": true, "trash": true, "gvfs-trash": true, "gvfs-rm": true, "gvfs-move": true,
+}
+
+// gioMoveSubcommands are the gio subcommands that remove or move their
+// operands.
+var gioMoveSubcommands = map[string]bool{"trash": true, "remove": true, "rm": true, "move": true, "mv": true, "rename": true}
+
+// replacesOperands reports whether sc removes or replaces its path operands
+// as a whole: a replaceVerbs or trashVerbs command, `gio trash|remove|move`,
+// or a tar that deletes what it archives (--remove-files).
+func replacesOperands(sc scannedCommand) bool {
+	switch {
+	case replaceVerbs[sc.Name], trashVerbs[sc.Name]:
+		return true
+	case sc.Name == "gio":
+		return len(sc.Args) > 0 && gioMoveSubcommands[sc.Args[0]]
+	case sc.Name == "tar":
+		return slices.ContainsFunc(sc.Args, func(a string) bool {
+			return cmdscan.WrapperOption{Name: a}.Is("--remove-files")
+		})
+	}
+	return false
+}
+
 // replacesProtectedAncestor reports whether a command deletes, moves or
 // replaces a directory that holds a home- or system-anchored protected
 // location (canon.ProtectedLocations): `rm -rf ~/.config`,
@@ -38,7 +66,7 @@ var replaceVerbs = func() map[string]bool {
 // no fixed ancestor and are not considered.
 func replacesProtectedAncestor(scs []scannedCommand) bool {
 	for _, sc := range scs {
-		if !replaceVerbs[sc.Name] {
+		if !replacesOperands(sc) {
 			continue
 		}
 		for _, p := range ancestorCandidates(sc) {
@@ -111,32 +139,49 @@ func isDir(p string) bool {
 
 // wordReachesProtectedAncestor reports whether word p, used by sc, can name a
 // directory that is, or holds, a home- or system-anchored protected location,
-// after brace and glob expansion and cwd resolution. A relative word from an
-// unknown directory is left to the relative-write analysis.
+// after brace and glob expansion and cwd resolution. A word built from an
+// expansion the scan cannot render, and a relative word after a cd whose
+// target it could not resolve, may start at the home directory, so their
+// literal tail is checked too (see tailReachesAncestor).
 func wordReachesProtectedAncestor(sc scannedCommand, p string) bool {
-	if expandedReachesAncestor(sc, p) {
-		return true
-	}
 	variants, ok := expandBraces(p)
 	if !ok {
 		return true
 	}
+	expanded := slices.Contains(sc.ExpandedArgs, p)
 	for _, v := range variants {
 		if v == "" {
 			continue
 		}
-		if hasGlobMeta(v) {
-			if globReachesAncestor(filepath.Clean(expandTilde(v))) {
+		if expanded && tailReachesAncestor(v) {
+			return true
+		}
+		if isRelativePath(v) && sc.cwdUnknown {
+			joined := path.Join(filepath.ToSlash(sc.cwdHint), filepath.ToSlash(v))
+			if tailReachesAncestor(joined) || rootedReachesAncestor(joined) {
 				return true
 			}
 			continue
 		}
-		resolved, known := resolveWord(sc, v)
-		if known && isRooted(resolved) && isProtectedAncestor(resolved) {
+		if resolved, known := resolveWord(sc, v); known && rootedReachesAncestor(resolved) {
 			return true
 		}
 	}
 	return false
+}
+
+// rootedReachesAncestor reports whether p, once a leading ~ is expanded, is
+// an absolute path or glob that can name a directory at or above a home- or
+// system-anchored protected location.
+func rootedReachesAncestor(p string) bool {
+	p = filepath.Clean(expandTilde(p))
+	if !isRooted(p) {
+		return false
+	}
+	if hasGlobMeta(p) {
+		return globReachesAncestor(p)
+	}
+	return isProtectedAncestor(p)
 }
 
 // isProtectedAncestor reports whether the absolute path p is a protected
@@ -188,16 +233,20 @@ func globReachesAncestor(pattern string) bool {
 }
 
 // expandedReachesAncestor reports whether word, an argument of sc built from
-// an expansion the scan cannot render (`"$(echo ~)/.config"`, `$H/.config`
+// an expansion the scan cannot render (`"$(cat f)/.config"`, `$H/.config`
 // after `H=~`), can still name a directory at or above a protected location
-// below the home directory: the expansion may be the home directory, so the
-// word fails closed when its literal tail is the home-relative path of such a
-// directory (it ends in /.config or /.config/<app>, say). Directories at or
-// above the home directory are not tails: `rm -rf "$tmp"` stays allowed.
+// below the home directory (see tailReachesAncestor).
 func expandedReachesAncestor(sc scannedCommand, word string) bool {
-	if !slices.Contains(sc.ExpandedArgs, word) {
-		return false
-	}
+	return slices.Contains(sc.ExpandedArgs, word) && tailReachesAncestor(word)
+}
+
+// tailReachesAncestor reports whether text, which may follow an unknown
+// prefix that can be the home directory, names a directory at or above a
+// protected location below it: its trailing segments match, segment by
+// segment and as globs, the home-relative path of such a directory (it ends
+// in /.config or /.config/<app>, or in /.conf*, say). Directories at or above
+// the home directory are not tails: `rm -rf "$tmp"` stays allowed.
+func tailReachesAncestor(text string) bool {
 	locs := canon.ProtectedLocations()
 	if locs == nil {
 		return true // the table could not be built: fail closed
@@ -207,17 +256,32 @@ func expandedReachesAncestor(sc scannedCommand, word string) bool {
 		return false
 	}
 	homeKey := strings.TrimSuffix(canon.PathKey(home), "/") + "/"
-	key := canon.PathKey(filepath.Clean(word))
+	segs := strings.Split(canon.PathKey(filepath.Clean(text)), "/")
 	for _, loc := range locs {
 		rel, ok := strings.CutPrefix(canon.PathKey(loc), homeKey)
 		if !ok {
 			continue
 		}
 		for dir := strings.TrimSuffix(rel, "/"); dir != "" && dir != "."; dir = path.Dir(dir) {
-			if key == dir || strings.HasSuffix(key, "/"+dir) {
+			if segmentsEndWith(segs, strings.Split(dir, "/")) {
 				return true
 			}
 		}
 	}
 	return false
+}
+
+// segmentsEndWith reports whether the last segments of the glob segments segs
+// match the literal segments want.
+func segmentsEndWith(segs, want []string) bool {
+	if len(segs) < len(want) {
+		return false
+	}
+	tail := segs[len(segs)-len(want):]
+	for i, w := range want {
+		if !shellSegMatch(tail[i], w) {
+			return false
+		}
+	}
+	return true
 }

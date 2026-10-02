@@ -1,7 +1,6 @@
 package cmdscan
 
 import (
-	"path"
 	"slices"
 	"strings"
 	"unicode"
@@ -49,7 +48,7 @@ func CommandWordIndexes(words []string) []int {
 		return nil
 	}
 	idx := []int{0}
-	if commandWrappers[path.Base(words[0])] {
+	if commandWrappers[wrapperName(words[0])] {
 		for i := 1; i < len(words); i++ {
 			idx = append(idx, i)
 		}
@@ -68,7 +67,7 @@ func CommandWordIndexes(words []string) []int {
 func ProgramWordIndex(words []string) int {
 	i := 0
 	for i < len(words) {
-		name := path.Base(words[i])
+		name := wrapperName(words[i])
 		if !commandWrappers[name] {
 			return i
 		}
@@ -80,13 +79,12 @@ func ProgramWordIndex(words []string) int {
 			case w == "--":
 				i++
 				break operands
-			case slices.Contains(wrapperCommandStrings[name], w):
-				return -1
-			case len(w) > 1 && w[0] == '-':
-				if slices.Contains(wrapperOptionArgs[name], w) {
-					i++
+			case isOptionWord(w):
+				opts, n := parseWrapperOption(name, words, i)
+				if slices.ContainsFunc(opts, func(o WrapperOption) bool { return o.Is(wrapperCommandStrings[name]...) }) {
+					return -1
 				}
-				i++
+				i += n
 			case w != "" && w[0] >= '0' && w[0] <= '9', isAssignment(w):
 				i++
 			default:
@@ -95,6 +93,102 @@ func ProgramWordIndex(words []string) int {
 		}
 	}
 	return -1
+}
+
+// WrapperOption is one option given to a wrapper command: its name as
+// written (each letter of a short-option cluster separately, as `-u`; a long
+// option possibly abbreviated, as `--ignore-env`) and its argument, when the
+// option takes one.
+type WrapperOption struct {
+	Name, Arg string
+}
+
+// Is reports whether o is one of spellings: a short option exactly, or a
+// long option by any abbreviation getopt_long accepts (`--ignore-env` is
+// --ignore-environment). A lone "-" matches only "-".
+func (o WrapperOption) Is(spellings ...string) bool {
+	for _, s := range spellings {
+		long, isLong := strings.CutPrefix(s, "--")
+		name, oLong := strings.CutPrefix(o.Name, "--")
+		if isLong && oLong && isLongOptionPrefix(name, long) || !isLong && o.Name == s {
+			return true
+		}
+	}
+	return false
+}
+
+// WrapperOptions returns the options the wrapper program wrapper (`env`,
+// `sudo`, ...) is given in args, the words after it, up to its first operand:
+// "--" or the first word that is not an option. A short-option cluster
+// (`-iu HOME`, `-uHOME`) yields each option, and an option that takes an
+// argument (wrapperOptionArgs, wrapperCommandStrings) takes the rest of the
+// cluster, the text after "=" of a long option, or the next word.
+func WrapperOptions(wrapper string, args []string) []WrapperOption {
+	name := wrapperName(wrapper)
+	var out []WrapperOption
+	for i := 0; i < len(args) && args[i] != "--" && isOptionWord(args[i]); {
+		opts, n := parseWrapperOption(name, args, i)
+		out = append(out, opts...)
+		i += n
+	}
+	return out
+}
+
+// isOptionWord reports whether w is an option word: it starts with "-" and
+// is not "--". A lone "-" is env's spelling of -i.
+func isOptionWord(w string) bool {
+	return strings.HasPrefix(w, "-") && w != "--"
+}
+
+// parseWrapperOption parses the option word words[i] of the wrapper name and
+// returns its options and how many words they take (1, or 2 when the last
+// option's argument is the next word).
+func parseWrapperOption(name string, words []string, i int) ([]WrapperOption, int) {
+	w := words[i]
+	takesArg := func(opt string) bool {
+		return slices.ContainsFunc(append(slices.Clone(wrapperOptionArgs[name]), wrapperCommandStrings[name]...),
+			func(s string) bool { return WrapperOption{Name: opt}.Is(s) })
+	}
+	nextArg := func() (string, int) {
+		if i+1 < len(words) {
+			return words[i+1], 2
+		}
+		return "", 1
+	}
+	if long, ok := strings.CutPrefix(w, "--"); ok {
+		if opt, arg, hasEq := strings.Cut(long, "="); hasEq {
+			return []WrapperOption{{Name: "--" + opt, Arg: arg}}, 1
+		}
+		if takesArg(w) {
+			arg, n := nextArg()
+			return []WrapperOption{{Name: w, Arg: arg}}, n
+		}
+		return []WrapperOption{{Name: w}}, 1
+	}
+	if w == "-" {
+		return []WrapperOption{{Name: w}}, 1
+	}
+	var opts []WrapperOption
+	for k := 1; k < len(w); k++ {
+		opt := "-" + w[k:k+1]
+		if !takesArg(opt) {
+			opts = append(opts, WrapperOption{Name: opt})
+			continue
+		}
+		if k+1 < len(w) {
+			return append(opts, WrapperOption{Name: opt, Arg: w[k+1:]}), 1
+		}
+		arg, n := nextArg()
+		return append(opts, WrapperOption{Name: opt, Arg: arg}), n
+	}
+	return opts, 1
+}
+
+// wrapperName returns the name a command word is looked up by in the wrapper
+// and shell tables: its program name (see ProgramName), case-folded, since
+// Windows and macOS file systems resolve ENV.EXE or Env to env.
+func wrapperName(word string) string {
+	return strings.ToLower(ProgramName(word))
 }
 
 // isAssignment reports whether w is a VAR=value word.
@@ -115,7 +209,7 @@ func isAssignment(w string) bool {
 // (`sh -c '...'`, `bash -ec '...'`) or eval.
 func ShellScript(words []string) (string, bool) {
 	for _, i := range CommandWordIndexes(words) {
-		name := path.Base(words[i])
+		name := wrapperName(words[i])
 		if name == "eval" {
 			return strings.Join(words[i+1:], " "), true
 		}
@@ -134,4 +228,4 @@ func ShellScript(words []string) (string, bool) {
 
 // IsScriptShell reports whether the program named name is a shell that runs
 // a script string passed with -c.
-func IsScriptShell(name string) bool { return scriptShells[path.Base(name)] }
+func IsScriptShell(name string) bool { return scriptShells[wrapperName(name)] }

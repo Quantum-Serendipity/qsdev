@@ -4,8 +4,9 @@ import "testing"
 
 // TestParseWithVars covers the rendering of known variables: a plain $NAME or
 // ${NAME} expands to its value, in or out of double quotes and in redirect
-// targets, while any other expansion (an operator, an unknown name, a command
-// substitution) still contributes no text. Every such word is an expansion.
+// targets, as does a plain echo of literal words, while any other expansion
+// (an operator, an unknown name, another command substitution) still
+// contributes no text. Every such word is an expansion.
 func TestParseWithVars(t *testing.T) {
 	t.Parallel()
 	vars := map[string]string{"HOME": "/h", "ORG": "/o/d.yaml"}
@@ -26,7 +27,12 @@ func TestParseWithVars(t *testing.T) {
 		{"default operator", "sed -i x ${HOME:-/z}/a", "/a", "", true},
 		{"length", "sed -i x ${#HOME}", "", "", true},
 		{"longer name", "sed -i x $HOMEDIR/a", "/a", "", true},
-		{"command substitution", "sed -i x $(echo /h)/a", "/a", "", true},
+		{"command substitution", "sed -i x $(cat /h)/a", "/a", "", true},
+		// A plain echo of literal words prints them (see echoOutput).
+		{"echo substitution", "sed -i x $(echo /h)/a", "/h/a", "", true},
+		{"quoted echo substitution", `rm -rf "$(echo ~/.co)nfig"`, "~/.config", "", true},
+		{"echo substitution of a variable", "sed -i x $(echo $HOME)/a", "/a", "", true},
+		{"echo substitution with an option", "sed -i x $(echo -n /h)/a", "/a", "", true},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

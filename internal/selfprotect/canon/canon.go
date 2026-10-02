@@ -13,6 +13,7 @@ import (
 	"sync"
 	"syscall"
 
+	"github.com/Quantum-Serendipity/qsdev/internal/userhome"
 	"github.com/Quantum-Serendipity/qsdev/pkg/branding"
 )
 
@@ -26,6 +27,11 @@ var (
 	// variable (defaulting to os.UserHomeDir) so tests can simulate a
 	// home-resolution failure and verify the fail-closed behavior of IsProtected.
 	userHomeDir = os.UserHomeDir
+
+	// accountHomeDir resolves the home directory the user database records
+	// for the account, where the CLI reads the org overlay from (a variable
+	// for tests).
+	accountHomeDir = userhome.Account
 
 	// executablePath resolves the running qsdev binary (a variable for tests).
 	executablePath = os.Executable
@@ -60,7 +66,14 @@ func ensureInit() error {
 			protectedPrefixes = append(protectedPrefixes, protectedEntry{dir + string(filepath.Separator), "system-config"})
 		}
 		protectedPrefixes = append(protectedPrefixes, claudeConfigDirEntries(os.Getenv(ClaudeConfigDirEnv))...)
-		protectedPrefixes = append(protectedPrefixes, orgOverlayEntries(branding.Get(), home, os.Getenv)...)
+		// The CLI reads the overlay below the account's home directory
+		// (catalog.OrgConfigPath), falling back to HOME's when the account has
+		// no entry; protect both.
+		homes := []string{home}
+		if account, err := accountHomeDir(); err == nil && account != home {
+			homes = append(homes, account)
+		}
+		protectedPrefixes = append(protectedPrefixes, orgOverlayEntries(branding.Get(), homes, os.Getenv)...)
 
 		protectedSuffixes = []protectedEntry{
 			{string(filepath.Separator) + ".mcp.json", "mcp-config"},
@@ -137,13 +150,18 @@ func orgConfigEnv(cfg branding.Config) string {
 
 // ShellPathVars returns the shell variables that name a home-anchored
 // protected location, with the values a command the agent runs sees: HOME
-// (the home directory) and <EnvPrefix>ORG_CONFIG when it is set. A command
-// scan renders them (cmdscan.ParseWithVars) so `$HOME/.config/<app>/x` and
-// `"$QSDEV_ORG_CONFIG"` are checked as the paths they expand to.
+// (the home directory), USERPROFILE (the Windows profile directory, which
+// Git Bash also exports) and <EnvPrefix>ORG_CONFIG when they are set. A
+// command scan renders them (cmdscan.ParseWithVars) so
+// `$HOME/.config/<app>/x`, `cd $HOME/.config` and `"$QSDEV_ORG_CONFIG"` are
+// checked as the paths they expand to.
 func ShellPathVars() map[string]string {
-	vars := make(map[string]string, 2)
+	vars := make(map[string]string, 3)
 	if home, err := userHomeDir(); err == nil {
 		vars["HOME"] = home
+	}
+	if profile := os.Getenv("USERPROFILE"); profile != "" {
+		vars["USERPROFILE"] = profile
 	}
 	env := orgConfigEnv(branding.Get())
 	if v := os.Getenv(env); v != "" {
@@ -154,13 +172,16 @@ func ShellPathVars() map[string]string {
 
 // orgOverlayEntries returns the protected entries for the user-level org
 // overlay the catalog merges into every generation: the ~/.config/<app>/
-// directory, and the file named by <EnvPrefix>ORG_CONFIG when getenv sets it.
-// Both are protected under their absolute and symlink-resolved spellings.
-func orgOverlayEntries(cfg branding.Config, home string, getenv func(string) string) []protectedEntry {
+// directory below each of homes, and the file named by <EnvPrefix>ORG_CONFIG
+// when getenv sets it. All are protected under their absolute and
+// symlink-resolved spellings.
+func orgOverlayEntries(cfg branding.Config, homes []string, getenv func(string) string) []protectedEntry {
 	sep := string(filepath.Separator)
 	var entries []protectedEntry
-	for _, dir := range spellings(cfg.OrgConfigDir(home)) {
-		entries = append(entries, protectedEntry{dir + sep, "config"})
+	for _, home := range homes {
+		for _, dir := range spellings(cfg.OrgConfigDir(home)) {
+			entries = append(entries, protectedEntry{dir + sep, "config"})
+		}
 	}
 	for _, file := range spellings(getenv(orgConfigEnv(cfg))) {
 		entries = append(entries, protectedEntry{file, "config"})
@@ -761,11 +782,12 @@ func ProtectedEnvVars() []string {
 // Windows.
 var homeEnvVars = []string{"HOME", "USERPROFILE"}
 
-// HomeEnvVars returns the environment variables that relocate the protected
-// home-anchored generator inputs for the CLI: the CLI reads the org overlay
-// from below the home directory (see orgOverlayEntries), so setting or
-// clearing one of them for a run of the CLI points a regeneration at an
-// unprotected overlay, or at none. Unlike ProtectedEnvVars they are set for
+// HomeEnvVars returns the environment variables that can relocate the
+// protected home-anchored generator inputs for the CLI: the CLI reads the org
+// overlay from below the account's home directory, and falls back to the one
+// these name only when the account has no user database entry (see
+// orgOverlayEntries), so setting or clearing one of them for a run of the CLI
+// could then point a regeneration at an unprotected overlay, or at none. Unlike ProtectedEnvVars they are set for
 // ordinary programs (`HOME=$(mktemp -d) go test`), so only a line that runs
 // the CLI may not change them.
 func HomeEnvVars() []string {

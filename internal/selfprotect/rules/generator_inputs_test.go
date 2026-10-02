@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/Quantum-Serendipity/qsdev/pkg/branding"
@@ -141,6 +142,36 @@ func TestGeneratorInputsVerdicts(t *testing.T) {
 		{"env -u home for cli", bash("env -u HOME " + b.AppName + " init --update"), Deny},
 		{"env -i for cli", bash("env -i " + b.AppName + " init --update"), Deny},
 		{"home for expanded program", bash("HOME=/tmp/e $Q init --update"), Deny},
+		// Every bash form that sets or clears HOME counts, and so does any
+		// spelling of the program word. The CLI also ignores HOME for the
+		// overlay (catalog.OrgConfigPath); these keep the fallback covered.
+		{"for-loop home then cli", bash("for HOME in /tmp/e; do " + b.AppName + " init --update; done"), Deny},
+		{"read home then cli", bash("read HOME <<< /tmp/e; " + b.AppName + " init --update"), Deny},
+		{"printf -v home then cli", bash("printf -v HOME %s /tmp/e; " + b.AppName + " init --update"), Deny},
+		{"mapfile home then cli", bash("mapfile -t HOME <<< /tmp/e; " + b.AppName + " init --update"), Deny},
+		{"mapfile clears home then cli", bash("mapfile -t HOME < /dev/null; " + b.AppName + " claude update"), Deny},
+		{"getopts home then cli", bash("getopts e HOME -e; " + b.AppName + " init --update"), Deny},
+		{"arithmetic home then cli", bash("((HOME=5)); " + b.AppName + " init --update"), Deny},
+		{"let home then cli", bash("let HOME=5; " + b.AppName + " init --update"), Deny},
+		{"default-assign home then cli", bash(": ${HOME:=/tmp/e}; " + b.AppName + " init --update"), Deny},
+		{"export computed name then cli", bash("X=HOME; export $X=/tmp/e; " + b.AppName + " init --update"), Deny},
+		{"nameref home then cli", bash("declare -n R=HOME; R=/tmp/e; " + b.AppName + " init --update"), Deny},
+		{"export -n home then cli", bash("export -n HOME; " + b.AppName + " init --update"), Deny},
+		{"expanded read home then cli", bash("$R HOME <<< /tmp/e; " + b.AppName + " init --update"), Deny},
+		{"home for ansi-c program", bash("HOME=/tmp/e $'" + b.AppName + "' init --update"), Deny},
+		{"home for split ansi-c program", bash("HOME=/tmp/e " + b.AppName[:2] + "$'" + b.AppName[2:3] + "'" + b.AppName[3:] + " init --update"), Deny},
+		{"home for brace program", bash("HOME=/tmp/e {" + b.AppName + ",} init --update"), Deny},
+		{"home for glob program", bash("HOME=/tmp/e " + b.AppName[:len(b.AppName)-1] + "? init --update"), Deny},
+		{"home for upper-case program", bash("HOME=/tmp/e " + strings.ToUpper(b.AppName) + " init --update"), Deny},
+		{"env chdir then unset home", bash("env -C /tmp -u HOME " + b.AppName + " init --update"), Deny},
+		{"env long chdir then unset home", bash("env --chdir /tmp -u HOME " + b.AppName + " init --update"), Deny},
+		{"env abbreviated ignore-environment", bash("env --ignore-env " + b.AppName + " init --update"), Deny},
+		{"env abbreviated unset", bash("env --un=HOME " + b.AppName + " init --update"), Deny},
+		{"env cluster unset home", bash("env -iu HOME " + b.AppName + " init --update"), Deny},
+		{"env.exe unset home", bash("env.exe -u HOME " + b.AppName + " init --update"), Deny},
+		{"upper-case env -i", bash("ENV -i " + b.AppName + " init --update"), Deny},
+		{"env split-string unset home", bash("env -S '-u HOME " + b.AppName + " init --update'"), Deny},
+		{"sudo env unset home", bash("sudo env -u HOME " + b.AppName + " init --update"), Deny},
 		// Deleting, moving or replacing a directory above the overlay removes
 		// or plants it without naming it.
 		{"remove overlay parent", bash("rm -rf ~/.config"), Deny},
@@ -160,6 +191,23 @@ func TestGeneratorInputsVerdicts(t *testing.T) {
 		{"variable overlay dir", bash(`rm -rf "$X/.config/` + b.AppName + `"`), Deny},
 		{"move command substitution overlay parent", bash(`mv "$(echo ~)/.config" /tmp/x`), Deny},
 		{"find starting at expanded overlay parent", bash(`find "$(echo ~)/.config" -delete`), Deny},
+		// A cd to an expanded directory may land in the home directory, and
+		// a plain echo substitution prints its words.
+		{"cd $HOME config then remove overlay dir", bash("cd $HOME/.config && rm -rf " + b.AppName), Deny},
+		{"cd expanded config then remove overlay dir", bash(`cd "$(cat /tmp/d)/.config" && rm -rf ` + b.AppName), Deny},
+		{"cd expanded then config then remove overlay dir", bash(`cd "$X" && cd .config && rm -rf ` + b.AppName), Deny},
+		{"cd glob config then remove overlay dir", bash("cd ~/.conf* && rm -rf " + b.AppName), Deny},
+		{"echo substitution overlay parent", bash(`rm -rf "$(echo ~/.config)"`), Deny},
+		{"split echo substitution overlay parent", bash(`rm -rf "$(echo ~/.co)nfig"`), Deny},
+		{"echo substitution home then glob", bash(`rm -rf "$(echo ~)"/.conf*`), Deny},
+		{"expanded prefix then glob", bash(`rm -rf "$(cat /tmp/h)"/.conf*`), Deny},
+		{"cd home then relative glob", bash("cd ~ && rm -rf .conf*"), Deny},
+		// Moving to the trash, gio and tar --remove-files remove the operand.
+		{"trash-put overlay parent", bash("trash-put ~/.config"), Deny},
+		{"gio trash overlay parent", bash("gio trash ~/.config"), Deny},
+		{"gio move overlay parent", bash("gio move ~/.config /tmp/x"), Deny},
+		{"tar remove-files overlay parent", bash("tar -cf /tmp/x.tar --remove-files ~/.config"), Deny},
+		{"tar abbreviated remove-files overlay parent", bash("tar -cf /tmp/x.tar --remove-f ~/.config"), Deny},
 		{"find delete overlay parent", bash("find ~/.config -delete"), Deny},
 		{"find exec rm overlay parent", bash("find ~/.config -exec rm -rf {} +"), Deny},
 		{"find exec mv overlay parent entries", bash(`find ~/.config -mindepth 1 -maxdepth 1 -exec mv {} /tmp/ \;`), Deny},
@@ -213,6 +261,12 @@ func TestGeneratorInputsVerdicts(t *testing.T) {
 		{"remove expanded variable", bash(`rm -rf "$tmp"`), Allow},
 		{"remove expanded sibling config dir", bash("rm -rf $X/.config/other"), Allow},
 		{"remove literal config dir beside expansion", bash("rm -rf $TMPDIR/x .config"), Allow},
+		{"cd expanded then remove unrelated dir", bash(`cd "$X" && rm -rf build`), Allow},
+		{"cd $HOME config then remove sibling", bash("cd $HOME/.config && rm -rf other"), Allow},
+		{"tar overlay parent without removal", bash("tar -cf /tmp/x.tar ~/.config"), Allow},
+		{"gio info overlay parent", bash("gio info ~/.config"), Allow},
+		{"trash-put unrelated file", bash("trash-put /tmp/scratch/x"), Allow},
+		{"remove echo substitution elsewhere", bash(`rm -rf "$(echo /tmp/build)"`), Allow},
 		// .devenv is devenv's runtime directory, routinely removed to reset
 		// the environment; its answers mirror is read only when the protected
 		// primary answers file is missing, so the directory stays removable.
@@ -223,6 +277,10 @@ func TestGeneratorInputsVerdicts(t *testing.T) {
 		{"export home then make", bash("export HOME=/tmp/e; make"), Allow},
 		{"cli without home change", bash(b.AppName + " status"), Allow},
 		{"echo home with cli name", bash("echo HOME is $HOME; " + b.AppName + " status"), Allow},
+		{"for-loop other variable with cli", bash("for f in a b; do " + b.AppName + " status; done"), Allow},
+		{"read other variable with cli", bash("read -r line < notes.txt; " + b.AppName + " status"), Allow},
+		{"env chdir for cli", bash("env -C /tmp " + b.AppName + " status"), Allow},
+		{"read home for other program", bash("read HOME <<< /tmp/e; make"), Allow},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

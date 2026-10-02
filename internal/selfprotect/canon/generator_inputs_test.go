@@ -11,6 +11,7 @@ import (
 	"github.com/Quantum-Serendipity/qsdev/internal/answers"
 	"github.com/Quantum-Serendipity/qsdev/internal/catalog"
 	"github.com/Quantum-Serendipity/qsdev/internal/state"
+	"github.com/Quantum-Serendipity/qsdev/internal/userhome"
 	"github.com/Quantum-Serendipity/qsdev/pkg/branding"
 )
 
@@ -187,7 +188,7 @@ func TestIsProtected_GeneratorInputs_WhiteLabel(t *testing.T) {
 
 	home := filepath.FromSlash("/home/alice")
 	var got []string
-	for _, e := range orgOverlayEntries(cfg, home, getenv) {
+	for _, e := range orgOverlayEntries(cfg, []string{home}, getenv) {
 		if e.category != "config" {
 			t.Errorf("org overlay entry %q category = %q, want config", e.path, e.category)
 		}
@@ -219,6 +220,11 @@ func TestGeneratorInputsMatchWriters(t *testing.T) {
 		t.Fatalf("getting home dir: %v", err)
 	}
 
+	account, err := userhome.Account()
+	if err != nil {
+		account = home // no user database entry: the CLI falls back to HOME
+	}
+
 	tests := []struct {
 		writer  string
 		path    string
@@ -229,6 +235,7 @@ func TestGeneratorInputsMatchWriters(t *testing.T) {
 		{"state.InitStateFile", filepath.Join(proj, filepath.FromSlash(state.InitStateFile())), "answers"},
 		{"catalog.OrgConfigPath", catalog.OrgConfigPath(), "config"},
 		{"catalog.HomeOrgConfigPath", catalog.HomeOrgConfigPath(home), "config"},
+		{"catalog.HomeOrgConfigPath(account)", catalog.HomeOrgConfigPath(account), "config"},
 	}
 	for _, tt := range tests {
 		if strings.TrimSpace(tt.path) == "" {
@@ -297,4 +304,35 @@ func isProtectedOrAncestor(p string) bool {
 	}
 	ok, _ := IsProtected(filepath.Join(p, "x"))
 	return ok
+}
+
+// TestIsProtected_AccountHomeOverlay pins that the org overlay below the
+// account's home directory, which the CLI reads whatever HOME says
+// (catalog.OrgConfigPath), is protected even when the hook's HOME names
+// another directory, and that the one below HOME stays protected for the
+// fallback. Not parallel: it replaces the package's home resolvers.
+func TestIsProtected_AccountHomeOverlay(t *testing.T) {
+	envHome := filepath.Join(t.TempDir(), "env-home")
+	accountHome := filepath.Join(t.TempDir(), "account-home")
+	origHome, origAccount := userHomeDir, accountHomeDir
+	reset := func() {
+		initOnce = sync.Once{}
+		initErr = nil
+		protectedPrefixes = nil
+		protectedSuffixes = nil
+	}
+	t.Cleanup(func() {
+		userHomeDir, accountHomeDir = origHome, origAccount
+		reset()
+	})
+	userHomeDir = func() (string, error) { return envHome, nil }
+	accountHomeDir = func() (string, error) { return accountHome, nil }
+	reset()
+
+	for _, home := range []string{envHome, accountHome} {
+		p := catalog.HomeOrgConfigPath(home)
+		if got, cat := IsProtected(p); !got || cat != "config" {
+			t.Errorf("IsProtected(%q) = (%v, %q), want (true, config)", p, got, cat)
+		}
+	}
 }

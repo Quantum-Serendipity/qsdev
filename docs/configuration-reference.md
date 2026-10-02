@@ -598,7 +598,9 @@ error). `qsdev init --update` applies a change.
 
 A project can commit a catalog defaults file at `.qsdev/defaults.yaml`. It
 uses the same schema as the user defaults file (`~/.config/qsdev/defaults.yaml`
-or `$QSDEV_ORG_CONFIG`, see `qsdev defaults`), but because anyone who can
+or `$QSDEV_ORG_CONFIG`, see `qsdev defaults`; `~` is the home directory your
+account's user database entry records, not `$HOME`, so a `HOME` set for one
+run does not move it), but because anyone who can
 push to the repository controls it, it may only **add or tighten**:
 
 | Section | Project effect |

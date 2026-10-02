@@ -53,14 +53,23 @@ type Command struct {
 	// expansion, as rendered in Args: an expansion of unknown value renders
 	// as nothing, so `"$(echo ~)/.config"` is "/.config" here.
 	ExpandedArgs []string
-	// Assigns names the variables this statement sets for the command or the
-	// rest of the shell line: prefix assignments (`GIT_EXTERNAL_DIFF=x git
-	// diff`) and bare assignment statements (`PATH=/tmp/x`, emitted as a
-	// nameless Command). Either can change what a later command word runs, so
-	// a command with assignments is never proven read-only. Declaration
-	// builtins (export, declare, local, ...) are reported as ordinary commands
-	// named by the builtin.
+	// Assigns names the variables this statement sets or clears for the
+	// command or the rest of the shell line: prefix assignments
+	// (`GIT_EXTERNAL_DIFF=x git diff`) and bare assignment statements
+	// (`PATH=/tmp/x`, emitted as a nameless Command), the names a declaration
+	// builtin is given (export, declare, local, readonly, typeset; for a
+	// nameref also the variable it refers to), a for or select loop variable,
+	// the variables read, mapfile/readarray, printf -v, getopts and wait -p
+	// store into, unset's operands, arithmetic assignments (`((X=1))`, let,
+	// `$((X=1))`), ${X:=value} defaults, a coprocess name and a {X}> redirect.
+	// Any of them can change what a later command word runs, so a command
+	// with assignments is never proven read-only. Declaration builtins are
+	// still reported as ordinary commands named by the builtin.
 	Assigns []string
+	// AssignsDynamic is set when the statement sets or clears a variable
+	// whose name comes from an expansion (`export $X=v`, `read "$V"`,
+	// `(( $X = 1 ))`), which Assigns cannot name: it may be any variable.
+	AssignsDynamic bool
 	// Pipeline groups commands joined by `|`/`|&`: all stages of one pipeline
 	// share the same non-zero id, in left-to-right order. Standalone commands
 	// have Pipeline == 0. Rules use this to reason about dataflow across a pipe
@@ -108,10 +117,10 @@ func IsSafeReadVerb(name string) bool {
 // deny: either its command word is read-only for any arguments (see
 // safeReadVerbs), or it is an argument-dependent command (git, sort, rg) whose
 // actual arguments are read-only — and it sets no variables (see
-// Command.Assigns).
+// Command.Assigns and Command.AssignsDynamic).
 func IsSafeReadCommand(c Command) bool {
-	if len(c.Assigns) > 0 {
-		// A prefix assignment can make a read-only command run code
+	if len(c.Assigns) > 0 || c.AssignsDynamic {
+		// An assignment can make a read-only command run code
 		// (GIT_EXTERNAL_DIFF, LD_PRELOAD, PATH).
 		return false
 	}
@@ -305,6 +314,10 @@ func ParseWithVars(command string, vars map[string]string) ([]Command, error) {
 			}
 		}
 
+		other := stmtAssigns(stmt, vars)
+		c.Assigns = append(c.Assigns, other.names...)
+		c.AssignsDynamic = other.dynamic
+
 		for _, r := range stmt.Redirs {
 			if r.Word == nil {
 				continue
@@ -326,7 +339,7 @@ func ParseWithVars(command string, vars map[string]string) ([]Command, error) {
 		// assignments or redirects that must be attributed even without one
 		// (bare `VAR=val`, compound-command redirects, `VAR=val > f`). Skip pure
 		// structural statements.
-		if hasWord || len(c.Assigns) > 0 || len(c.WriteRedirects) > 0 || len(c.ReadRedirects) > 0 {
+		if hasWord || len(c.Assigns) > 0 || c.AssignsDynamic || len(c.WriteRedirects) > 0 || len(c.ReadRedirects) > 0 {
 			cmds = append(cmds, c)
 		}
 		return true
@@ -439,6 +452,9 @@ func wordText(w *syntax.Word, vars map[string]string) (string, bool) {
 				case *syntax.ParamExp:
 					b.WriteString(knownParam(dp, vars))
 					hasExpansion = true
+				case *syntax.CmdSubst:
+					b.WriteString(echoOutput(dp))
+					hasExpansion = true
 				default:
 					hasExpansion = true
 				}
@@ -446,13 +462,46 @@ func wordText(w *syntax.Word, vars map[string]string) (string, bool) {
 		case *syntax.ParamExp:
 			b.WriteString(knownParam(p, vars))
 			hasExpansion = true
-		case *syntax.CmdSubst, *syntax.ArithmExp:
+		case *syntax.CmdSubst:
+			b.WriteString(echoOutput(p))
+			hasExpansion = true
+		case *syntax.ArithmExp:
 			hasExpansion = true
 		default:
 			hasExpansion = true
 		}
 	}
 	return b.String(), hasExpansion
+}
+
+// echoOutput returns what the command substitution cs prints when it is a
+// plain echo of unquoted literal words (`$(echo ~/.config)`), with the words
+// as written: a leading ~ is left for the caller to expand, as the shell
+// would have. It returns "" for any other substitution, whose output is
+// unknown.
+func echoOutput(cs *syntax.CmdSubst) string {
+	if len(cs.Stmts) != 1 || len(cs.Stmts[0].Redirs) > 0 {
+		return ""
+	}
+	call, ok := cs.Stmts[0].Cmd.(*syntax.CallExpr)
+	if !ok || len(call.Assigns) > 0 || len(call.Args) == 0 {
+		return ""
+	}
+	words := make([]string, 0, len(call.Args))
+	for _, w := range call.Args {
+		if len(w.Parts) != 1 {
+			return ""
+		}
+		lit, ok := w.Parts[0].(*syntax.Lit)
+		if !ok {
+			return ""
+		}
+		words = append(words, unescapeUnquoted(lit.Value))
+	}
+	if words[0] != "echo" || len(words) == 1 || strings.HasPrefix(words[1], "-") {
+		return "" // not echo, or an option that changes its output
+	}
+	return strings.Join(words[1:], " ")
 }
 
 // knownParam returns the value vars gives a plain parameter expansion ($NAME or

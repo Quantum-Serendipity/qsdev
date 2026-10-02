@@ -10,6 +10,7 @@ import (
 	"sync"
 	"testing"
 
+	"github.com/Quantum-Serendipity/qsdev/internal/userhome"
 	"github.com/Quantum-Serendipity/qsdev/pkg/branding"
 )
 
@@ -209,14 +210,42 @@ func TestOrgConfigPath_IgnoresHomeOverlayInTests(t *testing.T) {
 	if got := OrgConfigFile(); got != "" {
 		t.Errorf("OrgConfigFile() = %q in a test binary, want \"\"", got)
 	}
-	if got := homeOrgConfigPath(); got != overlay {
-		t.Errorf("homeOrgConfigPath() = %q, want %q", got, overlay)
+	// The fallback is anchored to the account, not to HOME (see
+	// TestHomeOrgConfigPath_IgnoresHomeEnvironment).
+	accountHome, err := userhome.Account()
+	if err != nil {
+		accountHome = home // no user database entry: the HOME fallback
+	}
+	if got, want := homeOrgConfigPath(), HomeOrgConfigPath(accountHome); got != want {
+		t.Errorf("homeOrgConfigPath() = %q, want %q", got, want)
 	}
 
 	// An explicit env override is still honoured.
 	t.Setenv(branding.Get().EnvPrefix+"ORG_CONFIG", overlay)
 	if got := OrgConfigPath(); got != overlay {
 		t.Errorf("OrgConfigPath() with env override = %q, want %q", got, overlay)
+	}
+}
+
+// Regression (U18-WS1): the CLI read the home org overlay below HOME, so an
+// agent line that set HOME for one run (`for HOME in /tmp/e; do qsdev claude
+// update; done`, `HOME=/tmp/e $'qsdev' claude update`, or a script the agent
+// wrote) regenerated the settings from an overlay of its own making, which
+// dropped the catalog's Bash(npx *) deny. The fallback now follows the
+// account's user database entry, which no shell line can change.
+func TestHomeOrgConfigPath_IgnoresHomeEnvironment(t *testing.T) {
+	accountHome, err := userhome.Account()
+	if err != nil {
+		t.Skipf("the current account has no user database entry here: %v", err)
+	}
+	want := HomeOrgConfigPath(accountHome)
+	for _, name := range []string{"HOME", "USERPROFILE"} {
+		t.Run(name, func(t *testing.T) {
+			t.Setenv(name, t.TempDir())
+			if got := homeOrgConfigPath(); got != want {
+				t.Errorf("homeOrgConfigPath() with %s relocated = %q, want %q", name, got, want)
+			}
+		})
 	}
 }
 

@@ -35,6 +35,11 @@ type scannedCommand struct {
 	// used an expansion, a glob, `-`, the directory stack, or CDPATH), so
 	// relative paths may land anywhere.
 	cwdUnknown bool
+	// cwdHint is what is known of the working directory when cwdUnknown is
+	// set: the unresolvable cd target as rendered (`$X/.config` is
+	// "/.config", a glob stays a glob), joined with any relative cd after it,
+	// or "" when nothing is known (popd, `cd -`).
+	cwdHint string
 }
 
 // scannedCommands returns the parsed commands annotated with their effective
@@ -54,7 +59,7 @@ func (ctx *EvalContext) scannedCommands() ([]scannedCommand, error) {
 	}
 	out := make([]scannedCommand, 0, len(cmds))
 	for _, c := range cmds {
-		sc := scannedCommand{Command: c, cwd: st.cwd, inProtectedDir: st.inProtected, cwdUnknown: st.unknown}
+		sc := scannedCommand{Command: c, cwd: st.cwd, inProtectedDir: st.inProtected, cwdUnknown: st.unknown, cwdHint: st.hint}
 		out = append(out, sc)
 		st.apply(sc)
 	}
@@ -67,6 +72,7 @@ type dirState struct {
 	cwd         string
 	inProtected bool
 	unknown     bool
+	hint        string // see scannedCommand.cwdHint
 	// cdpath reports that the line sets CDPATH, which makes cd search other
 	// directories for a bare relative target (`CDPATH=.claude cd hooks`).
 	cdpath bool
@@ -81,7 +87,7 @@ func (st *dirState) apply(sc scannedCommand) {
 	case "popd":
 		// The destination is the directory stack, which is not modelled.
 		// Leaving a protected directory cannot be proven, so keep that flag.
-		st.cwd, st.unknown = "", true
+		st.cwd, st.unknown, st.hint = "", true, ""
 		return
 	default:
 		return
@@ -98,7 +104,10 @@ func (st *dirState) apply(sc scannedCommand) {
 		// directory the literal part names (`cd "$HOME/.claude"`, `cd .c*e`),
 		// or that a rooted target names once $HOME is rendered
 		// (`cd $HOME/.config/<app>`).
-		st.cwd, st.unknown = "", true
+		st.cwd, st.unknown, st.hint = "", true, ""
+		if target != "-" && (sc.Name == "cd" || len(operands) > 0 && !strings.HasPrefix(target, "+")) {
+			st.hint = target // not the directory stack
+		}
 		st.inProtected = st.inProtected || lexicalProtected(target) || globProtected(target) ||
 			(isRooted(expandTilde(target)) && isProtectedDir(filepath.Clean(expandTilde(target))))
 		return
@@ -111,6 +120,7 @@ func (st *dirState) apply(sc scannedCommand) {
 		// A relative move from an unknown directory stays unknown; leaving a
 		// protected directory cannot be proven, so only ever add the flag.
 		st.inProtected = st.inProtected || isProtectedDir(expanded)
+		st.hint = path.Join(st.hint, filepath.ToSlash(expanded))
 		return
 	default:
 		st.cwd = filepath.Join(st.cwd, expanded)

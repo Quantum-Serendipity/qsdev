@@ -104,14 +104,31 @@ All notable changes to qsdev are recorded in this file. The format is based on
   or replacing a directory above the overlay (such as `rm -rf ~/.config`).
   An agent command that sets `QSDEV_ORG_CONFIG` (`QSDEV_ORG_CONFIG=... qsdev
   claude update`, `export QSDEV_ORG_CONFIG=...`) is denied too, since it
-  would point a regeneration at an unprotected file. So is an agent command
-  line that runs qsdev and sets or clears `HOME` or `USERPROFILE`
-  (`HOME=/tmp/x qsdev init --update`, `export HOME=/tmp/x; qsdev ...`,
-  `env -u HOME qsdev ...`, `env -i qsdev ...`), which moves the default
-  overlay below another home directory; setting `HOME` for other programs
+  would point a regeneration at an unprotected file. qsdev now reads the
+  default overlay below the home directory your operating system's user
+  database records for your account, not below `$HOME` or `%USERPROFILE%`,
+  so setting or clearing `HOME` for a qsdev run, however it is spelled and
+  even inside a script the agent wrote, no longer moves the overlay. qsdev
+  falls back to `$HOME` only when the account has no user database entry
+  (as in some containers). If you keep an overlay below a `HOME` that differs
+  from your account's home directory, move it there or point
+  `QSDEV_ORG_CONFIG` at it. For that fallback the hook also denies an agent
+  command line that runs qsdev and sets or clears `HOME` or `USERPROFILE`:
+  assignments, `export`/`declare`/`local` (including a name computed from a
+  variable, as in `export $X=...`, and namerefs), `unset`, for and select
+  loop variables, `read`, `mapfile`, `printf -v`, `getopts`, arithmetic,
+  `${HOME:=...}`, and `env -u HOME` or `env -i` in any option spelling. It
+  recognises qsdev when it is quoted or brace-expanded too (`$'qsdev'`,
+  `{qsdev,}`). The hook does not see inside a script file the agent runs
+  (`HOME=/tmp/x sh ./script.sh`); the account-anchored lookup is what covers
+  that case. Setting `HOME` for other programs
   (`HOME=$(mktemp -d) go test ./...`) stays allowed. Deleting or moving a
-  directory above the overlay through an expansion the hook cannot resolve
-  (`rm -rf "$(echo ~)/.config"`, `H=~; rm -rf $H/.config`) is denied as well.
+  directory above the overlay is denied when the hook cannot resolve the path
+  but its literal end is such a directory (`rm -rf "$(cat f)/.config"`,
+  `H=~; rm -rf $H/.config`, `rm -rf "$(echo ~)"/.conf*`), when it is
+  relative to a `cd` the hook cannot resolve (`cd $HOME/.config && rm -rf
+  qsdev`), and when it goes through `trash-put`, `gio trash`/`gio move` or
+  `tar --remove-files`.
   The overlay is protected at the location the hook process sees; a variable
   set outside the agent's commands (for example in the environment Claude
   Code was started with) moves it. Reading them is still allowed, as are

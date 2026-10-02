@@ -1,7 +1,6 @@
 package rules
 
 import (
-	"path"
 	"slices"
 	"strings"
 
@@ -14,15 +13,20 @@ import (
 // that changes the environment a regeneration runs with can move a generator
 // input to a location the hook does not protect: the org-config variable
 // (canon.ProtectedEnvVars) names the overlay directly, and the home variables
-// (canon.HomeEnvVars) name the directory the default overlay lives below.
+// (canon.HomeEnvVars) name the directory the default overlay lives below when
+// the account has no user database entry (the CLI otherwise ignores them, see
+// catalog.OrgConfigPath).
 
 // relocatesProtected reports whether the shell line command, parsed as scs,
 // relocates a protected location through the environment: a command sets a
 // canon.ProtectedEnvVars variable (`QSDEV_ORG_CONFIG=/tmp/x qsdev claude
 // update`, `export QSDEV_ORG_CONFIG=...`), or the line may run the CLI and
-// sets or clears a canon.HomeEnvVars variable (`HOME=/tmp/e qsdev init
-// --update`, `export HOME=/tmp/e; qsdev ...`, `env -u HOME qsdev ...`).
-// Scripts the line runs through a shell (`sh -c`, eval) are followed.
+// sets or clears a canon.HomeEnvVars variable, in any of the forms
+// cmdscan.Command.Assigns lists (`HOME=/tmp/e qsdev init --update`, `for HOME
+// in /tmp/e; do qsdev ...`, `read HOME <<< /tmp/e; qsdev ...`) or through env
+// (`env -u HOME qsdev ...`), or a variable whose name it computes (`export
+// $X=/tmp/e; qsdev ...`). Scripts the line runs through a shell (`sh -c`,
+// eval) are followed.
 func relocatesProtected(command string, scs []scannedCommand) bool {
 	cmds := make([]cmdscan.Command, len(scs))
 	for i, sc := range scs {
@@ -32,9 +36,14 @@ func relocatesProtected(command string, scs []scannedCommand) bool {
 	if anyCommandIn(cmds, 0, assignsEnv(org), mentionsEnvName(org)) {
 		return true
 	}
+	if !mayRunCLI(command, cmds) {
+		return false
+	}
 	home := canon.HomeEnvVars()
-	changesHome := func(c cmdscan.Command) bool { return assignsEnv(home)(c) || clearsEnv(home)(c) }
-	return mayRunCLI(command, cmds) && anyCommandIn(cmds, 0, changesHome, mentionsEnvName(home))
+	changesHome := func(c cmdscan.Command) bool {
+		return c.AssignsDynamic || assignsEnv(home)(c) || clearsEnv(home)(c)
+	}
+	return anyCommandIn(cmds, 0, changesHome, mentionsEnvName(home))
 }
 
 // unparsedRelocatesHome is relocatesProtected for a line that cannot be
@@ -43,15 +52,43 @@ func unparsedRelocatesHome(command string) bool {
 	return cmdscan.InvokesProgram(command, branding.Get().AppName) && mentionsEnvName(canon.HomeEnvVars())(command)
 }
 
-// mayRunCLI reports whether the line may run the CLI: a word names it (see
+// mayRunCLI reports whether the line may run the CLI: its text names it (see
 // cmdscan.InvokesProgram, which also sees it inside `sh -c` and eval
-// scripts), or a command word is built from an expansion and so may be it.
+// scripts), or a command word of a parsed command, or of a script it runs,
+// may be it (see commandMayRunCLI). A script that cannot be parsed may.
 func mayRunCLI(command string, cmds []cmdscan.Command) bool {
-	if cmdscan.InvokesProgram(command, branding.Get().AppName) {
+	app := branding.Get().AppName
+	if cmdscan.InvokesProgram(command, app) {
 		return true
 	}
-	expandedName := func(c cmdscan.Command) bool { return c.NameHasExpansion }
-	return anyCommandIn(cmds, 0, expandedName, func(string) bool { return false })
+	mayRun := func(c cmdscan.Command) bool { return commandMayRunCLI(c, app) }
+	return anyCommandIn(cmds, 0, mayRun, func(string) bool { return true })
+}
+
+// commandMayRunCLI reports whether c may run the program app: its command
+// word is built from an expansion, or a word that can name the program (see
+// cmdscan.CommandWordIndexes) names app once quotes and escapes are removed
+// (`$'qsdev'`, `qs$'d'ev`), after brace expansion (`{qsdev,}`), or as a glob
+// that can match it (`qsde?`). Names are compared case-insensitively, as
+// Windows and macOS resolve them.
+func commandMayRunCLI(c cmdscan.Command, app string) bool {
+	if c.NameHasExpansion {
+		return true
+	}
+	words := append([]string{c.Name}, c.Args...)
+	for _, i := range cmdscan.CommandWordIndexes(words) {
+		variants, ok := expandBraces(words[i])
+		if !ok {
+			return true
+		}
+		for _, v := range variants {
+			name := strings.ToLower(cmdscan.ProgramName(v))
+			if name == strings.ToLower(app) || (hasGlobMeta(name) && shellSegMatch(name, strings.ToLower(app))) {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // anyCommandIn reports whether pred holds for a command of cmds, or of a
@@ -96,9 +133,10 @@ func mentionsEnvName(vars []string) func(string) bool {
 	}
 }
 
-// assignsEnv returns a check that a command sets one of vars: as a prefix or
-// bare assignment, or as a NAME=value word of a command such as export,
-// declare, env or sudo.
+// assignsEnv returns a check that a command sets one of vars: in any form
+// cmdscan.Command.Assigns lists, as a NAME=value word of a command such as
+// env or sudo, or as an argument of a command word built from an expansion,
+// which may be read, export or declare (`$R HOME <<< /tmp/e`).
 func assignsEnv(vars []string) func(cmdscan.Command) bool {
 	return func(c cmdscan.Command) bool {
 		if slices.ContainsFunc(c.Assigns, func(name string) bool { return isEnvName(name, vars) }) {
@@ -106,74 +144,47 @@ func assignsEnv(vars []string) func(cmdscan.Command) bool {
 		}
 		return slices.ContainsFunc(c.Args, func(w string) bool {
 			name, _, ok := strings.Cut(w, "=")
-			return ok && isEnvName(name, vars)
+			return (ok || c.NameHasExpansion) && isEnvName(name, vars)
 		})
 	}
 }
 
-// clearsEnv returns a check that a command removes one of vars from the
-// environment: `unset NAME`, or an env that unsets it (-u NAME, -uNAME,
-// --unset[=]NAME) or starts from an empty environment (-i, -,
-// --ignore-environment), directly or behind a wrapper.
+// clearsEnv returns a check that a command runs env, directly or behind a
+// wrapper, so that it removes one of vars from the environment of the program
+// it runs (see envChanges). unset is covered by cmdscan.Command.Assigns.
 func clearsEnv(vars []string) func(cmdscan.Command) bool {
 	return func(c cmdscan.Command) bool {
 		words := append([]string{c.Name}, c.Args...)
 		for _, i := range cmdscan.CommandWordIndexes(words) {
-			switch path.Base(words[i]) {
-			case "unset":
-				if slices.ContainsFunc(words[i+1:], func(w string) bool { return isEnvName(w, vars) }) {
-					return true
-				}
-			case "env":
-				if envClears(words[i+1:], vars) {
-					return true
-				}
+			if strings.EqualFold(cmdscan.ProgramName(words[i]), "env") && envChanges(words[i+1:], vars) {
+				return true
 			}
 		}
 		return false
 	}
 }
 
-// envClears reports whether env's arguments args remove one of vars from the
-// environment of the program it runs. Options end at the first word that is
-// neither an option nor an assignment.
-func envClears(args []string, vars []string) bool {
-	for j := 0; j < len(args); j++ {
-		a := args[j]
+// envChanges reports whether env's arguments args remove one of vars from
+// the environment of the program it runs: -u NAME (in any spelling cmdscan's
+// option table accepts, including `-C dir -u NAME` and an abbreviated
+// --unset), or -i/-/--ignore-environment, which start from an empty one. A
+// -S string is split and read as more arguments, which may also set a
+// variable.
+func envChanges(args []string, vars []string) bool {
+	for _, o := range cmdscan.WrapperOptions("env", args) {
 		switch {
-		case a == "-" || a == "-i" || a == "--ignore-environment":
+		case o.Is("-", "-i", "--ignore-environment"):
 			return true
-		case a == "--unset" || a == "-u":
-			if j+1 < len(args) && isEnvName(args[j+1], vars) {
+		case o.Is("-u", "--unset") && isEnvName(o.Arg, vars):
+			return true
+		case o.Is("-S", "--split-string"):
+			split := strings.Fields(o.Arg)
+			if envChanges(split, vars) || slices.ContainsFunc(split, func(w string) bool {
+				name, _, ok := strings.Cut(w, "=")
+				return ok && isEnvName(name, vars)
+			}) {
 				return true
 			}
-			j++
-		case strings.HasPrefix(a, "--unset="):
-			if isEnvName(strings.TrimPrefix(a, "--unset="), vars) {
-				return true
-			}
-		case strings.HasPrefix(a, "--"):
-			// another long option
-		case len(a) > 1 && a[0] == '-':
-			// A short-option cluster: -i empties the environment, and -u
-			// takes the rest of the cluster, or the next word, as a name.
-			flags, name, hasU := strings.Cut(a[1:], "u")
-			if strings.ContainsRune(flags, 'i') {
-				return true
-			}
-			if hasU {
-				if name == "" && j+1 < len(args) {
-					j++
-					name = args[j]
-				}
-				if isEnvName(name, vars) {
-					return true
-				}
-			}
-		case strings.Contains(a, "="):
-			// an assignment for the program
-		default:
-			return false
 		}
 	}
 	return false

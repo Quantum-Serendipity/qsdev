@@ -338,7 +338,7 @@ func (t *hookTargets) writesIn(scs []scannedCommand, depth int) string {
 		}
 		nested := make([]scannedCommand, len(sub))
 		for i, c := range sub {
-			nested[i] = scannedCommand{Command: c, cwd: sc.cwd, cwdUnknown: sc.cwdUnknown, inProtectedDir: sc.inProtectedDir}
+			nested[i] = scannedCommand{Command: c, cwd: sc.cwd, cwdUnknown: sc.cwdUnknown, cwdHint: sc.cwdHint, inProtectedDir: sc.inProtectedDir}
 		}
 		if p := t.writesIn(nested, depth+1); p != "" {
 			return p

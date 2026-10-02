@@ -11,6 +11,7 @@ import (
 	"strings"
 
 	"github.com/Quantum-Serendipity/qsdev/internal/claudesettings"
+	"github.com/Quantum-Serendipity/qsdev/internal/selfprotect/canon"
 	"github.com/Quantum-Serendipity/qsdev/internal/selfprotect/cmdscan"
 	"github.com/Quantum-Serendipity/qsdev/internal/shebang"
 	"github.com/Quantum-Serendipity/qsdev/internal/toolcheck"
@@ -267,8 +268,9 @@ func sandboxExecCommand(run []string) ([]string, bool) {
 	return run[3+i+1:], true
 }
 
-// runProblem is why the shell cannot start a hook script, and the program
-// the script's interpreter line names.
+// runProblem is why the shell cannot start a hook script or program, and the
+// file that fails: the script itself when it cannot be read or executed,
+// otherwise the interpreter its interpreter line names.
 type runProblem struct {
 	program, reason, remediation string
 }
@@ -293,7 +295,7 @@ func scriptRunProblem(projectRoot, path, label string, lookPath func(string) (st
 	named := cmp.Or(line.Program(), line.Interpreter)
 	switch {
 	case posix && !canExecute(path):
-		return &runProblem{cmp.Or(named, label), "is not executable for this user (the shell exits 126)", remediateInterpreter}
+		return &runProblem{label, "is not executable for this user (the shell exits 126)", remediateInterpreter}
 	case line.Interpreter == "":
 		return nil // no #! line: the shell runs it as a shell script
 	case posix && strings.ContainsRune(line.Interpreter+line.Arg, '\r'):
@@ -468,25 +470,37 @@ func programProblem(projectRoot, program string, lookPath func(string) (string, 
 
 // hookProgram returns the program and arguments of the first simple command
 // of a hook command that runs one, following wrappers (exec, env, timeout,
-// see cmdscan.ProgramWordIndex) and skipping shell builtins (`cd "$dir" &&
-// prog` runs prog). ${CLAUDE_PROJECT_DIR} renders as projectRoot. ok is
-// false when that program is a project hook script (see checkHookScripts),
-// is built from any other expansion, or cannot be named, and for
-// unparseable commands. On Windows a POSIX absolute path is left alone, as
-// Git Bash maps it into its own layer.
+// see cmdscan.ProgramWordIndex) and skipping shell builtins and wrappers
+// given no command (`cd "$dir" && prog` and `exec 2>/dev/null; prog` run
+// prog). A leading ~ or ~/ expands to the home directory, and
+// ${CLAUDE_PROJECT_DIR} renders as projectRoot. ok is false when that
+// program runs only conditionally (behind ||, a branch, or && after a status
+// test such as `test -x prog && prog`, see cmdscan.Guard), is a project hook
+// script (see checkHookScripts), is built from any other expansion
+// (including ~user), or cannot be named, and for unparseable commands. On
+// Windows a POSIX absolute path is left alone, as Git Bash maps it into its
+// own layer.
 func hookProgram(projectRoot, command string) (program string, args []string, ok bool) {
 	cmds, err := cmdscan.ParseWithVars(command, map[string]string{claudeProjectDirVar: projectRoot})
 	if err != nil {
 		return "", nil, false
 	}
+	tested := false // a skipped command's exit status is a test, so && may guard a branch
 	for _, c := range cmds {
+		if c.Guard == cmdscan.Guarded || c.Guard == cmdscan.GuardedByAnd && tested {
+			return "", nil, false
+		}
 		if c.Name == "" {
 			continue
 		}
 		words := append([]string{c.Name}, c.Args...)
 		p := cmdscan.ProgramWordIndex(words)
 		if p < 0 {
-			return "", nil, false
+			if !cmdscan.RunsNoProgram(words) {
+				return "", nil, false
+			}
+			tested = true // `command -v prog`, or a wrapper with no command
+			continue
 		}
 		word := words[p]
 		expanded := c.NameHasExpansion
@@ -494,10 +508,16 @@ func hookProgram(projectRoot, command string) (program string, args []string, ok
 			expanded = slices.Contains(c.ExpandedArgs, word)
 		}
 		if !expanded && cmdscan.IsShellBuiltin(word) {
+			tested = tested || statusTests[word]
 			continue
 		}
 		if expanded && !strings.HasPrefix(word, projectRoot+"/") || strings.ContainsRune(word, '$') {
 			return "", nil, false
+		}
+		if !expanded && strings.HasPrefix(word, "~") {
+			if word, ok = homeProgram(word); !ok {
+				return "", nil, false
+			}
 		}
 		if runtime.GOOS == "windows" && strings.HasPrefix(word, "/") {
 			return "", nil, false
@@ -508,6 +528,25 @@ func hookProgram(projectRoot, command string) (program string, args []string, ok
 		return word, words[p+1:], true
 	}
 	return "", nil, false
+}
+
+// statusTests are the builtins whose exit status tests something (`test -x
+// prog && prog`), so a command after them in an && list may never run. Other
+// builtins, such as cd, are taken to succeed.
+var statusTests = map[string]bool{"test": true, "[": true, "false": true, "type": true, "hash": true}
+
+// homeProgram expands the leading ~ or ~/ of a program word the way the
+// shell does, to the home directory. ok is false for ~user, whose account
+// lookup is not reproduced, and when the home directory is unknown.
+func homeProgram(word string) (string, bool) {
+	if word != "~" && !strings.HasPrefix(word, "~/") {
+		return "", false
+	}
+	expanded, err := canon.ExpandTilde(word)
+	if err != nil {
+		return "", false
+	}
+	return expanded, true
 }
 
 // claudeProjectDirVar is the variable Claude Code sets to the project

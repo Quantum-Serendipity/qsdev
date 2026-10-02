@@ -359,7 +359,19 @@ func TestCheckHookPrograms(t *testing.T) {
 		{name: "relative path present", command: "./bin/qsdev selfprotect", event: "PreToolUse", scripts: map[string]os.FileMode{"bin/qsdev": 0o755}},
 		{name: "project path missing", command: `"${CLAUDE_PROJECT_DIR}"/tools/guard.py`, event: "PreToolUse", wantSev: SeverityHigh, wantProg: rootVar + "/tools/guard.py"},
 		{name: "project path present", command: `"${CLAUDE_PROJECT_DIR}"/tools/guard.py`, event: "PreToolUse", scripts: map[string]os.FileMode{"tools/guard.py": 0o755}},
-		{name: "project path not executable", command: `"${CLAUDE_PROJECT_DIR}"/tools/guard.py`, event: "PreToolUse", scripts: map[string]os.FileMode{"tools/guard.py": 0o644}, posix: true, wantSev: SeverityHigh, wantProg: "python3", wantMsg: rootVar + "/tools/guard.py"},
+		{name: "project path not executable", command: `"${CLAUDE_PROJECT_DIR}"/tools/guard.py`, event: "PreToolUse", scripts: map[string]os.FileMode{"tools/guard.py": 0o644}, posix: true, wantSev: SeverityHigh, wantProg: rootVar + "/tools/guard.py"},
+		{name: "exec redirect then unresolvable program", command: `exec 2>/dev/null; nonexistent-bin`, event: "PreToolUse", wantSev: SeverityHigh, wantProg: "nonexistent-bin"},
+		{name: "exec redirect then resolvable program", command: `exec 2>/dev/null; gofmt -l .`, event: "PostToolUse"},
+		{name: "env split string", command: `env -S 'nonexistent-bin -u'`, event: "PreToolUse"},
+		{name: "test-guarded optional program", command: `test -x .venv/bin/ruff && .venv/bin/ruff check`, event: "PostToolUse"},
+		{name: "bracket-guarded optional program", command: `[ -x "$CLAUDE_PROJECT_DIR/tools/opt" ] && "$CLAUDE_PROJECT_DIR/tools/opt" || true`, event: "PostToolUse"},
+		{name: "double-bracket-guarded optional program", command: `[[ -x .venv/bin/ruff ]] && .venv/bin/ruff check`, event: "PostToolUse"},
+		{name: "command -v guard then exit", command: `command -v nonexistent-bin >/dev/null || exit 0; nonexistent-bin`, event: "PostToolUse"},
+		{name: "command -v and-guard", command: `command -v nonexistent-bin >/dev/null && nonexistent-bin`, event: "PostToolUse"},
+		{name: "or branch", command: `true || nonexistent-bin`, event: "PostToolUse"},
+		{name: "if branch", command: `if [ -x ./bin/qsdev ]; then ./bin/qsdev selfprotect; fi`, event: "PreToolUse"},
+		{name: "function body", command: `f() { nonexistent-bin; }; :`, event: "PreToolUse"},
+		{name: "cd and-chain then unresolvable program", command: `cd "$CLAUDE_PROJECT_DIR" && cd .claude && nonexistent-bin selfprotect`, event: "PreToolUse", wantSev: SeverityCritical, wantProg: "nonexistent-bin"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -400,6 +412,48 @@ func TestCheckHookPrograms(t *testing.T) {
 			}
 			if !ShouldFail(results, AuditLevelHigh) {
 				t.Error("finding does not fail the check at --audit-level high")
+			}
+		})
+	}
+}
+
+// TestCheckHookPrograms_HomeTilde pins that a program under ~/ resolves in
+// the home directory, as the shell expands it, not under the project. It
+// sets HOME, so it cannot run in parallel.
+func TestCheckHookPrograms_HomeTilde(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home) // os.UserHomeDir on Windows
+	writeTestFileMode(t, home, "bin/guard", "#!/bin/sh\n", 0o755)
+	tests := []struct {
+		name     string
+		command  string
+		wantProg string // empty: no finding
+	}{
+		{name: "present", command: "~/bin/guard selfprotect"},
+		{name: "missing", command: "~/bin/missing selfprotect", wantProg: filepath.Join(home, "bin", "missing")},
+		{name: "other account", command: "~nonexistent-user-qsdev/bin/missing selfprotect"},
+		{name: "quoted home variable", command: `"$HOME"/bin/missing selfprotect`},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cmd, err := json.Marshal(tt.command)
+			if err != nil {
+				t.Fatal(err)
+			}
+			actual, err := claudesettings.Parse([]byte(`{"hooks": {"PreToolUse": [{"matcher": "*", "hooks": [{"type": "command", "command": ` + string(cmd) + `}]}]}}`))
+			if err != nil {
+				t.Fatal(err)
+			}
+			results := checkHookPrograms(t.TempDir(), actual, lookPathNoBuiltins)
+			if tt.wantProg == "" {
+				if len(results) != 0 {
+					t.Fatalf("unexpected findings: %+v", results)
+				}
+				return
+			}
+			if len(results) != 1 || results[0].Metadata["program"] != tt.wantProg || results[0].Severity != SeverityCritical {
+				t.Fatalf("findings = %+v, want one critical finding naming %s", results, tt.wantProg)
 			}
 		})
 	}
@@ -465,7 +519,7 @@ func TestCheckHookScripts_Interpreter(t *testing.T) {
 		{name: "env interpreter missing", content: "#!/usr/bin/env nonexistent-bin\n", wantProg: "nonexistent-bin"},
 		{name: "env -S interpreter missing", content: "#!/usr/bin/env -S nonexistent-bin -u\n", wantProg: "nonexistent-bin"},
 		{name: "absolute interpreter missing", content: "#!" + missingAbs + "\n", posix: true, wantProg: missingAbs},
-		{name: "not executable", content: "#!/usr/bin/env python3\n", noExec: true, posix: true, wantProg: "python3"},
+		{name: "not executable", content: "#!/usr/bin/env python3\n", noExec: true, posix: true, wantProg: ".claude/hooks/x.py"},
 		{name: "absolute interpreter is a directory", content: "#!" + filepath.Dir(missingAbs) + "\n", posix: true, wantProg: filepath.Dir(missingAbs)},
 		{name: "absolute interpreter not executable", content: "#!" + notExecInterp + "\n", posix: true, wantProg: notExecInterp},
 		{name: "CRLF interpreter line", content: "#!/usr/bin/env python3\r\nprint(1)\r\n", posix: true, wantProg: "python3"},
@@ -474,7 +528,7 @@ func TestCheckHookScripts_Interpreter(t *testing.T) {
 		{name: "env -S with options resolvable", content: "#!/usr/bin/env -S python3 -u\n"},
 		{name: "env path missing", content: "#!/nonexistent/env python3\n", posix: true, wantProg: "/nonexistent/env"},
 		{name: "relative env path missing", content: "#!env python3\n", posix: true, wantProg: "env"},
-		{name: "executable by others only", content: "#!/usr/bin/env python3\n", mode: 0o645, notRoot: true, posix: true, wantProg: "python3"},
+		{name: "executable by others only", content: "#!/usr/bin/env python3\n", mode: 0o645, notRoot: true, posix: true, wantProg: ".claude/hooks/x.py"},
 		{
 			name:    "timeout wrapper with interpreter",
 			command: `timeout 30 python3 "${CLAUDE_PROJECT_DIR}"/.claude/hooks/x.py`,

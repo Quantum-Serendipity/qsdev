@@ -212,11 +212,11 @@ func TestOrgConfigPath_IgnoresHomeOverlayInTests(t *testing.T) {
 	}
 	// The fallback is anchored to the account, not to HOME (see
 	// TestHomeOrgConfigPath_IgnoresHomeEnvironment).
-	accountHome, err := userhome.Account()
-	if err != nil {
-		accountHome = home // no user database entry: the HOME fallback
+	want := "" // no user database entry: no home overlay
+	if accountHome, err := userhome.Account(); err == nil {
+		want = HomeOrgConfigPath(accountHome)
 	}
-	if got, want := homeOrgConfigPath(), HomeOrgConfigPath(accountHome); got != want {
+	if got := homeOrgConfigPath(); got != want {
 		t.Errorf("homeOrgConfigPath() = %q, want %q", got, want)
 	}
 
@@ -244,6 +244,35 @@ func TestHomeOrgConfigPath_IgnoresHomeEnvironment(t *testing.T) {
 			t.Setenv(name, t.TempDir())
 			if got := homeOrgConfigPath(); got != want {
 				t.Errorf("homeOrgConfigPath() with %s relocated = %q, want %q", name, got, want)
+			}
+		})
+	}
+}
+
+// Regression (U18-WS1, round 2): a static build's os/user reads only
+// /etc/passwd, so a directory-service account had no entry and the overlay
+// path fell back to os.UserHomeDir, which reads HOME; `HOME=<evil> sh ./r.sh`
+// then regenerated from the agent's overlay. When the account cannot be
+// resolved the home overlay is not read, wherever HOME points and whether or
+// not an overlay exists there.
+func TestHomeOrgConfigPath_UnresolvedAccountIgnoresHome(t *testing.T) {
+	orig := accountHome
+	accountHome = func() (string, error) { return "", errors.New("no user database entry") }
+	t.Cleanup(func() { accountHome = orig })
+
+	evil := t.TempDir()
+	overlay := HomeOrgConfigPath(evil)
+	if err := os.MkdirAll(filepath.Dir(overlay), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(overlay, []byte("permission_deny_rules: {}\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range []string{"HOME", "USERPROFILE"} {
+		t.Run(name, func(t *testing.T) {
+			t.Setenv(name, evil)
+			if got := homeOrgConfigPath(); got != "" {
+				t.Errorf("homeOrgConfigPath() with an unresolved account and %s=%s = %q, want \"\"", name, evil, got)
 			}
 		})
 	}

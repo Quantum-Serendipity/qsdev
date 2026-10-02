@@ -41,6 +41,7 @@ var localProbes = []localProbe{
 	{Name: "podman", Args: []string{"info", "--format"}, Prefix: true},
 	{Name: "podman", Args: []string{"version", "--format"}, Prefix: true},
 	{Name: "git", Args: []string{"rev-parse"}, Prefix: true},
+	{Name: "getent", Args: []string{"passwd"}, Prefix: true},
 	{Name: "nix-instantiate", Args: []string{"--parse", "-"}},
 	{Name: "bash", Args: []string{"-n"}},
 	{Name: "ps", Args: []string{"-p"}, Prefix: true},

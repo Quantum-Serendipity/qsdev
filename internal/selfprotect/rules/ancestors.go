@@ -140,8 +140,9 @@ func isDir(p string) bool {
 // wordReachesProtectedAncestor reports whether word p, used by sc, can name a
 // directory that is, or holds, a home- or system-anchored protected location,
 // after brace and glob expansion and cwd resolution. A word built from an
-// expansion the scan cannot render, and a relative word after a cd whose
-// target it could not resolve, may start at the home directory, so their
+// expansion the scan cannot render, a word starting with a tilde form it
+// cannot resolve (see unresolvedTilde), and a relative word after a cd whose
+// target it could not resolve, may start at a home directory, so their
 // literal tail is checked too (see tailReachesAncestor).
 func wordReachesProtectedAncestor(sc scannedCommand, p string) bool {
 	variants, ok := expandBraces(p)
@@ -153,7 +154,7 @@ func wordReachesProtectedAncestor(sc scannedCommand, p string) bool {
 		if v == "" {
 			continue
 		}
-		if expanded && tailReachesAncestor(v) {
+		if (expanded || unresolvedTilde(v)) && tailReachesAncestor(v) {
 			return true
 		}
 		if isRelativePath(v) && sc.cwdUnknown {
@@ -234,41 +235,53 @@ func globReachesAncestor(pattern string) bool {
 
 // expandedReachesAncestor reports whether word, an argument of sc built from
 // an expansion the scan cannot render (`"$(cat f)/.config"`, `$H/.config`
-// after `H=~`), can still name a directory at or above a protected location
-// below the home directory (see tailReachesAncestor).
+// after `H=~`), or starting with a tilde form it cannot resolve, can still
+// name a directory at or above a protected location below a home directory
+// (see tailReachesAncestor).
 func expandedReachesAncestor(sc scannedCommand, word string) bool {
-	return slices.Contains(sc.ExpandedArgs, word) && tailReachesAncestor(word)
+	return (slices.Contains(sc.ExpandedArgs, word) || unresolvedTilde(word)) && tailReachesAncestor(word)
 }
 
 // tailReachesAncestor reports whether text, which may follow an unknown
-// prefix that can be the home directory, names a directory at or above a
+// prefix that can be a home directory, names a directory at or above a
 // protected location below it: its trailing segments match, segment by
 // segment and as globs, the home-relative path of such a directory (it ends
-// in /.config or /.config/<app>, or in /.conf*, say). Directories at or above
-// the home directory are not tails: `rm -rf "$tmp"` stays allowed.
+// in /.config or /.config/<app>, or in /.conf*, say). Every protected home
+// counts (canon.ProtectedHomes: HOME and the account's home directory).
+// Directories at or above a home directory are not tails: `rm -rf "$tmp"`
+// stays allowed.
 func tailReachesAncestor(text string) bool {
-	locs := canon.ProtectedLocations()
-	if locs == nil {
+	locs, homes := canon.ProtectedLocations(), canon.ProtectedHomes()
+	if locs == nil || homes == nil {
 		return true // the table could not be built: fail closed
 	}
-	home := expandTilde("~")
-	if !isRooted(home) {
-		return false
-	}
-	homeKey := strings.TrimSuffix(canon.PathKey(home), "/") + "/"
 	segs := strings.Split(canon.PathKey(filepath.Clean(text)), "/")
-	for _, loc := range locs {
-		rel, ok := strings.CutPrefix(canon.PathKey(loc), homeKey)
-		if !ok {
+	for _, home := range homes {
+		if !isRooted(home) {
 			continue
 		}
-		for dir := strings.TrimSuffix(rel, "/"); dir != "" && dir != "."; dir = path.Dir(dir) {
-			if segmentsEndWith(segs, strings.Split(dir, "/")) {
-				return true
+		homeKey := strings.TrimSuffix(canon.PathKey(home), "/") + "/"
+		for _, loc := range locs {
+			rel, ok := strings.CutPrefix(canon.PathKey(loc), homeKey)
+			if !ok {
+				continue
+			}
+			for dir := strings.TrimSuffix(rel, "/"); dir != "" && dir != "."; dir = path.Dir(dir) {
+				if segmentsEndWith(segs, strings.Split(dir, "/")) {
+					return true
+				}
 			}
 		}
 	}
 	return false
+}
+
+// unresolvedTilde reports whether p starts with a tilde form the scan cannot
+// render: ~name for an account the user database does not know, or a
+// directory-stack form (~+, ~-, ~2). It can still be a home directory, so it
+// is treated like an expansion (see tailReachesAncestor).
+func unresolvedTilde(p string) bool {
+	return strings.HasPrefix(p, "~") && !isRooted(expandTilde(p))
 }
 
 // segmentsEndWith reports whether the last segments of the glob segments segs

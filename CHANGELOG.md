@@ -108,22 +108,35 @@ All notable changes to qsdev are recorded in this file. The format is based on
   default overlay below the home directory your operating system's user
   database records for your account, not below `$HOME` or `%USERPROFILE%`,
   so setting or clearing `HOME` for a qsdev run, however it is spelled and
-  even inside a script the agent wrote, no longer moves the overlay. qsdev
-  falls back to `$HOME` only when the account has no user database entry
-  (as in some containers). If you keep an overlay below a `HOME` that differs
-  from your account's home directory, move it there or point
-  `QSDEV_ORG_CONFIG` at it. For that fallback the hook also denies an agent
+  even inside a script the agent wrote, no longer moves the overlay. Accounts
+  that come from a directory service (SSSD, LDAP or Active Directory, NIS,
+  systemd-homed), which the static release builds cannot see in
+  `/etc/passwd`, are resolved through `getent`, run only from a fixed system
+  path with an empty environment. When the account still cannot be resolved
+  (an arbitrary container uid, say), qsdev reads no home overlay at all
+  rather than one below `$HOME`, and warns when it finds one there; point
+  `QSDEV_ORG_CONFIG` at it to use it. If you keep an overlay below a `HOME`
+  that differs from your account's home directory, move it there or point
+  `QSDEV_ORG_CONFIG` at it. As defense in depth the hook also denies an agent
   command line that runs qsdev and sets or clears `HOME` or `USERPROFILE`:
   assignments, `export`/`declare`/`local` (including a name computed from a
   variable, as in `export $X=...`, and namerefs), `unset`, for and select
   loop variables, `read`, `mapfile`, `printf -v`, `getopts`, arithmetic,
-  `${HOME:=...}`, and `env -u HOME` or `env -i` in any option spelling. It
+  `${HOME:=...}`, `env -u HOME` or `env -i` in any option spelling, and
+  `exec -c` (bash's `env -i`, which also drops `QSDEV_ORG_CONFIG`). It
   recognises qsdev when it is quoted or brace-expanded too (`$'qsdev'`,
   `{qsdev,}`). The hook does not see inside a script file the agent runs
   (`HOME=/tmp/x sh ./script.sh`); the account-anchored lookup is what covers
-  that case. Setting `HOME` for other programs
+  that case. A file that sets the environment qsdev later runs in
+  (`devenv.nix`, `devenv.local.nix`, `.envrc.local`, `.env`, and the bash,
+  zsh, ksh, fish and PowerShell startup files) may not be changed by the agent
+  where it sets or removes `QSDEV_ORG_CONFIG` (SP-015), so a `devenv shell`
+  or `direnv exec` run after `direnv allow` keeps the org overlay; the agent
+  may change these files only with Edit or Write, which check that, not with
+  a shell command. Setting `HOME` for other programs
   (`HOME=$(mktemp -d) go test ./...`) stays allowed. Deleting or moving a
-  directory above the overlay is denied when the hook cannot resolve the path
+  directory above the overlay is denied also through `~name`
+  (`rm -rf ~alice/.config`) and when the hook cannot resolve the path
   but its literal end is such a directory (`rm -rf "$(cat f)/.config"`,
   `H=~; rm -rf $H/.config`, `rm -rf "$(echo ~)"/.conf*`), when it is
   relative to a `cd` the hook cannot resolve (`cd $HOME/.config && rm -rf

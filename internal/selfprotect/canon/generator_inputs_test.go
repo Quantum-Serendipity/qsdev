@@ -1,6 +1,7 @@
 package canon
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"slices"
@@ -211,7 +212,8 @@ func TestIsProtected_GeneratorInputs_WhiteLabel(t *testing.T) {
 // packages that write the generator inputs, so a renamed file cannot silently
 // fall out of protection. catalog.OrgConfigPath skips its home fallback in a
 // test binary, so the overlay is checked through the environment variable and
-// the fallback through catalog.HomeOrgConfigPath, the path it falls back to.
+// the home overlay through catalog.HomeOrgConfigPath, below the account's home
+// directory and below HOME.
 func TestGeneratorInputsMatchWriters(t *testing.T) {
 	withOrgConfig(t)
 	proj := filepath.FromSlash("/work/repo")
@@ -222,7 +224,7 @@ func TestGeneratorInputsMatchWriters(t *testing.T) {
 
 	account, err := userhome.Account()
 	if err != nil {
-		account = home // no user database entry: the CLI falls back to HOME
+		account = home // no user database entry: the CLI reads no home overlay
 	}
 
 	tests := []struct {
@@ -309,8 +311,9 @@ func isProtectedOrAncestor(p string) bool {
 // TestIsProtected_AccountHomeOverlay pins that the org overlay below the
 // account's home directory, which the CLI reads whatever HOME says
 // (catalog.OrgConfigPath), is protected even when the hook's HOME names
-// another directory, and that the one below HOME stays protected for the
-// fallback. Not parallel: it replaces the package's home resolvers.
+// another directory, and that the one below HOME stays protected too. Both
+// homes are reported by ProtectedHomes, which the ancestor tail check uses.
+// Not parallel: it replaces the package's home resolvers.
 func TestIsProtected_AccountHomeOverlay(t *testing.T) {
 	envHome := filepath.Join(t.TempDir(), "env-home")
 	accountHome := filepath.Join(t.TempDir(), "account-home")
@@ -320,6 +323,7 @@ func TestIsProtected_AccountHomeOverlay(t *testing.T) {
 		initErr = nil
 		protectedPrefixes = nil
 		protectedSuffixes = nil
+		protectedHomes = nil
 	}
 	t.Cleanup(func() {
 		userHomeDir, accountHomeDir = origHome, origAccount
@@ -334,5 +338,48 @@ func TestIsProtected_AccountHomeOverlay(t *testing.T) {
 		if got, cat := IsProtected(p); !got || cat != "config" {
 			t.Errorf("IsProtected(%q) = (%v, %q), want (true, config)", p, got, cat)
 		}
+	}
+	if got := ProtectedHomes(); !slices.Equal(got, []string{envHome, accountHome}) {
+		t.Errorf("ProtectedHomes() = %q, want %q", got, []string{envHome, accountHome})
+	}
+}
+
+// TestExpandTilde_NamedAccount pins that ~name expands, as bash does, to the
+// home directory the user database records for name, and that a name it does
+// not know, or a directory-stack form, is left unchanged (not rooted) for the
+// caller to treat as an unknown expansion. Not parallel: it replaces the
+// package's account resolver.
+func TestExpandTilde_NamedAccount(t *testing.T) {
+	alice := filepath.Join(t.TempDir(), "alice")
+	orig := namedHomeDir
+	t.Cleanup(func() { namedHomeDir = orig })
+	var asked []string
+	namedHomeDir = func(name string) (string, error) {
+		asked = append(asked, name)
+		if name == "alice" {
+			return alice, nil
+		}
+		return "", errors.New("no such account")
+	}
+	tests := []struct {
+		in, want string
+	}{
+		{"~alice", alice},
+		{"~alice/.config/x", filepath.Join(alice, ".config", "x")},
+		{"~bob/.config", "~bob/.config"},
+		{"~+/.config", "~+/.config"},
+		{"~-", "~-"},
+		{"~2/x", "~2/x"},
+		{"~-alice", "~-alice"},
+		{"a~alice", "a~alice"},
+	}
+	for _, tt := range tests {
+		got, err := ExpandTilde(tt.in)
+		if err != nil || got != tt.want {
+			t.Errorf("ExpandTilde(%q) = %q, %v; want %q", tt.in, got, err, tt.want)
+		}
+	}
+	if want := []string{"alice", "alice", "bob"}; !slices.Equal(asked, want) {
+		t.Errorf("accounts looked up = %q, want %q", asked, want)
 	}
 }

@@ -172,6 +172,19 @@ func TestGeneratorInputsVerdicts(t *testing.T) {
 		{"upper-case env -i", bash("ENV -i " + b.AppName + " init --update"), Deny},
 		{"env split-string unset home", bash("env -S '-u HOME " + b.AppName + " init --update'"), Deny},
 		{"sudo env unset home", bash("sudo env -u HOME " + b.AppName + " init --update"), Deny},
+		// exec -c is bash's env -i: it drops the org-config variable as well.
+		{"exec -c for cli", bash("exec -c " + b.AppName + " claude update"), Deny},
+		{"exec clustered -cl for cli", bash("exec -cl " + b.AppName + " claude update"), Deny},
+		{"exec clustered -ca for cli", bash("exec -ca name " + b.AppName + " claude update"), Deny},
+		{"sh -c exec -c for cli", bash(`bash -c 'exec -c ` + b.AppName + ` claude update'`), Deny},
+		// A file that sets the dev shell's environment relocates the overlay
+		// for every later regeneration run in it.
+		{"Write devenv.local.nix org config", EvalContext{
+			ToolName: "Write", FilePath: filepath.Join(project, "devenv.local.nix"),
+			CanonicalPath: filepath.Join(project, "devenv.local.nix"), CWD: project,
+			Content: "{ env." + orgEnv + " = \"/tmp/evil.yaml\"; }\n",
+		}, Deny},
+		{"printf org config into devenv.local.nix", bash(`printf '{ env.%s = "/tmp/e"; }' ` + orgEnv + " > devenv.local.nix"), Deny},
 		// Deleting, moving or replacing a directory above the overlay removes
 		// or plants it without naming it.
 		{"remove overlay parent", bash("rm -rf ~/.config"), Deny},
@@ -281,6 +294,14 @@ func TestGeneratorInputsVerdicts(t *testing.T) {
 		{"read other variable with cli", bash("read -r line < notes.txt; " + b.AppName + " status"), Allow},
 		{"env chdir for cli", bash("env -C /tmp " + b.AppName + " status"), Allow},
 		{"read home for other program", bash("read HOME <<< /tmp/e; make"), Allow},
+		{"exec without -c for cli", bash("exec " + b.AppName + " status"), Allow},
+		{"exec -c for other program", bash("exec -c make"), Allow},
+		{"Write devenv.local.nix other env", EvalContext{
+			ToolName: "Write", FilePath: filepath.Join(project, "devenv.local.nix"),
+			CanonicalPath: filepath.Join(project, "devenv.local.nix"), CWD: project,
+			Content: "{ env.API_URL = \"http://localhost\"; }\n",
+		}, Allow},
+		{"cat devenv.local.nix", bash("cat devenv.local.nix"), Allow},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

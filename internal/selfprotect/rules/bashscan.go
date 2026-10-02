@@ -97,7 +97,7 @@ func (st *dirState) apply(sc scannedCommand) {
 	if len(operands) > 0 {
 		target = operands[0]
 	}
-	if sc.HasExpansion || target == "-" || hasGlobMeta(target) ||
+	if sc.HasExpansion || target == "-" || hasGlobMeta(target) || unresolvedTilde(target) ||
 		(sc.Name == "pushd" && (len(operands) == 0 || strings.HasPrefix(target, "+"))) ||
 		(st.cdpath && usesCDPATH(target)) {
 		// The destination is not statically known. Keep any protected
@@ -136,8 +136,9 @@ func usesCDPATH(target string) bool {
 		!strings.HasPrefix(target, "./") && !strings.HasPrefix(target, "../")
 }
 
-// expandTilde expands a leading ~ (or ~/) to the home directory, leaving the
-// path unchanged when it has none or home cannot be resolved.
+// expandTilde expands a leading ~ (or ~/) to the home directory, and ~name to
+// that account's (see canon.ExpandTilde), leaving the path unchanged when it
+// has none or the home directory cannot be resolved.
 func expandTilde(p string) string {
 	if expanded, err := canon.ExpandTilde(p); err == nil {
 		return expanded

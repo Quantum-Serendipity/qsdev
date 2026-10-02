@@ -240,7 +240,7 @@ If your project was initialized before qsdev 0.7.0, running `qsdev update` intro
 
 **Policy engine** — The policy engine (`qsdev enforce`) exists but no tier or preset enables it yet; it is planned for the full tier. `qsdev update` does not create its policy file (`.qsdev/policy.yaml`), and existing allowlisted packages remain allowed.
 
-**Self-protection hook** — The `qsdev selfprotect` binary now runs as the first PreToolUse hook, evaluating 18 rules against tool calls. Existing custom hooks are not affected but run after self-protection.
+**Self-protection hook** — The `qsdev selfprotect` binary now runs as the first PreToolUse hook, evaluating 19 rules against tool calls. Existing custom hooks are not affected but run after self-protection.
 
 **Cloud deny rules** — If AWS, GCP, or Azure CLI tools are detected in your project, new deny rules are added to `.claude/settings.json` restricting credential file access and authentication commands. The three-way merge preserves your custom rules.
 
@@ -321,7 +321,7 @@ Alternatively, `qsdev check --auto-fix` can restore deleted generated files and 
 
 ### Self-protection rule blocked a tool call
 
-Exit code 2 from a PreToolUse hook indicates a self-protection denial. Review the output to see which rule triggered. Self-protection rules (SP-001 through SP-014, MCP-001/002/005, INT-001) use `bypass_tier: enforce_always` and cannot be lifted with `qsdev session allow`. If a legitimate operation is blocked, check whether the tool call is writing to or reading from a protected path.
+Exit code 2 from a PreToolUse hook indicates a self-protection denial. Review the output to see which rule triggered. Self-protection rules (SP-001 through SP-015, MCP-001/002/005, INT-001) use `bypass_tier: enforce_always` and cannot be lifted with `qsdev session allow`. If a legitimate operation is blocked, check whether the tool call is writing to or reading from a protected path.
 
 ### Cloud deny rules appeared after update
 

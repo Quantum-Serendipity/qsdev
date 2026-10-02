@@ -20,6 +20,7 @@ import (
 var (
 	protectedPrefixes []protectedEntry
 	protectedSuffixes []protectedEntry
+	protectedHomes    []string
 	initOnce          sync.Once
 	initErr           error
 
@@ -32,6 +33,10 @@ var (
 	// for the account, where the CLI reads the org overlay from (a variable
 	// for tests).
 	accountHomeDir = userhome.Account
+
+	// namedHomeDir resolves the home directory of a named account, which
+	// `~name` expands to (a variable for tests).
+	namedHomeDir = userhome.Named
 
 	// executablePath resolves the running qsdev binary (a variable for tests).
 	executablePath = os.Executable
@@ -67,13 +72,12 @@ func ensureInit() error {
 		}
 		protectedPrefixes = append(protectedPrefixes, claudeConfigDirEntries(os.Getenv(ClaudeConfigDirEnv))...)
 		// The CLI reads the overlay below the account's home directory
-		// (catalog.OrgConfigPath), falling back to HOME's when the account has
-		// no entry; protect both.
-		homes := []string{home}
+		// (catalog.OrgConfigPath); the one below HOME is protected too.
+		protectedHomes = []string{home}
 		if account, err := accountHomeDir(); err == nil && account != home {
-			homes = append(homes, account)
+			protectedHomes = append(protectedHomes, account)
 		}
-		protectedPrefixes = append(protectedPrefixes, orgOverlayEntries(branding.Get(), homes, os.Getenv)...)
+		protectedPrefixes = append(protectedPrefixes, orgOverlayEntries(branding.Get(), protectedHomes, os.Getenv)...)
 
 		protectedSuffixes = []protectedEntry{
 			{string(filepath.Separator) + ".mcp.json", "mcp-config"},
@@ -291,7 +295,11 @@ func runningExecutable() string {
 	return abs
 }
 
-// ExpandTilde replaces a leading ~ with the user's home directory.
+// ExpandTilde replaces a leading ~ with the user's home directory, and a
+// leading ~name with the home directory the user database records for the
+// account name, as the shell does. A ~name whose account cannot be resolved
+// (or a ~+, ~- or ~N directory-stack form) is returned unchanged, so callers
+// that need a resolved path see that it is not rooted.
 func ExpandTilde(path string) (string, error) {
 	if path == "" {
 		return "", nil
@@ -303,7 +311,56 @@ func ExpandTilde(path string) (string, error) {
 		}
 		return filepath.Join(home, path[1:]), nil
 	}
+	if name, rest, ok := tildeUser(path); ok {
+		if home, err := namedHomeDir(name); err == nil {
+			return filepath.Join(home, rest), nil
+		}
+	}
 	return path, nil
+}
+
+// tildeUser splits a ~name or ~name/rest path into the account name and the
+// rest. Bash takes the name up to the first slash; a name that is not a valid
+// login name (~+, ~-, ~2, ...) is not an account.
+func tildeUser(path string) (name, rest string, ok bool) {
+	after, found := strings.CutPrefix(path, "~")
+	if !found {
+		return "", "", false
+	}
+	name, rest, _ = strings.Cut(after, "/")
+	if name == "" || !isLoginName(name) {
+		return "", "", false
+	}
+	return name, rest, true
+}
+
+// isLoginName reports whether name can be a login name: letters, digits, and
+// . _ - (and a trailing $ for machine accounts), not starting with - or a
+// digit-only name, which bash reads as a directory-stack index.
+func isLoginName(name string) bool {
+	if strings.HasPrefix(name, "-") || strings.Trim(name, "0123456789") == "" {
+		return false
+	}
+	for i, r := range name {
+		switch {
+		case r >= 'a' && r <= 'z', r >= 'A' && r <= 'Z', r >= '0' && r <= '9', r == '.', r == '_', r == '-':
+		case r == '$' && i == len(name)-1:
+		default:
+			return false
+		}
+	}
+	return true
+}
+
+// ProtectedHomes returns the home directories protected locations are
+// anchored below: the hook's HOME and, when it differs, the account's home
+// directory from the user database, where the CLI reads the org overlay. It
+// returns nil when the table cannot be built.
+func ProtectedHomes() []string {
+	if ensureInit() != nil {
+		return nil
+	}
+	return slices.Clone(protectedHomes)
 }
 
 // Canonicalize resolves a path to its canonical form.
@@ -777,19 +834,41 @@ func ProtectedEnvVars() []string {
 	return slices.Clone(brandedTables().envVars)
 }
 
+// envSourceFiles are the lower-cased base names of the files a shell or the
+// dev environment reads variables from before the CLI runs: devenv's
+// configuration (devenv.nix, and devenv.local.nix, the documented place for
+// local env), direnv's local file and dotenv file, and the shell startup files
+// of bash, zsh, ksh, fish and PowerShell. A ProtectedEnvVars variable one of
+// them sets reaches every later regeneration run in that environment.
+var envSourceFiles = []string{
+	"devenv.nix", "devenv.local.nix", ".envrc.local", ".env",
+	".profile", ".bashrc", ".bash_profile", ".bash_login",
+	".zshenv", ".zprofile", ".zshrc", ".zlogin",
+	".kshrc", ".mkshrc", "config.fish", ".pam_environment",
+	"profile.ps1", "microsoft.powershell_profile.ps1",
+}
+
+// EnvSourceFiles returns the lower-cased base names of the files that set the
+// environment a later CLI run inherits (see envSourceFiles). A change that
+// adds, removes or alters a ProtectedEnvVars assignment in one of them
+// relocates the org overlay as surely as a command line that sets it.
+func EnvSourceFiles() []string {
+	return slices.Clone(envSourceFiles)
+}
+
 // homeEnvVars are the variables os.UserHomeDir reads the home directory from:
 // HOME on Unix (and plan9's home, the same name case-folded), USERPROFILE on
 // Windows.
 var homeEnvVars = []string{"HOME", "USERPROFILE"}
 
-// HomeEnvVars returns the environment variables that can relocate the
-// protected home-anchored generator inputs for the CLI: the CLI reads the org
-// overlay from below the account's home directory, and falls back to the one
-// these name only when the account has no user database entry (see
-// orgOverlayEntries), so setting or clearing one of them for a run of the CLI
-// could then point a regeneration at an unprotected overlay, or at none. Unlike ProtectedEnvVars they are set for
-// ordinary programs (`HOME=$(mktemp -d) go test`), so only a line that runs
-// the CLI may not change them.
+// HomeEnvVars returns the environment variables that name the home
+// directory (os.UserHomeDir). The CLI reads the org overlay below the
+// account's home directory from the user database, and not at all when that
+// cannot be resolved (catalog.OrgConfigPath), so they no longer move it; the
+// Bash rules still deny a line that runs the CLI and sets or clears one, as
+// defense in depth. Unlike ProtectedEnvVars they are set for ordinary programs
+// (`HOME=$(mktemp -d) go test`), so only a line that runs the CLI may not
+// change them.
 func HomeEnvVars() []string {
 	return slices.Clone(homeEnvVars)
 }

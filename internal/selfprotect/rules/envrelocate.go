@@ -1,6 +1,7 @@
 package rules
 
 import (
+	"path/filepath"
 	"slices"
 	"strings"
 
@@ -12,10 +13,11 @@ import (
 // Protection covers the protected locations the hook process sees. A command
 // that changes the environment a regeneration runs with can move a generator
 // input to a location the hook does not protect: the org-config variable
-// (canon.ProtectedEnvVars) names the overlay directly, and the home variables
-// (canon.HomeEnvVars) name the directory the default overlay lives below when
-// the account has no user database entry (the CLI otherwise ignores them, see
-// catalog.OrgConfigPath).
+// (canon.ProtectedEnvVars) names the overlay directly. The CLI reads the
+// default overlay below the account's home directory, not below HOME (see
+// catalog.OrgConfigPath), so the home variables (canon.HomeEnvVars) no longer
+// move it; a line that runs the CLI may still not change them, as defense in
+// depth.
 
 // relocatesProtected reports whether the shell line command, parsed as scs,
 // relocates a protected location through the environment: a command sets a
@@ -23,10 +25,11 @@ import (
 // update`, `export QSDEV_ORG_CONFIG=...`), or the line may run the CLI and
 // sets or clears a canon.HomeEnvVars variable, in any of the forms
 // cmdscan.Command.Assigns lists (`HOME=/tmp/e qsdev init --update`, `for HOME
-// in /tmp/e; do qsdev ...`, `read HOME <<< /tmp/e; qsdev ...`) or through env
-// (`env -u HOME qsdev ...`), or a variable whose name it computes (`export
-// $X=/tmp/e; qsdev ...`). Scripts the line runs through a shell (`sh -c`,
-// eval) are followed.
+// in /tmp/e; do qsdev ...`, `read HOME <<< /tmp/e; qsdev ...`), or clears it
+// or a ProtectedEnvVars variable through env or exec (`env -u HOME qsdev
+// ...`, `exec -c qsdev ...`), or sets a variable whose name it computes
+// (`export $X=/tmp/e; qsdev ...`). Scripts the line runs through a shell (`sh
+// -c`, eval) are followed.
 func relocatesProtected(command string, scs []scannedCommand) bool {
 	cmds := make([]cmdscan.Command, len(scs))
 	for i, sc := range scs {
@@ -40,10 +43,11 @@ func relocatesProtected(command string, scs []scannedCommand) bool {
 		return false
 	}
 	home := canon.HomeEnvVars()
-	changesHome := func(c cmdscan.Command) bool {
-		return c.AssignsDynamic || assignsEnv(home)(c) || clearsEnv(home)(c)
+	cleared := slices.Concat(home, org)
+	changesEnv := func(c cmdscan.Command) bool {
+		return c.AssignsDynamic || assignsEnv(home)(c) || clearsEnv(cleared)(c)
 	}
-	return anyCommandIn(cmds, 0, changesHome, mentionsEnvName(home))
+	return anyCommandIn(cmds, 0, changesEnv, mentionsEnvName(home))
 }
 
 // unparsedRelocatesHome is relocatesProtected for a line that cannot be
@@ -149,19 +153,36 @@ func assignsEnv(vars []string) func(cmdscan.Command) bool {
 	}
 }
 
-// clearsEnv returns a check that a command runs env, directly or behind a
-// wrapper, so that it removes one of vars from the environment of the program
-// it runs (see envChanges). unset is covered by cmdscan.Command.Assigns.
+// clearsEnv returns a check that a command runs env or bash's exec builtin,
+// directly or behind a wrapper, so that it removes one of vars from the
+// environment of the program it runs (see envChanges and execClearsEnv).
+// unset is covered by cmdscan.Command.Assigns.
 func clearsEnv(vars []string) func(cmdscan.Command) bool {
 	return func(c cmdscan.Command) bool {
 		words := append([]string{c.Name}, c.Args...)
 		for _, i := range cmdscan.CommandWordIndexes(words) {
-			if strings.EqualFold(cmdscan.ProgramName(words[i]), "env") && envChanges(words[i+1:], vars) {
-				return true
+			switch strings.ToLower(cmdscan.ProgramName(words[i])) {
+			case "env":
+				if envChanges(words[i+1:], vars) {
+					return true
+				}
+			case "exec":
+				if execClearsEnv(words[i+1:]) {
+					return true
+				}
 			}
 		}
 		return false
 	}
+}
+
+// execClearsEnv reports whether exec, given args, runs its command with an
+// empty environment: -c, bash's form of env -i, also in a cluster (`-cl`,
+// `-ca NAME`).
+func execClearsEnv(args []string) bool {
+	return slices.ContainsFunc(cmdscan.WrapperOptions("exec", args), func(o cmdscan.WrapperOption) bool {
+		return o.Is("-c")
+	})
 }
 
 // envChanges reports whether env's arguments args remove one of vars from
@@ -188,4 +209,65 @@ func envChanges(args []string, vars []string) bool {
 		}
 	}
 	return false
+}
+
+// envFileName returns the entry of canon.EnvSourceFiles that ctx's Write or
+// Edit target is named, by the name the tool uses or its resolved one, or "".
+func envFileName(ctx *EvalContext) string {
+	names := canon.EnvSourceFiles()
+	for _, p := range []string{ctx.FilePath, ctx.CanonicalPath} {
+		if base := strings.ToLower(filepath.Base(p)); p != "" && slices.Contains(names, base) {
+			return base
+		}
+	}
+	return ""
+}
+
+// envMentionNoise is what a spelling of a variable name can be split by in
+// a shell or Nix file without changing the name it builds: quotes, escapes,
+// line continuations, string concatenation and interpolation.
+var envMentionNoise = strings.NewReplacer(
+	`"`, "", "'", "", `\`, "", "+", "", "$", "", "{", "", "}", "", "(", "", ")", "",
+	" ", "", "\t", "", "\n", "", "\r", "",
+)
+
+// mentionsProtectedEnv reports whether text names a canon.ProtectedEnvVars
+// variable, also when quotes, concatenation or interpolation split the name
+// (`"QSDEV_ORG_" + "CONFIG"`, `${"QSDEV_ORG"}_CONFIG`).
+func mentionsProtectedEnv(text string) bool {
+	return mentionsEnvName(canon.ProtectedEnvVars())(envMentionNoise.Replace(text))
+}
+
+// envFileRelocation returns why a tool call changes a variable the CLI's
+// environment inherits that relocates a protected location, or "": a Write or
+// Edit of an environment source file (canon.EnvSourceFiles: devenv.local.nix,
+// a shell startup file, ...) whose content before or after names a
+// canon.ProtectedEnvVars variable (`{ env.QSDEV_ORG_CONFIG = "/tmp/x"; }`,
+// or removing the line that sets it), or a shell command that rewrites one of
+// those files at all, since its content cannot be checked (`printf ... >>
+// ~/.bashrc`). It fails closed when the change cannot be reconstructed.
+func envFileRelocation(ctx *EvalContext) string {
+	if cmdscan.IsShellTool(ctx.ToolName) {
+		if name, ok := BashRewritesFile(ctx, canon.EnvSourceFiles()); ok {
+			return "shell command changes " + name + ", which sets the environment " + branding.Get().AppName +
+				" runs in and is only checked for the Edit and Write tools; make the change with Edit or Write"
+		}
+		return ""
+	}
+	if !isWriteOrEdit(ctx.ToolName) {
+		return ""
+	}
+	name := envFileName(ctx)
+	if name == "" {
+		return ""
+	}
+	before, after, err := ctx.FileChange()
+	if err != nil {
+		return "cannot verify the change to " + name + ": " + err.Error()
+	}
+	if before != after && (mentionsProtectedEnv(before) || mentionsProtectedEnv(after)) {
+		return name + " sets the environment " + branding.Get().AppName + " runs in; changing " +
+			strings.Join(canon.ProtectedEnvVars(), " or ") + " there would relocate the org overlay"
+	}
+	return ""
 }

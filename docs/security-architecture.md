@@ -364,17 +364,17 @@ Agent self-protection blocks the direct ways an agent edits qsdev's guardrails. 
 
 Structural protection: `qsdev check` reports edited or deleted machine-owned generated files against the committed `.qsdev-generated.sha256`, and the generated `.claude/settings.json` carries permission deny rules. Neither depends on how a command is spelled, but `qsdev check` detects a change after the fact rather than preventing it.
 
-**18 Tier 1 enforce-always rules** across 5 categories:
+**19 Tier 1 enforce-always rules** across 5 categories:
 
 | Category | Rule IDs | What it protects |
 |----------|----------|------------------|
 | Config protection | SP-001–SP-008 | Config file writes/reads/deletes, symlinks, path traversal, /proc reads, copy/redirect, Claude Code settings overrides |
 | MCP integrity | MCP-001, MCP-002, MCP-005 | Tool description injection, cross-tool protected path access, server config tampering |
 | Binary integrity | INT-001 | Modification of security binaries in `.qsdev/bin/` |
-| Bypass prevention | SP-011–SP-014 | Hook command hijacking, bypass commands, audit trail writes, CLI security control commands |
+| Bypass prevention | SP-011–SP-015 | Hook command hijacking, bypass commands, audit trail writes, CLI security control commands, org-config changes in files that set qsdev's environment |
 | Process protection | SP-009–SP-010 | Process management targeting qsdev/claude, hook script modification |
 
-All 18 rules use deny-override combining: if any rule denies, the tool call is blocked. Only the first denial is reported. Evasion detection runs before the rule set, and the gate-dodge and git code-execution checks run after it only when no rule denied.
+All 19 rules use deny-override combining: if any rule denies, the tool call is blocked. Only the first denial is reported. Evasion detection runs before the rule set, and the gate-dodge and git code-execution checks run after it only when no rule denied.
 
 **Human-only commands.** Commands that weaken or remove a guardrail are marked sensitive in the command tree: `teardown`, `disable` of a security-category tool, `repair --force`, `claude init --force`, `claude update --force`, `update --no-strict`, `self-update --no-strict` (or `--strict=false`), `defaults reset`, `session allow` and `sandbox approve`. A `--dry-run` preview stays open. The CLI refuses a sensitive invocation inside an AI agent session (`CLAUDECODE` set) or without an interactive terminal, saying it requires a human, and SP-014 blocks an agent's Bash call to any of them; SP-014 derives its set from the same marks, so it has no list of its own. A command word built from a variable (`$Q teardown`) is not resolved yet.
 

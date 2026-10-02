@@ -537,10 +537,26 @@ var sp014 = Rule{
 	},
 }
 
-// Tier1Rules contains all 18 enforce-always Tier 1 self-protection rules.
+// sp015 denies a change to a file that sets the environment the CLI runs in
+// (devenv.local.nix, a shell startup file) that sets or removes the org-config
+// variable, which relocates the org overlay for every later regeneration (see
+// envFileRelocation).
+var sp015 = Rule{
+	ID:       "SP-015",
+	Name:     "Environment file relocation block",
+	Category: "self-protection",
+	Evaluate: func(ctx *EvalContext) (Verdict, string) {
+		if reason := envFileRelocation(ctx); reason != "" {
+			return Deny, reason
+		}
+		return Allow, ""
+	},
+}
+
+// Tier1Rules contains all 19 enforce-always Tier 1 self-protection rules.
 var Tier1Rules = NewRuleSet(
 	sp001, sp002, sp003, sp004, sp005, sp006, sp007, sp008, sp009, sp010,
 	mcp001, mcp002, mcp005,
 	int001,
-	sp011, sp012, sp013, sp014,
+	sp011, sp012, sp013, sp014, sp015,
 )

@@ -1779,8 +1779,8 @@ func TestRuleSet_Rules(t *testing.T) {
 	t.Parallel()
 
 	rules := Tier1Rules.Rules()
-	if len(rules) != 18 {
-		t.Errorf("expected 18 rules, got %d", len(rules))
+	if len(rules) != 19 {
+		t.Errorf("expected 19 rules, got %d", len(rules))
 	}
 
 	expectedIDs := []string{
@@ -1788,7 +1788,7 @@ func TestRuleSet_Rules(t *testing.T) {
 		"SP-006", "SP-007", "SP-008", "SP-009", "SP-010",
 		"MCP-001", "MCP-002", "MCP-005",
 		"INT-001",
-		"SP-011", "SP-012", "SP-013", "SP-014",
+		"SP-011", "SP-012", "SP-013", "SP-014", "SP-015",
 	}
 	for i, expected := range expectedIDs {
 		if i >= len(rules) {

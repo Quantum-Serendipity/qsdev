@@ -477,3 +477,62 @@ func TestDayTwoCommands_NoProjectConfigIsNotCreated(t *testing.T) {
 		t.Errorf(".qsdev.yaml created by add-package (err=%v)", err)
 	}
 }
+
+// TestDayTwoCommands_UncommittedOptOutsNotPromoted is the regression test
+// for devenv add/remove-* copying the local, gitignored answers into the
+// committed .qsdev.yaml unreconciled: a hand-edited `attach-guard: false` (or
+// `claude_code: false`) in the answers file became a committed opt-out, which
+// the next init --update then honoured by deleting the package guard. Only
+// `disable --force` may write an always-on opt-out.
+func TestDayTwoCommands_UncommittedOptOutsNotPromoted(t *testing.T) {
+	tests := []struct {
+		name string
+		args []string
+	}{
+		{"add-package", []string{"add-package", "jq"}},
+		{"add-service", []string{"add-service", "redis"}},
+		{"add-language", []string{"add-language", "python"}},
+		{"remove-language", []string{"remove-language", "go"}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			dir := initProject(t)
+			cfgPath := filepath.Join(dir, ".qsdev.yaml")
+			writeFile(t, cfgPath, "version: 2\nlanguages:\n  - name: go\nclaude_code:\n  enabled: true\n"+
+				"tools:\n  enabled:\n    - attach-guard\n")
+			markJoined(t, dir)
+
+			local, err := answers.LoadPrimary(dir)
+			if err != nil {
+				t.Fatal(err)
+			}
+			local.ClaudeCode = false
+			local.EnabledTools = map[string]bool{"attach-guard": false}
+			if err := answers.SavePrimary(dir, local); err != nil {
+				t.Fatal(err)
+			}
+
+			out, err := runDevenv(t, tt.args...)
+			if err != nil {
+				t.Fatalf("%v: %v\n%s", tt.args, err, out)
+			}
+
+			cfg, err := qsdevconfig.ParseQsdevConfig(cfgPath)
+			if err != nil {
+				t.Fatalf("parsing synced config: %v", err)
+			}
+			if len(cfg.Tools.Disabled) != 0 {
+				t.Errorf("tools.disabled = %v, want none: an answers-file off was committed", cfg.Tools.Disabled)
+			}
+			if !slices.Contains(cfg.Tools.Enabled, "attach-guard") {
+				t.Errorf("tools.enabled = %v, want attach-guard kept", cfg.Tools.Enabled)
+			}
+			if !qsdevconfig.ClaudeCodeEnabled(cfg) {
+				t.Error("claude_code.enabled turned off by a local answers edit")
+			}
+			if want := `always-on tool "attach-guard" kept enabled`; !strings.Contains(out, want) {
+				t.Errorf("output lacks warning %q:\n%s", want, out)
+			}
+		})
+	}
+}

@@ -3,6 +3,7 @@ package devenv
 import (
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -17,6 +18,7 @@ import (
 	"github.com/Quantum-Serendipity/qsdev/internal/detect"
 	"github.com/Quantum-Serendipity/qsdev/internal/profile"
 	"github.com/Quantum-Serendipity/qsdev/internal/state"
+	"github.com/Quantum-Serendipity/qsdev/internal/toolreg"
 	"github.com/Quantum-Serendipity/qsdev/internal/validation"
 	"github.com/Quantum-Serendipity/qsdev/pkg/ecosystem"
 	_ "github.com/Quantum-Serendipity/qsdev/pkg/ecosystem/modules" // register all modules
@@ -638,7 +640,14 @@ type regenerateOpts struct {
 // persists state, answers and the answer-derived keys of .qsdev.yaml. Unless force is set it refuses to overwrite
 // generated files that have been modified locally. For remove commands, set
 // cleanup=true to detect and delete orphaned files that are no longer produced.
+//
+// answers come from the local answers file, which SyncProjectConfig copies
+// into the committed .qsdev.yaml, so they are first settled against it (see
+// settleAgainstCommitted).
 func regenerateAndPersist(cmd *cobra.Command, answers types.WizardAnswers, opts regenerateOpts) (*generate.WriteResult, error) {
+	if err := settleAgainstCommitted(cmd.ErrOrStderr(), opts.projectRoot, &answers); err != nil {
+		return nil, err
+	}
 	registry := ecosystem.DefaultRegistry()
 	gen := NewDevenvGenerator(registry, WithProfileRegistry(profile.DefaultProfileRegistry()))
 	files, err := gen.Generate(answers)
@@ -677,6 +686,23 @@ func regenerateAndPersist(cmd *cobra.Command, answers types.WizardAnswers, opts 
 		return result, err
 	}
 	return result, nil
+}
+
+// settleAgainstCommitted gives answers loaded from the local, gitignored
+// answers file the choices the committed .qsdev.yaml records, as init --update
+// does: the committed Claude Code and tier choices (see
+// qsdevconfig.AdoptCommitted) and the committed tool opt-outs (see
+// toolreg.ReconcileProject), writing any warnings to w. Without it a
+// hand-edited `attach-guard: false` or `claude_code: false` would be promoted
+// into the committed config by the day-2 commands that regenerate from those
+// answers.
+func settleAgainstCommitted(w io.Writer, projectRoot string, answers *types.WizardAnswers) error {
+	qsdevconfig.AdoptCommitted(projectRoot, answers)
+	treg, err := toolreg.Default()
+	if err != nil {
+		return fmt.Errorf("loading tool registry: %w", err)
+	}
+	return toolreg.ReconcileProject(w, projectRoot, answers, treg)
 }
 
 // writeAndPersist writes files to disk, records their state and saves the

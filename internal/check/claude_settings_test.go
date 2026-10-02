@@ -372,6 +372,24 @@ func TestCheckHookPrograms(t *testing.T) {
 		{name: "if branch", command: `if [ -x ./bin/qsdev ]; then ./bin/qsdev selfprotect; fi`, event: "PreToolUse"},
 		{name: "function body", command: `f() { nonexistent-bin; }; :`, event: "PreToolUse"},
 		{name: "cd and-chain then unresolvable program", command: `cd "$CLAUDE_PROJECT_DIR" && cd .claude && nonexistent-bin selfprotect`, event: "PreToolUse", wantSev: SeverityCritical, wantProg: "nonexistent-bin"},
+		{name: "cd or-exit then unresolvable program", command: `cd "$CLAUDE_PROJECT_DIR" || exit 1; nonexistent-bin selfprotect`, event: "PreToolUse", wantSev: SeverityCritical, wantProg: "nonexistent-bin"},
+		{name: "optional env file then unresolvable program", command: `cd "$CLAUDE_PROJECT_DIR"; [ -f .env ] && . ./.env; nonexistent-bin selfprotect`, event: "PreToolUse", wantSev: SeverityCritical, wantProg: "nonexistent-bin"},
+		{name: "if-guarded exit then program", command: `if ! command -v nonexistent-bin >/dev/null; then exit 0; fi; nonexistent-bin`, event: "PostToolUse"},
+		{name: "test-guarded exit then program", command: `[ -x ./bin/qsdev ] || exit 0; ./bin/qsdev selfprotect`, event: "PreToolUse"},
+		{name: "cd and-exit ends the hook", command: `cd "$CLAUDE_PROJECT_DIR" && exit 0; nonexistent-bin`, event: "PostToolUse"},
+		{name: "exit ends the hook", command: `exit 0; nonexistent-bin`, event: "PostToolUse"},
+		{name: "exec ends the hook", command: `exec gofmt -l .; nonexistent-bin`, event: "PostToolUse"},
+		{name: "or-exec fallback after cd then program", command: `cd "$CLAUDE_PROJECT_DIR" || exec gofmt; nonexistent-bin`, event: "PostToolUse", wantSev: SeverityHigh, wantProg: "nonexistent-bin"},
+		{name: "exec redirect then cd and-chain", command: `exec 2>/dev/null; cd "$CLAUDE_PROJECT_DIR" && nonexistent-bin`, event: "PostToolUse", wantSev: SeverityHigh, wantProg: "nonexistent-bin"},
+		{name: "earlier test then cd and-chain", command: `test -f x; cd "$CLAUDE_PROJECT_DIR" && nonexistent-bin`, event: "PostToolUse", wantSev: SeverityHigh, wantProg: "nonexistent-bin"},
+		{name: "program and-guards the next", command: `gofmt -l . && nonexistent-bin`, event: "PostToolUse"},
+		{name: "builtin behind an external wrapper", command: `timeout 5 cd /tmp && gofmt -l .`, event: "PostToolUse", wantSev: SeverityHigh, wantProg: "cd"},
+		{name: "builtin behind exec", command: `exec cd /tmp`, event: "PostToolUse", wantSev: SeverityHigh, wantProg: "cd"},
+		{name: "builtin behind command", command: `command cd /tmp && gofmt -l .`, event: "PostToolUse"},
+		{name: "mapfile builtin", command: `mapfile -t a < /dev/null; gofmt -l .`, event: "PostToolUse"},
+		{name: "enable builtin", command: `enable -n test; gofmt -l .`, event: "PostToolUse"},
+		{name: "second unconditional program", command: `gofmt -l .; nonexistent-bin`, event: "PostToolUse", wantSev: SeverityHigh, wantProg: "nonexistent-bin"},
+		{name: "second program after a pipeline", command: `gofmt -l . | cat; nonexistent-bin selfprotect`, event: "PreToolUse", wantSev: SeverityCritical, wantProg: "nonexistent-bin"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -434,6 +452,8 @@ func TestCheckHookPrograms_HomeTilde(t *testing.T) {
 		{name: "missing", command: "~/bin/missing selfprotect", wantProg: filepath.Join(home, "bin", "missing")},
 		{name: "other account", command: "~nonexistent-user-qsdev/bin/missing selfprotect"},
 		{name: "quoted home variable", command: `"$HOME"/bin/missing selfprotect`},
+		{name: "quoted tilde is literal", command: `"~/bin/guard" selfprotect`, wantProg: "~/bin/guard"},
+		{name: "escaped tilde is literal", command: `\~/bin/guard selfprotect`, wantProg: "~/bin/guard"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -659,9 +679,10 @@ func lookPathFound(file string) (string, error) {
 }
 
 // lookPathNoBuiltins is lookPathFound on a PATH that, like a typical one,
-// holds no file named after the shell builtins cd, source or exec.
+// holds no file named after the shell builtins cd, source, exec, mapfile or
+// enable.
 func lookPathNoBuiltins(file string) (string, error) {
-	if file == "cd" || file == "source" || file == "exec" {
+	if file == "cd" || file == "source" || file == "exec" || file == "mapfile" || file == "enable" {
 		return "", exec.ErrNotFound
 	}
 	return lookPathFound(file)

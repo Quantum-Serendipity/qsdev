@@ -53,6 +53,10 @@ type Command struct {
 	// expansion, as rendered in Args: an expansion of unknown value renders
 	// as nothing, so `"$(echo ~)/.config"` is "/.config" here.
 	ExpandedArgs []string
+	// TildeWords holds the indexes of the command's words (0 is Name, i is
+	// Args[i-1]) that start with an unquoted, unescaped ~, which the shell
+	// expands to a home directory. A quoted or escaped ~ stays literal.
+	TildeWords []int
 	// Assigns names the variables this statement sets or clears for the
 	// command or the rest of the shell line: prefix assignments
 	// (`GIT_EXTERNAL_DIFF=x git diff`) and bare assignment statements
@@ -315,6 +319,11 @@ func ParseWithVars(command string, vars map[string]string) ([]Command, error) {
 				c.Name = name
 				c.NameHasExpansion = exp
 				c.HasExpansion = c.HasExpansion || exp
+				for i, w := range cmd.Args {
+					if leadingTilde(w) {
+						c.TildeWords = append(c.TildeWords, i)
+					}
+				}
 				for _, w := range cmd.Args[1:] {
 					t, e := wordText(w, vars)
 					c.Args = append(c.Args, t)
@@ -565,6 +574,16 @@ func wordText(w *syntax.Word, vars map[string]string) (string, bool) {
 		}
 	}
 	return b.String(), hasExpansion
+}
+
+// leadingTilde reports whether w starts with an unquoted, unescaped ~, which
+// the shell expands.
+func leadingTilde(w *syntax.Word) bool {
+	if len(w.Parts) == 0 {
+		return false
+	}
+	lit, ok := w.Parts[0].(*syntax.Lit)
+	return ok && strings.HasPrefix(lit.Value, "~")
 }
 
 // echoOutput returns what the command substitution cs prints when it is a

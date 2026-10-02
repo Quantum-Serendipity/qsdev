@@ -47,20 +47,27 @@ var scriptShells = map[string]bool{
 	"sh": true, "bash": true, "zsh": true, "dash": true, "ksh": true, "mksh": true, "ash": true,
 }
 
-// shellBuiltins are the builtins and reserved words a POSIX shell (and bash,
-// which Claude Code runs hooks with) runs itself, never looking them up on
-// PATH, so a missing file of that name does not stop them.
+// shellBuiltins are the builtins of bash, which Claude Code runs hooks
+// with, and the POSIX special builtins: the shell runs them itself, never
+// looking them up on PATH, so a missing file of that name does not stop
+// them. Reserved words (if, for, time, ...) parse as shell syntax, not as
+// command words, so they need no entry. Every builtin varBuiltins and
+// declBuiltins model is listed here too, except nameref, a mksh and zsh
+// declaration bash runs from PATH.
 var shellBuiltins = map[string]bool{
 	".": true, ":": true, "[": true, "alias": true, "bg": true, "bind": true,
-	"break": true, "builtin": true, "cd": true, "command": true, "continue": true,
-	"declare": true, "dirs": true, "echo": true, "eval": true, "exec": true,
-	"exit": true, "export": true, "false": true, "fg": true, "getopts": true,
-	"hash": true, "jobs": true, "kill": true, "let": true, "local": true,
-	"popd": true, "printf": true, "pushd": true, "pwd": true, "read": true,
-	"readonly": true, "return": true, "set": true, "shift": true, "shopt": true,
-	"source": true, "test": true, "times": true, "trap": true, "true": true,
-	"type": true, "typeset": true, "ulimit": true, "umask": true, "unalias": true,
-	"unset": true, "wait": true,
+	"break": true, "builtin": true, "caller": true, "cd": true, "command": true,
+	"compgen": true, "complete": true, "compopt": true, "continue": true,
+	"declare": true, "dirs": true, "disown": true, "echo": true, "enable": true,
+	"eval": true, "exec": true, "exit": true, "export": true, "false": true,
+	"fc": true, "fg": true, "getopts": true, "hash": true, "help": true,
+	"history": true, "jobs": true, "kill": true, "let": true, "local": true,
+	"logout": true, "mapfile": true, "popd": true, "printf": true, "pushd": true,
+	"pwd": true, "read": true, "readarray": true, "readonly": true, "return": true,
+	"set": true, "shift": true, "shopt": true, "source": true, "suspend": true,
+	"test": true, "times": true, "trap": true, "true": true, "type": true,
+	"typeset": true, "ulimit": true, "umask": true, "unalias": true, "unset": true,
+	"wait": true,
 }
 
 // IsShellBuiltin reports whether the command word name is a shell builtin,
@@ -90,32 +97,53 @@ func CommandWordIndexes(words []string) []int {
 // to the next command word. It returns -1 when no single word names the
 // program (no words, a wrapper given no command, `command -v`, which only
 // looks its operands up, or a wrapper that takes the command as one string;
-// RunsNoProgram tells the last apart). Unlike CommandWordIndexes, which
+// Program tells these apart). Unlike CommandWordIndexes, which
 // over-approximates for blocking rules, it names exactly one word.
 func ProgramWordIndex(words []string) int {
-	i, _ := programWord(words)
-	return i
+	return Program(words).Index
 }
 
-// RunsNoProgram reports whether words run no program at all: there are no
-// words, a wrapper is given no command (`exec 2>/dev/null`, `timeout 30`), or
-// `command -v`/`-V` only looks names up. A wrapper that takes its command as
-// one string (`env -S 'python3 -u'`) runs a program, though ProgramWordIndex
-// cannot name it.
-func RunsNoProgram(words []string) bool {
-	i, commandString := programWord(words)
-	return i < 0 && !commandString
+// ProgramRun describes how the words of one simple command run a program
+// (see Program).
+type ProgramRun struct {
+	// Index is the index of the word naming the program, as ProgramWordIndex
+	// returns it, or -1.
+	Index int
+	// CommandString is set when a wrapper takes the command as one string
+	// (`env -S 'python3 -u'`): a program runs, but no single word names it.
+	CommandString bool
+	// LookupOnly is set when `command -v`/`-V` only looks its operands up,
+	// which tests whether they resolve.
+	LookupOnly bool
+	// ShellRuns is set when the shell itself runs the program word, directly
+	// or through the builtins command and builtin, so a builtin of that name
+	// runs. Any other wrapper (env, timeout, exec, ...) execs it as a file.
+	ShellRuns bool
+	// Exec is set when exec, reached by the shell, runs the program: the
+	// shell is replaced by it, so nothing after the statement runs.
+	Exec bool
 }
 
-// programWord is ProgramWordIndex, also reporting whether it returned -1
-// because a wrapper takes the command as one string.
-func programWord(words []string) (index int, commandString bool) {
+// RunsProgram reports whether the words run a program, named or not.
+func (r ProgramRun) RunsProgram() bool { return r.Index >= 0 || r.CommandString }
+
+// Program describes the program the words run, following wrappers the way
+// ProgramWordIndex does. When Index is -1 and neither CommandString nor
+// LookupOnly is set, the words run no program at all: there are no words, or
+// a wrapper is given no command (`exec 2>/dev/null`, `timeout 30`).
+func Program(words []string) ProgramRun {
+	run := ProgramRun{ShellRuns: true}
 	i := 0
 	for i < len(words) {
 		name := wrapperName(words[i])
 		if !commandWrappers[name] {
-			return i, false
+			run.Index = i
+			return run
 		}
+		if run.ShellRuns && words[i] == "exec" {
+			run.Exec = true
+		}
+		run.ShellRuns = run.ShellRuns && shellRunWrappers[words[i]]
 		i++
 	operands:
 		for i < len(words) {
@@ -127,10 +155,10 @@ func programWord(words []string) (index int, commandString bool) {
 			case isOptionWord(w):
 				opts, n := parseWrapperOption(name, words, i)
 				if slices.ContainsFunc(opts, func(o WrapperOption) bool { return o.Is(wrapperCommandStrings[name]...) }) {
-					return -1, true
+					return ProgramRun{Index: -1, CommandString: true, Exec: run.Exec}
 				}
 				if slices.ContainsFunc(opts, func(o WrapperOption) bool { return o.Is(wrapperLookups[name]...) }) {
-					return -1, false
+					return ProgramRun{Index: -1, LookupOnly: true}
 				}
 				i += n
 			case w != "" && w[0] >= '0' && w[0] <= '9', isAssignment(w):
@@ -140,8 +168,13 @@ func programWord(words []string) (index int, commandString bool) {
 			}
 		}
 	}
-	return -1, false
+	return ProgramRun{Index: -1}
 }
+
+// shellRunWrappers are the wrappers that are builtins running their operand
+// as a command of the shell, builtins included. They are matched exactly, as
+// builtins are (see IsShellBuiltin).
+var shellRunWrappers = map[string]bool{"command": true, "builtin": true}
 
 // WrapperOption is one option given to a wrapper command: its name as
 // written (each letter of a short-option cluster separately, as `-u`; a long

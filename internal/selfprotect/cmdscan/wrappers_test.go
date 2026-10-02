@@ -1,6 +1,7 @@
 package cmdscan
 
 import (
+	"maps"
 	"slices"
 	"testing"
 )
@@ -67,28 +68,62 @@ func TestProgramWordIndex(t *testing.T) {
 	}
 }
 
-func TestRunsNoProgram(t *testing.T) {
+func TestProgram(t *testing.T) {
 	t.Parallel()
 	tests := []struct {
 		name  string
 		words []string
-		want  bool
+		want  ProgramRun
 	}{
-		{"empty", nil, true},
-		{"exec with no command", []string{"exec"}, true},
-		{"wrapper only", []string{"timeout", "30"}, true},
-		{"command lookup", []string{"command", "-v", "git"}, true},
-		{"env split string", []string{"env", "-S", "python3 -u"}, false},
-		{"plain program", []string{"git", "status"}, false},
-		{"wrapped program", []string{"exec", "git"}, false},
+		{"empty", nil, ProgramRun{Index: -1}},
+		{"exec with no command", []string{"exec"}, ProgramRun{Index: -1}},
+		{"wrapper only", []string{"timeout", "30"}, ProgramRun{Index: -1}},
+		{"command lookup", []string{"command", "-v", "git"}, ProgramRun{Index: -1, LookupOnly: true}},
+		{"env split string", []string{"env", "-S", "python3 -u"}, ProgramRun{Index: -1, CommandString: true}},
+		{"exec split string", []string{"exec", "env", "-S", "python3 -u"}, ProgramRun{Index: -1, CommandString: true, Exec: true}},
+		{"plain program", []string{"git", "status"}, ProgramRun{Index: 0, ShellRuns: true}},
+		{"exec program", []string{"exec", "git"}, ProgramRun{Index: 1, Exec: true}},
+		{"command builtin", []string{"command", "cd", "/tmp"}, ProgramRun{Index: 1, ShellRuns: true}},
+		{"builtin builtin", []string{"builtin", "cd", "/tmp"}, ProgramRun{Index: 1, ShellRuns: true}},
+		{"command exec", []string{"command", "exec", "git"}, ProgramRun{Index: 2, Exec: true}},
+		{"external wrapper", []string{"timeout", "5", "cd", "/tmp"}, ProgramRun{Index: 2}},
+		{"exec behind an external wrapper", []string{"env", "exec", "git"}, ProgramRun{Index: 2}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
-			if got := RunsNoProgram(tt.words); got != tt.want {
-				t.Errorf("RunsNoProgram(%q) = %v, want %v", tt.words, got, tt.want)
+			got := Program(tt.words)
+			if got != tt.want {
+				t.Errorf("Program(%q) = %+v, want %+v", tt.words, got, tt.want)
+			}
+			if runs := tt.want.Index >= 0 || tt.want.CommandString; got.RunsProgram() != runs {
+				t.Errorf("Program(%q).RunsProgram() = %v, want %v", tt.words, got.RunsProgram(), runs)
 			}
 		})
+	}
+}
+
+// TestShellBuiltinsCoverVarBuiltins pins that every builtin cmdscan models
+// elsewhere is a shell builtin, so the tables cannot drift apart. nameref
+// parses as a declaration (mksh, zsh) but bash runs it from PATH.
+func TestShellBuiltinsCoverVarBuiltins(t *testing.T) {
+	t.Parallel()
+	names := slices.Collect(maps.Keys(varBuiltins))
+	for name := range declBuiltins {
+		if name != "nameref" {
+			names = append(names, name)
+		}
+	}
+	for name := range shellRunWrappers {
+		names = append(names, name)
+	}
+	for _, name := range names {
+		if !IsShellBuiltin(name) {
+			t.Errorf("%s is modelled as a builtin but IsShellBuiltin(%q) is false", name, name)
+		}
+	}
+	if IsShellBuiltin("nameref") {
+		t.Error(`IsShellBuiltin("nameref") = true, but bash has no nameref builtin`)
 	}
 }
 
@@ -138,6 +173,15 @@ func TestIsShellBuiltin(t *testing.T) {
 		{"/usr/bin/cd", false},
 		{"exec", true},
 		{"CD", false},
+		{"mapfile", true},
+		{"readarray", true},
+		{"enable", true},
+		{"caller", true},
+		{"compgen", true},
+		{"disown", true},
+		{"history", true},
+		{"suspend", true},
+		{"nameref", false},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

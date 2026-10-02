@@ -1,6 +1,9 @@
 package cmdscan
 
-import "testing"
+import (
+	"slices"
+	"testing"
+)
 
 // TestParse_QuoteAndEscapeRemoval covers the shell's quote removal in
 // argument words (F135): a protected path spelled with split quotes,
@@ -59,5 +62,35 @@ func TestParse_EscapedCommandWord(t *testing.T) {
 	}
 	if len(cmds) != 2 || cmds[0].Name != "rm" || cmds[1].Name != "rm" {
 		t.Errorf("escaped/quote-split command words not decoded: %+v", cmds)
+	}
+}
+
+// TestParse_TildeWords pins that only a ~ the shell expands, unquoted and
+// unescaped at the start of a word, is reported.
+func TestParse_TildeWords(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		command string
+		want    []int
+	}{
+		{`~/bin/guard ~ x`, []int{0, 1}},
+		{`exec ~/bin/guard`, []int{1}},
+		{`"~/bin/guard"`, nil},
+		{`'~'/bin/guard`, nil},
+		{`\~/bin/guard`, nil},
+		{`a~/b x~`, nil},
+		{`~user/bin/guard`, []int{0}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.command, func(t *testing.T) {
+			t.Parallel()
+			cmds, err := Parse(tt.command)
+			if err != nil || len(cmds) != 1 {
+				t.Fatalf("Parse(%q) = %+v, %v", tt.command, cmds, err)
+			}
+			if !slices.Equal(cmds[0].TildeWords, tt.want) {
+				t.Errorf("Parse(%q).TildeWords = %v, want %v", tt.command, cmds[0].TildeWords, tt.want)
+			}
+		})
 	}
 }

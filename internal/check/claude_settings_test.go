@@ -321,16 +321,23 @@ func TestCheckClaudeSettingsPosture_HooksWithoutPolicy(t *testing.T) {
 }
 
 // TestCheckHookPrograms guards U18-V04: a hook whose bare command word does
-// not resolve on PATH exits 127, which Claude Code treats as a non-blocking
-// error, so the guard silently stops applying.
+// not resolve on PATH exits 127, and one whose program path does not exist
+// or cannot run exits 127 or 126; Claude Code treats each as a non-blocking
+// error, so the guard silently stops applying. Shell builtins (cd, source)
+// are never looked up on PATH, and project hook scripts are left to
+// checkHookScripts.
 func TestCheckHookPrograms(t *testing.T) {
 	t.Parallel()
+	const rootVar = "<root>" // replaced by the project directory in wantProg
 	tests := []struct {
 		name     string
 		command  string
 		event    string
-		wantSev  CheckSeverity // empty: no finding
+		scripts  map[string]os.FileMode // project files to create, by mode
+		posix    bool                   // the case only applies outside Windows
+		wantSev  CheckSeverity          // empty: no finding
 		wantProg string
+		wantMsg  string // the program the message names, when not wantProg
 	}{
 		{name: "unresolvable self-protection", command: "nonexistent-bin selfprotect", event: "PreToolUse", wantSev: SeverityCritical, wantProg: "nonexistent-bin"},
 		{name: "unresolvable other hook", command: "nonexistent-bin --flag", event: "PostToolUse", wantSev: SeverityHigh, wantProg: "nonexistent-bin"},
@@ -338,14 +345,32 @@ func TestCheckHookPrograms(t *testing.T) {
 		{name: "resolvable", command: "sh -c true", event: "PreToolUse"},
 		{name: "project script path", command: `"${CLAUDE_PROJECT_DIR}"/.claude/hooks/x.py`, event: "PreToolUse"},
 		{name: "variable command word", command: "$QSDEV_BIN selfprotect", event: "PreToolUse"},
-		{name: "absolute path", command: "/nonexistent/qsdev selfprotect", event: "PreToolUse"},
-		{name: "relative path", command: "./bin/qsdev selfprotect", event: "PreToolUse"},
+		{name: "unknown variable path", command: `"$OTHER"/tools/guard.py`, event: "PreToolUse"},
 		{name: "unparseable", command: "qsdev 'selfprotect", event: "PreToolUse"},
 		{name: "unresolvable interpreter of a project script", command: `nonexistent-bin "${CLAUDE_PROJECT_DIR}"/.claude/hooks/x.py`, event: "PreToolUse", wantSev: SeverityHigh, wantProg: "nonexistent-bin"},
+		{name: "cd builtin then resolvable program", command: `cd "$CLAUDE_PROJECT_DIR" && gofmt -l .`, event: "PostToolUse"},
+		{name: "cd builtin then unresolvable program", command: `cd "$CLAUDE_PROJECT_DIR" && nonexistent-bin`, event: "PostToolUse", wantSev: SeverityHigh, wantProg: "nonexistent-bin"},
+		{name: "cd builtin then project script", command: `cd "$CLAUDE_PROJECT_DIR" && ./.claude/hooks/x.py`, event: "PreToolUse"},
+		{name: "source builtin", command: `source "${CLAUDE_PROJECT_DIR}"/.env; gofmt -l .`, event: "PostToolUse"},
+		{name: "exec wrapper of a project script", command: `exec "${CLAUDE_PROJECT_DIR}"/.claude/hooks/x.py`, event: "PreToolUse"},
+		{name: "exec wrapper of an unresolvable program", command: `exec nonexistent-bin selfprotect`, event: "PreToolUse", wantSev: SeverityCritical, wantProg: "nonexistent-bin"},
+		{name: "absolute path missing", command: "/nonexistent/qsdev selfprotect", event: "PreToolUse", posix: true, wantSev: SeverityCritical, wantProg: "/nonexistent/qsdev"},
+		{name: "relative path missing", command: "./bin/qsdev selfprotect", event: "PreToolUse", wantSev: SeverityCritical, wantProg: "./bin/qsdev"},
+		{name: "relative path present", command: "./bin/qsdev selfprotect", event: "PreToolUse", scripts: map[string]os.FileMode{"bin/qsdev": 0o755}},
+		{name: "project path missing", command: `"${CLAUDE_PROJECT_DIR}"/tools/guard.py`, event: "PreToolUse", wantSev: SeverityHigh, wantProg: rootVar + "/tools/guard.py"},
+		{name: "project path present", command: `"${CLAUDE_PROJECT_DIR}"/tools/guard.py`, event: "PreToolUse", scripts: map[string]os.FileMode{"tools/guard.py": 0o755}},
+		{name: "project path not executable", command: `"${CLAUDE_PROJECT_DIR}"/tools/guard.py`, event: "PreToolUse", scripts: map[string]os.FileMode{"tools/guard.py": 0o644}, posix: true, wantSev: SeverityHigh, wantProg: "python3", wantMsg: rootVar + "/tools/guard.py"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
+			if tt.posix && runtime.GOOS == "windows" {
+				t.Skip("Windows runs hooks through Git Bash, which maps POSIX paths and has no exec bit")
+			}
+			dir := t.TempDir()
+			for rel, mode := range tt.scripts {
+				writeTestFileMode(t, dir, rel, "#!/usr/bin/env python3\n", mode)
+			}
 			cmd, err := json.Marshal(tt.command)
 			if err != nil {
 				t.Fatal(err)
@@ -354,7 +379,7 @@ func TestCheckHookPrograms(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			results := checkHookPrograms(actual, lookPathFound)
+			results := checkHookPrograms(dir, actual, lookPathNoBuiltins)
 			if tt.wantSev == "" {
 				if len(results) != 0 {
 					t.Fatalf("unexpected findings: %+v", results)
@@ -368,13 +393,35 @@ func TestCheckHookPrograms(t *testing.T) {
 			if r.Name != "claude_hook_unresolvable" || r.Status != StatusFail || r.Severity != tt.wantSev {
 				t.Errorf("finding = %s/%s/%s, want claude_hook_unresolvable/fail/%s", r.Name, r.Status, r.Severity, tt.wantSev)
 			}
-			if !strings.Contains(r.Message, tt.wantProg) || r.Metadata["program"] != tt.wantProg {
-				t.Errorf("finding %q (metadata %v) does not name %s", r.Message, r.Metadata, tt.wantProg)
+			wantProg := strings.Replace(tt.wantProg, rootVar, dir, 1)
+			wantMsg := strings.Replace(cmp.Or(tt.wantMsg, tt.wantProg), rootVar, dir, 1)
+			if !strings.Contains(r.Message, wantMsg) || r.Metadata["program"] != wantProg {
+				t.Errorf("finding %q (metadata %v) does not name %s (program %s)", r.Message, r.Metadata, wantMsg, wantProg)
 			}
 			if !ShouldFail(results, AuditLevelHigh) {
 				t.Error("finding does not fail the check at --audit-level high")
 			}
 		})
+	}
+}
+
+// TestCheckClaudeSettingsPosture_ExecWrappedScript pins that a project hook
+// script started through exec is reported once, by checkHookScripts, and
+// that exec is not itself looked up on PATH.
+func TestCheckClaudeSettingsPosture_ExecWrappedScript(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	writeTestScript(t, dir, ".claude/hooks/x.py", "#!/usr/bin/env nonexistent-bin\n")
+	writeTestFile(t, dir, ClaudeSettingsRelPath,
+		`{"hooks": {"PreToolUse": [{"matcher": "Bash", "hooks": [{"type": "command", "command": "exec \"${CLAUDE_PROJECT_DIR}\"/.claude/hooks/x.py"}]}]}}`)
+	var found []CheckResult
+	for _, r := range CheckClaudeSettingsPosture(CheckContext{ProjectRoot: dir, LookPath: lookPathNoBuiltins}) {
+		if r.Name == "claude_hook_unresolvable" {
+			found = append(found, r)
+		}
+	}
+	if len(found) != 1 || found[0].Metadata["program"] != "nonexistent-bin" {
+		t.Errorf("claude_hook_unresolvable findings = %+v, want exactly one naming nonexistent-bin", found)
 	}
 }
 
@@ -466,6 +513,24 @@ func TestCheckHookScripts_Interpreter(t *testing.T) {
 			wantProg: "nonexistent-bin",
 		},
 		{
+			name:    "script passed to an interpreter after --",
+			command: `python3 -- "${CLAUDE_PROJECT_DIR}"/.claude/hooks/x.py`,
+			content: "#!/usr/bin/env nonexistent-bin\n",
+			noExec:  true,
+		},
+		{
+			name:    "sandboxed script passed to an interpreter",
+			command: `qsdev sandbox exec --category linter -- python3 "${CLAUDE_PROJECT_DIR}"/.claude/hooks/x.py`,
+			content: "#!/usr/bin/env nonexistent-bin\n",
+			noExec:  true,
+		},
+		{
+			name:     "sandboxed script through a wrapper",
+			command:  `qsdev sandbox exec -- timeout 30 "${CLAUDE_PROJECT_DIR}"/.claude/hooks/x.py`,
+			content:  "#!/usr/bin/env nonexistent-bin\n",
+			wantProg: "nonexistent-bin",
+		},
+		{
 			name:    "script passed to an interpreter",
 			command: `sh "${CLAUDE_PROJECT_DIR}"/.claude/hooks/x.py`,
 			content: "#!/usr/bin/env nonexistent-bin\n",
@@ -537,6 +602,15 @@ func lookPathFound(file string) (string, error) {
 		return "", exec.ErrNotFound
 	}
 	return filepath.Join("/usr/bin", file), nil
+}
+
+// lookPathNoBuiltins is lookPathFound on a PATH that, like a typical one,
+// holds no file named after the shell builtins cd, source or exec.
+func lookPathNoBuiltins(file string) (string, error) {
+	if file == "cd" || file == "source" || file == "exec" {
+		return "", exec.ErrNotFound
+	}
+	return lookPathFound(file)
 }
 
 func writeTestFile(t *testing.T, dir, rel, content string) {

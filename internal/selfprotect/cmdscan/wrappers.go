@@ -41,6 +41,27 @@ var scriptShells = map[string]bool{
 	"sh": true, "bash": true, "zsh": true, "dash": true, "ksh": true, "mksh": true, "ash": true,
 }
 
+// shellBuiltins are the builtins and reserved words a POSIX shell (and bash,
+// which Claude Code runs hooks with) runs itself, never looking them up on
+// PATH, so a missing file of that name does not stop them.
+var shellBuiltins = map[string]bool{
+	".": true, ":": true, "[": true, "alias": true, "bg": true, "bind": true,
+	"break": true, "builtin": true, "cd": true, "command": true, "continue": true,
+	"declare": true, "dirs": true, "echo": true, "eval": true, "exec": true,
+	"exit": true, "export": true, "false": true, "fg": true, "getopts": true,
+	"hash": true, "jobs": true, "kill": true, "let": true, "local": true,
+	"popd": true, "printf": true, "pushd": true, "pwd": true, "read": true,
+	"readonly": true, "return": true, "set": true, "shift": true, "shopt": true,
+	"source": true, "test": true, "times": true, "trap": true, "true": true,
+	"type": true, "typeset": true, "ulimit": true, "umask": true, "unalias": true,
+	"unset": true, "wait": true,
+}
+
+// IsShellBuiltin reports whether the command word name is a shell builtin,
+// which the shell runs without a PATH lookup. Builtins are matched exactly:
+// a path such as /usr/bin/cd, or another case, names a file.
+func IsShellBuiltin(name string) bool { return shellBuiltins[name] }
+
 // CommandWordIndexes returns the indexes of the words that can name the program
 // run: the first word, and when that is a wrapper, every later word.
 func CommandWordIndexes(words []string) []int {

@@ -93,6 +93,34 @@ func TestShellScript(t *testing.T) {
 	}
 }
 
+func TestIsShellBuiltin(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name string
+		want bool
+	}{
+		{"cd", true},
+		{"source", true},
+		{".", true},
+		{":", true},
+		{"export", true},
+		{"[", true},
+		{"python3", false},
+		{"qsdev", false},
+		{"/usr/bin/cd", false},
+		{"exec", true},
+		{"CD", false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			if got := IsShellBuiltin(tt.name); got != tt.want {
+				t.Errorf("IsShellBuiltin(%q) = %v, want %v", tt.name, got, tt.want)
+			}
+		})
+	}
+}
+
 func TestInvokesProgram(t *testing.T) {
 	t.Parallel()
 	tests := []struct {

@@ -3,6 +3,7 @@ package check
 import (
 	"cmp"
 	"encoding/json"
+	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -13,6 +14,7 @@ import (
 	"testing"
 
 	"github.com/Quantum-Serendipity/qsdev/internal/claudesettings"
+	"github.com/Quantum-Serendipity/qsdev/pkg/types"
 )
 
 // generatedSettings mirrors the settings.json qsdev generates at the standard
@@ -173,6 +175,21 @@ func TestCheckClaudeSettingsPosture(t *testing.T) {
 			expected: withEnv(`{"TOOL_GATES_DENIED": "WebFetch"}`),
 			local:    `{"env": {"TOOL_GATES_DENIED": "", "MY_VAR": "x"}}`,
 			wantWarn: []string{"claude_settings_local_override"},
+		},
+		{
+			name:     "local launch env",
+			actual:   generatedSettings,
+			expected: generatedSettings,
+			local:    `{"env": {"PYTHONPATH": ".claude/rules", "BASH_ENV": "x"}}`,
+			wantFail: []string{"claude_settings_local_override", "claude_settings_local_override"},
+			failSev:  SeverityCritical,
+		},
+		{
+			name:     "committed launch env",
+			actual:   withEnv(`{"LD_PRELOAD": "/tmp/x.so"}`),
+			expected: generatedSettings,
+			wantFail: []string{"claude_hook_launch_env"},
+			failSev:  SeverityCritical,
 		},
 		{
 			name:     "local disableBypassPermissionsMode changed warns",
@@ -757,5 +774,50 @@ func TestCheckHookRegistrations_UnregisteredGuardIsCritical(t *testing.T) {
 		if got := r.Severity; got != want[r.Metadata["command"]] {
 			t.Errorf("missing %q: severity %s, want %s", r.Metadata["command"], got, want[r.Metadata["command"]])
 		}
+	}
+}
+
+// TestCheckExpectedGeneration pins that a project using Claude Code whose
+// expected generator output is unknown fails critically, and that the
+// settings posture check then claims nothing is intact.
+func TestCheckExpectedGeneration(t *testing.T) {
+	t.Parallel()
+	genErr := errors.New(`unknown skill "no-such-skill"`)
+	enabled := true
+	tests := []struct {
+		name         string
+		err          error
+		settings     bool
+		cfg          *types.QsdevConfig
+		wantStatus   CheckStatus
+		wantSeverity CheckSeverity
+	}{
+		{name: "known output", err: nil, settings: true},
+		{name: "settings on disk", err: genErr, settings: true, wantStatus: StatusFail, wantSeverity: SeverityCritical},
+		{name: "claude code configured", err: genErr, cfg: &types.QsdevConfig{ClaudeCode: types.ClaudeCodeConfig{Enabled: &enabled}}, wantStatus: StatusFail, wantSeverity: SeverityCritical},
+		{name: "no claude code", err: genErr, wantStatus: StatusWarn, wantSeverity: SeverityLow},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			dir := t.TempDir()
+			if tt.settings {
+				writeTestFile(t, dir, ClaudeSettingsRelPath, generatedSettings)
+			}
+			ctx := CheckContext{ProjectRoot: dir, QsdevConfig: tt.cfg, ExpectedGenerationErr: tt.err}
+			got := CheckExpectedGeneration(ctx)
+			if tt.wantStatus == "" {
+				if len(got) != 0 {
+					t.Fatalf("got %+v, want no result", got)
+				}
+				return
+			}
+			if len(got) != 1 || got[0].Name != "expected_generation_failed" || got[0].Status != tt.wantStatus || got[0].Severity != tt.wantSeverity {
+				t.Fatalf("got %+v, want one expected_generation_failed %s/%s", got, tt.wantStatus, tt.wantSeverity)
+			}
+			if tt.settings && slices.ContainsFunc(CheckClaudeSettingsPosture(ctx), func(r CheckResult) bool { return r.Status == StatusPass }) {
+				t.Error("claude_settings_posture passes without the expected settings")
+			}
+		})
 	}
 }

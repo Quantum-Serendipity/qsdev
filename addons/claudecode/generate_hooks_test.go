@@ -151,3 +151,35 @@ func TestPackageGuardContent(t *testing.T) {
 	}
 	t.Fatalf("no %s generated", claudecode.PackageGuardPath)
 }
+
+// TestHookScriptContents pins that every hook script the generator writes,
+// whichever answers enable it, is listed with exactly the content written.
+func TestHookScriptContents(t *testing.T) {
+	t.Parallel()
+	all := types.HookChoices{
+		SafetyBlock: true, AuditLog: true, CredentialScan: true, DestructivePrevention: true,
+		FileBoundary: true, ToolGates: true,
+	}
+	soc2 := all
+	soc2.SOC2Audit = true
+	contents := claudecode.HookScriptContents()
+	if len(contents[claudecode.PackageGuardPath]) == 0 {
+		t.Fatalf("HookScriptContents lacks %s", claudecode.PackageGuardPath)
+	}
+	for _, hooks := range []types.HookChoices{all, soc2} {
+		files, err := claudecode.GenerateHookFiles(types.WizardAnswers{Tier: "full", Hooks: hooks, AgentTools: types.AgentToolsAnswers{SembleEnabled: true}})
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, f := range files {
+			want, ok := contents[f.Path]
+			if !ok {
+				t.Errorf("HookScriptContents lacks generated %s", f.Path)
+				continue
+			}
+			if !bytes.Equal(f.Content, want) {
+				t.Errorf("generated %s differs from HookScriptContents", f.Path)
+			}
+		}
+	}
+}

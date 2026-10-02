@@ -111,9 +111,10 @@ func runCheck(cmd *cobra.Command, format check.OutputFormat, auditLevel check.Au
 	// The answers file is local (gitignored), so a CI checkout has none;
 	// rebuild them from the committed config the way join does, so CI still
 	// knows what the project must enforce.
+	var answersErr error
 	if answers.ProjectName == "" && ctx.QsdevConfig != nil {
-		if answers, err = buildJoinAnswers(cmd, InitOptions{}, projectRoot); err != nil {
-			_, _ = fmt.Fprintf(cmd.ErrOrStderr(), "Warning: could not derive answers from %s: %v\n", cfgFile, err)
+		if answers, answersErr = buildJoinAnswers(cmd, InitOptions{}, projectRoot); answersErr != nil {
+			answersErr = fmt.Errorf("deriving answers from %s: %w", cfgFile, answersErr)
 		}
 	}
 	// The committed hooks block is authoritative for the hook policy (init,
@@ -166,19 +167,18 @@ func runCheck(cmd *cobra.Command, format check.OutputFormat, auditLevel check.Au
 	var genErr error
 	if answers.ProjectName != "" {
 		freshFiles, _, genErr = regenerateFreshFiles(answers)
-		if genErr != nil {
-			_, _ = fmt.Fprintf(cmd.ErrOrStderr(), "Warning: could not regenerate expected files: %v\n", genErr)
-		}
 	}
 	if settings, ok := freshFiles[check.ClaudeSettingsRelPath]; ok {
 		ctx.ExpectedClaudeSettings = settings.Content
 	}
-	if len(freshFiles) > 0 {
-		ctx.GeneratedContent = make(map[string][]byte, len(freshFiles))
-		for rel, f := range freshFiles {
-			ctx.GeneratedContent[rel] = f.Content
-		}
+	// Every hook script is judged against the content qsdev writes for it,
+	// seeded from the embedded templates so the judgement holds when the
+	// generator cannot run or the config turns Claude Code off.
+	ctx.GeneratedContent = claudecode.HookScriptContents()
+	for rel, f := range freshFiles {
+		ctx.GeneratedContent[rel] = f.Content
 	}
+	ctx.ExpectedGenerationErr = expectedGenerationErr(answersErr, genErr)
 	if answers.ClaudeCode {
 		for _, h := range claudecode.HooksWithoutPolicy(answers) {
 			ctx.HooksWithoutPolicy = append(ctx.HooksWithoutPolicy, check.HookWithoutPolicy{Name: h.Name, PolicyKey: h.PolicyKey})
@@ -341,4 +341,17 @@ func settleCommittedScope(answers *types.WizardAnswers, reg *toolreg.Registry, c
 		committed = &cfg.Tools
 	}
 	toolreg.Reconcile(answers, reg, committed)
+}
+
+// expectedGenerationErr reports why the generator's output for the project
+// is unknown, or nil when it is known or there was nothing to generate from.
+// Without that output every hook-registration check has nothing to compare
+// against, so check reports the failure (see check.CheckExpectedGeneration)
+// rather than passing on what is left. An unreadable config is reported by
+// its own check.
+func expectedGenerationErr(answersErr, genErr error) error {
+	if genErr != nil {
+		return fmt.Errorf("regenerating expected files: %w", genErr)
+	}
+	return answersErr
 }

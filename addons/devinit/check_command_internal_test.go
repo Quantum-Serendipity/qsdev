@@ -11,6 +11,8 @@ import (
 	"strings"
 	"testing"
 
+	"gopkg.in/yaml.v3"
+
 	"github.com/Quantum-Serendipity/qsdev/addons/claudecode"
 	"github.com/Quantum-Serendipity/qsdev/internal/answers"
 	"github.com/Quantum-Serendipity/qsdev/internal/catalog"
@@ -747,4 +749,137 @@ func TestGuardReplacedAndRehashed(t *testing.T) {
 		t.Errorf("report lacks file_unmodified_%s:\n%s", claudecode.PackageGuardPath, out)
 	}
 	assertGuardLayers(posture.LayerDisabled)
+}
+
+// editProjectConfig rewrites the project's committed config with edit
+// applied to its YAML document.
+func editProjectConfig(t *testing.T, dir string, edit func(map[string]any)) {
+	t.Helper()
+	path := filepath.Join(dir, branding.Get().ConfigFile)
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var cfg map[string]any
+	if err := yaml.Unmarshal(data, &cfg); err != nil {
+		t.Fatal(err)
+	}
+	edit(cfg)
+	if data, err = yaml.Marshal(cfg); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, data, 0o644); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// claudeCodeConfig returns the claude_code section of a config document.
+func claudeCodeConfig(t *testing.T, cfg map[string]any) map[string]any {
+	t.Helper()
+	cc, ok := cfg["claude_code"].(map[string]any)
+	if !ok {
+		t.Fatalf("config has no claude_code section: %v", cfg)
+	}
+	return cc
+}
+
+// TestCheckCmd_GuardBypassWhenExpectedGenerationFails drives `qsdev check` on
+// a CI-like checkout (no local state or answers) whose package guard was
+// replaced and re-hashed in the committed manifest, or unregistered, together
+// with a committed config edit that stops the generator from producing the
+// expected files or turns Claude Code off. Each must still fail at
+// --audit-level critical: the guard is judged against the embedded template
+// whatever the config says, and a generator that cannot run is itself a
+// critical failure rather than a vacuous pass.
+func TestCheckCmd_GuardBypassWhenExpectedGenerationFails(t *testing.T) {
+	unknownSkill := func(cfg map[string]any) {
+		claudeCodeConfig(t, cfg)["skills"] = []any{"no-such-skill"}
+	}
+	tests := []struct {
+		name       string
+		gut        bool
+		unregister bool
+		config     func(map[string]any)
+		wantFail   []string
+	}{
+		{
+			name:     "rehash plus unknown skill",
+			gut:      true,
+			config:   unknownSkill,
+			wantFail: []string{"file_unmodified_" + claudecode.PackageGuardPath, "expected_generation_failed"},
+		},
+		{
+			name: "rehash plus claude_code disabled",
+			gut:  true,
+			config: func(cfg map[string]any) {
+				claudeCodeConfig(t, cfg)["enabled"] = false
+			},
+			wantFail: []string{"file_unmodified_" + claudecode.PackageGuardPath},
+		},
+		{
+			name:       "hook removal plus unknown skill",
+			unregister: true,
+			config:     unknownSkill,
+			wantFail:   []string{"expected_generation_failed"},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			dir := freshCloneProject(t)
+			stubHookProgramsOnPath(t, dir)
+			if tt.gut {
+				replaced := []byte("import sys; sys.exit(0)\n")
+				if err := os.WriteFile(filepath.Join(dir, filepath.FromSlash(claudecode.PackageGuardPath)), replaced, 0o755); err != nil {
+					t.Fatal(err)
+				}
+				manifestPath := filepath.Join(dir, state.ManifestFile())
+				manifest, err := state.LoadManifest(manifestPath)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if _, ok := manifest[claudecode.PackageGuardPath]; !ok {
+					t.Fatalf("manifest does not list %s", claudecode.PackageGuardPath)
+				}
+				manifest[claudecode.PackageGuardPath] = state.ComputeHash(replaced)
+				if err := state.WriteManifest(dir, manifest); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if tt.unregister {
+				editSettings(t, dir, func(s map[string]any) {
+					hooks := s["hooks"].(map[string]any)
+					var kept []any
+					for _, m := range hooks[claudesettings.EventPreToolUse].([]any) {
+						data, _ := json.Marshal(m)
+						if !strings.Contains(string(data), claudecode.PackageGuardPath) {
+							kept = append(kept, m)
+						}
+					}
+					hooks[claudesettings.EventPreToolUse] = kept
+				})
+			}
+			editProjectConfig(t, dir, tt.config)
+
+			out, err := runLifecycleCmd(t, dir, checkCmd(), "--format", "json", "--audit-level", "critical")
+			if err == nil {
+				t.Fatalf("check passed at critical:\n%s", out)
+			}
+			var report check.CheckReport
+			if jerr := json.NewDecoder(strings.NewReader(out[strings.Index(out, "{"):])).Decode(&report); jerr != nil {
+				t.Fatalf("parsing report: %v\n%s", jerr, out)
+			}
+			for _, name := range tt.wantFail {
+				if !slices.ContainsFunc(report.Checks, func(c check.CheckResult) bool {
+					return c.Name == name && c.Status == check.StatusFail && c.Severity == check.SeverityCritical
+				}) {
+					t.Errorf("report lacks a critical %s failure:\n%s", name, out)
+				}
+			}
+			if slices.ContainsFunc(report.Checks, func(c check.CheckResult) bool {
+				return c.Name == "claude_settings_posture" && c.Status == check.StatusPass
+			}) && slices.Contains(tt.wantFail, "expected_generation_failed") {
+				t.Errorf("claude_settings_posture passes without the expected settings:\n%s", out)
+			}
+		})
+	}
 }

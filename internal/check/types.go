@@ -180,6 +180,11 @@ type CheckContext struct {
 	// the recorded or committed hash, which a change to the guard can
 	// re-hash along with it.
 	GeneratedContent map[string][]byte
+	// ExpectedGenerationErr is why the generator's output for the project
+	// (ExpectedClaudeSettings, and the generated files beyond the embedded
+	// hook scripts) is unknown: the answers could not be derived from the
+	// config, or generation from them failed. Nil when that output is known.
+	ExpectedGenerationErr error
 	// ManifestFile is the committed manifest of machine-owned generated files
 	// (state.ManifestFile under the project root). Unlike StateFile it exists
 	// on a clean CI checkout, so it is what CI verifies generated files

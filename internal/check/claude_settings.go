@@ -2,7 +2,9 @@ package check
 
 import (
 	"cmp"
+	"errors"
 	"fmt"
+	"io/fs"
 	"maps"
 	"os"
 	"path/filepath"
@@ -75,6 +77,10 @@ func CheckClaudeSettingsPosture(ctx CheckContext) []CheckResult {
 		results = append(results, checkHookRegistrations(actual, *expected)...)
 		results = append(results, checkHookEnv(actual, *expected)...)
 	}
+	for _, msg := range launchEnvOverrides(actual.Env) {
+		results = append(results, postureResult("claude_hook_launch_env", StatusFail, SeverityCritical,
+			ClaudeSettingsRelPath+" "+msg, "Remove the variable from "+ClaudeSettingsRelPath+"'s "+claudesettings.KeyEnv))
+	}
 	lookPath := ctx.LookPath
 	if lookPath == nil {
 		lookPath = toolcheck.LookPath
@@ -84,11 +90,33 @@ func CheckClaudeSettingsPosture(ctx CheckContext) []CheckResult {
 	results = append(results, checkHooksWithoutPolicy(ctx.HooksWithoutPolicy)...)
 	results = append(results, checkLocalOverride(ctx.ProjectRoot, ctx.ClaudeUserDir, actual, expected)...)
 
-	if len(results) == 0 {
+	// Without the expected settings the comparison checks above did not run,
+	// so nothing is known to be intact (see CheckExpectedGeneration).
+	if len(results) == 0 && ctx.ExpectedGenerationErr == nil {
 		return []CheckResult{postureResult("claude_settings_posture", StatusPass, SeverityInfo,
 			"Generated hook registrations and permission mode are intact in "+ClaudeSettingsRelPath, "")}
 	}
 	return results
+}
+
+// CheckExpectedGeneration reports a project whose expected generator output
+// is unknown (ctx.ExpectedGenerationErr). The hook-registration and
+// bypass-mode checks compare .claude/settings.json against that output, so
+// without it they pass on nothing; for a project that uses Claude Code (its
+// config or state says so, or a settings file exists) that is a critical
+// failure rather than a pass. Elsewhere it is a warning.
+func CheckExpectedGeneration(ctx CheckContext) []CheckResult {
+	if ctx.ExpectedGenerationErr == nil {
+		return nil
+	}
+	message := fmt.Sprintf("Could not determine the files qsdev generates for this project: %v", ctx.ExpectedGenerationErr)
+	remediation := "Fix " + branding.Get().ConfigFile + " so 'qsdev init --update' succeeds"
+	_, statErr := os.Stat(filepath.Join(ctx.ProjectRoot, filepath.FromSlash(ClaudeSettingsRelPath)))
+	if !claudeCodeConfigured(ctx) && errors.Is(statErr, fs.ErrNotExist) {
+		return []CheckResult{postureResult("expected_generation_failed", StatusWarn, SeverityLow, message, remediation)}
+	}
+	return []CheckResult{postureResult("expected_generation_failed", StatusFail, SeverityCritical,
+		message+"; the Claude Code hook registrations and permission mode cannot be verified", remediation)}
 }
 
 func checkDisableBypass(actual, expected claudesettings.Settings) []CheckResult {
@@ -402,7 +430,25 @@ func checkLocalOverride(projectRoot, userDir string, project claudesettings.Sett
 				claudesettings.KeyEnv, key, got, wantEnv[key]))
 		}
 	}
+	for _, msg := range launchEnvOverrides(local.Env) {
+		add(StatusFail, SeverityCritical, msg)
+	}
 	return results
+}
+
+// launchEnvOverrides describes each non-empty env variable in env that
+// decides which program or code a hook command runs (see
+// claudesettings.IsLaunchEnv): set for every hook, it can make a registered
+// guard run something else, so no guard can be trusted to run.
+func launchEnvOverrides(env map[string]string) []string {
+	var msgs []string
+	for _, key := range slices.Sorted(maps.Keys(env)) {
+		if env[key] != "" && claudesettings.IsLaunchEnv(key) {
+			msgs = append(msgs, fmt.Sprintf("sets %s %s to %q, which decides what program or code every hook runs, so the guard hooks may never run",
+				claudesettings.KeyEnv, key, env[key]))
+		}
+	}
+	return msgs
 }
 
 // checkHookPrograms reports registered hook commands whose program cannot

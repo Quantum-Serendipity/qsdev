@@ -81,7 +81,7 @@ func sanitizeLocal(base *types.QsdevConfig, local *LocalConfig) (*types.QsdevCon
 	}
 
 	if level := local.ClaudeCode.PermissionLevel; level != "" {
-		floor := EffectivePermissionLevel(base.ClaudeCode.PermissionLevel, base.Tier, base.ClaudeCode.MCPServers)
+		floor := PermissionFloor(base)
 		if permissionAtLeastAsStrict(level, floor) {
 			applied.ClaudeCode.PermissionLevel = level
 		} else {

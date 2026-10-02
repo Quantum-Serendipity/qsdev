@@ -126,8 +126,9 @@ func runCheck(cmd *cobra.Command, format check.OutputFormat, auditLevel check.Au
 
 	// Settle the answers against the committed config, as every generation
 	// path does, before deciding what is required: the always-on scope and
-	// the opt-outs come from .qsdev.yaml, never from the local answers file
-	// alone, so a local edit cannot narrow what check enforces.
+	// the opt-outs and the permission floor come from .qsdev.yaml, never from
+	// the local answers file alone, so a local edit cannot narrow the
+	// always-on tools or deny rules check enforces.
 	settleCommittedScope(&answers, toolRegistry, ctx.QsdevConfig)
 
 	// The required-tools check covers the always-on tools that apply to the
@@ -300,21 +301,28 @@ func requiredDenyRules(answers types.WizardAnswers, cfg *types.QsdevConfig) ([]s
 
 // effectivePermissionPreset resolves the permission preset the same way
 // settings generation does: an explicit permission level wins, then the
-// tier's default preset, then standard. Saved answers are preferred; the
-// project config is used when no answers were saved.
+// tier's default preset, then standard. The project config is used when no
+// answers were saved; otherwise the saved answers, which are local, may only
+// tighten the preset cfg commits (see qsdevconfig.TightenPermissionLevel), as
+// a local layer may.
 func effectivePermissionPreset(answers types.WizardAnswers, cfg *types.QsdevConfig) string {
-	level, tierName, mcp := answers.PermissionLevel, answers.Tier, answers.MCPServers
-	if level == "" && tierName == "" && cfg != nil {
-		level, tierName = cfg.ClaudeCode.PermissionLevel, cfg.Tier
+	if cfg == nil {
+		return qsdevconfig.EffectivePermissionLevel(answers.PermissionLevel, answers.Tier, answers.MCPServers)
 	}
-	return qsdevconfig.EffectivePermissionLevel(level, tierName, mcp)
+	floor := qsdevconfig.PermissionFloor(cfg)
+	if answers.PermissionLevel == "" && answers.Tier == "" {
+		return floor
+	}
+	level := qsdevconfig.EffectivePermissionLevel(answers.PermissionLevel, answers.Tier, answers.MCPServers)
+	return qsdevconfig.TightenPermissionLevel(level, floor)
 }
 
 // settleCommittedScope settles answers against cfg, the committed
 // .qsdev.yaml (nil when it did not load): Claude Code and the tier, which
 // decide which always-on tools apply (see toolreg.Tool.EnforcedFor), are
-// taken from cfg, and the tools are reconciled against its tools block (see
-// toolreg.Reconcile).
+// taken from cfg, the permission level is raised to at least the one cfg
+// commits (see effectivePermissionPreset), and the tools are reconciled
+// against its tools block (see toolreg.Reconcile).
 func settleCommittedScope(answers *types.WizardAnswers, reg *toolreg.Registry, cfg *types.QsdevConfig) {
 	if answers.ProjectName == "" {
 		return
@@ -323,6 +331,7 @@ func settleCommittedScope(answers *types.WizardAnswers, reg *toolreg.Registry, c
 	if cfg != nil {
 		answers.ClaudeCode = qsdevconfig.ClaudeCodeEnabled(cfg)
 		answers.Tier = qsdevconfig.ConfigTier(cfg)
+		answers.PermissionLevel = effectivePermissionPreset(*answers, cfg)
 		committed = &cfg.Tools
 	}
 	toolreg.Reconcile(answers, reg, committed)

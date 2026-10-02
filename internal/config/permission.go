@@ -5,6 +5,7 @@ import (
 
 	"github.com/Quantum-Serendipity/qsdev/internal/catalog"
 	"github.com/Quantum-Serendipity/qsdev/internal/tier"
+	"github.com/Quantum-Serendipity/qsdev/pkg/types"
 )
 
 // defaultPermissionLevel is the preset generation applies when neither a
@@ -53,4 +54,20 @@ func ComparePermissionLevels(a, b string) (int, bool) {
 func permissionAtLeastAsStrict(candidate, floor string) bool {
 	c, ok := ComparePermissionLevels(candidate, floor)
 	return ok && c >= 0
+}
+
+// PermissionFloor returns the effective permission preset cfg commits: the
+// floor a local layer or local answers may tighten but never loosen.
+func PermissionFloor(cfg *types.QsdevConfig) string {
+	return EffectivePermissionLevel(cfg.ClaudeCode.PermissionLevel, cfg.Tier, cfg.ClaudeCode.MCPServers)
+}
+
+// TightenPermissionLevel returns level when it is known to be at least as
+// strict as floor, and floor otherwise (including when the two are not
+// comparable), so a local choice can only tighten the committed preset.
+func TightenPermissionLevel(level, floor string) string {
+	if permissionAtLeastAsStrict(level, floor) {
+		return level
+	}
+	return floor
 }

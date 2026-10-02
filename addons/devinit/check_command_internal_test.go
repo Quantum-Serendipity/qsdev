@@ -66,6 +66,18 @@ func TestRequiredDenyRules_CoverPresetDenySets(t *testing.T) {
 			mustExclude: []string{"destructive_ops", "sandbox_config_edits"},
 		},
 		{
+			name:        "local answers cannot loosen the committed preset",
+			answers:     types.WizardAnswers{PermissionLevel: "supply-chain-only", Tier: "standard"},
+			cfg:         &types.QsdevConfig{ClaudeCode: types.ClaudeCodeConfig{PermissionLevel: "standard"}},
+			mustInclude: []string{"sudo_prefix", "sandbox_config_edits", "destructive_ops"},
+		},
+		{
+			name:        "local answers may tighten the committed preset",
+			answers:     types.WizardAnswers{PermissionLevel: "minimal"},
+			cfg:         &types.QsdevConfig{ClaudeCode: types.ClaudeCodeConfig{PermissionLevel: "standard"}},
+			mustInclude: []string{"sudo_prefix", "sandbox_config_edits", "destructive_ops"},
+		},
+		{
 			name:        "tier from project config selects its default preset",
 			cfg:         &types.QsdevConfig{Tier: "supply-chain-only"},
 			mustInclude: []string{"pipe_to_shell"},
@@ -636,5 +648,46 @@ func TestRunCheck_LocalAnswersCannotNarrowRequiredTools(t *testing.T) {
 				t.Errorf("check did not fail %s: %+v", want, report.Checks)
 			}
 		})
+	}
+}
+
+// TestRunCheck_LocalPermissionLevelCannotNarrowDenyRules verifies that a
+// looser permission level in the local answers file does not shrink the deny
+// rules check requires below the committed preset: a local level may only
+// tighten it, as a local config layer may.
+func TestRunCheck_LocalPermissionLevelCannotNarrowDenyRules(t *testing.T) {
+	dir := initLifecycleProject(t)
+
+	saved, err := answers.LoadPrimary(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	saved.PermissionLevel = "supply-chain-only"
+	if err := answers.SavePrimary(dir, saved); err != nil {
+		t.Fatal(err)
+	}
+	// destructive_ops is in the committed standard preset but not in
+	// supply-chain-only, so only the committed floor requires it.
+	stripped := denySetRules(t, "destructive_ops")
+	editSettings(t, dir, func(settings map[string]any) {
+		perms, _ := settings["permissions"].(map[string]any)
+		deny, _ := perms["deny"].([]any)
+		kept := slices.DeleteFunc(slices.Clone(deny), func(r any) bool {
+			s, _ := r.(string)
+			return slices.Contains(stripped, s)
+		})
+		if len(kept) == len(deny) {
+			t.Fatalf("generated settings.json carries no destructive_ops deny rule: %v", deny)
+		}
+		perms["deny"] = kept
+	})
+
+	report := runCheckJSON(t, dir)
+	for _, rule := range stripped {
+		if !slices.ContainsFunc(report.Checks, func(c check.CheckResult) bool {
+			return c.Name == "deny_rule_missing" && c.Status == check.StatusFail && c.Metadata["rule"] == rule
+		}) {
+			t.Errorf("check did not report the stripped deny rule %q", rule)
+		}
 	}
 }

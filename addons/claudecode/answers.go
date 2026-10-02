@@ -71,11 +71,15 @@ func loadSavedAnswers(projectRoot string) (types.WizardAnswers, error) {
 // normalizeAnswers applies the answers invariants the way devinit's update
 // does: the answers first adopt the choices committed in .qsdev.yaml (see
 // config.AdoptCommitted), so the invariants only infer a tier when the
-// project records none, a claude regeneration never replaces the team's
-// committed tier, and the answers it persists keep Claude Code on while the
-// committed file enables it.
+// project records none and a claude regeneration never replaces the team's
+// committed tier. Only claude subcommands normalise through here, and every
+// one of them configures Claude Code, so the answers record Claude Code on
+// whatever the file says: the invariants then force the self-protection hook
+// the generated settings always register, and the answers persisted beside
+// those settings agree with them.
 func normalizeAnswers(projectRoot string, a *types.WizardAnswers) {
 	qsdevconfig.AdoptCommitted(projectRoot, a)
+	a.ClaudeCode = true
 	answers.EnforceInvariants(a)
 }
 

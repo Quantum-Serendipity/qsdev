@@ -92,7 +92,9 @@ All notable changes to qsdev are recorded in this file. The format is based on
   hook. The `hooks.self_protection` answer is kept for schema compatibility
   but ignored: projects that saved `self_protection: false` gain the hook on
   the next `qsdev claude update`, `qsdev init --update` or other
-  regeneration, and the saved answers are rewritten to `true` (U18-01).
+  regeneration, and the saved answers are rewritten to `true` (U18-01). The
+  `qsdev claude` subcommands also record `claude_code: true` in the answers
+  they save, since the settings they generate always configure Claude Code.
 - The self-protection hook now blocks agent writes, deletes, moves and copies
   out of the repository for the inputs the settings generator trusts: the
   state directory (`.devinit/`, holding the answers and state manifest), the

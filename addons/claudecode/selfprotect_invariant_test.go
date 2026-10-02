@@ -257,28 +257,52 @@ func TestClaudeInit_RegistersSelfprotect(t *testing.T) {
 }
 
 // TestClaudeUpdate_KeepsSelfprotectAfterAnswersEdit is the U18-01 end-to-end
-// case: editing the answers file to switch self-protection off and running
-// `claude update` neither removes the hook nor persists the edit.
+// case: editing the answers file to switch self-protection off, alone or
+// together with Claude Code itself, and running `claude update` neither
+// removes the hook nor persists the edit. A claude subcommand configures
+// Claude Code, so the answers it saves record Claude Code on, matching the
+// settings.json it generates.
 func TestClaudeUpdate_KeepsSelfprotectAfterAnswersEdit(t *testing.T) {
-	dir := claudeInitProject(t)
-
-	path := answers.PrimaryPath(dir)
-	content := readFile(t, path)
-	edited := strings.Replace(content, "self_protection: true", "self_protection: false", 1)
-	if edited == content {
-		t.Fatalf("answers file has no self_protection: true to edit:\n%s", content)
+	tests := []struct {
+		name  string
+		edits [][2]string
+	}{
+		{"self_protection off", [][2]string{{"self_protection: true", "self_protection: false"}}},
+		{"claude_code and self_protection off", [][2]string{
+			{"self_protection: true", "self_protection: false"},
+			{"claude_code: true", "claude_code: false"},
+		}},
 	}
-	if err := os.WriteFile(path, []byte(edited), 0o644); err != nil {
-		t.Fatal(err)
-	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			dir := claudeInitProject(t)
 
-	mustRunClaude(t, "update", "--force")
+			path := answers.PrimaryPath(dir)
+			content := readFile(t, path)
+			edited := content
+			for _, e := range tt.edits {
+				next := strings.Replace(edited, e[0], e[1], 1)
+				if next == edited {
+					t.Fatalf("answers file has no %q to edit:\n%s", e[0], content)
+				}
+				edited = next
+			}
+			if err := os.WriteFile(path, []byte(edited), 0o644); err != nil {
+				t.Fatal(err)
+			}
 
-	if !settingsHasSelfprotect(t, dir) {
-		t.Errorf("settings.json lost %q after the answers edit", selfprotectCommand())
-	}
-	if !strings.Contains(readFile(t, path), "self_protection: true") {
-		t.Error("claude update did not re-save self_protection: true")
+			mustRunClaude(t, "update", "--force")
+
+			if !settingsHasSelfprotect(t, dir) {
+				t.Errorf("settings.json lost %q after the answers edit", selfprotectCommand())
+			}
+			saved := readFile(t, path)
+			for _, want := range []string{"self_protection: true", "claude_code: true"} {
+				if !strings.Contains(saved, want) {
+					t.Errorf("claude update did not re-save %s:\n%s", want, saved)
+				}
+			}
+		})
 	}
 }
 

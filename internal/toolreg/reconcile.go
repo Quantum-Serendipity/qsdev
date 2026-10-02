@@ -16,10 +16,12 @@ import (
 // committed.Disabled, which only `disable --force` writes, is the one record
 // of an always-on opt-out: an explicit off for an always-on tool that it does
 // not list (from a hand-edited answers file, say) is dropped so the tool is
-// enforced again, and each tool it lists that the answers do not explicitly
-// enable is disabled (its DisableFunc switches off what it backs and records
-// any opt-out, such as Hooks.SafetyBlockOptOut, that answers saved before
-// that record existed lack). A nil
+// enforced again wherever it applies, also when it does not apply now (Claude
+// Code switched off, say), so the off never reaches tools.disabled; and each
+// tool it lists that the answers do not explicitly enable is disabled (its
+// DisableFunc switches off what it backs and records any opt-out, such as
+// Hooks.SafetyBlockOptOut, that answers saved before that record existed
+// lack). A nil
 // committed means the project has no committed config (or none that loads),
 // so no opt-out is recorded: like an empty tools block, every explicit off
 // for an always-on tool is dropped. The answers file alone never opts out.
@@ -64,13 +66,17 @@ func ReconcileAndWarn(w io.Writer, a *types.WizardAnswers, reg *Registry, commit
 }
 
 // dropUncommittedOptOuts deletes the explicit off of each always-on tool that
-// applies to a and is not in optOuts, so enforcement turns it back on, and
-// returns the dropped names.
+// is not in optOuts, so enforcement turns it back on wherever it applies, and
+// returns the dropped names. It drops the off whether or not the tool applies
+// to a now: scope (Tool.EnforcedFor) decides enforcement, not whether an
+// opt-out may be recorded, so an off given while, say, Claude Code is switched
+// off is not persisted into tools.disabled to read back later as a committed
+// opt-out.
 func dropUncommittedOptOuts(a *types.WizardAnswers, reg *Registry, optOuts []string) []string {
 	var dropped []string
 	for _, tool := range reg.All() {
 		enabled, set := a.EnabledTools[tool.Name]
-		if !set || enabled || !tool.EnforcedFor(a) || slices.Contains(optOuts, tool.Name) {
+		if !set || enabled || tool.Default != AlwaysOn || slices.Contains(optOuts, tool.Name) {
 			continue
 		}
 		delete(a.EnabledTools, tool.Name)

@@ -124,8 +124,9 @@ func enforceable(answers *types.WizardAnswers, registry *Registry) []*Tool {
 }
 
 // WarnAlwaysOnRestored writes a warning to w for each always-on tool name
-// that was kept enabled against an answer source, naming the only way to opt
-// out.
+// that was kept enabled against an answer source (or, for one that does not
+// apply now, whose off was dropped so it is enforced once it applies), naming
+// the only way to opt out.
 func WarnAlwaysOnRestored(w io.Writer, names []string) {
 	for _, name := range names {
 		_, _ = fmt.Fprintf(w, "Warning: always-on tool %q kept enabled; opt out with `qsdev disable %s --force`\n", name, name)

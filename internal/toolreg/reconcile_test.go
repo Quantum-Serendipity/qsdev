@@ -1,6 +1,7 @@
 package toolreg
 
 import (
+	"maps"
 	"slices"
 	"strings"
 	"testing"
@@ -160,6 +161,59 @@ func TestReconcile_UncommittedSafetyBlockOptOutDropped(t *testing.T) {
 			}
 			if !answers.Hooks.SafetyBlock || answers.Hooks.SafetyBlockOptOut {
 				t.Errorf("Hooks = %+v, want safety block on and no opt-out", answers.Hooks)
+			}
+		})
+	}
+}
+
+// TestReconcile_OutOfScopeAlwaysOnOffNotPersisted verifies that an explicit
+// off for an always-on tool that does not apply to the answers (Claude Code
+// switched off) is dropped like any other uncommitted off, so it never
+// reaches tools.disabled to be read back later as a committed opt-out, with
+// or without a committed config.
+func TestReconcile_OutOfScopeAlwaysOnOffNotPersisted(t *testing.T) {
+	t.Parallel()
+	reg := catalogRegistry(t)
+	probe := &types.WizardAnswers{ClaudeCode: false}
+	offs := map[string]bool{}
+	for _, tool := range reg.All() {
+		if tool.Default == AlwaysOn && !tool.EnforcedFor(probe) {
+			offs[tool.Name] = false
+		}
+	}
+	if _, ok := offs[ToolAttachGuard]; !ok || len(offs) < 2 {
+		t.Fatalf("catalog out-of-scope always-on tools = %v, want attach-guard among several", offs)
+	}
+	tests := []struct {
+		name      string
+		committed *types.ToolsConfig
+	}{
+		{"no committed config", nil},
+		{"empty tools block", &types.ToolsConfig{}},
+		{"committed enables them", &types.ToolsConfig{Enabled: []string{ToolAttachGuard}}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			answers := &types.WizardAnswers{ClaudeCode: false, EnabledTools: maps.Clone(offs)}
+
+			kept := Reconcile(answers, reg, tt.committed)
+
+			for name := range offs {
+				if enabled, set := answers.EnabledTools[name]; set && !enabled {
+					t.Errorf("EnabledTools[%s] = false survived Reconcile; it would persist into tools.disabled", name)
+				}
+				if !slices.Contains(kept, name) {
+					t.Errorf("kept = %v, want %s reported so the caller warns", kept, name)
+				}
+			}
+
+			// Switching Claude Code back on enforces them again.
+			answers.ClaudeCode = true
+			Reconcile(answers, reg, tt.committed)
+			if !answers.EnabledTools[ToolAttachGuard] || !answers.Hooks.SafetyBlock || answers.Hooks.SafetyBlockOptOut {
+				t.Errorf("after re-enabling Claude Code: attach-guard = %v, Hooks = %+v, want the guard on",
+					answers.EnabledTools[ToolAttachGuard], answers.Hooks)
 			}
 		})
 	}

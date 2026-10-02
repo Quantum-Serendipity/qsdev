@@ -795,6 +795,47 @@ func TestInit_AnswersFileCannotOptOutAlwaysOn(t *testing.T) {
 	assertAttachGuardOn(t, dir)
 }
 
+// TestInit_OutOfScopeAnswersFileOffNotPersisted is the scope-gate
+// regression: an answers file that switches Claude Code off and sets an
+// explicit off for attach-guard must not write it to tools.disabled, where a
+// later init with Claude Code back on would read it as a committed opt-out
+// and keep the package guard off.
+func TestInit_OutOfScopeAnswersFileOffNotPersisted(t *testing.T) {
+	dir, _ := initGoProject(t)
+	a := loadProjectAnswers(t, dir)
+	a.ClaudeCode = false
+	a.EnabledTools[toolreg.ToolAttachGuard] = false
+	data, err := yaml.Marshal(a)
+	if err != nil {
+		t.Fatal(err)
+	}
+	answersFile := filepath.Join(t.TempDir(), "answers.yaml")
+	if err := os.WriteFile(answersFile, data, 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	out, err := executeInitCmd(t, dir, "--yes", "--force", "--answers-file", answersFile)
+	if err != nil {
+		t.Fatalf("init --answers-file: %v\n%s", err, out)
+	}
+	want := "always-on tool \"attach-guard\" kept enabled"
+	if !strings.Contains(out, want) {
+		t.Errorf("init output does not warn %q:\n%s", want, out)
+	}
+	if _, disabled := committedTools(t, dir); len(disabled) != 0 {
+		t.Errorf(".qsdev.yaml tools.disabled = %v, want empty: the answers file is not an opt-out", disabled)
+	}
+
+	out, err = executeInitCmd(t, dir, "--yes", "--force", "--lang", "go", "--claude-code")
+	if err != nil {
+		t.Fatalf("re-init with Claude Code: %v\n%s", err, out)
+	}
+	if strings.Contains(out, "is disabled by tools.disabled") {
+		t.Errorf("re-init reports a committed package-guard opt-out:\n%s", out)
+	}
+	assertAttachGuardOn(t, dir)
+}
+
 // TestInit_AgentPostmortemFalseRejected verifies --agent-postmortem=false is
 // rejected with a pointer to the only opt-out rather than silently ignored.
 func TestInit_AgentPostmortemFalseRejected(t *testing.T) {

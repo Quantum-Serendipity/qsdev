@@ -3,7 +3,6 @@ package devinit
 import (
 	"errors"
 	"fmt"
-	"io"
 	"io/fs"
 	"log/slog"
 	"os"
@@ -312,25 +311,12 @@ func buildAnswersFromInputs(cmd *cobra.Command, opts InitOptions, projectRoot st
 	if err != nil {
 		return types.WizardAnswers{}, fmt.Errorf("loading tool registry: %w", err)
 	}
-	if err := reconcileTools(cmd.ErrOrStderr(), projectRoot, &answers, treg); err != nil {
+	if err := toolreg.ReconcileProject(cmd.ErrOrStderr(), projectRoot, &answers, treg); err != nil {
 		return types.WizardAnswers{}, err
 	}
 
 	qsdevanswers.EnforceInvariants(&answers)
 	return answers, nil
-}
-
-// reconcileTools settles the enabled tools once every answer source has run
-// against the committed .qsdev.yaml, writing its warnings to w (see
-// toolreg.ReconcileAndWarn). A committed config that exists but cannot be
-// loaded is an error.
-func reconcileTools(w io.Writer, projectRoot string, a *types.WizardAnswers, reg *toolreg.Registry) error {
-	committed, err := qsdevconfig.CommittedTools(projectRoot)
-	if err != nil {
-		return fmt.Errorf("loading committed tools: %w", err)
-	}
-	toolreg.ReconcileAndWarn(w, a, reg, committed)
-	return nil
 }
 
 // runInitWizard collects the remaining answers interactively and validates

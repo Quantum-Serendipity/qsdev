@@ -1,9 +1,11 @@
 package toolreg
 
 import (
+	"fmt"
 	"io"
 	"slices"
 
+	qsdevconfig "github.com/Quantum-Serendipity/qsdev/internal/config"
 	"github.com/Quantum-Serendipity/qsdev/pkg/types"
 )
 
@@ -63,6 +65,20 @@ func ReconcileAndWarn(w io.Writer, a *types.WizardAnswers, reg *Registry, commit
 	slices.Sort(kept)
 	WarnAlwaysOnRestored(w, slices.Compact(kept))
 	WarnSafetyBlockOptOut(w, a)
+}
+
+// ReconcileProject loads the tools block of projectRoot's committed
+// .qsdev.yaml and runs ReconcileAndWarn against it, writing the warnings to
+// w (io.Discard for a caller that reports nothing). It is the one step every
+// command that regenerates from answers takes once every answer source has
+// run. A committed config that exists but cannot be loaded is an error.
+func ReconcileProject(w io.Writer, projectRoot string, a *types.WizardAnswers, reg *Registry) error {
+	committed, err := qsdevconfig.CommittedTools(projectRoot)
+	if err != nil {
+		return fmt.Errorf("loading committed tools: %w", err)
+	}
+	ReconcileAndWarn(w, a, reg, committed)
+	return nil
 }
 
 // dropUncommittedOptOuts deletes the explicit off of each always-on tool that

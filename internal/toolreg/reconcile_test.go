@@ -1,11 +1,15 @@
 package toolreg
 
 import (
+	"io"
 	"maps"
+	"os"
+	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
 
+	"github.com/Quantum-Serendipity/qsdev/pkg/branding"
 	"github.com/Quantum-Serendipity/qsdev/pkg/types"
 )
 
@@ -339,4 +343,39 @@ func TestSwitchedOff(t *testing.T) {
 			}
 		})
 	}
+}
+
+// TestReconcileProject verifies the shared load-and-reconcile step: with no
+// committed config an answers-file off is dropped and warned about, and a
+// committed config that exists but does not load is an error, not a missing
+// config.
+func TestReconcileProject(t *testing.T) {
+	t.Parallel()
+	reg := catalogRegistry(t)
+
+	t.Run("no committed config", func(t *testing.T) {
+		t.Parallel()
+		a := &types.WizardAnswers{ClaudeCode: true, EnabledTools: map[string]bool{ToolAttachGuard: false}}
+		var out strings.Builder
+		if err := ReconcileProject(&out, t.TempDir(), a, reg); err != nil {
+			t.Fatal(err)
+		}
+		if !a.EnabledTools[ToolAttachGuard] {
+			t.Errorf("EnabledTools[attach-guard] = false, want the uncommitted off dropped")
+		}
+		if !strings.Contains(out.String(), `always-on tool "attach-guard" kept enabled`) {
+			t.Errorf("no warning for the dropped off:\n%s", out.String())
+		}
+	})
+
+	t.Run("unloadable committed config", func(t *testing.T) {
+		t.Parallel()
+		dir := t.TempDir()
+		if err := os.WriteFile(filepath.Join(dir, branding.Get().ConfigFile), []byte("tools: [not, a, block\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		if err := ReconcileProject(io.Discard, dir, &types.WizardAnswers{}, reg); err == nil {
+			t.Error("ReconcileProject succeeded on an unloadable committed config")
+		}
+	})
 }

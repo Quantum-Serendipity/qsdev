@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"io/fs"
 	"maps"
 	"os"
@@ -157,11 +158,9 @@ func loadLifecycleAnswers(ctx context.Context, projectRoot string) (types.Wizard
 	}
 	answers.ProjectRoot = projectRoot
 	answers.Detected = detect.Detect(ctx, projectRoot)
-	committed, err := qsdevconfig.CommittedTools(projectRoot)
-	if err != nil {
-		return types.WizardAnswers{}, fmt.Errorf("loading committed tools: %w", err)
+	if err := toolreg.ReconcileProject(io.Discard, projectRoot, &answers, toolreg.DefaultRegistry()); err != nil {
+		return types.WizardAnswers{}, err
 	}
-	toolreg.Reconcile(&answers, toolreg.DefaultRegistry(), committed)
 	return answers, nil
 }
 

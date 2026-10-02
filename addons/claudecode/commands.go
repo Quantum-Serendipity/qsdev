@@ -112,7 +112,7 @@ func initCmd() *cobra.Command {
 				toolreg.SeedAlwaysOn(&answers, treg)
 			}
 			answers.Detected = detected
-			if err := reconcileTools(cmd.ErrOrStderr(), projectRoot, &answers, treg); err != nil {
+			if err := toolreg.ReconcileProject(cmd.ErrOrStderr(), projectRoot, &answers, treg); err != nil {
 				return err
 			}
 
@@ -188,20 +188,8 @@ func initCmd() *cobra.Command {
 	return cmdutil.MarkSensitive(cmd, cmdutil.Sensitivity{Flags: map[string]bool{"force": true}})
 }
 
-// reconcileTools settles answers' enabled tools against the committed
-// .qsdev.yaml, writing its warnings to w (see toolreg.ReconcileAndWarn). A
-// committed config that exists but cannot be loaded is an error.
-func reconcileTools(w io.Writer, projectRoot string, answers *types.WizardAnswers, reg *toolreg.Registry) error {
-	committed, err := qsdevconfig.CommittedTools(projectRoot)
-	if err != nil {
-		return fmt.Errorf("loading committed tools: %w", err)
-	}
-	toolreg.ReconcileAndWarn(w, answers, reg, committed)
-	return nil
-}
-
 // loadReconciledAnswers loads the saved answers and reconciles their tools
-// (see reconcileTools), writing its warnings to w, so a command that
+// (see toolreg.ReconcileProject), writing its warnings to w, so a command that
 // regenerates from them honours only the opt-outs the committed .qsdev.yaml
 // records, exactly as init and update do.
 func loadReconciledAnswers(w io.Writer, projectRoot string) (types.WizardAnswers, error) {
@@ -213,7 +201,7 @@ func loadReconciledAnswers(w io.Writer, projectRoot string) (types.WizardAnswers
 	if err != nil {
 		return types.WizardAnswers{}, fmt.Errorf("loading tool registry: %w", err)
 	}
-	if err := reconcileTools(w, projectRoot, &answers, treg); err != nil {
+	if err := toolreg.ReconcileProject(w, projectRoot, &answers, treg); err != nil {
 		return types.WizardAnswers{}, err
 	}
 	return answers, nil
@@ -249,7 +237,7 @@ func updateCmd() *cobra.Command {
 			if err != nil {
 				return fmt.Errorf("loading tool registry: %w", err)
 			}
-			if err := reconcileTools(cmd.ErrOrStderr(), projectRoot, &answers, treg); err != nil {
+			if err := toolreg.ReconcileProject(cmd.ErrOrStderr(), projectRoot, &answers, treg); err != nil {
 				return err
 			}
 

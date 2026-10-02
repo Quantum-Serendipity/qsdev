@@ -159,7 +159,7 @@ func ShellPathVars() map[string]string {
 func orgOverlayEntries(cfg branding.Config, home string, getenv func(string) string) []protectedEntry {
 	sep := string(filepath.Separator)
 	var entries []protectedEntry
-	for _, dir := range spellings(filepath.Join(home, ".config", cfg.AppName)) {
+	for _, dir := range spellings(cfg.OrgConfigDir(home)) {
 		entries = append(entries, protectedEntry{dir + sep, "config"})
 	}
 	for _, file := range spellings(getenv(orgConfigEnv(cfg))) {

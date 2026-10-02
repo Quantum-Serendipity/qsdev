@@ -209,10 +209,15 @@ func TestIsProtected_GeneratorInputs_WhiteLabel(t *testing.T) {
 // TestGeneratorInputsMatchWriters cross-checks canon's derivation against the
 // packages that write the generator inputs, so a renamed file cannot silently
 // fall out of protection. catalog.OrgConfigPath skips its home fallback in a
-// test binary, so the overlay is checked through the environment variable.
+// test binary, so the overlay is checked through the environment variable and
+// the fallback through catalog.HomeOrgConfigPath, the path it falls back to.
 func TestGeneratorInputsMatchWriters(t *testing.T) {
 	withOrgConfig(t)
 	proj := filepath.FromSlash("/work/repo")
+	home, err := os.UserHomeDir()
+	if err != nil {
+		t.Fatalf("getting home dir: %v", err)
+	}
 
 	tests := []struct {
 		writer  string
@@ -223,6 +228,7 @@ func TestGeneratorInputsMatchWriters(t *testing.T) {
 		{"answers.DevenvCopyFile", filepath.Join(proj, filepath.FromSlash(answers.DevenvCopyFile())), "answers"},
 		{"state.InitStateFile", filepath.Join(proj, filepath.FromSlash(state.InitStateFile())), "answers"},
 		{"catalog.OrgConfigPath", catalog.OrgConfigPath(), "config"},
+		{"catalog.HomeOrgConfigPath", catalog.HomeOrgConfigPath(home), "config"},
 	}
 	for _, tt := range tests {
 		if strings.TrimSpace(tt.path) == "" {

@@ -33,8 +33,14 @@ func homeOrgConfigPath() string {
 	if err != nil {
 		return ""
 	}
+	return HomeOrgConfigPath(home)
+}
 
-	return filepath.Join(home, ".config", branding.Get().AppName, "defaults.yaml")
+// HomeOrgConfigPath returns the user-level defaults file below home,
+// <home>/.config/<app>/defaults.yaml: the path OrgConfigPath falls back to
+// when <EnvPrefix>ORG_CONFIG is unset.
+func HomeOrgConfigPath(home string) string {
+	return filepath.Join(branding.Get().OrgConfigDir(home), "defaults.yaml")
 }
 
 // OrgConfigFile returns the user-level defaults file path if it exists,

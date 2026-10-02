@@ -1,6 +1,7 @@
 package claudecode_test
 
 import (
+	"bytes"
 	"strings"
 	"testing"
 
@@ -126,4 +127,27 @@ func TestGenerateHookFiles_AllEnabled(t *testing.T) {
 			}
 		}
 	})
+}
+
+// TestPackageGuardContent pins that the content posture judges the guard
+// against is exactly what the generator writes for it.
+func TestPackageGuardContent(t *testing.T) {
+	t.Parallel()
+	files, err := claudecode.GenerateHookFiles(types.WizardAnswers{Hooks: types.HookChoices{SafetyBlock: true}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := claudecode.PackageGuardContent()
+	if len(want) == 0 {
+		t.Fatal("PackageGuardContent is empty")
+	}
+	for _, f := range files {
+		if f.Path == claudecode.PackageGuardPath {
+			if !bytes.Equal(f.Content, want) {
+				t.Error("generated package-guard.py differs from PackageGuardContent")
+			}
+			return
+		}
+	}
+	t.Fatalf("no %s generated", claudecode.PackageGuardPath)
 }

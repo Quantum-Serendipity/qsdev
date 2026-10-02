@@ -45,7 +45,10 @@ func checkGeneratedFiles(ctx CheckContext) []CheckResult {
 	results = append(results, manifestResults...)
 
 	expected := state.ExpectedState(genState, manifest)
-	if len(expected.Files) == 0 {
+	guards := guardScripts(ctx)
+	// A guard the generator writes is verified even when nothing records it.
+	generatesGuard := slices.ContainsFunc(guards, func(g string) bool { return ctx.GeneratedContent[g] != nil })
+	if len(expected.Files) == 0 && !generatesGuard {
 		if len(results) > 0 {
 			return results
 		}
@@ -62,7 +65,7 @@ func checkGeneratedFiles(ctx CheckContext) []CheckResult {
 		}}
 	}
 
-	return append(results, verifyGeneratedFiles(ctx.ProjectRoot, expected, guardScripts(ctx))...)
+	return append(results, verifyGeneratedFiles(ctx.ProjectRoot, expected, guards, ctx.GeneratedContent)...)
 }
 
 // guardScripts returns the project hook scripts a PreToolUse hook runs: the
@@ -190,9 +193,17 @@ func projectConfigured(ctx CheckContext) bool {
 // verifyGeneratedFiles reports each expected file that was modified, deleted
 // or no longer parses. A modified or deleted guard (one of guards, see
 // guardScripts) is critical: with it gone, the agent actions it vets run
-// unchecked.
-func verifyGeneratedFiles(projectRoot string, expected types.GeneratedState, guards []string) []CheckResult {
+// unchecked. A guard the generator writes (listed in generated) is judged
+// against that content, line endings aside, whether or not expected lists
+// it: the expected hashes come from the local state and the committed
+// manifest, and a change to the guard can re-hash or drop its entry.
+func verifyGeneratedFiles(projectRoot string, expected types.GeneratedState, guards []string, generated map[string][]byte) []CheckResult {
 	statuses := state.CheckModified(expected, projectRoot)
+	for _, guard := range guards {
+		if content, ok := generated[guard]; ok {
+			statuses[guard] = state.CheckContent(projectRoot, guard, content, expected.Files[guard].Mode)
+		}
+	}
 	// In an un-joined checkout (a fresh clone or CI) repair and update
 	// refuse to run until the checkout is joined, and auto-fix has no local
 	// generation to restore from, so the remediation joins first.
@@ -216,7 +227,7 @@ func verifyGeneratedFiles(projectRoot string, expected types.GeneratedState, gua
 
 		switch status.Status {
 		case types.Modified:
-			if storedFile.Strategy.IsHumanEdited() {
+			if storedFile.Strategy.IsHumanEdited() && !slices.Contains(guards, relPath) {
 				// User-editable strategies: modification is expected, not a
 				// failure (their security content is checked separately).
 				userEdited = append(userEdited, relPath)
@@ -235,6 +246,9 @@ func verifyGeneratedFiles(projectRoot string, expected types.GeneratedState, gua
 			if slices.Contains(guards, relPath) {
 				r.Severity = SeverityCritical
 				r.Message = fmt.Sprintf("Guard script %s, run by a PreToolUse hook, has been modified", relPath)
+				if generated[relPath] != nil {
+					r.Message = fmt.Sprintf("Guard script %s, run by a PreToolUse hook, differs from the version this qsdev generates", relPath)
+				}
 				r.Remediation = guardRemediation(relPath)
 			}
 			results = append(results, remediate(r))

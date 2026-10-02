@@ -10,6 +10,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/Quantum-Serendipity/qsdev/addons/claudecode"
 	"github.com/Quantum-Serendipity/qsdev/internal/cmdutil"
 	"github.com/Quantum-Serendipity/qsdev/internal/posture"
 	"github.com/Quantum-Serendipity/qsdev/internal/posture/conformance"
@@ -160,7 +161,7 @@ func runPostureStatus(cmd *cobra.Command, args []string, opts postureStatusOptio
 	}
 
 	// Perform assessment.
-	report, err := posture.Assess(projectDir, posture.AssessOptions{FreshScan: opts.scan, ClaudeUserDir: claudeUserDir()})
+	report, err := posture.Assess(projectDir, postureOptions(posture.AssessOptions{FreshScan: opts.scan, ClaudeUserDir: claudeUserDir()}))
 	if err != nil {
 		if errors.Is(err, posture.ErrNotInitialized) {
 			fmt.Fprintf(cmd.ErrOrStderr(), "Project not initialized. Run '%s init' first.\n", branding.Get().AppName)
@@ -281,6 +282,14 @@ func exitForAudit(report *posture.PostureReport, auditLevel string) error {
 		}
 	}
 	return nil
+}
+
+// postureOptions returns opts with the generator's package guard as the
+// content the guard on disk is judged against, so every posture assessment
+// credits the guard only when it is what this qsdev writes.
+func postureOptions(opts posture.AssessOptions) posture.AssessOptions {
+	opts.PackageGuard = claudecode.PackageGuardContent()
+	return opts
 }
 
 // claudeUserDir returns the user Claude settings directory, whose

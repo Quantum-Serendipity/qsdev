@@ -462,3 +462,54 @@ func TestIsRecordedOutput(t *testing.T) {
 		})
 	}
 }
+
+// TestCheckContent pins that a file is judged against the content the
+// generator writes for it, not a recorded hash: a CRLF checkout of that
+// content (Git's core.autocrlf on Windows) is unmodified, and any other
+// difference, a lone CR included, is a modification.
+func TestCheckContent(t *testing.T) {
+	t.Parallel()
+	const want = "#!/usr/bin/env python3\nimport sys\n"
+	tests := []struct {
+		name   string
+		disk   *string
+		mode   os.FileMode // recorded mode; the file is written 0o644
+		status types.ModificationStatus
+	}{
+		{name: "identical", disk: ptr(want), status: types.Unmodified},
+		{name: "crlf checkout", disk: ptr("#!/usr/bin/env python3\r\nimport sys\r\n"), status: types.Unmodified},
+		{name: "lone carriage return", disk: ptr("#!/usr/bin/env python3\rimport sys\n"), status: types.Modified},
+		{name: "emptied", disk: ptr(""), status: types.Modified},
+		{name: "appended", disk: ptr(want + "sys.exit(0)\n"), status: types.Modified},
+		{name: "absent", status: types.Deleted},
+		{name: "mode recorded and kept", disk: ptr(want), mode: 0o644, status: types.Unmodified},
+	}
+	if runtime.GOOS != "windows" {
+		tests = append(tests, struct {
+			name   string
+			disk   *string
+			mode   os.FileMode
+			status types.ModificationStatus
+		}{name: "mode changed", disk: ptr(want), mode: 0o755, status: types.Modified})
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			dir := t.TempDir()
+			if tt.disk != nil {
+				if err := os.WriteFile(filepath.Join(dir, "guard.py"), []byte(*tt.disk), 0o644); err != nil {
+					t.Fatal(err)
+				}
+			}
+			got := CheckContent(dir, "guard.py", []byte(want), tt.mode)
+			if got.Status != tt.status {
+				t.Errorf("Status = %v, want %v", got.Status, tt.status)
+			}
+			if got.StoredHash != ComputeHash([]byte(want)) {
+				t.Errorf("StoredHash = %q, want the hash of the generated content", got.StoredHash)
+			}
+		})
+	}
+}
+
+func ptr(s string) *string { return &s }

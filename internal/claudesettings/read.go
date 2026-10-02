@@ -24,9 +24,10 @@ type Effective struct {
 	// User, Project and Local are the parsed files, nil when the file is
 	// absent or (User) not read.
 	User, Project, Local *Settings
-	// Sources maps KeyDisableAllHooks, KeyDefaultMode and
-	// KeyDisableBypassPermissionsMode to the RelPath (UserLabel for the user
-	// file) of every file whose value is in effect, in read order.
+	// Sources maps KeyDisableAllHooks, KeyDefaultMode,
+	// KeyDisableBypassPermissionsMode and EnvSourceKey of each env variable
+	// to the RelPath (UserLabel for the user file) of every file whose value
+	// is in effect, in read order.
 	Sources map[string][]string
 }
 
@@ -92,6 +93,11 @@ func ReadWith(projectRoot string, opts ReadOptions) (Effective, error) {
 	return e, nil
 }
 
+// EnvSourceKey is the Effective.Sources key of the env variable name.
+func EnvSourceKey(name string) string {
+	return KeyEnv + "." + name
+}
+
 // readFile parses the settings file at path, named label in errors; it
 // returns nil when the file does not exist.
 func readFile(path, label string) (*Settings, error) {
@@ -116,6 +122,9 @@ func (e *Effective) overlay(rel string, s Settings) {
 		e.Hooks[event] = append(e.Hooks[event], matchers...)
 	}
 	maps.Copy(e.Env, s.Env)
+	for k := range s.Env {
+		e.Sources[EnvSourceKey(k)] = []string{rel}
+	}
 	if s.DisableAllHooks {
 		e.DisableAllHooks = true
 		e.Sources[KeyDisableAllHooks] = append(e.Sources[KeyDisableAllHooks], rel)

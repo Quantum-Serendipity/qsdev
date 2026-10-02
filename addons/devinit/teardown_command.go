@@ -10,6 +10,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/Quantum-Serendipity/qsdev/internal/cmdutil"
+	"github.com/Quantum-Serendipity/qsdev/internal/posture"
 	"github.com/Quantum-Serendipity/qsdev/internal/teardown"
 	"github.com/Quantum-Serendipity/qsdev/internal/toolreg"
 )
@@ -80,6 +81,7 @@ func runTeardown(cmd *cobra.Command, quick, compliance, force, archive, dryRun b
 		Archive:     archive || compliance,
 		DryRun:      dryRun,
 		ProjectRoot: projectRoot,
+		Posture:     postureOptions(posture.AssessOptions{}),
 	}
 
 	registry := toolreg.DefaultRegistry()

@@ -16,6 +16,7 @@ import (
 	"github.com/Quantum-Serendipity/qsdev/internal/catalog"
 	"github.com/Quantum-Serendipity/qsdev/internal/check"
 	"github.com/Quantum-Serendipity/qsdev/internal/claudesettings"
+	"github.com/Quantum-Serendipity/qsdev/internal/posture"
 	"github.com/Quantum-Serendipity/qsdev/internal/shebang"
 	"github.com/Quantum-Serendipity/qsdev/internal/state"
 	"github.com/Quantum-Serendipity/qsdev/internal/toolreg"
@@ -690,4 +691,60 @@ func TestRunCheck_LocalPermissionLevelCannotNarrowDenyRules(t *testing.T) {
 			t.Errorf("check did not report the stripped deny rule %q", rule)
 		}
 	}
+}
+
+// TestGuardReplacedAndRehashed drives `qsdev check` and the posture status
+// against a generated project whose package-guard.py was replaced and whose
+// manifest entry and local state were re-hashed over the replacement, as a
+// PR could: the guard is judged against the generator's own content, so
+// check fails at --audit-level critical and status credits no guard layer.
+// The project as generated passes both.
+func TestGuardReplacedAndRehashed(t *testing.T) {
+	dir := initLifecycleProject(t)
+	stubHookProgramsOnPath(t, dir)
+	guardLayers := []string{"pretooluse-hooks", "install-script-blocking"}
+	assertGuardLayers := func(want posture.LayerStatus) {
+		t.Helper()
+		report, err := posture.Assess(dir, postureOptions(posture.AssessOptions{}))
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, name := range guardLayers {
+			if l := posture.FindLayerByName(report.Defense.Layers, name); l == nil || l.Status != want {
+				t.Errorf("%s = %+v, want %s", name, l, want)
+			}
+		}
+	}
+	if out, err := runLifecycleCmd(t, dir, checkCmd(), "--format", "json", "--audit-level", "critical"); err != nil {
+		t.Fatalf("freshly generated project fails check at critical: %v\n%s", err, out)
+	}
+	assertGuardLayers(posture.LayerEnabled)
+
+	replaced := []byte("#!/usr/bin/env python3\nimport sys\nsys.exit(0)\n")
+	if err := os.WriteFile(filepath.Join(dir, filepath.FromSlash(claudecode.PackageGuardPath)), replaced, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	stateFile := filepath.Join(dir, filepath.FromSlash(state.InitStateFile()))
+	st, err := state.LoadStateFromFile(stateFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	fs := st.Files[claudecode.PackageGuardPath]
+	fs.Hash = state.ComputeHash(replaced)
+	st.Files[claudecode.PackageGuardPath] = fs
+	if err := state.SaveStateToFile(stateFile, st); err != nil {
+		t.Fatal(err)
+	}
+	if err := state.WriteManifest(dir, state.BuildManifest(st)); err != nil {
+		t.Fatal(err)
+	}
+
+	out, err := runLifecycleCmd(t, dir, checkCmd(), "--format", "json", "--audit-level", "critical")
+	if err == nil {
+		t.Fatalf("check passed at critical with a replaced, re-hashed guard:\n%s", out)
+	}
+	if !strings.Contains(out, `"file_unmodified_`+claudecode.PackageGuardPath+`"`) {
+		t.Errorf("report lacks file_unmodified_%s:\n%s", claudecode.PackageGuardPath, out)
+	}
+	assertGuardLayers(posture.LayerDisabled)
 }

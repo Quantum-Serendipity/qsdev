@@ -97,6 +97,9 @@ type assessmentInput struct {
 	guardOnce func() guardState
 	// userSettingsRead records that claudeSettings includes the user file.
 	userSettingsRead bool
+	// packageGuard is the generator's package-guard.py (see
+	// AssessOptions.PackageGuard).
+	packageGuard []byte
 }
 
 // guardState is whether the package guard is in force, and why.
@@ -158,6 +161,11 @@ func (in assessmentInput) judgeGuard() guardState {
 	if reason := in.guardModified(); reason != "" {
 		return disabled(reason)
 	}
+	if prefix := settings.Env[claudesettings.EnvShellPrefix]; prefix != "" {
+		return disabled(fmt.Sprintf("hook commands are prefixed with %s=%q (set in %s), so the hook may never run package-guard.py",
+			claudesettings.EnvShellPrefix, prefix,
+			strings.Join(settings.Sources[claudesettings.EnvSourceKey(claudesettings.EnvShellPrefix)], ", ")))
+	}
 	if !settings.RunsScript(claudesettings.EventPreToolUse, "Bash", packageGuardPath, branding.Get().AppName, claudesettings.GuardHookTimeout) {
 		return disabled(fmt.Sprintf("package-guard.py not registered as a blocking PreToolUse hook matching Bash "+
 			"(not async, timeout at least %ds) in %s or %s",
@@ -172,28 +180,26 @@ func (in assessmentInput) judgeGuard() guardState {
 }
 
 // guardModified returns why package-guard.py on disk cannot be credited as the
-// generated version, or "" when it is unmodified by the same judgement check
-// uses: state.CheckFile against the local state overlaid with the committed
-// manifest (state.ExpectedState), so a teammate's committed regeneration
-// counts as generated. A manifest that cannot be loaded leaves the local
-// state alone; check reports the manifest itself.
+// generated version, or "" when it is the content the generator writes (see
+// AssessOptions.PackageGuard), line endings aside, with its recorded mode.
+// The local state and the committed manifest are not consulted for the
+// content: either can be re-hashed along with an edited guard.
 func (in assessmentInput) guardModified() string {
-	if in.ProjectPath == "" {
+	switch {
+	case in.ProjectPath == "":
 		return "package-guard.py content not inspected"
+	case in.packageGuard == nil:
+		return "package-guard.py content not verified: no generated version to compare it with"
 	}
-	expected := in.GenState
-	if manifest, err := state.LoadManifest(filepath.Join(in.ProjectPath, state.ManifestFile())); err == nil {
-		expected = state.ExpectedState(in.GenState, manifest)
-	}
-	fs := state.CheckFile(in.ProjectPath, packageGuardPath, expected.Files[packageGuardPath])
+	fs := state.CheckContent(in.ProjectPath, packageGuardPath, in.packageGuard, in.GenState.Files[packageGuardPath].Mode)
 	switch fs.Status {
 	case types.Unmodified:
 		return ""
 	case types.Deleted:
 		return "package-guard.py not present"
 	case types.Modified:
-		return "package-guard.py modified from the generated version; run 'qsdev update --configs-only --overwrite-modified' to restore " +
-			packageGuardPath
+		return "package-guard.py modified from the generated version this qsdev writes; run " +
+			"'qsdev update --configs-only --overwrite-modified' to restore " + packageGuardPath
 	default:
 		return fmt.Sprintf("package-guard.py unreadable: %v", fs.Error)
 	}
@@ -500,14 +506,13 @@ func assessLayer(spec layerSpec, input assessmentInput) DefenseLayer {
 //
 // Enabled and Total count only the layers in scope at currentTier, matching
 // the tier-relative Score, so the "N/M layers" summary never contradicts it.
-func AssessDefenseLayers(projectPath string, enabledTools map[string]bool, detected types.DetectedProject, genState types.GeneratedState, currentTier int) DefenseCoverage {
-	return assessDefenseLayers(projectPath, claudesettings.ReadOptions{}, enabledTools, detected, genState, currentTier)
-}
-
-// assessDefenseLayers is AssessDefenseLayers reading the Claude settings with
-// settingsOpts, so a user-level disableAllHooks disables the guard layers.
-func assessDefenseLayers(projectPath string, settingsOpts claudesettings.ReadOptions, enabledTools map[string]bool,
+//
+// opts.ClaudeUserDir also reads the user Claude settings, so a user-level
+// disableAllHooks disables the guard layers; opts.PackageGuard is what the
+// guard on disk is judged against. opts.FreshScan is not used here.
+func AssessDefenseLayers(projectPath string, opts AssessOptions, enabledTools map[string]bool,
 	detected types.DetectedProject, genState types.GeneratedState, currentTier int) DefenseCoverage {
+	settingsOpts := claudesettings.ReadOptions{UserDir: opts.ClaudeUserDir}
 	input := assessmentInput{
 		ProjectPath:  projectPath,
 		EnabledTools: enabledTools,
@@ -517,6 +522,7 @@ func assessDefenseLayers(projectPath string, settingsOpts claudesettings.ReadOpt
 			return claudesettings.ReadWith(projectPath, settingsOpts)
 		}),
 		userSettingsRead: settingsOpts.UserDir != "",
+		packageGuard:     opts.PackageGuard,
 	}
 	input.guardOnce = sync.OnceValue(input.judgeGuard)
 

@@ -81,7 +81,7 @@ func Teardown(
 
 	// 8. If compliance: generate final posture report.
 	if opts.Profile == ProfileCompliance {
-		report, err := posture.Assess(opts.ProjectRoot, posture.AssessOptions{})
+		report, err := posture.Assess(opts.ProjectRoot, opts.Posture)
 		if err != nil {
 			// Non-fatal: log warning but continue with teardown.
 			fmt.Fprintf(w, "Warning: could not generate posture report: %v\n", err)

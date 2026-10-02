@@ -173,6 +173,12 @@ func runCheck(cmd *cobra.Command, format check.OutputFormat, auditLevel check.Au
 	if settings, ok := freshFiles[check.ClaudeSettingsRelPath]; ok {
 		ctx.ExpectedClaudeSettings = settings.Content
 	}
+	if len(freshFiles) > 0 {
+		ctx.GeneratedContent = make(map[string][]byte, len(freshFiles))
+		for rel, f := range freshFiles {
+			ctx.GeneratedContent[rel] = f.Content
+		}
+	}
 	if answers.ClaudeCode {
 		for _, h := range claudecode.HooksWithoutPolicy(answers) {
 			ctx.HooksWithoutPolicy = append(ctx.HooksWithoutPolicy, check.HookWithoutPolicy{Name: h.Name, PolicyKey: h.PolicyKey})
@@ -248,7 +254,7 @@ func evaluateCustomConformance(projectRoot string, scan bool) *check.CustomConfo
 	case policy == nil:
 		return nil
 	default:
-		report, assessErr := posture.Assess(projectRoot, posture.AssessOptions{FreshScan: scan})
+		report, assessErr := posture.Assess(projectRoot, postureOptions(posture.AssessOptions{FreshScan: scan}))
 		if assessErr != nil {
 			level = conformance.PolicyError(fmt.Errorf(
 				"cannot evaluate %s: assessing project posture: %w", policyFile, assessErr))

@@ -18,6 +18,9 @@ import (
 // its real hash, so any edit on disk makes it a modified guard.
 const pristineGuard = "#!/usr/bin/env python3\n\"\"\"Package guard.\"\"\"\nimport sys\n\nsys.exit(main())\n"
 
+// testAssessOpts supplies pristineGuard as the generator's package guard.
+var testAssessOpts = AssessOptions{PackageGuard: []byte(pristineGuard)}
+
 // guardedFiles returns the files of a project whose package guard is in
 // force, a pristine guard registered as a PreToolUse hook in settings.json,
 // with extra added over them.
@@ -79,7 +82,9 @@ func TestGuardEffective(t *testing.T) {
 		noProject bool
 		// guardMode, when set, is recorded as the guard's generated mode
 		// (fixtures write it 0o644).
-		guardMode  os.FileMode
+		guardMode os.FileMode
+		// noTemplate assesses without the generator's package guard.
+		noTemplate bool
 		want       LayerStatus
 		wantReason string
 	}{
@@ -220,11 +225,74 @@ func TestGuardEffective(t *testing.T) {
 			wantReason: "not registered as a blocking PreToolUse hook matching Bash",
 		},
 		{
-			name:     "manifest_newer_than_local_state",
-			files:    guardedFiles(nil),
-			disk:     map[string]string{packageGuardPath: pristineGuard + "# newer template\n"},
-			manifest: map[string]string{packageGuardPath: pristineGuard + "# newer template\n"},
-			want:     LayerEnabled,
+			// A PR replaces the guard and re-hashes its manifest entry: only
+			// the generator's own content vouches for the guard.
+			name:       "manifest_rehashed_over_replaced_guard",
+			files:      guardedFiles(nil),
+			disk:       map[string]string{packageGuardPath: "#!/usr/bin/env python3\nprint('{}')\n"},
+			manifest:   map[string]string{packageGuardPath: "#!/usr/bin/env python3\nprint('{}')\n"},
+			want:       LayerDisabled,
+			wantReason: "modified from the generated version",
+		},
+		{
+			name:       "state_records_replaced_guard",
+			files:      guardedFiles(map[string]string{packageGuardPath: "import sys\nsys.exit(0)\n"}),
+			want:       LayerDisabled,
+			wantReason: "modified from the generated version",
+		},
+		{
+			name:  "state_older_than_template",
+			files: guardedFiles(map[string]string{packageGuardPath: pristineGuard + "# older template\n"}),
+			disk:  map[string]string{packageGuardPath: pristineGuard},
+			want:  LayerEnabled,
+		},
+		{
+			name:  "crlf_checkout",
+			files: guardedFiles(nil),
+			disk:  map[string]string{packageGuardPath: strings.ReplaceAll(pristineGuard, "\n", "\r\n")},
+			want:  LayerEnabled,
+		},
+		{
+			name:       "no_generator_template",
+			files:      guardedFiles(nil),
+			noTemplate: true,
+			want:       LayerDisabled,
+			wantReason: "not verified",
+		},
+		{
+			name:       "shell_prefix_in_settings_local",
+			files:      guardedFiles(map[string]string{localPath: `{"env": {"CLAUDE_CODE_SHELL_PREFIX": "true"}}`}),
+			want:       LayerDisabled,
+			wantReason: `CLAUDE_CODE_SHELL_PREFIX="true" (set in ` + localPath + ")",
+		},
+		{
+			name:  "shell_prefix_empty",
+			files: guardedFiles(map[string]string{localPath: `{"env": {"CLAUDE_CODE_SHELL_PREFIX": ""}}`}),
+			want:  LayerEnabled,
+		},
+		{
+			name: "hook_args_exec_form",
+			files: guardedFiles(map[string]string{
+				".claude/settings.json": strings.Replace(settingsWithPackageGuard, `{"type": "command",`, `{"type": "command", "args": [],`, 1),
+			}),
+			want:       LayerDisabled,
+			wantReason: "not registered as a blocking PreToolUse hook matching Bash",
+		},
+		{
+			name: "hook_shell_powershell",
+			files: guardedFiles(map[string]string{
+				".claude/settings.json": strings.Replace(settingsWithPackageGuard, `{"type": "command",`, `{"type": "command", "shell": "powershell",`, 1),
+			}),
+			want:       LayerDisabled,
+			wantReason: "not registered as a blocking PreToolUse hook matching Bash",
+		},
+		{
+			name: "matcher_leading_close_bracket",
+			files: guardedFiles(map[string]string{
+				".claude/settings.json": strings.Replace(settingsWithPackageGuard, `"matcher": "Bash"`, `"matcher": "[]]?Bash"`, 1),
+			}),
+			want:       LayerDisabled,
+			wantReason: "not registered as a blocking PreToolUse hook matching Bash",
 		},
 		{
 			name:       "manifest_matches_but_guard_edited",
@@ -320,7 +388,11 @@ func TestGuardEffective(t *testing.T) {
 			if tools == nil {
 				tools = attachGuard
 			}
-			cov := AssessDefenseLayers(dir, tools, types.DetectedProject{}, genState, 3)
+			opts := testAssessOpts
+			if tt.noTemplate {
+				opts = AssessOptions{}
+			}
+			cov := AssessDefenseLayers(dir, opts, tools, types.DetectedProject{}, genState, 3)
 			for _, name := range guardLayers {
 				got := layerByName(t, cov, name)
 				if got.Status != tt.want {
@@ -390,7 +462,7 @@ func TestAssess_GuttedGuard(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 			dir := writeT1GuardedProject(t)
-			opts := AssessOptions{ClaudeUserDir: t.TempDir()}
+			opts := AssessOptions{ClaudeUserDir: t.TempDir(), PackageGuard: []byte(pristineGuard)}
 			pristine, err := Assess(dir, opts)
 			if err != nil {
 				t.Fatalf("Assess: %v", err)
@@ -437,7 +509,7 @@ func TestGuardEffective_ModeChanged(t *testing.T) {
 	fs := genState.Files[packageGuardPath]
 	fs.Mode = 0o755 // fixtures write 0o644: the guard lost its exec bit
 	genState.Files[packageGuardPath] = fs
-	cov := AssessDefenseLayers(dir, map[string]bool{"attach-guard": true}, types.DetectedProject{}, genState, 3)
+	cov := AssessDefenseLayers(dir, testAssessOpts, map[string]bool{"attach-guard": true}, types.DetectedProject{}, genState, 3)
 	want := LayerDisabled
 	if runtime.GOOS == "windows" {
 		want = LayerEnabled

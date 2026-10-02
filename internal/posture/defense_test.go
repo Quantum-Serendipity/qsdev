@@ -27,7 +27,7 @@ func TestAssessDefenseLayers_AllEnabled(t *testing.T) {
 		".semgrepignore":          "",
 	}))
 
-	result := AssessDefenseLayers(dir, enabledTools, detected, genState, 3)
+	result := AssessDefenseLayers(dir, testAssessOpts, enabledTools, detected, genState, 3)
 
 	if result.Score != 100.0 {
 		t.Errorf("all enabled: score = %f, want 100.0", result.Score)
@@ -48,7 +48,7 @@ func TestAssessDefenseLayers_ContainerSecurityNA(t *testing.T) {
 		Files: map[string]types.FileState{},
 	}
 
-	result := AssessDefenseLayers("", enabledTools, detected, genState, 3)
+	result := AssessDefenseLayers("", testAssessOpts, enabledTools, detected, genState, 3)
 
 	found := false
 	for _, l := range result.Layers {
@@ -73,7 +73,7 @@ func TestAssessDefenseLayers_ContainerSecurityDisabledWithDockerfile(t *testing.
 		Files: map[string]types.FileState{},
 	}
 
-	result := AssessDefenseLayers("", enabledTools, detected, genState, 3)
+	result := AssessDefenseLayers("", testAssessOpts, enabledTools, detected, genState, 3)
 
 	for _, l := range result.Layers {
 		if l.Name == "container-security" {
@@ -96,7 +96,7 @@ func TestAssessDefenseLayers_SecretsPartial(t *testing.T) {
 		Files: map[string]types.FileState{},
 	}
 
-	result := AssessDefenseLayers("", enabledTools, detected, genState, 3)
+	result := AssessDefenseLayers("", testAssessOpts, enabledTools, detected, genState, 3)
 
 	for _, l := range result.Layers {
 		if l.Name == "secrets-scanning" {
@@ -122,7 +122,7 @@ func TestAssessDefenseLayers_SecretsFull(t *testing.T) {
 		Files: map[string]types.FileState{},
 	}
 
-	result := AssessDefenseLayers("", enabledTools, detected, genState, 3)
+	result := AssessDefenseLayers("", testAssessOpts, enabledTools, detected, genState, 3)
 
 	for _, l := range result.Layers {
 		if l.Name == "secrets-scanning" {
@@ -148,7 +148,7 @@ func TestAssessDefenseLayers_PreToolUseGuardAbsent(t *testing.T) {
 		Files: map[string]types.FileState{},
 	}
 
-	result := AssessDefenseLayers("", enabledTools, detected, genState, 3)
+	result := AssessDefenseLayers("", testAssessOpts, enabledTools, detected, genState, 3)
 
 	for _, l := range result.Layers {
 		if l.Name == "pretooluse-hooks" {
@@ -187,7 +187,7 @@ func TestAssessDefenseLayers_PreToolUseFull(t *testing.T) {
 			dir, genState := writeProjectFiles(t, guardedFiles(map[string]string{
 				".claude/settings.json": tt.settings,
 			}))
-			result := AssessDefenseLayers(dir, map[string]bool{"attach-guard": true}, types.DetectedProject{}, genState, 3)
+			result := AssessDefenseLayers(dir, testAssessOpts, map[string]bool{"attach-guard": true}, types.DetectedProject{}, genState, 3)
 			if got := layerByName(t, result, "pretooluse-hooks"); got.Status != tt.want {
 				t.Errorf("pretooluse-hooks: status = %q (%s), want %q", got.Status, got.Reason, tt.want)
 			}
@@ -201,7 +201,7 @@ func TestAssessDefenseLayers_NixHardening(t *testing.T) {
 
 	t.Run("enabled when devenv.nix carries hardening", func(t *testing.T) {
 		dir, genState := writeProjectFiles(t, map[string]string{"devenv.nix": hardenedDevenvNix})
-		result := AssessDefenseLayers(dir, enabledTools, detected, genState, 3)
+		result := AssessDefenseLayers(dir, testAssessOpts, enabledTools, detected, genState, 3)
 		for _, l := range result.Layers {
 			if l.Name == "nix-hardening" {
 				if l.Status != LayerEnabled {
@@ -217,7 +217,7 @@ func TestAssessDefenseLayers_NixHardening(t *testing.T) {
 		genState := types.GeneratedState{
 			Files: map[string]types.FileState{},
 		}
-		result := AssessDefenseLayers("", enabledTools, detected, genState, 3)
+		result := AssessDefenseLayers("", testAssessOpts, enabledTools, detected, genState, 3)
 		for _, l := range result.Layers {
 			if l.Name == "nix-hardening" {
 				if l.Status != LayerDisabled {
@@ -327,7 +327,7 @@ func TestAssessDefenseLayers_SAST(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 			dir, genState := writeProjectFiles(t, tt.files)
-			l := layerByName(t, AssessDefenseLayers(dir, tt.tools, types.DetectedProject{}, genState, 3), "sast")
+			l := layerByName(t, AssessDefenseLayers(dir, testAssessOpts, tt.tools, types.DetectedProject{}, genState, 3), "sast")
 			if l.Status != tt.want {
 				t.Errorf("sast: status = %q (%s), want %q", l.Status, l.Reason, tt.want)
 			}
@@ -394,7 +394,7 @@ func TestAssessDefenseLayers_LicenseCompliance(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 			dir, genState := writeProjectFiles(t, tt.files)
-			l := layerByName(t, AssessDefenseLayers(dir, tt.tools, types.DetectedProject{}, genState, 3), "license-compliance")
+			l := layerByName(t, AssessDefenseLayers(dir, testAssessOpts, tt.tools, types.DetectedProject{}, genState, 3), "license-compliance")
 			if l.Status != tt.want {
 				t.Errorf("license-compliance: status = %q (%s), want %q", l.Status, l.Reason, tt.want)
 			}
@@ -405,6 +405,7 @@ func TestAssessDefenseLayers_LicenseCompliance(t *testing.T) {
 func TestAssessDefenseLayers_LayerCount(t *testing.T) {
 	result := AssessDefenseLayers(
 		"",
+		testAssessOpts,
 		map[string]bool{},
 		types.DetectedProject{},
 		types.GeneratedState{Files: map[string]types.FileState{}},
@@ -421,7 +422,7 @@ func TestAssessDefenseLayers_AgeGating(t *testing.T) {
 	t.Run("enabled with package-guard", func(t *testing.T) {
 		enabledTools := map[string]bool{"attach-guard": true}
 		dir, genState := writeProjectFiles(t, guardedFiles(nil))
-		result := AssessDefenseLayers(dir, enabledTools, detected, genState, 3)
+		result := AssessDefenseLayers(dir, testAssessOpts, enabledTools, detected, genState, 3)
 		for _, l := range result.Layers {
 			if l.Name == "age-gating" {
 				if l.Status != LayerEnabled {
@@ -452,7 +453,7 @@ func TestAssessDefenseLayers_AgeGating(t *testing.T) {
 		}
 		for _, tt := range tests {
 			t.Run(tt.name, func(t *testing.T) {
-				result := AssessDefenseLayers(dir, enabledTools, tt.detected, genState, 3)
+				result := AssessDefenseLayers(dir, testAssessOpts, enabledTools, tt.detected, genState, 3)
 				for _, l := range result.Layers {
 					if l.Name != "age-gating" {
 						continue
@@ -474,7 +475,7 @@ func TestAssessDefenseLayers_AgeGating(t *testing.T) {
 				".claude/hooks/package-guard.py": {},
 			},
 		}
-		result := AssessDefenseLayers("", enabledTools, detected, genState, 3)
+		result := AssessDefenseLayers("", testAssessOpts, enabledTools, detected, genState, 3)
 		for _, l := range result.Layers {
 			if l.Name == "age-gating" {
 				if l.Status != LayerDisabled {
@@ -491,6 +492,7 @@ func TestAssessDefenseLayers_MinTierValues(t *testing.T) {
 	t.Parallel()
 	result := AssessDefenseLayers(
 		"",
+		testAssessOpts,
 		map[string]bool{},
 		types.DetectedProject{},
 		types.GeneratedState{Files: map[string]types.FileState{}},
@@ -544,7 +546,7 @@ func TestAssessDefenseLayers_T1ScoreIgnoresHigherTierLayers(t *testing.T) {
 	// At tier 1, only T1 layers are considered.
 	// pretooluse-hooks (T1, critical) should be enabled.
 	// Higher-tier layers like secrets-scanning (T2), sast (T3) should be excluded.
-	result := AssessDefenseLayers(dir, enabledTools, detected, genState, 1)
+	result := AssessDefenseLayers(dir, testAssessOpts, enabledTools, detected, genState, 1)
 
 	if result.Score == 0 {
 		t.Error("T1 score should not be 0 when T1 layers are enabled")
@@ -552,7 +554,7 @@ func TestAssessDefenseLayers_T1ScoreIgnoresHigherTierLayers(t *testing.T) {
 
 	// Now test at tier 3 with same tools — score should be lower because
 	// higher-tier layers are included but disabled.
-	resultT3 := AssessDefenseLayers(dir, enabledTools, detected, genState, 3)
+	resultT3 := AssessDefenseLayers(dir, testAssessOpts, enabledTools, detected, genState, 3)
 
 	if resultT3.Score >= result.Score {
 		t.Errorf("T3 score (%f) should be lower than T1 score (%f) with same tools, because more layers are in scope but disabled",

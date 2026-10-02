@@ -621,7 +621,7 @@ func TestVerifyGeneratedFiles_UnjoinedCheckoutJoinsFirst(t *testing.T) {
 		}
 		expected := state.RecordFiles([]types.GeneratedFile{{Path: "deleted.txt", Content: []byte("x"), Mode: 0o644}})
 		var r *CheckResult
-		for _, res := range verifyGeneratedFiles(dir, expected, nil) {
+		for _, res := range verifyGeneratedFiles(dir, expected, nil, nil) {
 			if res.Name == "file_exists_deleted.txt" {
 				r = &res
 			}

@@ -5,13 +5,30 @@ import (
 	"github.com/Quantum-Serendipity/qsdev/pkg/types"
 )
 
+// PackageGuardPath is the project-relative path of the package guard.
+const PackageGuardPath = ".claude/hooks/package-guard.py"
+
+// packageGuardTemplate is the embedded template written to PackageGuardPath.
+const packageGuardTemplate = "templates/hooks/package-guard.py"
+
+// PackageGuardContent returns the content the generator writes to
+// PackageGuardPath: the embedded template, copied verbatim. The guard on
+// disk is judged against it (posture.AssessOptions.PackageGuard).
+func PackageGuardContent() []byte {
+	content, err := templateFS.ReadFile(packageGuardTemplate)
+	if err != nil {
+		return nil // embedded at build time; nil leaves the guard unverified
+	}
+	return content
+}
+
 // GenerateHookFiles returns GeneratedFile entries for all enabled hook presets.
 func GenerateHookFiles(answers types.WizardAnswers) ([]types.GeneratedFile, error) {
 	specs := []hookFileSpec{
 		{
 			enabled:      packageGuardEnabled(answers),
-			templatePath: "templates/hooks/package-guard.py",
-			outputPath:   ".claude/hooks/package-guard.py",
+			templatePath: packageGuardTemplate,
+			outputPath:   PackageGuardPath,
 			mode:         fileutil.ModeExecutable,
 			strategy:     types.Overwrite,
 			owner:        "attach-guard",

@@ -302,4 +302,10 @@ type AssessOptions struct {
 	// reads; empty judges the project files alone, so the result does not
 	// depend on the machine.
 	ClaudeUserDir string
+	// PackageGuard is the content the generator writes for package-guard.py
+	// (claudecode.PackageGuardContent). The guard on disk is credited only
+	// when it is this content, never by a recorded or committed hash, which
+	// a change to the guard can re-hash along with it; nil leaves the guard
+	// unverified, so it is not credited.
+	PackageGuard []byte
 }

@@ -1,7 +1,9 @@
 package state
 
 import (
+	"bytes"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -95,10 +97,38 @@ func CheckModified(stored types.GeneratedState, projectRoot string) map[string]F
 // recorded and meaningful, the permission bits match. An empty file is
 // content like any other.
 func CheckFile(projectRoot, relPath string, fs types.FileState) FileStatus {
+	return checkOnDisk(projectRoot, relPath, fs.Hash, fs.Mode, func(data []byte) bool {
+		return ComputeHash(data) == fs.Hash
+	})
+}
+
+// CheckContent compares the file at relPath under projectRoot with want, the
+// content the generator writes for it, rather than with a recorded hash, so a
+// committed state or manifest re-hashed over other content cannot vouch for
+// it. A checkout whose lines end in CRLF (Git's core.autocrlf on Windows) of
+// want is unmodified; any other difference, a lone CR included, is not. mode
+// is compared as CheckFile compares the recorded mode.
+func CheckContent(projectRoot, relPath string, want []byte, mode os.FileMode) FileStatus {
+	normalized := crlfToLF(want)
+	return checkOnDisk(projectRoot, relPath, ComputeHash(want), mode, func(data []byte) bool {
+		return bytes.Equal(crlfToLF(data), normalized)
+	})
+}
+
+// crlfToLF replaces every CRLF line ending in data with LF.
+func crlfToLF(data []byte) []byte {
+	return bytes.ReplaceAll(data, []byte("\r\n"), []byte("\n"))
+}
+
+// checkOnDisk reads the file at relPath under projectRoot and reports it
+// unmodified when matches accepts its content and, where recorded and
+// meaningful, its permission bits equal mode. storedHash is reported as the
+// expected hash.
+func checkOnDisk(projectRoot, relPath, storedHash string, mode os.FileMode, matches func([]byte) bool) FileStatus {
 	absPath := filepath.Join(projectRoot, relPath)
 	status := FileStatus{
 		Path:       relPath,
-		StoredHash: fs.Hash,
+		StoredHash: storedHash,
 	}
 
 	info, err := os.Stat(absPath)
@@ -112,19 +142,19 @@ func CheckFile(projectRoot, relPath string, fs types.FileState) FileStatus {
 		return status
 	}
 
-	hash, err := ComputeFileHash(absPath)
+	data, err := os.ReadFile(absPath)
 	if err != nil {
 		status.Status = types.Unknown
-		status.Error = err
+		status.Error = fmt.Errorf("computing file hash for %s: %w", absPath, err)
 		return status
 	}
-	status.CurrentHash = hash
+	status.CurrentHash = ComputeHash(data)
 
 	// A zero stored mode means the mode was never recorded (legacy state or a
-	// generator that relied on the pipeline default), so only the hash can
+	// generator that relied on the pipeline default), so only the content can
 	// be compared.
-	modeMatch := runtime.GOOS == "windows" || fs.Mode == 0 || info.Mode().Perm() == fs.Mode.Perm()
-	if hash == fs.Hash && modeMatch {
+	modeMatch := runtime.GOOS == "windows" || mode == 0 || info.Mode().Perm() == mode.Perm()
+	if matches(data) && modeMatch {
 		status.Status = types.Unmodified
 	} else {
 		status.Status = types.Modified

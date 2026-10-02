@@ -10,6 +10,7 @@ import (
 
 	"gopkg.in/yaml.v3"
 
+	"github.com/Quantum-Serendipity/qsdev/addons/claudecode"
 	"github.com/Quantum-Serendipity/qsdev/internal/evidence"
 	"github.com/Quantum-Serendipity/qsdev/internal/posture"
 	"github.com/Quantum-Serendipity/qsdev/internal/state"
@@ -152,7 +153,7 @@ func TestEvidenceCmd_ParityWithPostureAssess(t *testing.T) {
 	}
 	report := parseEvidenceJSON(t, out)
 
-	assessed, err := posture.Assess(dir, posture.AssessOptions{})
+	assessed, err := posture.Assess(dir, postureOptions(posture.AssessOptions{}))
 	if err != nil {
 		t.Fatalf("posture.Assess failed: %v", err)
 	}
@@ -203,14 +204,15 @@ func TestEvidenceCmd_EnforcedLayerAddressed(t *testing.T) {
 	writeInitialized(t, dir)
 
 	// Persist a real init-state manifest that enables attach-guard and records
-	// the generated guard files with their real hashes.
+	// the generated guard files with their real hashes; the guard is the one
+	// the generator writes.
 	st := types.GeneratedState{
 		QsdevVersion: "0.8.0",
 		EnabledTools: map[string]bool{"attach-guard": true},
 		Files:        map[string]types.FileState{},
 	}
 	for rel, content := range map[string]string{
-		".claude/hooks/package-guard.py": "#!/usr/bin/env python3\n",
+		claudecode.PackageGuardPath: string(claudecode.PackageGuardContent()),
 		".claude/settings.json": `{"hooks": {"PreToolUse": [{"matcher": "Bash", "hooks": [` +
 			`{"type": "command", "command": "\"${CLAUDE_PROJECT_DIR}\"/.claude/hooks/package-guard.py"}]}]}}`,
 	} {

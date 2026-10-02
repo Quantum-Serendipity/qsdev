@@ -174,6 +174,12 @@ type CheckContext struct {
 	// produces for the project's saved answers (nil when unknown); its hook
 	// registrations and bypass setting must still be in force on disk.
 	ExpectedClaudeSettings []byte
+	// GeneratedContent maps the project-relative path of each file the
+	// generator writes for the project's saved answers to its content (nil
+	// when unknown). A guard script is judged against it rather than against
+	// the recorded or committed hash, which a change to the guard can
+	// re-hash along with it.
+	GeneratedContent map[string][]byte
 	// ManifestFile is the committed manifest of machine-owned generated files
 	// (state.ManifestFile under the project root). Unlike StateFile it exists
 	// on a clean CI checkout, so it is what CI verifies generated files

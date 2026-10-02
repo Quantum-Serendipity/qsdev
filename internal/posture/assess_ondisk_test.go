@@ -79,7 +79,7 @@ func TestAssess_StateListedFilesMustExistOnDisk(t *testing.T) {
 			}
 			writeState(t, root, filepath.Join(".devinit", ".qsdev-init-state.yaml"), st)
 
-			report, err := Assess(root, AssessOptions{})
+			report, err := Assess(root, testAssessOpts)
 			if err != nil {
 				t.Fatalf("Assess: %v", err)
 			}

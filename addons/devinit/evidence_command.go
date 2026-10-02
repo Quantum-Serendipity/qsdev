@@ -101,7 +101,7 @@ func runEvidence(cmd *cobra.Command, frameworkID, format string) error {
 	}
 	projectName := filepath.Base(projectRoot)
 
-	report, err := posture.Assess(projectRoot, posture.AssessOptions{})
+	report, err := posture.Assess(projectRoot, postureOptions(posture.AssessOptions{}))
 	if err != nil {
 		if errors.Is(err, posture.ErrNotInitialized) {
 			_, _ = fmt.Fprintf(cmd.ErrOrStderr(),

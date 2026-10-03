@@ -8,10 +8,8 @@ import (
 
 // ReadOnlyAnnotation marks a command whose read-only invocation starts no
 // process other than procexec's declared local probes (so it runs no project
-// code and fetches no packages) and mutates no project or user state. The one
-// network use it allows is a GET of qsdev's own release metadata, which
-// `update --dry-run` makes on a release build to preview the binary stage
-// (dev builds skip it). Its value is the boolean flag that makes the command
+// code and fetches no packages), makes no network request and mutates no
+// project or user state. Its value is the boolean flag that makes the command
 // read-only, or "" when its default invocation is.
 const ReadOnlyAnnotation = "qsdev.readonly"
 

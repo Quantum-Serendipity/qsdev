@@ -612,10 +612,11 @@ func TestUpdateDryRunNoLockChange(t *testing.T) {
 	}
 }
 
-// TestUpdateDryRun_ReleaseBuildOnlyQueriesRelease pins what the read-only
-// contract allows `update --dry-run` on a release build: one release metadata
-// query, which the preview reports, and no download, install or exec.
-func TestUpdateDryRun_ReleaseBuildOnlyQueriesRelease(t *testing.T) {
+// TestUpdateDryRun_ReleaseBuildQueriesNothing pins the read-only contract
+// for `update --dry-run` on a release build: the preview names the binary
+// stage but makes no release metadata query (no network), download, install
+// or exec. `update --check` is the explicit network query.
+func TestUpdateDryRun_ReleaseBuildQueriesNothing(t *testing.T) {
 	t.Chdir(t.TempDir())
 	t.Setenv(procexec.ForbidExecEnv, "1")
 
@@ -623,11 +624,8 @@ func TestUpdateDryRun_ReleaseBuildOnlyQueriesRelease(t *testing.T) {
 	t.Cleanup(func() { binaryVersion, checkForUpdate, doSelfUpdate = origVersion, origCheck, origDo })
 	binaryVersion = func() string { return "v0.7.9" }
 	checks := 0
-	checkForUpdate = func(_ context.Context, _ selfupdate.Config, current string) (*selfupdate.Release, error) {
+	checkForUpdate = func(context.Context, selfupdate.Config, string) (*selfupdate.Release, error) {
 		checks++
-		if current != "0.7.9" {
-			t.Errorf("checked for updates from %q, want 0.7.9", current)
-		}
 		return &selfupdate.Release{Version: "0.8.0"}, nil
 	}
 	doSelfUpdate = func(context.Context, selfupdate.Config, *selfupdate.Release) error {
@@ -635,18 +633,26 @@ func TestUpdateDryRun_ReleaseBuildOnlyQueriesRelease(t *testing.T) {
 		return nil
 	}
 
-	cmd := updateCmd()
-	var out bytes.Buffer
-	cmd.SetOut(&out)
-	cmd.SetErr(&out)
-	cmd.SetArgs([]string{"--dry-run", "--self-only"})
-	if err := cmd.Execute(); err != nil {
-		t.Fatalf("update --dry-run: %v\n%s", err, out.String())
-	}
-	if checks != 1 {
-		t.Errorf("release metadata queried %d times, want 1", checks)
-	}
-	if !strings.Contains(out.String(), "would update v0.7.9 → v0.8.0") {
-		t.Errorf("dry-run did not preview the binary stage:\n%s", out.String())
+	for _, args := range [][]string{
+		{"--dry-run", "--self-only"},
+		{"--dry-run", "--self-only", "--force"},
+	} {
+		t.Run(strings.Join(args, " "), func(t *testing.T) {
+			checks = 0
+			cmd := updateCmd()
+			var out bytes.Buffer
+			cmd.SetOut(&out)
+			cmd.SetErr(&out)
+			cmd.SetArgs(args)
+			if err := cmd.Execute(); err != nil {
+				t.Fatalf("update %v: %v\n%s", args, err, out.String())
+			}
+			if checks != 0 {
+				t.Errorf("release metadata queried %d times, want 0", checks)
+			}
+			if !strings.Contains(out.String(), stageSelfUpdate) || !strings.Contains(out.String(), "qsdev update --check") {
+				t.Errorf("dry-run did not preview the binary stage:\n%s", out.String())
+			}
+		})
 	}
 }

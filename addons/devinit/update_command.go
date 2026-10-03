@@ -457,8 +457,8 @@ var (
 )
 
 // runSelfUpdateStage checks for and installs a newer binary. Under --dry-run
-// it still queries the release metadata endpoint, which is what the preview
-// reports, but downloads and installs nothing.
+// it is read-only, so it queries no release metadata (no network) and points
+// at `qsdev update --check`, the explicit query.
 func runSelfUpdateStage(cmd *cobra.Command, opts FullUpdateOptions) StageResult {
 	currentVersion := strings.TrimPrefix(binaryVersion(), "v")
 
@@ -467,6 +467,14 @@ func runSelfUpdateStage(cmd *cobra.Command, opts FullUpdateOptions) StageResult 
 			Name:    stageSelfUpdate,
 			Status:  StageSkipped,
 			Message: "dev build, skipping version check",
+		}
+	}
+
+	if opts.DryRun {
+		return StageResult{
+			Name:    stageSelfUpdate,
+			Status:  StageSkipped,
+			Message: fmt.Sprintf("would check for a release newer than v%s; run `qsdev update --check` to query it", currentVersion),
 		}
 	}
 
@@ -485,7 +493,7 @@ func runSelfUpdateStage(cmd *cobra.Command, opts FullUpdateOptions) StageResult 
 		// --force also forces config regeneration; refusing to downgrade the
 		// binary is not a failure of the update as a whole.
 		return StageResult{
-			Name:    "Self-update",
+			Name:    stageSelfUpdate,
 			Status:  StageSkipped,
 			Message: err.Error(),
 		}
@@ -504,14 +512,6 @@ func runSelfUpdateStage(cmd *cobra.Command, opts FullUpdateOptions) StageResult 
 			Name:    stageSelfUpdate,
 			Status:  StageUpToDate,
 			Message: fmt.Sprintf("v%s is the latest", currentVersion),
-		}
-	}
-
-	if opts.DryRun {
-		return StageResult{
-			Name:    stageSelfUpdate,
-			Status:  StageSuccess,
-			Message: fmt.Sprintf("would update v%s → v%s", currentVersion, release.Version),
 		}
 	}
 

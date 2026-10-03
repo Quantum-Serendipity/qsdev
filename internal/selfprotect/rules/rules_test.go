@@ -3,6 +3,7 @@ package rules
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/Quantum-Serendipity/qsdev/internal/selfprotect/cmdscan"
@@ -1622,10 +1623,12 @@ func TestSP013_AuditTrailWriteBlock(t *testing.T) {
 
 // sensitiveFixture mirrors the shape of the sensitive commands the CLI marks
 // (cmdutil.MarkSensitive): unconditional ones, flag-conditioned ones, one
-// conditioned on a positional argument, and one with a read-only flag.
-var sensitiveFixture = []cmdscan.CommandSpec{
+// conditioned on a positional argument, one with a read-only flag and one
+// with a flag that takes a value. Each also reads --help, -h and --version
+// as read-only, as cmdutil.SensitiveCommands derives them from cobra.
+var sensitiveFixture = withInfoFlags([]cmdscan.CommandSpec{
 	{Path: [][]string{{"teardown"}}, ReadOnly: []string{"--dry-run"}},
-	{Path: [][]string{{"session"}, {"allow"}}},
+	{Path: [][]string{{"session"}, {"allow"}}, ValueFlags: []string{"--rules", "-r"}},
 	{Path: [][]string{{"sandbox"}, {"approve"}}},
 	{Path: [][]string{{"defaults"}, {"reset"}}},
 	{Path: [][]string{{"defaults"}, {"pin"}}},
@@ -1636,6 +1639,15 @@ var sensitiveFixture = []cmdscan.CommandSpec{
 		{Spellings: []string{"--strict"}, Value: false},
 	}},
 	{Path: [][]string{{"disable"}}, Args: func() []string { return []string{"attach-guard", "gitleaks"} }},
+})
+
+// withInfoFlags adds cobra's help and version flags to each spec's
+// read-only flags.
+func withInfoFlags(specs []cmdscan.CommandSpec) []cmdscan.CommandSpec {
+	for i := range specs {
+		specs[i].ReadOnly = append(specs[i].ReadOnly, "--help", "-h", "--version")
+	}
+	return specs
 }
 
 // TestSP014_CLISecurityControlBlock pins that SP-014 blocks exactly the
@@ -1705,6 +1717,43 @@ func TestSP014_CLISecurityControlBlock(t *testing.T) {
 		{"qsdev repair $FLAGS", Deny},
 		{"qsdev disable $TOOL", Deny},
 		{"qsdev teardown $X --dry-run", Allow},
+		// Regression (U18-WS1 round 6): the program named as an argument
+		// of another program, followed by a glob or a variable, is not a
+		// computed invocation; a quoted argument is data; help and version
+		// forms print instead of running.
+		{"grep -rn qsdev internal/*.go", Allow},
+		{"rg qsdev *.md", Allow},
+		{`grep -l "qsdev teardown" docs/*`, Allow},
+		{`git commit -m "qsdev teardown is gated"`, Allow},
+		// The fixture has no command with a --version flag of its own; the
+		// real tree has one (self-update), so there this is denied.
+		{"qsdev --version $V", Allow},
+		{"qsdev $CMD --help", Allow},
+		{"qsdev defaults pin --help", Allow},
+		{"qsdev -h defaults pin", Allow},
+		{"qsdev help defaults pin", Allow},
+		{"qsdev defaults pin -- --help", Deny},
+		{"qsdev session allow --rules --help", Deny},
+		{"qsdev session allow -r --help SC-001", Deny},
+		// A flag before the path may take the next word as its value.
+		{"qsdev --config x self-update --no-strict", Deny},
+		{"qsdev -C x teardown", Deny},
+		// An unquoted argument that runs the program still counts when its
+		// subcommand is written out.
+		{`find . -exec qsdev teardown \;`, Deny},
+		{"devenv shell qsdev defaults pin", Deny},
+		{"go run ./cmd/qsdev teardown", Deny},
+		{"devenv shell qsdev defaults $P", Allow},
+		// Command lines another program runs, quoted or not.
+		{`sh -c 'cd /x && qsdev teardown'`, Deny},
+		{`env -S "qsdev teardown"`, Deny},
+		{`script -q -c "qsdev teardown" /dev/null`, Deny},
+		{`script --command="qsdev teardown" /dev/null`, Deny},
+		{`pwsh -Command "qsdev teardown"`, Deny},
+		{`cmd /c "qsdev teardown"`, Deny},
+		{`if qsdev teardown; then :; fi`, Deny},
+		{`! FOO=1 qsdev teardown`, Deny},
+		{`xargs sh -c 'qsdev defaults "$@"' _`, Deny},
 		// Computed words that cannot be an invocation stay open.
 		{"cp $a $b", Allow},
 		{"cd $DIR && ls", Allow},
@@ -1730,6 +1779,37 @@ func TestSP014_CLISecurityControlBlock(t *testing.T) {
 			v, reason := sp014.Evaluate(&ctx)
 			if v != tt.verdict {
 				t.Errorf("SP-014(%q) = %v (%s), want %v", tt.command, v, reason, tt.verdict)
+			}
+		})
+	}
+}
+
+// TestSP014_Reason pins that SP-014 names a guardrail-weakening command only
+// when it is written out, and otherwise says the command line is computed,
+// so a denial never names a command that may never run.
+func TestSP014_Reason(t *testing.T) {
+	t.Parallel()
+	const computed = "a computed qsdev command"
+	tests := []struct {
+		command, want string
+	}{
+		{"qsdev defaults pin", "'qsdev defaults pin' weakens a guardrail"},
+		{"echo qsdev teardown", "'qsdev teardown' weakens a guardrail"},
+		{"P=pin; qsdev defaults $P", computed},
+		{"qsdev defaults $(echo pin)", computed},
+		{"Q=qsdev; $Q defaults pin", computed},
+		{"echo pin | xargs qsdev defaults", computed},
+		{`Q=qsdev; env -u CLAUDECODE script -qec "$Q defaults pin" /dev/null`, computed},
+		{"qsdev $CMD", computed},
+		{"qsdev disable $TOOL; qsdev teardown", "'qsdev teardown' weakens a guardrail"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.command, func(t *testing.T) {
+			t.Parallel()
+			ctx := EvalContext{ToolName: "Bash", Command: tt.command, SensitiveCommands: sensitiveFixture}
+			v, reason := sp014.Evaluate(&ctx)
+			if v != Deny || !strings.HasPrefix(reason, tt.want) {
+				t.Errorf("SP-014(%q) = %v (%q), want deny starting %q", tt.command, v, reason, tt.want)
 			}
 		})
 	}

@@ -14,13 +14,18 @@ type CommandSpec struct {
 	// Path holds, per subcommand level below the program, the words that
 	// name it (its name and aliases).
 	Path [][]string
-	// ReadOnly holds the spellings of the flag (e.g. "--dry-run") that make
-	// an invocation read-only; such an invocation never matches.
+	// ReadOnly holds the spellings of the flags (e.g. "--dry-run", "--help")
+	// that make an invocation read-only, or print instead of running it;
+	// such an invocation never matches.
 	ReadOnly []string
+	// ValueFlags holds the spellings of the flags that take the next word as
+	// their value, so a ReadOnly spelling there (`--reason --help`) is a
+	// value, not the flag.
+	ValueFlags []string
 	// Flags match an invocation that sets any of them to its Value.
 	Flags []FlagCond
 	// Args returns the positional arguments that match an invocation; it is
-	// called only once the path matched. Nil matches none.
+	// called only once an invocation may match. Nil matches none.
 	Args func() []string
 }
 
@@ -40,82 +45,160 @@ func (s CommandSpec) Always() bool {
 
 // Matches reports whether argv, the words after the program name, invoke the
 // spec's subcommand in a matching way. Flags before and between path words
-// are skipped. A flag value that does not parse as a boolean counts as
+// are skipped, and so is a word after a flag written without "=", which may
+// be its value. A flag value that does not parse as a boolean counts as
 // matching, so a spelling the CLI would reject never hides a match. A word
 // whose value the shell computes (IsDynamicWord) may stand for the rest of
 // the path and any flag or argument, so it matches.
 func (s CommandSpec) Matches(argv []string) bool {
-	return s.invokedBy(invocation{args: argv, literalProgram: true})
+	c := &simpleCommand{texts: append([]string{""}, argv...)}
+	c.invs = []invocation{{literalProgram: true}}
+	return s.invokedIn(c) != noMatch
 }
 
-// invocation is one place a command may run the program: the words after
-// the program word, and what is known about them.
-type invocation struct {
-	args []string
-	// literalProgram is set when the program word names the program itself;
-	// otherwise it is a word whose value is unknown (a variable, a command
-	// substitution, a word xargs replaces), and at least one path word must
-	// be literal for a match, so that every `cp $a $b` is not one.
-	literalProgram bool
-	// open is set when words the text does not show may follow args: xargs
-	// appends what it reads from its input.
-	open bool
+// matchKind is how a command invokes a spec's subcommand.
+type matchKind uint8
+
+const (
+	noMatch matchKind = iota
+	// literalMatch: the program and the words that decide the match are
+	// written out.
+	literalMatch
+	// computedMatch: the match rests on a word the shell computes or on
+	// input xargs appends, which may stand for what the spec names.
+	computedMatch
+)
+
+// invokedIn returns how c invokes the spec's subcommand at any of its
+// invocations: a literal match over a computed one.
+func (s CommandSpec) invokedIn(c *simpleCommand) matchKind {
+	var rest *restIndex
+	best := noMatch
+	for _, inv := range c.invs {
+		if k := s.invokedAt(c, inv, &rest); k != noMatch && (best == noMatch || k == literalMatch) {
+			best = k
+		}
+	}
+	return best
 }
 
-// invokedBy reports whether inv invokes the spec's subcommand in a matching
-// way (see Matches). A dynamic word, or the end of an open invocation, ends
-// the scan as a match once something literal anchors it.
-func (s CommandSpec) invokedBy(inv invocation) bool {
+// invokedAt reports how inv invokes the spec's subcommand (see Matches). A
+// dynamic word, or the end of an open invocation, ends the scan as a
+// computed match once something literal anchors it; a literal read-only
+// flag before any "--" (`--dry-run`, `--help`) makes it no match at all.
+// rest indexes c's words for the spec; it is built the first time an
+// invocation matches and shared by the others.
+func (s CommandSpec) invokedAt(c *simpleCommand, inv invocation, rest **restIndex) matchKind {
+	k, end := s.pathMatch(c.texts, inv)
+	if k == noMatch {
+		return noMatch
+	}
+	if *rest == nil {
+		*rest = s.indexRest(c.texts)
+	}
+	if (*rest).readOnly[inv.at+1] {
+		return noMatch
+	}
+	if end >= 0 {
+		return (*rest).match(s, inv, end)
+	}
+	return k
+}
+
+// pathMatch matches the spec's path against the words after inv's program
+// word. When the path is written out it returns literalMatch and the index
+// just past it, for the words from there on to decide (see restIndex.match);
+// otherwise end is -1 and the match is the one a dynamic word or an open end
+// makes, or none.
+func (s CommandSpec) pathMatch(words []string, inv invocation) (k matchKind, end int) {
 	anchored := inv.literalProgram
 	level := 0
-	for i, w := range inv.args {
-		if level == len(s.Path) {
-			return s.restMatches(inv.args[i:], inv.open)
-		}
+	// valueSlot is set after a flag written without "=": cobra takes the
+	// next word as its value when the flag is not a known boolean, so a word
+	// there that is not the path may be skipped (`--version x self-update`).
+	valueSlot := false
+	i := inv.at + 1
+	for ; i < len(words) && level < len(s.Path); i++ {
+		w := words[i]
 		switch {
 		case IsDynamicWord(w):
 			// Word splitting may turn it into the rest of the path.
-			return anchored
+			if anchored && !inv.mention {
+				return computedMatch, -1
+			}
+			return noMatch, -1
 		case strings.HasPrefix(w, "-"):
+			valueSlot = !strings.Contains(w, "=")
 			continue
 		case !slices.Contains(s.Path[level], w):
-			return false
+			if valueSlot {
+				valueSlot = false
+				continue
+			}
+			return noMatch, -1
 		}
+		valueSlot = false
 		level++
 		anchored = true
 	}
-	if level == len(s.Path) {
-		return s.restMatches(nil, inv.open)
+	switch {
+	case level == len(s.Path):
+		return literalMatch, i
+	case inv.open && anchored && !inv.mention:
+		return computedMatch, -1
 	}
-	return inv.open && anchored
+	return noMatch, -1
 }
 
-// restMatches reports whether rest, the words after the spec's path, make
-// the invocation match: a literal read-only flag never does; otherwise an
-// unconditional spec, an open invocation and a dynamic word (which may be
-// the flag or argument a condition names) do, and else a flag or argument
-// the spec's conditions name.
-func (s CommandSpec) restMatches(rest []string, open bool) bool {
-	if slices.ContainsFunc(rest, func(w string) bool { return flagValue(w, s.ReadOnly, true) }) {
-		return false
+// restIndex records, for each index of a command's words, what the words
+// from there on hold for one spec, so that every invocation in a command is
+// judged in time linear in its length.
+type restIndex struct {
+	// readOnly[i] is set when a literal read-only flag follows before any
+	// "--", other than as the value of a flag that takes one (ValueFlags).
+	readOnly []bool
+	// cond[i] is set when a literal flag or argument the spec's conditions
+	// name follows; dynamic[i] when a word the shell computes does.
+	cond, dynamic []bool
+}
+
+// indexRest indexes words for the spec.
+func (s CommandSpec) indexRest(words []string) *restIndex {
+	n := len(words)
+	r := &restIndex{readOnly: make([]bool, n+1), cond: make([]bool, n+1), dynamic: make([]bool, n+1)}
+	var args []string
+	if s.Args != nil {
+		args = s.Args()
 	}
-	if s.Always() || open || slices.ContainsFunc(rest, IsDynamicWord) {
-		return true
+	for i := n - 1; i >= 0; i-- {
+		w := words[i]
+		isValue := i > 0 && slices.Contains(s.ValueFlags, words[i-1])
+		r.readOnly[i] = w != "--" && (r.readOnly[i+1] || !isValue && flagValue(w, s.ReadOnly, true))
+		r.dynamic[i] = r.dynamic[i+1] || IsDynamicWord(w)
+		r.cond[i] = r.cond[i+1] || slices.ContainsFunc(s.Flags, func(f FlagCond) bool { return flagValue(w, f.Spellings, f.Value) }) ||
+			!strings.HasPrefix(w, "-") && slices.Contains(args, w)
 	}
-	for _, w := range rest {
-		for _, f := range s.Flags {
-			if flagValue(w, f.Spellings, f.Value) {
-				return true
-			}
+	return r
+}
+
+// match judges the words from index end on, after the spec's path written
+// out at inv: an unconditional spec, or a literal flag or argument its
+// conditions name, matches literally; otherwise, unless inv is a mention, an
+// open invocation and a dynamic word (which may be such a flag or argument)
+// match as computed.
+func (r *restIndex) match(s CommandSpec, inv invocation, end int) matchKind {
+	switch {
+	case s.Always() || r.cond[end]:
+		if inv.literalProgram {
+			return literalMatch
 		}
+		return computedMatch
+	case inv.mention:
+		return noMatch
+	case inv.open || r.dynamic[end]:
+		return computedMatch
 	}
-	if s.Args == nil {
-		return false
-	}
-	args := s.Args()
-	return slices.ContainsFunc(rest, func(w string) bool {
-		return !strings.HasPrefix(w, "-") && slices.Contains(args, w)
-	})
+	return noMatch
 }
 
 // flagValue reports whether word sets the flag spelled as one of spellings to
@@ -132,13 +215,32 @@ func flagValue(word string, spellings []string, want bool) bool {
 	return err != nil || got == want
 }
 
+// Invoked is a spec a command invokes, and how it was found.
+type Invoked struct {
+	Spec CommandSpec
+	// Computed is set when the match rests on a word the shell computes (a
+	// variable, a substitution, a glob, an alias for a computed value) or on
+	// input xargs appends, rather than on the subcommand written out.
+	Computed bool
+}
+
 // InvokedSpecs returns the specs that command invokes the program app with,
-// judged on the raw text: quotes are dropped and the text is split at
-// whitespace and shell operators, so quoting, wrappers (env, sh -c, eval) and
-// compound commands do not hide an invocation. A backslash is read both as a
-// shell escape (q\sdev) and as a Windows path separator. An invocation
-// mentioned in an argument (`echo "qsdev teardown"`) matches too; the
-// caller's rule errs towards the human gate.
+// judged on the raw text: the text is split into simple commands at shell
+// operators and into words at blanks, with quotes dropped, so quoting,
+// wrappers (env, timeout, xargs, ...), command lines run by another program
+// (sh -c, eval, script -c, PowerShell -Command, cmd /c) and compound
+// commands do not hide an invocation. A backslash is read both as a shell
+// escape (q\sdev) and as a Windows path separator.
+//
+// The program counts where it may run: as the program word of a simple
+// command or of such a command line, past reserved words, assignments and
+// wrappers. An unquoted argument of another program that names it counts as
+// well, for a program may run its arguments (`find -exec`, `devenv shell`),
+// but only when the subcommand is written out: `grep qsdev *.go` is no
+// invocation. A quoted argument (`grep "qsdev teardown" docs/*`) is data. A
+// quoted script string is split into commands like the rest of the text, so
+// a separator inside data (`echo "a; qsdev teardown"`) errs towards the
+// human gate.
 //
 // Words the shell computes fail closed rather than being resolved: a program
 // word built from an expansion (`$Q defaults pin`, `$(printf qs)dev ...`,
@@ -147,13 +249,15 @@ func flagValue(word string, spellings []string, want bool) bool {
 // $(echo pin)`) matches whatever it stands for, and an invocation under xargs
 // may take its remaining words from its input (`echo pin | xargs qsdev
 // defaults`, `xargs -I X X defaults pin`). Only a command whose program and
-// subcommand words are all computed (`$A $B`) is not matched.
-func InvokedSpecs(command, app string, specs []CommandSpec) []CommandSpec {
-	var hit []CommandSpec
-	for _, inv := range invocations(command, app) {
+// subcommand words are all computed (`$A $B`) is not matched. A literal
+// read-only flag (ReadOnly) before any "--" clears an invocation whatever
+// else it holds (`qsdev $CMD --help`).
+func InvokedSpecs(command, app string, specs []CommandSpec) []Invoked {
+	var hit []Invoked
+	for _, c := range commandsInvoking(command, app) {
 		for _, s := range specs {
-			if s.invokedBy(inv) {
-				hit = append(hit, s)
+			if k := s.invokedIn(c); k != noMatch {
+				hit = append(hit, Invoked{Spec: s, Computed: k == computedMatch})
 			}
 		}
 	}
@@ -162,9 +266,12 @@ func InvokedSpecs(command, app string, specs []CommandSpec) []CommandSpec {
 
 // InvokesProgram reports whether command may run the program app, judged on
 // the raw text the way InvokedSpecs judges it, counting only a word that
-// names app literally.
+// names app literally: in command position, or as an unquoted argument of
+// another program.
 func InvokesProgram(command, app string) bool {
-	return slices.ContainsFunc(invocations(command, app), func(inv invocation) bool { return inv.literalProgram })
+	return slices.ContainsFunc(commandsInvoking(command, app), func(c *simpleCommand) bool {
+		return slices.ContainsFunc(c.invs, func(inv invocation) bool { return inv.literalProgram })
+	})
 }
 
 // IsDynamicWord reports whether the shell computes word rather than taking it
@@ -172,65 +279,6 @@ func InvokesProgram(command, app string) bool {
 // including the placeholder opaqueExpansions leaves) or a glob character.
 func IsDynamicWord(word string) bool {
 	return strings.ContainsAny(word, "$*?[")
-}
-
-// invocations returns each place command may run the program app (see
-// InvokedSpecs), in the text as written and in the text with every
-// expansion made opaque (opaqueExpansions), which keeps a substitution's
-// output from splitting into words of its own.
-func invocations(command, app string) []invocation {
-	var out []invocation
-	for _, text := range []string{command, opaqueExpansions(command)} {
-		out = append(out, textInvocations(text, app)...)
-	}
-	return out
-}
-
-// textInvocations returns the invocations of app in text, split into words
-// as InvokedSpecs describes.
-func textInvocations(text, app string) []invocation {
-	raw := strings.FieldsFunc(strings.NewReplacer(`'`, "", `"`, "").Replace(text), isWordBreak)
-	words := make([]string, len(raw))
-	for i, w := range raw {
-		words[i] = strings.ReplaceAll(w, `\`, "")
-	}
-	aliases := appAliases(words, app)
-	xargsAt := slices.IndexFunc(words, func(w string) bool { return ProgramName(w) == "xargs" })
-	var out []invocation
-	for i, w := range raw {
-		inv := invocation{args: words[i+1:], open: xargsAt >= 0 && xargsAt < i}
-		switch {
-		// Case-folded: Windows and macOS resolve QSDEV to qsdev.
-		case strings.EqualFold(ProgramName(w), app) || strings.EqualFold(ProgramName(words[i]), app) ||
-			slices.Contains(aliases, words[i]):
-			inv.literalProgram = true
-		case IsDynamicWord(ProgramName(words[i])):
-		case inv.open && !strings.HasPrefix(words[i], "-"):
-			// xargs may replace this word with the program (-I, -J).
-			inv.open = false
-		default:
-			continue
-		}
-		out = append(out, inv)
-	}
-	return out
-}
-
-// appAliases returns the names words define as aliases for app: each
-// name=value word after an alias word whose value names app or is computed.
-func appAliases(words []string, app string) []string {
-	at := slices.Index(words, "alias")
-	if at < 0 {
-		return nil
-	}
-	var names []string
-	for _, w := range words[at+1:] {
-		name, value, ok := strings.Cut(w, "=")
-		if ok && name != "" && (strings.EqualFold(ProgramName(value), app) || IsDynamicWord(value)) {
-			names = append(names, name)
-		}
-	}
-	return names
 }
 
 // opaqueExpansions returns command with every command substitution ($(...)
@@ -338,15 +386,6 @@ func (sc bracketScan) expansionEnd(i int) int {
 		}
 	}
 	return i
-}
-
-// isWordBreak reports whether r separates words for InvokedSpecs.
-func isWordBreak(r rune) bool {
-	switch r {
-	case ' ', '\t', '\n', '\r', ';', '|', '&', '(', ')', '<', '>', '`', '{', '}':
-		return true
-	}
-	return false
 }
 
 // ProgramName returns the program a command word names: its base name (after

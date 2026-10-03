@@ -136,3 +136,52 @@ func TestSensitiveCommands(t *testing.T) {
 		}
 	}
 }
+
+// TestSensitiveCommandsReadOnlyAgreesWithCobra pins that a spec treats an
+// invocation as read-only exactly when cobra prints instead of running it:
+// help and version flags count, but not as a flag's value, not after "--",
+// and not --version on a command that defines a version flag of its own.
+func TestSensitiveCommandsReadOnlyAgreesWithCobra(t *testing.T) {
+	tests := [][]string{
+		{"teardown", "--help"},
+		{"teardown", "-h"},
+		{"--help", "teardown"},
+		{"teardown", "--version"},
+		{"self-update", "--strict=false", "--help"},
+		{"pin"},
+		{"pin", "--version", "1"},
+		{"pin", "--reason", "--help"},
+		{"pin", "-r", "-h"},
+		{"pin", "--", "--help"},
+		// cobra takes x as pin's own --version value and runs pin, which is
+		// why `qsdev --version $V` cannot be cleared as a version form.
+		{"--version", "x", "pin"},
+		{"--version", "x", "teardown"},
+	}
+	for _, args := range tests {
+		t.Run(strings.Join(args, " "), func(t *testing.T) {
+			t.Setenv("CLAUDECODE", "")
+			var ran []string
+			root := sensitiveTree(&ran)
+			root.Version = "1.0.0"
+			pin := &cobra.Command{Use: "pin", RunE: func(cmd *cobra.Command, _ []string) error {
+				ran = append(ran, cmd.Name())
+				return nil
+			}}
+			pin.Flags().StringP("reason", "r", "", "")
+			pin.Flags().String("version", "", "")
+			root.AddCommand(MarkSensitive(pin, Sensitivity{}))
+			specs := SensitiveCommands(root)
+
+			root.SetIn(ttyReader{Reader: strings.NewReader(""), tty: true})
+			root.SetOut(&bytes.Buffer{})
+			root.SetErr(&bytes.Buffer{})
+			root.SetArgs(args)
+			_ = root.Execute()
+			matched := slices.ContainsFunc(specs, func(s cmdscan.CommandSpec) bool { return s.Matches(args) })
+			if runs := len(ran) > 0; matched != runs {
+				t.Errorf("specs match %q = %v, but the command ran = %v", args, matched, runs)
+			}
+		})
+	}
+}

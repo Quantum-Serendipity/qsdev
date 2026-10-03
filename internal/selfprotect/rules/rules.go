@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strings"
 
 	"github.com/Quantum-Serendipity/qsdev/internal/selfprotect/canon"
@@ -528,13 +529,26 @@ var sp014 = Rule{
 		if len(hits) == 0 {
 			return Allow, ""
 		}
-		path := make([]string, len(hits[0].Path))
-		for i, names := range hits[0].Path {
-			path[i] = names[0]
-		}
-		return Deny, fmt.Sprintf("'%s %s' weakens a guardrail and requires a human at their own terminal",
-			app, strings.Join(path, " "))
+		at := max(slices.IndexFunc(hits, func(h cmdscan.Invoked) bool { return !h.Computed }), 0)
+		return Deny, sensitiveInvocationReason(app, hits[at])
 	},
+}
+
+// sensitiveInvocationReason describes what SP-014 found: the guardrail-
+// weakening command written out, or, when the match rests on words the shell
+// computes, that the command line may run one, without naming a command
+// that may never run.
+func sensitiveInvocationReason(app string, hit cmdscan.Invoked) string {
+	if hit.Computed {
+		return fmt.Sprintf("a computed %s command (a program or subcommand word the shell expands, "+
+			"or arguments xargs appends) may weaken a guardrail; such commands require a human at their own terminal", app)
+	}
+	path := make([]string, len(hit.Spec.Path))
+	for i, names := range hit.Spec.Path {
+		path[i] = names[0]
+	}
+	return fmt.Sprintf("'%s %s' weakens a guardrail and requires a human at their own terminal",
+		app, strings.Join(path, " "))
 }
 
 // sp015 denies a change to a file that sets the environment the CLI runs in

@@ -12,6 +12,7 @@ import (
 
 	"github.com/charmbracelet/x/term"
 	"github.com/spf13/cobra"
+	"github.com/spf13/pflag"
 
 	"github.com/Quantum-Serendipity/qsdev/internal/selfprotect/cmdscan"
 	"github.com/Quantum-Serendipity/qsdev/pkg/branding"
@@ -126,14 +127,54 @@ func SensitiveCommands(root *cobra.Command) []cmdscan.CommandSpec {
 
 // commandSpec translates c's Sensitivity into a spec at path.
 func commandSpec(c *cobra.Command, path [][]string, s Sensitivity) cmdscan.CommandSpec {
-	spec := cmdscan.CommandSpec{Path: path, Args: s.Args}
+	spec := cmdscan.CommandSpec{Path: path, Args: s.Args, ReadOnly: infoFlagSpellings(c), ValueFlags: valueFlagSpellings(c)}
 	if viaFlag := c.Annotations[ReadOnlyAnnotation]; viaFlag != "" {
-		spec.ReadOnly = flagSpellings(c, viaFlag)
+		spec.ReadOnly = append(spec.ReadOnly, flagSpellings(c, viaFlag)...)
 	}
 	for _, name := range slices.Sorted(maps.Keys(s.Flags)) {
 		spec.Flags = append(spec.Flags, cmdscan.FlagCond{Spellings: flagSpellings(c, name), Value: s.Flags[name]})
 	}
 	return spec
+}
+
+// infoFlagSpellings returns the spellings of the flags with which c prints
+// instead of running: cobra's help flag, which every command has, and
+// --version, which prints the root's version or, on a command without a
+// version flag, fails as an unknown flag. None does when c does not parse
+// its flags, and --version runs c when c defines a version flag of its own
+// or ignores unknown flags.
+func infoFlagSpellings(c *cobra.Command) []string {
+	if c.DisableFlagParsing {
+		return nil
+	}
+	// Cobra adds both just before parsing; adding them here finds the
+	// spellings it gives them.
+	c.InitDefaultHelpFlag()
+	c.InitDefaultVersionFlag()
+	spellings := flagSpellings(c, "help")
+	switch f := c.Flags().Lookup("version"); {
+	case f == nil && !c.FParseErrWhitelist.UnknownFlags,
+		f != nil && len(f.Annotations[cobra.FlagSetByCobraAnnotation]) > 0:
+		spellings = append(spellings, flagSpellings(c, "version")...)
+	}
+	return spellings
+}
+
+// valueFlagSpellings returns the spellings of c's flags, its own and those
+// it inherits, that take the next word as their value.
+func valueFlagSpellings(c *cobra.Command) []string {
+	var spellings []string
+	add := func(f *pflag.Flag) {
+		if f.NoOptDefVal == "" {
+			spellings = append(spellings, "--"+f.Name)
+			if f.Shorthand != "" {
+				spellings = append(spellings, "-"+f.Shorthand)
+			}
+		}
+	}
+	c.LocalFlags().VisitAll(add)
+	c.InheritedFlags().VisitAll(add)
+	return spellings
 }
 
 // flagSpellings returns the ways to write c's flag name: --name and, when it

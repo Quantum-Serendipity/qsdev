@@ -175,7 +175,13 @@ All notable changes to qsdev are recorded in this file. The format is based on
   (`echo pin | xargs qsdev defaults`), is treated as the sensitive word it
   may stand for. The same holds for every other human-only command. A
   command whose program and subcommand words are all computed (`$A $B`)
-  is not recognised. Pins are kept in
+  is not recognised. Only a word that may run as the program counts: a
+  quoted argument is data, and the CLI named as an argument of another
+  program counts only with its subcommand written out, so
+  `grep -rn qsdev internal/*.go` and `grep -l "qsdev teardown" docs/*` stay
+  open, as do `--help` and `--version` (except `--version` before a
+  computed word, which `self-update --version` may take as its value).
+  Pins are kept in
   `~/.config/qsdev/org-overlay-pins.yaml`, which the hook protects with the
   overlay, so nothing the agent does in a checkout (`git clean -fdX`, a fresh
   clone) removes one; an overlay below the project or the temporary

@@ -128,7 +128,12 @@ type ProgramRun struct {
 	Index int
 	// CommandString is set when a wrapper takes the command as one string
 	// (`env -S 'python3 -u'`): a program runs, but no single word names it.
+	// With the words split from text whose quotes were removed, the command
+	// line is StringHead (the option's argument) followed by the words from
+	// index StringRest on.
 	CommandString bool
+	StringHead    string
+	StringRest    int
 	// LookupOnly is set when `command -v`/`-V` only looks its operands up,
 	// which tests whether they resolve.
 	LookupOnly bool
@@ -179,8 +184,8 @@ func Program(words []string) ProgramRun {
 				break operands
 			case isOptionWord(w):
 				opts, n := parseWrapperOption(name, words, i)
-				if slices.ContainsFunc(opts, func(o WrapperOption) bool { return o.Is(wrapperCommandStrings[name]...) }) {
-					return ProgramRun{Index: -1, CommandString: true, Exec: run.Exec}
+				if k := slices.IndexFunc(opts, func(o WrapperOption) bool { return o.Is(wrapperCommandStrings[name]...) }); k >= 0 {
+					return ProgramRun{Index: -1, CommandString: true, Exec: run.Exec, StringHead: opts[k].Arg, StringRest: i + n}
 				}
 				if slices.ContainsFunc(opts, func(o WrapperOption) bool { return o.Is(wrapperLookups[name]...) }) {
 					return ProgramRun{Index: -1, LookupOnly: true}
@@ -355,6 +360,63 @@ func Script(words []string) (ScriptRun, bool) {
 		}
 	}
 	return ScriptRun{}, false
+}
+
+// commandLineOption is the option with which a program runs a command line
+// given as its argument: a letter, which also counts inside a short-option
+// cluster (`bash -ec`, `script -qec`), and whole-word spellings, compared
+// case-insensitively as PowerShell and cmd compare them.
+type commandLineOption struct {
+	letter byte
+	words  []string
+}
+
+// commandLineOptions are the programs other than the script shells that run
+// a command line given as an option's argument: script(1) and su run it with
+// the user's shell, PowerShell and cmd with their own.
+var commandLineOptions = map[string]commandLineOption{
+	"script":     {letter: 'c', words: []string{"--command"}},
+	"su":         {letter: 'c', words: []string{"--command"}},
+	"pwsh":       {words: []string{"-c", "-command", "-commandwithargs", "-cwa"}},
+	"powershell": {words: []string{"-c", "-command"}},
+	"cmd":        {words: []string{"/c", "/k"}},
+}
+
+// CommandLine returns the command line that the program words[0] runs from
+// its arguments: the script of a script shell's -c (`bash -ec '...'`),
+// eval's operands, the argument of `script -c`, `su -c`, PowerShell's
+// -Command or cmd's /c. The words are taken as split from text whose quotes
+// were removed, so the command line is head (the option's argument, which
+// may be attached as --command=...) followed by the words from index rest
+// on.
+func CommandLine(words []string) (head string, rest int, ok bool) {
+	if len(words) < 2 {
+		return "", 0, false
+	}
+	name := wrapperName(words[0])
+	if name == "eval" {
+		return words[1], 2, true
+	}
+	opt, known := commandLineOptions[name]
+	if scriptShells[name] {
+		opt, known = commandLineOption{letter: 'c'}, true
+	}
+	if !known {
+		return "", 0, false
+	}
+	for j := 1; j < len(words); j++ {
+		w := words[j]
+		spelling, attached, hasArg := strings.Cut(w, "=")
+		switch {
+		case hasArg && slices.ContainsFunc(opt.words, func(s string) bool { return strings.EqualFold(s, spelling) }):
+			return attached, j + 1, true
+		case j+1 >= len(words):
+		case slices.ContainsFunc(opt.words, func(s string) bool { return strings.EqualFold(s, w) }),
+			opt.letter != 0 && len(w) > 1 && w[0] == '-' && w[1] != '-' && strings.IndexByte(w[1:], opt.letter) >= 0:
+			return words[j+1], j + 2, true
+		}
+	}
+	return "", 0, false
 }
 
 // startupShells are the script shells that source a startup file even for

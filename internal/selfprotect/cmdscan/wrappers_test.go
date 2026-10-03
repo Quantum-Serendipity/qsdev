@@ -79,8 +79,9 @@ func TestProgram(t *testing.T) {
 		{"exec with no command", []string{"exec"}, ProgramRun{Index: -1}},
 		{"wrapper only", []string{"timeout", "30"}, ProgramRun{Index: -1}},
 		{"command lookup", []string{"command", "-v", "git"}, ProgramRun{Index: -1, LookupOnly: true}},
-		{"env split string", []string{"env", "-S", "python3 -u"}, ProgramRun{Index: -1, CommandString: true}},
-		{"exec split string", []string{"exec", "env", "-S", "python3 -u"}, ProgramRun{Index: -1, CommandString: true, Exec: true}},
+		{"env split string", []string{"env", "-S", "python3 -u"}, ProgramRun{Index: -1, CommandString: true, StringHead: "python3 -u", StringRest: 3}},
+		{"env attached split string", []string{"env", "-Spython3", "-u"}, ProgramRun{Index: -1, CommandString: true, StringHead: "python3", StringRest: 2}},
+		{"exec split string", []string{"exec", "env", "-S", "python3 -u"}, ProgramRun{Index: -1, CommandString: true, Exec: true, StringHead: "python3 -u", StringRest: 4}},
 		{"plain program", []string{"git", "status"}, ProgramRun{Index: 0, ShellRuns: true}},
 		{"exec program", []string{"exec", "git"}, ProgramRun{Index: 1, Exec: true}},
 		{"command builtin", []string{"command", "cd", "/tmp"}, ProgramRun{Index: 1, ShellRuns: true}},
@@ -261,6 +262,9 @@ func TestInvokesProgram(t *testing.T) {
 		{"q''sdev status", true},
 		{"go test ./...", false},
 		{"cat qsdev.yaml", false},
+		{"find . -exec qsdev status ;", true},
+		{`grep -l "qsdev" docs`, false},
+		{"$Q status", false},
 		{"ls ~/.config/qsdevx", false},
 	}
 	for _, tt := range tests {
@@ -270,6 +274,39 @@ func TestInvokesProgram(t *testing.T) {
 				t.Errorf("InvokesProgram(%q) = %v, want %v", tt.command, got, tt.want)
 			}
 		})
+	}
+}
+
+// TestCommandLine pins which programs run a command line given as an
+// argument, and where it starts in the words split from unquoted text.
+func TestCommandLine(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		words    []string
+		head     string
+		rest     int
+		wantOkay bool
+	}{
+		{[]string{"sh", "-c", "qsdev", "x"}, "qsdev", 3, true},
+		{[]string{"bash", "-ec", "qsdev"}, "qsdev", 3, true},
+		{[]string{"/bin/ZSH", "-x", "-c", "qsdev"}, "qsdev", 4, true},
+		{[]string{"eval", "qsdev", "x"}, "qsdev", 2, true},
+		{[]string{"script", "-qec", "qsdev", "/dev/null"}, "qsdev", 3, true},
+		{[]string{"script", "--command=qsdev", "x"}, "qsdev", 2, true},
+		{[]string{"su", "--command", "qsdev", "root"}, "qsdev", 3, true},
+		{[]string{"pwsh", "-NonInteractive", "-Command", "qsdev"}, "qsdev", 4, true},
+		{[]string{"powershell.exe", "-c", "qsdev"}, "qsdev", 3, true},
+		{[]string{"cmd", "/C", "qsdev"}, "qsdev", 3, true},
+		{[]string{"sh", "script.sh"}, "", 0, false},
+		{[]string{"sh", "-c"}, "", 0, false},
+		{[]string{"grep", "-c", "qsdev"}, "", 0, false},
+		{[]string{"eval"}, "", 0, false},
+	}
+	for _, tt := range tests {
+		head, rest, ok := CommandLine(tt.words)
+		if head != tt.head || rest != tt.rest || ok != tt.wantOkay {
+			t.Errorf("CommandLine(%q) = %q, %d, %v, want %q, %d, %v", tt.words, head, rest, ok, tt.head, tt.rest, tt.wantOkay)
+		}
 	}
 }
 

@@ -125,8 +125,7 @@ func (p *ProjectPolicy) Apply(a *types.WizardAnswers) {
 		}
 	}
 
-	a.MCPPolicy = ClientMCPPolicy(p.Committed)
-	a.MCPServers = a.MCPPolicy.Filter(a.MCPServers)
+	AdoptClientMCPPolicy(a, p.Committed)
 	a.BranchPattern = p.Committed.Git.BranchPattern
 	a.HookPolicy = p.Committed.Hooks.Clone()
 	// The java and cloud blocks have no wizard or flag equivalent: the committed file is
@@ -240,6 +239,17 @@ func (p *ProjectPolicy) Warnings() []string {
 		warnings = append(warnings, fmt.Sprintf("%s: %s raised to %v (%s)", v.Field, attempted, v.Enforced, v.Reason))
 	}
 	return warnings
+}
+
+// AdoptClientMCPPolicy gives answers the client MCP policy cfg, the committed
+// .qsdev.yaml, declares and drops every MCP server it does not permit. The
+// committed client block is the only source of that policy: the copy the
+// local answers file saves may be stale or missing, and a server the policy
+// blocks is never configured, so an always-on tool must not record it (see
+// toolreg's MCP force-on) nor check require it.
+func AdoptClientMCPPolicy(a *types.WizardAnswers, cfg *types.QsdevConfig) {
+	a.MCPPolicy = ClientMCPPolicy(cfg)
+	a.MCPServers = a.MCPPolicy.Filter(a.MCPServers)
 }
 
 // ClientMCPPolicy returns the MCP server policy cfg's client block declares.

@@ -11,6 +11,7 @@ import (
 
 	"github.com/Quantum-Serendipity/qsdev/addons/devenv"
 	"github.com/Quantum-Serendipity/qsdev/internal/answers"
+	"github.com/Quantum-Serendipity/qsdev/internal/catalog"
 	qsdevconfig "github.com/Quantum-Serendipity/qsdev/internal/config"
 	"github.com/Quantum-Serendipity/qsdev/internal/state"
 	"github.com/Quantum-Serendipity/qsdev/pkg/types"
@@ -534,5 +535,43 @@ func TestDayTwoCommands_UncommittedOptOutsNotPromoted(t *testing.T) {
 				t.Errorf("output lacks warning %q:\n%s", want, out)
 			}
 		})
+	}
+}
+
+// TestDayTwoCommands_CommittedClientMCPBlockHolds is the U28-WS1 regression
+// for devenv add/remove-* settling answers whose local file lacks the client
+// MCP policy: the committed client block still decides it, so an always-on
+// MCP tool's force-on never writes a server the client blocks into the
+// committed claude_code.mcp_servers.
+func TestDayTwoCommands_CommittedClientMCPBlockHolds(t *testing.T) {
+	blocked := catalog.MustDefault().AlwaysOnMCPServers()[0]
+	dir := initProject(t)
+	cfgPath := filepath.Join(dir, ".qsdev.yaml")
+	writeFile(t, cfgPath, "version: 2\nlanguages:\n  - name: go\nclaude_code:\n  enabled: true\n"+
+		"client:\n  name: acme\n  blocked_mcp_servers:\n    - "+blocked+"\n")
+	markJoined(t, dir)
+
+	local, err := answers.LoadPrimary(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	local.MCPPolicy = types.MCPPolicy{}
+	if err := answers.SavePrimary(dir, local); err != nil {
+		t.Fatal(err)
+	}
+
+	if out, err := runDevenv(t, "add-package", "jq"); err != nil {
+		t.Fatalf("add-package: %v\n%s", err, out)
+	}
+
+	cfg, err := qsdevconfig.ParseQsdevConfig(cfgPath)
+	if err != nil {
+		t.Fatalf("parsing synced config: %v", err)
+	}
+	if slices.Contains(cfg.ClaudeCode.MCPServers, blocked) {
+		t.Errorf("committed mcp_servers = %v, want the client-blocked %q left out", cfg.ClaudeCode.MCPServers, blocked)
+	}
+	if !slices.Contains(cfg.Packages, "jq") {
+		t.Errorf("packages = %v, want jq added", cfg.Packages)
 	}
 }

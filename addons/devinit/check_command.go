@@ -328,9 +328,10 @@ func effectivePermissionPreset(answers types.WizardAnswers, cfg *types.QsdevConf
 // settleCommittedScope settles answers against cfg, the committed
 // .qsdev.yaml (nil when it did not load): Claude Code and the tier, which
 // decide which always-on tools apply (see toolreg.Tool.EnforcedFor), are
-// taken from cfg, the permission level is raised to at least the one cfg
-// commits (see effectivePermissionPreset), and the tools are reconciled
-// against its tools block (see toolreg.Reconcile).
+// taken from cfg, as is the client MCP policy (see
+// qsdevconfig.AdoptClientMCPPolicy), the permission level is raised to at
+// least the one cfg commits (see effectivePermissionPreset), and the tools
+// are reconciled against its tools block (see toolreg.Reconcile).
 func settleCommittedScope(answers *types.WizardAnswers, reg *toolreg.Registry, cfg *types.QsdevConfig) {
 	if answers.ProjectName == "" {
 		return
@@ -339,6 +340,7 @@ func settleCommittedScope(answers *types.WizardAnswers, reg *toolreg.Registry, c
 	if cfg != nil {
 		answers.ClaudeCode = qsdevconfig.ClaudeCodeEnabled(cfg)
 		answers.Tier = qsdevconfig.ConfigTier(cfg)
+		qsdevconfig.AdoptClientMCPPolicy(answers, cfg)
 		answers.PermissionLevel = effectivePermissionPreset(*answers, cfg)
 		committed = &cfg.Tools
 	}

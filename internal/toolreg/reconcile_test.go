@@ -464,3 +464,45 @@ func TestReconcile_UnknownToolNamesDropped(t *testing.T) {
 		})
 	}
 }
+
+// TestSettleProject_CommittedClientMCPPolicy is the U28-WS1 regression for
+// answers whose local file lacks the client MCP policy: settling takes the
+// policy from the committed client block, so the always-on MCP tools' force-on
+// never adds a server the client blocks (it would be written back into the
+// committed mcp_servers), while it still restores the permitted ones.
+func TestSettleProject_CommittedClientMCPPolicy(t *testing.T) {
+	t.Parallel()
+	reg := catalogRegistry(t)
+	servers := catalog.MustDefault().AlwaysOnMCPServers()
+	if len(servers) < 2 {
+		t.Fatalf("catalog declares always-on MCP servers %v, want at least two", servers)
+	}
+	blocked, permitted := servers[0], servers[1:]
+
+	dir := t.TempDir()
+	enabled := true
+	cfg := types.QsdevConfig{
+		Version:    types.ConfigVersionCurrent,
+		Tier:       "standard",
+		ClaudeCode: types.ClaudeCodeConfig{Enabled: &enabled, MCPServers: permitted},
+		Client:     &types.ClientConfig{Name: "acme", BlockedMCP: []string{blocked}},
+	}
+	if err := qsdevconfig.WriteProjectConfig(dir, cfg); err != nil {
+		t.Fatal(err)
+	}
+	a := &types.WizardAnswers{ClaudeCode: true, Tier: "standard", MCPServers: slices.Clone(permitted)}
+	if err := SettleProject(io.Discard, dir, a, reg); err != nil {
+		t.Fatal(err)
+	}
+	if slices.Contains(a.MCPServers, blocked) {
+		t.Errorf("MCPServers = %v, want the client-blocked %q left out", a.MCPServers, blocked)
+	}
+	if !slices.Contains(a.MCPPolicy.Blocked, blocked) {
+		t.Errorf("MCPPolicy = %+v, want the committed client policy", a.MCPPolicy)
+	}
+	for _, s := range permitted {
+		if !slices.Contains(a.MCPServers, s) {
+			t.Errorf("MCPServers = %v, want permitted %q kept", a.MCPServers, s)
+		}
+	}
+}

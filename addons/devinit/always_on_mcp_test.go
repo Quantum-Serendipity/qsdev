@@ -10,6 +10,7 @@ import (
 	"github.com/Quantum-Serendipity/qsdev/internal/check"
 	"github.com/Quantum-Serendipity/qsdev/internal/surgery"
 	"github.com/Quantum-Serendipity/qsdev/internal/toolreg"
+	"github.com/Quantum-Serendipity/qsdev/pkg/types"
 )
 
 // initStandardProject runs `init --yes --lang go --tier standard` in a fresh
@@ -129,5 +130,45 @@ func TestRunCheck_FailsWhenAlwaysOnMCPServerMissing(t *testing.T) {
 		if !slices.Contains(got, tool.Name) {
 			t.Errorf("check did not fail tool_mcp_server_missing_%s; failed %v", tool.Name, got)
 		}
+	}
+}
+
+// TestAlwaysOnMCP_CommittedClientBlockHoldsWithoutLocalPolicy is the U28-WS1
+// regression for a local answers file that lacks mcp_policy while the
+// committed client block blocks an always-on MCP tool's server: check takes
+// the policy from .qsdev.yaml, so it passes (the generated .mcp.json rightly
+// omits the server), and enable never writes the blocked server into the
+// committed claude_code.mcp_servers.
+func TestAlwaysOnMCP_CommittedClientBlockHoldsWithoutLocalPolicy(t *testing.T) {
+	blocked := alwaysOnMCPTools(t)[0].MCPServer
+	dir := initStandardProject(t)
+	addClientPolicy(t, dir, &types.ClientConfig{Name: "acme", BlockedMCP: []string{blocked}})
+	if out, err := executeInitCmd(t, dir, "--update", "--yes"); err != nil {
+		t.Fatalf("init --update: %v\n%s", err, out)
+	}
+	if got := committedConfig(t, dir).ClaudeCode.MCPServers; slices.Contains(got, blocked) {
+		t.Fatalf("after update committed mcp_servers = %v, want blocked %q left out", got, blocked)
+	}
+
+	local := loadProjectAnswers(t, dir)
+	if local.MCPPolicy.IsZero() {
+		t.Fatal("init --update saved no MCP policy; the setup does not exercise a missing one")
+	}
+	local.MCPPolicy = types.MCPPolicy{}
+	if err := saveAnswers(dir, local); err != nil {
+		t.Fatalf("saving answers: %v", err)
+	}
+
+	for _, c := range runCheckJSON(t, dir).Checks {
+		if strings.HasPrefix(c.Name, "tool_mcp_server_missing_") && c.Status == check.StatusFail {
+			t.Errorf("check failed %s for a server the client blocks: %s", c.Name, c.Message)
+		}
+	}
+
+	if out, err := enableTool(t, dir, "commitlint"); err != nil {
+		t.Fatalf("enable: %v\n%s", err, out)
+	}
+	if got := committedConfig(t, dir).ClaudeCode.MCPServers; slices.Contains(got, blocked) {
+		t.Errorf("enable wrote the client-blocked %q into committed mcp_servers %v", blocked, got)
 	}
 }

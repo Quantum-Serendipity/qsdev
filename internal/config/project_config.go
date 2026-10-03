@@ -31,7 +31,10 @@ import (
 //     answers file that says otherwise cannot make a regeneration drop the
 //     Claude Code settings and with them the self-protection hook (U18-01).
 //     Turning Claude Code off is a committed change (claude_code.enabled:
-//     false), never a local one.
+//     false), never a local one;
+//   - the client MCP policy is the committed one (see AdoptClientMCPPolicy),
+//     so an answers file that lacks or loosens it cannot make an always-on
+//     tool record a blocked server in the committed mcp_servers.
 //
 // An unreadable config is left to the caller's policy load and
 // SyncProjectConfig, which report it.
@@ -43,6 +46,7 @@ func AdoptCommitted(projectRoot string, a *types.WizardAnswers) {
 	if ClaudeCodeEnabled(cfg) {
 		a.ClaudeCode = true
 	}
+	AdoptClientMCPPolicy(a, cfg)
 	if a.Tier != "" || cfg.Tier == "" {
 		return
 	}

@@ -3,6 +3,7 @@ package config
 import (
 	"os"
 	"path/filepath"
+	"slices"
 	"testing"
 
 	"github.com/Quantum-Serendipity/qsdev/internal/answers"
@@ -93,6 +94,63 @@ func TestAdoptCommitted_ClaudeCode(t *testing.T) {
 			AdoptCommitted(root, &a)
 			if a.ClaudeCode != tt.want {
 				t.Errorf("ClaudeCode = %v, want %v", a.ClaudeCode, tt.want)
+			}
+		})
+	}
+}
+
+// TestAdoptCommitted_ClientMCPPolicy verifies answers take the client MCP
+// policy from the committed client block, not from the local answers file,
+// and drop every server it blocks: a stale or missing local mcp_policy must
+// not let an always-on tool record a blocked server in the committed
+// mcp_servers (U28-WS1).
+func TestAdoptCommitted_ClientMCPPolicy(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name        string
+		config      string // .qsdev.yaml content; empty means no file
+		answers     types.WizardAnswers
+		wantBlocked []string
+		wantServers []string
+	}{
+		{
+			name:        "committed block adopted when local policy is missing",
+			config:      "version: 2\nclient:\n    name: acme\n    blocked_mcp_servers: [context7]\n",
+			answers:     types.WizardAnswers{MCPServers: []string{"context7", "github"}},
+			wantBlocked: []string{"context7"},
+			wantServers: []string{"github"},
+		},
+		{
+			name:   "stale local policy replaced by committed none",
+			config: "version: 2\n",
+			answers: types.WizardAnswers{
+				MCPPolicy:  types.MCPPolicy{Blocked: []string{"github"}},
+				MCPServers: []string{"github"},
+			},
+			wantServers: []string{"github"},
+		},
+		{
+			name: "no config keeps answers' policy",
+			answers: types.WizardAnswers{
+				MCPPolicy:  types.MCPPolicy{Blocked: []string{"github"}},
+				MCPServers: []string{"context7"},
+			},
+			wantBlocked: []string{"github"},
+			wantServers: []string{"context7"},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			root := t.TempDir()
+			writeCommittedConfig(t, root, tt.config)
+			a := tt.answers
+			AdoptCommitted(root, &a)
+			if !slices.Equal(a.MCPPolicy.Blocked, tt.wantBlocked) {
+				t.Errorf("MCPPolicy.Blocked = %v, want %v", a.MCPPolicy.Blocked, tt.wantBlocked)
+			}
+			if !slices.Equal(a.MCPServers, tt.wantServers) {
+				t.Errorf("MCPServers = %v, want %v", a.MCPServers, tt.wantServers)
 			}
 		})
 	}

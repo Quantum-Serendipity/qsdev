@@ -116,9 +116,9 @@ func ReconcileProject(w io.Writer, projectRoot string, a *types.WizardAnswers, r
 
 // SettleProject settles answers loaded from the local, gitignored answers
 // file against projectRoot's committed .qsdev.yaml: they first adopt the
-// committed Claude Code and tier choices (see qsdevconfig.AdoptCommitted) and
-// then have their tools reconciled against the committed opt-outs (see
-// ReconcileProject), with its warnings written to w. It is the one settle
+// committed Claude Code, tier and client MCP policy choices (see
+// qsdevconfig.AdoptCommitted) and then have their tools reconciled against
+// the committed opt-outs (see ReconcileProject), with its warnings written to w. It is the one settle
 // step for every day-2 command that regenerates from those answers and
 // records them in the committed config (enable, disable, repair, devenv
 // add/remove-*), so a hand-edited `claude_code: false` or always-on off is

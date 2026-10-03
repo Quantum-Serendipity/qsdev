@@ -27,6 +27,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"os/exec"
 	"os/user"
 	"runtime"
 	"strconv"
@@ -36,6 +37,25 @@ import (
 
 	"github.com/Quantum-Serendipity/qsdev/internal/procexec"
 )
+
+// ErrNoAccount reports that the user database has no entry for an account:
+// /etc/passwd lists none and getent, when installed, finds none either (or
+// os/user reports the account unknown). It is not reported for a lookup that
+// fails some other way (an unreadable database, a getent run that hangs or
+// cannot start), so a caller may tell an account the system does not know,
+// such as an arbitrary container uid, from a lookup it could not complete.
+var ErrNoAccount = errors.New("the user database has no entry for the account")
+
+// errGetentNotFound reports getent's own "key not found" result (exit
+// status 2).
+var errGetentNotFound = errors.New("getent found no entry")
+
+// errNoGetent reports that getent is not installed at any of getentPaths.
+var errNoGetent = errors.New("getent is not installed at a system path")
+
+// getentNotFoundStatus is the exit status getent documents for a key the
+// database does not have.
+const getentNotFoundStatus = 2
 
 // passwdFile is the local passwd database (a variable for tests).
 var passwdFile = "/etc/passwd"
@@ -66,8 +86,20 @@ var lookup = func() (*user.User, error) {
 	case readsPasswd:
 		return lookupPasswd(strconv.Itoa(uid), uidField)
 	default:
-		return user.LookupId(strconv.Itoa(uid))
+		u, err := user.LookupId(strconv.Itoa(uid))
+		return u, unknownAccount(err)
 	}
+}
+
+// unknownAccount marks an os/user error that reports the account unknown as
+// ErrNoAccount; other errors are returned as they are.
+func unknownAccount(err error) error {
+	var unknownID user.UnknownUserIdError
+	var unknownName user.UnknownUserError
+	if errors.As(err, &unknownID) || errors.As(err, &unknownName) {
+		return fmt.Errorf("%w: %w", ErrNoAccount, err)
+	}
+	return err
 }
 
 // lookupName returns the user database entry of the account named name. It
@@ -76,7 +108,8 @@ var lookupName = func(name string) (*user.User, error) {
 	if readsPasswd {
 		return lookupPasswd(name, nameField)
 	}
-	return user.Lookup(name)
+	u, err := user.Lookup(name)
+	return u, unknownAccount(err)
 }
 
 // The passwd entry fields a lookup key is matched against.
@@ -138,11 +171,22 @@ func lookupPasswdUncached(key string, field int) (*user.User, error) {
 		return u, nil
 	}
 	nss, nssErr := getentPasswd(key, field)
-	if nssErr != nil {
-		return nil, fmt.Errorf("no passwd entry for %q: %w", key, errors.Join(err, nssErr))
+	if nssErr == nil {
+		return nss, nil
 	}
-	return nss, nil
+	err = errors.Join(err, nssErr)
+	// Only a database that answered "no such entry" means the account is
+	// unknown: getent's not-found result, or, without getent, a passwd file
+	// that was read and has no entry.
+	if errors.Is(nssErr, errGetentNotFound) || (errors.Is(nssErr, errNoGetent) && errors.Is(err, errNotInPasswdFile)) {
+		return nil, fmt.Errorf("no passwd entry for %q: %w: %w", key, ErrNoAccount, err)
+	}
+	return nil, fmt.Errorf("no passwd entry for %q: %w", key, err)
 }
+
+// errNotInPasswdFile reports that passwdFile was read and has no entry for
+// the key.
+var errNotInPasswdFile = errors.New("no entry in the passwd file")
 
 // scanPasswdFile returns the entry of passwdFile whose field number field is
 // key.
@@ -155,7 +199,7 @@ func scanPasswdFile(key string, field int) (*user.User, error) {
 	if u := findPasswdEntry(f, key, field); u != nil {
 		return u, nil
 	}
-	return nil, fmt.Errorf("%s has no entry for %q", passwdFile, key)
+	return nil, fmt.Errorf("%s has no entry for %q: %w", passwdFile, key, errNotInPasswdFile)
 }
 
 // findPasswdEntry returns the first passwd line of r
@@ -195,9 +239,9 @@ func getentPasswd(key string, field int) (*user.User, error) {
 		if u := findPasswdEntry(bytes.NewReader(out), key, field); u != nil {
 			return u, nil
 		}
-		return nil, fmt.Errorf("getent printed no passwd entry for %q", key)
+		return nil, fmt.Errorf("getent printed no passwd entry for %q: %w", key, errGetentNotFound)
 	}
-	return nil, errors.New("getent is not installed at a system path")
+	return nil, errNoGetent
 }
 
 // runGetent runs the getent binary at path for the passwd entry of key, with
@@ -217,6 +261,10 @@ func runGetent(path, key string) ([]byte, error) {
 	timer := time.AfterFunc(getentTimeout, func() { _ = cmd.Process.Kill() })
 	defer timer.Stop()
 	if err := cmd.Wait(); err != nil {
+		var exit *exec.ExitError
+		if errors.As(err, &exit) && exit.ExitCode() == getentNotFoundStatus {
+			err = fmt.Errorf("%w (%w)", errGetentNotFound, err)
+		}
 		return nil, fmt.Errorf("running %s passwd %s: %w", path, key, err)
 	}
 	return stdout.Bytes(), nil

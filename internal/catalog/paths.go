@@ -1,6 +1,7 @@
 package catalog
 
 import (
+	"errors"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -54,8 +55,9 @@ var warnUnanchoredOverlay sync.Once
 // the agent spells the assignment or whichever script it runs, would otherwise
 // point a regeneration at an overlay of its own making. When the account
 // cannot be resolved the home overlay is not read at all, and an overlay
-// found below HOME is reported instead of trusted; set <EnvPrefix>ORG_CONFIG
-// to use it.
+// found below HOME is reported instead of trusted; for an account the user
+// database has no entry for, <EnvPrefix>ORG_CONFIG names it (see
+// OrgConfigPin.Unanchored).
 func homeOrgConfigPath() string {
 	home, err := accountHome()
 	if err == nil {
@@ -63,10 +65,12 @@ func homeOrgConfigPath() string {
 	}
 	if envHome, envErr := envHomeDir(); envErr == nil {
 		if p := HomeOrgConfigPath(envHome); fileExists(p) {
+			hint := "the account's home directory could not be looked up"
+			if errors.Is(err, userhome.ErrNoAccount) {
+				hint = "the user database has no entry for this account; set " + branding.Get().EnvPrefix + "ORG_CONFIG to use it"
+			}
 			warnUnanchoredOverlay.Do(func() {
-				slog.Warn("ignoring the org defaults file below HOME: the user database has no home directory for this account; set "+
-					branding.Get().EnvPrefix+"ORG_CONFIG to use it",
-					"path", p, "error", err)
+				slog.Warn("ignoring the org defaults file below HOME: "+hint, "path", p, "error", err)
 			})
 		}
 	}

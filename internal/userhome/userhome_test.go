@@ -1,6 +1,7 @@
 package userhome
 
 import (
+	"errors"
 	"os"
 	"os/user"
 	"path/filepath"
@@ -164,8 +165,8 @@ func TestLookupPasswd(t *testing.T) {
 		if u, err := lookupPasswd("nssuser", nameField); err != nil || u.HomeDir != nssHome {
 			t.Errorf("lookupPasswd(nssuser) = %+v, %v; want home %q", u, err, nssHome)
 		}
-		if u, err := lookupPasswd("4242", uidField); err == nil {
-			t.Errorf("lookupPasswd(4242) = %+v, want an error", u)
+		if u, err := lookupPasswd("4242", uidField); !errors.Is(err, ErrNoAccount) {
+			t.Errorf("lookupPasswd(4242) = %+v, %v; want ErrNoAccount (getent's not-found status)", u, err)
 		}
 		if u, err := lookupPasswd("-x", nameField); err == nil {
 			t.Errorf("lookupPasswd(-x) = %+v, want an option-like key refused", u)
@@ -174,8 +175,8 @@ func TestLookupPasswd(t *testing.T) {
 	t.Run("no entry and no getent", func(t *testing.T) {
 		fakePasswd(t, "root:x:0:0::/root:/bin/sh\n")
 		fakeGetent(t, "")
-		if u, err := lookupPasswd("54321", uidField); err == nil {
-			t.Errorf("lookupPasswd(54321) = %+v, want an error, not an answer from HOME or USER", u)
+		if u, err := lookupPasswd("54321", uidField); !errors.Is(err, ErrNoAccount) {
+			t.Errorf("lookupPasswd(54321) = %+v, %v; want ErrNoAccount, not an answer from HOME or USER", u, err)
 		}
 		// Regression (U18-WS1 round 2): os/user in a build without cgo
 		// answered for the running account from HOME and USER.
@@ -185,6 +186,60 @@ func TestLookupPasswd(t *testing.T) {
 			}
 		}
 	})
+}
+
+// TestLookupPasswdFailureIsNotNoAccount pins that only a database that
+// answered "no such entry" reports ErrNoAccount: a getent that fails another
+// way (a directory service error, a crash) or a passwd file that cannot be
+// read leaves the account undecided, so callers that trust an unknown
+// account's environment (catalog's unanchored org overlay) do not trust it on
+// a lookup they could not complete. Not parallel: it replaces package
+// variables.
+func TestLookupPasswdFailureIsNotNoAccount(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("getent is not used on Windows")
+	}
+	script := filepath.Join(t.TempDir(), "getent")
+	if err := os.WriteFile(script, []byte("#!/bin/sh\nexit 1\n"), 0o755); err != nil { // #nosec G306 -- test executable
+		t.Fatal(err)
+	}
+	t.Run("getent fails", func(t *testing.T) {
+		fakePasswd(t, "root:x:0:0::/root:/bin/sh\n")
+		orig := getentPaths
+		getentPaths = []string{script}
+		resetPasswdCache(t)
+		t.Cleanup(func() { getentPaths = orig })
+		if _, err := lookupPasswd("54321", uidField); err == nil || errors.Is(err, ErrNoAccount) {
+			t.Errorf("lookupPasswd with a failing getent = %v, want an error other than ErrNoAccount", err)
+		}
+	})
+	t.Run("unreadable passwd file and no getent", func(t *testing.T) {
+		orig := passwdFile
+		passwdFile = filepath.Join(t.TempDir(), "missing-passwd")
+		t.Cleanup(func() { passwdFile = orig })
+		fakeGetent(t, "")
+		if _, err := lookupPasswd("54321", uidField); err == nil || errors.Is(err, ErrNoAccount) {
+			t.Errorf("lookupPasswd without a passwd file or getent = %v, want an error other than ErrNoAccount", err)
+		}
+	})
+}
+
+// TestUnknownAccount pins that os/user's unknown-account errors (macOS,
+// Windows) report ErrNoAccount and other errors do not.
+func TestUnknownAccount(t *testing.T) {
+	t.Parallel()
+	for _, tt := range []struct {
+		err  error
+		want bool
+	}{
+		{user.UnknownUserIdError(4242), true},
+		{user.UnknownUserError("nobody"), true},
+		{errors.New("directory service unavailable"), false},
+	} {
+		if got := errors.Is(unknownAccount(tt.err), ErrNoAccount); got != tt.want {
+			t.Errorf("unknownAccount(%v) is ErrNoAccount = %v, want %v", tt.err, got, tt.want)
+		}
+	}
 }
 
 // TestNamed pins that Named reads an account's home directory from the user

@@ -11,6 +11,7 @@ import (
 
 	"gopkg.in/yaml.v3"
 
+	"github.com/Quantum-Serendipity/qsdev/internal/userhome"
 	"github.com/Quantum-Serendipity/qsdev/pkg/branding"
 	"github.com/Quantum-Serendipity/qsdev/pkg/fileutil"
 )
@@ -37,6 +38,14 @@ type OrgConfigPin struct {
 	// Global is set when the pin is the account-wide one, not one recorded
 	// for the project.
 	Global bool
+	// Unanchored is set when the user database has no entry for the account
+	// (userhome.ErrNoAccount; an arbitrary container or CI uid), so there is
+	// no home directory to keep pins in or to find the home overlay below.
+	// The overlay OrgConfigPath resolves is then read as it is, unless it
+	// lies where the agent can write (untrustedOrgConfigLocation): nothing an
+	// agent does makes its account unknown to the system, and such an
+	// account has no other way to name its overlay.
+	Unanchored bool
 }
 
 var (
@@ -132,6 +141,9 @@ func pinKey(projectRoot string) (string, error) {
 // only.
 func LoadOrgConfigPin(projectRoot string) (OrgConfigPin, error) {
 	rec, _, err := loadOrgPins()
+	if errors.Is(err, userhome.ErrNoAccount) {
+		return OrgConfigPin{Unanchored: true}, nil
+	}
 	if err != nil {
 		return OrgConfigPin{}, fmt.Errorf("loading the pinned org overlay: %w", err)
 	}
@@ -164,6 +176,10 @@ func RecordOrgConfigPin(projectRoot string) (string, error) {
 		return "", fmt.Errorf("not pinning the org overlay %s: %s", path, reason)
 	}
 	rec, file, err := loadOrgPins()
+	if errors.Is(err, userhome.ErrNoAccount) {
+		return "", fmt.Errorf("not pinning the org overlay: %w; with no home directory to keep a pin in, %s reads the overlay %sORG_CONFIG names without one",
+			err, branding.Get().AppName, branding.Get().EnvPrefix)
+	}
 	if err != nil {
 		return "", err
 	}
@@ -193,10 +209,14 @@ func RecordOrgConfigPin(projectRoot string) (string, error) {
 }
 
 // pinnedOverlay returns the overlay pin allows: the pinned path, or without a
-// pin the account's home overlay.
+// pin the account's home overlay, or "" for an unanchored pin, which has
+// neither.
 func pinnedOverlay(pin OrgConfigPin) string {
-	if pin.Recorded {
+	switch {
+	case pin.Recorded:
 		return pin.Path
+	case pin.Unanchored:
+		return ""
 	}
 	return defaultOrgConfigPath()
 }
@@ -205,6 +225,9 @@ func pinnedOverlay(pin OrgConfigPin) string {
 // a message.
 func describePin(pin OrgConfigPin) string {
 	switch {
+	case pin.Unanchored:
+		return describeOverlay(OrgConfigPath()) + " (named by " + branding.Get().EnvPrefix +
+			"ORG_CONFIG; the account has no user database entry, so no overlay can be pinned)"
 	case !pin.Recorded:
 		return describeOverlay(defaultOrgConfigPath()) + " (the account's home overlay; no overlay is pinned)"
 	case pin.Global:
@@ -227,6 +250,9 @@ func OrgConfigDrift(projectRoot string, pin OrgConfigPin) string {
 	}
 	if reason := untrustedOrgConfigLocation(resolved, projectRoot); reason != "" {
 		return fmt.Sprintf("the org overlay %s %s", resolved, reason)
+	}
+	if pin.Unanchored {
+		return ""
 	}
 	if !sameOverlay(resolved, pinnedOverlay(pin)) {
 		return fmt.Sprintf("the org overlay resolves to %s, not %s", describeOverlay(resolved), describePin(pin))
@@ -275,10 +301,12 @@ func PolicyOrgConfigFile() string {
 	if fallback != "" && untrustedOrgConfigLocation(fallback, root) != "" {
 		fallback = ""
 	}
+	hint := "; to use it, run " + PinCommandHint() + " at your own terminal"
+	if pin.Unanchored {
+		hint = "; to use it, move it outside the project and the temporary directory"
+	}
 	warnDrift.Do(func() {
-		slog.Warn("ignoring the org overlay this run resolves: "+drift+
-			"; to use it, run "+PinCommandHint()+" at your own terminal",
-			"using", describeOverlay(fallback))
+		slog.Warn("ignoring the org overlay this run resolves: "+drift+hint, "using", describeOverlay(fallback))
 	})
 	if fallback == "" || !fileExists(fallback) {
 		return ""

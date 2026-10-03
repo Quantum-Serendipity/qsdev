@@ -184,6 +184,12 @@ All notable changes to qsdev are recorded in this file. The format is based on
   report an overlay qsdev ignores. If you set `QSDEV_ORG_CONFIG`, run
   `qsdev defaults pin` once at your terminal; a CI job, which has no
   terminal, places its overlay at `~/.config/qsdev/defaults.yaml` instead.
+  An account the user database has no entry for (an arbitrary container or
+  CI uid such as `docker --user 1001`) has no home directory to keep a pin
+  in, so there qsdev reads the overlay `QSDEV_ORG_CONFIG` names, as before,
+  unless it lies below the project or the temporary directory, and
+  `qsdev defaults pin` explains that no pin is needed. A lookup that fails
+  for another reason (an unreachable directory service) reads no overlay.
   Execution contexts that do not inherit the environment the hook checks
   (`systemd-run --user`, a `tmux` session started earlier) are not modelled
   by the hook; the pin is what covers them.

@@ -1,11 +1,14 @@
 package catalog
 
 import (
+	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 
+	"github.com/Quantum-Serendipity/qsdev/internal/userhome"
 	"github.com/Quantum-Serendipity/qsdev/pkg/branding"
 )
 
@@ -225,5 +228,51 @@ func TestRecordOrgConfigPin(t *testing.T) {
 	}
 	if _, err := LoadOrgConfigPin(w.project); err == nil {
 		t.Error("LoadOrgConfigPin of a malformed pins file succeeded, want an error")
+	}
+}
+
+// TestUnanchoredAccountReadsOrgConfig pins the account the user database does
+// not know (an arbitrary container or CI uid; regression of U18-WS1 against
+// main): with no home directory to keep a pin in, the overlay
+// <EnvPrefix>ORG_CONFIG names is read as before pins existed, except one
+// below the project or the temporary directory, and 'defaults pin' explains
+// that no pin is needed. A lookup that fails another way (a hung directory
+// service) still reads no overlay. Not parallel: it sets the environment and
+// package variables.
+func TestUnanchoredAccountReadsOrgConfig(t *testing.T) {
+	env := branding.Get().EnvPrefix + "ORG_CONFIG"
+	w := newPinWorld(t)
+	accountHome = func() (string, error) {
+		return "", fmt.Errorf("looking up the current account: %w", userhome.ErrNoAccount)
+	}
+	pinsHome = accountHome
+	t.Setenv(env, w.other)
+
+	pin, err := LoadOrgConfigPin(w.project)
+	if err != nil || !pin.Unanchored || pin.Recorded {
+		t.Fatalf("LoadOrgConfigPin without an account = %+v, %v; want an unanchored pin", pin, err)
+	}
+	if drift := ProjectOrgConfigDrift(w.project); drift != "" {
+		t.Errorf("ProjectOrgConfigDrift without an account = %q, want none", drift)
+	}
+	if src := ProjectOrgConfigSource(w.project); !strings.Contains(src, w.other) || !strings.Contains(src, env) {
+		t.Errorf("ProjectOrgConfigSource = %q, want the overlay %s names", src, env)
+	}
+	UseOrgConfigPin(w.project, pin)
+	if got := PolicyOrgConfigFile(); got != w.other {
+		t.Errorf("PolicyOrgConfigFile() without an account = %q, want %q", got, w.other)
+	}
+	if _, err := RecordOrgConfigPin(w.project); err == nil || !strings.Contains(err.Error(), env) {
+		t.Errorf("RecordOrgConfigPin without an account = %v, want an error naming %s", err, env)
+	}
+
+	t.Setenv(env, writeAt(t, filepath.Join(w.project, "evil.yaml")))
+	if got := PolicyOrgConfigFile(); got != "" {
+		t.Errorf("PolicyOrgConfigFile() for an overlay below the project = %q, want none", got)
+	}
+
+	pinsHome = func() (string, error) { return "", errors.New("getent timed out") }
+	if pin, err := LoadOrgConfigPin(w.project); err == nil || pin.Unanchored {
+		t.Errorf("LoadOrgConfigPin after a failed lookup = %+v, %v; want an error, not an unanchored pin", pin, err)
 	}
 }

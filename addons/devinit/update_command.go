@@ -134,7 +134,7 @@ Use stage-specific flags to run only one stage.`,
 	cmd.Flags().BoolVar(&opts.NoStrict, "no-strict", false, "Allow installing a release that has no signature bundle (escape hatch for dev/self-built releases)")
 	cmd.Flags().BoolVar(&opts.SkipContainer, "skip-container", false, "Skip generating Gateway container config for hookless frameworks")
 	// --no-strict installs a binary whose signature was not verified.
-	return cmdutil.MarkSensitive(cmdutil.MarkReadOnly(cmd, "dry-run"), cmdutil.Sensitivity{Flags: map[string]bool{"no-strict": true}})
+	return cmdutil.MarkSensitive(cmdutil.MarkReadOnly(cmd, "dry-run", "check"), cmdutil.Sensitivity{Flags: map[string]bool{"no-strict": true}})
 }
 
 func runCheckOnly(cmd *cobra.Command, opts FullUpdateOptions) error {

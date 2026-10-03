@@ -11,6 +11,7 @@ import (
 	"testing"
 
 	"github.com/spf13/cobra"
+	"github.com/spf13/pflag"
 
 	"github.com/Quantum-Serendipity/qsdev/instance"
 	"github.com/Quantum-Serendipity/qsdev/internal/cmdutil"
@@ -35,20 +36,51 @@ var readOnlyLostBy = map[string][]string{
 	"mcp status": {"probe", "probe-untrusted"},
 	"mcp health": {"probe", "probe-untrusted"},
 	"outdated":   {"online"},
+	"check":      {"auto-fix", "scan"},
+	"status":     {"all-badges", "scan"},
+	"update":     {"check"},
+}
+
+// readOnlyHarmlessFlags is, per read-only command, the boolean flags reviewed
+// as keeping its read-only invocation inside the contract: they only shape
+// output, select what is previewed, or are answers a dry-run never applies.
+// Every other boolean flag must be recorded as an opt-out, so a new mutating
+// or network flag cannot join a read-only command unreviewed.
+var readOnlyHarmlessFlags = map[string][]string{
+	"devenv doctor": {"check", "json"},
+	"info":          {"json", "oneline"},
+	"init": {
+		"agent-postmortem", "agent-semble", "agent-semble-text-files", "agent-version-sentinel",
+		"claude-code", "claude-only", "devenv-only", "direnv", "force", "list-profiles",
+		"merge", "nix-hardening-guide", "quiet", "update", "yes",
+	},
+	"mcp grade":  {"all", "json"},
+	"mcp health": {"json"},
+	"mcp list":   {"json"},
+	"mcp status": {"json"},
+	"repair":     {"force", "reset"},
+	"status":     {"fix", "json", "quiet", "sarif", "verbose"},
+	"teardown":   {"archive", "compliance", "force", "quick"},
+	"update": {
+		"allow-downgrade", "changelog", "configs-only", "deps-only", "force",
+		"no-strict", "overwrite-modified", "self-only", "skip-container",
+	},
 }
 
 // TestReadOnlyAnnotationFlags: every flag a read-only annotation names (the
 // flag that makes the command read-only and the flags that leave the
-// contract) exists on its command, and the opt-outs of the acceptance set are
-// recorded.
+// contract) exists on its command, the opt-outs are the recorded ones, and
+// every other boolean flag of a read-only command is reviewed as harmless.
 func TestReadOnlyAnnotationFlags(t *testing.T) {
 	t.Parallel()
 	var walk func(c *cobra.Command)
 	walk = func(c *cobra.Command) {
 		if args, ok := cmdutil.ReadOnlyArgs(c); ok {
 			inv := strings.TrimPrefix(c.CommandPath(), c.Root().Name()+" ")
-			flags := cmdutil.ReadOnlyLostBy(c)
-			if via := c.Annotations[cmdutil.ReadOnlyAnnotation]; via != "" {
+			lostBy := cmdutil.ReadOnlyLostBy(c)
+			flags := slices.Clone(lostBy)
+			via := c.Annotations[cmdutil.ReadOnlyAnnotation]
+			if via != "" {
 				flags = append(flags, via)
 			}
 			for _, f := range flags {
@@ -56,9 +88,16 @@ func TestReadOnlyAnnotationFlags(t *testing.T) {
 					t.Errorf("%s (read-only as %q): annotation names --%s, which it does not define", inv, args, f)
 				}
 			}
-			if want, ok := readOnlyLostBy[inv]; ok && !slices.Equal(cmdutil.ReadOnlyLostBy(c), want) {
-				t.Errorf("%s: read-only opt-out flags = %q, want %q", inv, cmdutil.ReadOnlyLostBy(c), want)
+			if want := readOnlyLostBy[inv]; !slices.Equal(lostBy, want) {
+				t.Errorf("%s: read-only opt-out flags = %q, want %q", inv, lostBy, want)
 			}
+			c.LocalFlags().VisitAll(func(f *pflag.Flag) {
+				if f.Value.Type() != "bool" || f.Name == "help" || f.Name == via ||
+					slices.Contains(lostBy, f.Name) || slices.Contains(readOnlyHarmlessFlags[inv], f.Name) {
+					return
+				}
+				t.Errorf("%s: boolean flag --%s is neither a read-only opt-out (cmdutil.MarkReadOnly lostBy) nor reviewed as harmless (readOnlyHarmlessFlags)", inv, f.Name)
+			})
 		}
 		for _, sub := range c.Commands() {
 			walk(sub)

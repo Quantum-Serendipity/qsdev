@@ -104,7 +104,7 @@ Exit codes:
 	cmd.Flags().StringVar(&auditLevel, "audit-level", "high",
 		"Exit threshold: none|info|low|moderate|high|critical (any = info, medium = moderate); each level includes every check of the levels above it")
 
-	return cmdutil.MarkReadOnly(cmd, "")
+	return cmdutil.MarkReadOnly(cmd, "", "all-badges", "scan")
 }
 
 // statusFormats are the accepted --format values.

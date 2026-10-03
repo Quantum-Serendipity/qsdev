@@ -19,6 +19,7 @@ import (
 	"github.com/Quantum-Serendipity/qsdev/internal/posture"
 	"github.com/Quantum-Serendipity/qsdev/internal/posture/conformance"
 	"github.com/Quantum-Serendipity/qsdev/internal/state"
+	"github.com/Quantum-Serendipity/qsdev/internal/surgery"
 	"github.com/Quantum-Serendipity/qsdev/internal/toolcheck"
 	"github.com/Quantum-Serendipity/qsdev/internal/toolreg"
 	"github.com/Quantum-Serendipity/qsdev/internal/version"
@@ -179,6 +180,7 @@ func runCheck(cmd *cobra.Command, format check.OutputFormat, auditLevel check.Au
 		ctx.GeneratedContent[rel] = f.Content
 	}
 	ctx.ExpectedGenerationErr = expectedGenerationErr(answersErr, genErr)
+	ctx.RequiredMCPServers = requiredMCPServers(answers, toolRegistry, freshFiles)
 	if answers.ClaudeCode {
 		for _, h := range claudecode.HooksWithoutPolicy(answers) {
 			ctx.HooksWithoutPolicy = append(ctx.HooksWithoutPolicy, check.HookWithoutPolicy{Name: h.Name, PolicyKey: h.PolicyKey})
@@ -341,6 +343,28 @@ func settleCommittedScope(answers *types.WizardAnswers, reg *toolreg.Registry, c
 		committed = &cfg.Tools
 	}
 	toolreg.Reconcile(answers, reg, committed)
+}
+
+// requiredMCPServers maps each always-on tool that applies to answers and
+// that they enable to its MCP server, for each server the expected
+// .mcp.json in freshFiles configures (a server the client MCP policy blocks
+// is never configured, so never required). The on-disk .mcp.json must
+// configure every one of them.
+func requiredMCPServers(answers types.WizardAnswers, reg *toolreg.Registry, freshFiles map[string]types.GeneratedFile) map[string]string {
+	expected, ok := freshFiles[check.MCPConfigRelPath]
+	if !ok {
+		return nil
+	}
+	required := make(map[string]string)
+	for _, tool := range reg.All() {
+		if tool.MCPServer == "" || !tool.EnforcedFor(&answers) || !answers.EnabledTools[tool.Name] {
+			continue
+		}
+		if surgery.JSONHasMCPServer(expected.Content, tool.MCPServer) {
+			required[tool.Name] = tool.MCPServer
+		}
+	}
+	return required
 }
 
 // expectedGenerationErr reports why the generator's output for the project

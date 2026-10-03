@@ -8,6 +8,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/Quantum-Serendipity/qsdev/addons/devinit"
+	"github.com/Quantum-Serendipity/qsdev/internal/catalog"
 	"github.com/Quantum-Serendipity/qsdev/pkg/types"
 )
 
@@ -106,9 +107,17 @@ func TestAnswersFromFlags_FullFlagSet(t *testing.T) {
 		t.Error("expected AuditLog hook")
 	}
 
-	// Check MCPServers.
-	if len(answers.MCPServers) != 1 || answers.MCPServers[0] != "github" {
-		t.Errorf("MCPServers = %v, want [github]", answers.MCPServers)
+	// Check MCPServers: the flag's, then the always-on MCP tools' servers
+	// (U28-WS1: an always-on tool recorded as enabled has its server).
+	wantServers := []string{"github"}
+	for _, s := range catalog.MustDefault().AlwaysOnMCPServers() {
+		if !slices.Contains(wantServers, s) {
+			wantServers = append(wantServers, s)
+		}
+	}
+	if len(answers.MCPServers) == 0 || answers.MCPServers[0] != "github" ||
+		!slices.Equal(slices.Sorted(slices.Values(answers.MCPServers)), slices.Sorted(slices.Values(wantServers))) {
+		t.Errorf("MCPServers = %v, want github then %v", answers.MCPServers, wantServers[1:])
 	}
 
 	// Check skills: the flag's, then the always-on trail-of-bits skill.

@@ -177,9 +177,10 @@ func GeneratesAgentConfig(answers types.WizardAnswers) bool {
 
 // Infer determines the most likely tier of a legacy .qsdev.yaml that predates
 // the always-persisted tier field. A supply-chain-only permission level means
-// that tier. The catalog's default MCP servers (and semble, provisioned by its
-// agent tool) are written by every default init, so they never imply Full;
-// only a server outside that set does. Anything else is the catalog's default
+// that tier. The catalog's default MCP servers, the servers of its always-on
+// tools (which enforcement adds) and semble (provisioned by its agent tool)
+// are written by every default configuration, so they never imply Full; only
+// a server outside that set does. Anything else is the catalog's default
 // tier.
 func Infer(permissionLevel string, mcpServers []string) Tier {
 	if permissionLevel == "supply-chain-only" {
@@ -189,7 +190,7 @@ func Infer(permissionLevel string, mcpServers []string) Tier {
 	if err != nil {
 		return Standard
 	}
-	defaults := cat.DefaultMCPServers()
+	defaults := append(cat.DefaultMCPServers(), cat.AlwaysOnMCPServers()...)
 	for _, s := range mcpServers {
 		if s != types.SembleMCPServer && !slices.Contains(defaults, s) {
 			return Full

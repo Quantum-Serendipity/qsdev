@@ -168,6 +168,17 @@ func TestInfer(t *testing.T) {
 				tc.permLevel, tc.mcpServers, got, tc.want)
 		}
 	}
+
+	// U28-WS1: enforcement adds the servers of the catalog's always-on tools
+	// to every configuration they apply to, so they never imply the full
+	// tier either.
+	alwaysOn := catalog.MustDefault().AlwaysOnMCPServers()
+	if len(alwaysOn) == 0 {
+		t.Fatal("catalog declares no always-on MCP tools")
+	}
+	if got := Infer("standard", alwaysOn); got != Standard {
+		t.Errorf("Infer(standard, %v) = %v, want %v", alwaysOn, got, Standard)
+	}
 }
 
 func TestAllTiers_Order(t *testing.T) {

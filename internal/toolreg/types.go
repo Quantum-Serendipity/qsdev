@@ -142,11 +142,16 @@ type Tool struct {
 	DisableFunc   DisableFunc
 	GenerateFunc  GenerateFunc // Produces exclusive files.
 
-	// ForceOnFunc switches on what backs the tool (its catalog toggle_field
-	// and skill_name), so EnforceAlwaysOn makes an always-on tool it records
-	// as enabled actually generate. It leaves MCP servers alone: they feed
-	// tier inference. Nil when the catalog declares neither.
+	// ForceOnFunc switches on what backs the tool (its catalog toggle_field,
+	// skill_name and mcp_server_name), so EnforceAlwaysOn makes an always-on
+	// tool it records as enabled actually generate. The servers of always-on
+	// tools never imply a tier (see tier.Infer), so adding one leaves tier
+	// inference unchanged. Nil when the catalog declares none of them.
 	ForceOnFunc ForceOnFunc
+
+	// MCPServer is the MCP server that backs the tool (its catalog
+	// mcp_server_name), or empty.
+	MCPServer string
 
 	// ClaudeCodeBacked is set when the catalog backs the tool with Claude
 	// Code answers (mcp_server_name, skill_name or toggle_field).

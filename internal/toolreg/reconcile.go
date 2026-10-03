@@ -59,10 +59,26 @@ func Reconcile(answers *types.WizardAnswers, reg *Registry, committed *types.Too
 // reconciles answers calls it, so they all warn alike. Each tool decision
 // dropped for naming no catalog tool is warned about too.
 func ReconcileAndWarn(w io.Writer, a *types.WizardAnswers, reg *Registry, committed *types.ToolsConfig, restored ...string) {
+	reconcileAndWarn(w, a, reg, committed, nil, restored)
+}
+
+// reconcileAndWarn is ReconcileAndWarn that also warns about each always-on
+// tool whose MCP server committedServers (the committed
+// claude_code.mcp_servers) lists and the answers had dropped, so enforcement
+// added it back.
+func reconcileAndWarn(w io.Writer, a *types.WizardAnswers, reg *Registry, committed *types.ToolsConfig, committedServers, restored []string) {
 	for _, name := range DropUnknownTools(a, reg) {
 		_, _ = fmt.Fprintf(w, "Warning: ignoring unknown tool %q in the answers; run `qsdev list` to see available tools\n", name)
 	}
+	had := slices.Clone(a.MCPServers)
 	kept := append(Reconcile(a, reg, committed), restored...)
+	for _, tool := range reg.All() {
+		server := tool.MCPServer
+		if tool.Default == AlwaysOn && server != "" && slices.Contains(committedServers, server) &&
+			!slices.Contains(had, server) && slices.Contains(a.MCPServers, server) {
+			kept = append(kept, tool.Name)
+		}
+	}
 	if committed != nil {
 		for _, tool := range reg.All() {
 			name := tool.Name
@@ -77,17 +93,24 @@ func ReconcileAndWarn(w io.Writer, a *types.WizardAnswers, reg *Registry, commit
 	WarnSafetyBlockOptOut(w, a)
 }
 
-// ReconcileProject loads the tools block of projectRoot's committed
-// .qsdev.yaml and runs ReconcileAndWarn against it, writing the warnings to
-// w (io.Discard for a caller that reports nothing). It is the one step every
-// command that regenerates from answers takes once every answer source has
-// run. A committed config that exists but cannot be loaded is an error.
+// ReconcileProject loads projectRoot's committed .qsdev.yaml and runs
+// ReconcileAndWarn against its tools block, writing the warnings to w
+// (io.Discard for a caller that reports nothing); an always-on tool whose
+// MCP server the committed claude_code.mcp_servers lists but the answers
+// dropped is warned about too. It is the one step every command that
+// regenerates from answers takes once every answer source has run. A
+// committed config that exists but cannot be loaded is an error.
 func ReconcileProject(w io.Writer, projectRoot string, a *types.WizardAnswers, reg *Registry) error {
-	committed, err := qsdevconfig.CommittedTools(projectRoot)
+	cfg, err := qsdevconfig.CommittedConfig(projectRoot)
 	if err != nil {
 		return fmt.Errorf("loading committed tools: %w", err)
 	}
-	ReconcileAndWarn(w, a, reg, committed)
+	var tools *types.ToolsConfig
+	var servers []string
+	if cfg != nil {
+		tools, servers = &cfg.Tools, cfg.ClaudeCode.MCPServers
+	}
+	reconcileAndWarn(w, a, reg, tools, servers, nil)
 	return nil
 }
 

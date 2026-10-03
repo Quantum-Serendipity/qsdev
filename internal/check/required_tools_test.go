@@ -1,6 +1,8 @@
 package check
 
 import (
+	"os"
+	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
@@ -186,6 +188,48 @@ func TestCheckRequiredTools_FailsWhenAlwaysOnAbsent(t *testing.T) {
 			}
 			if !slices.Equal(failed, tt.wantFail) {
 				t.Fatalf("failed = %v, want %v", failed, tt.wantFail)
+			}
+		})
+	}
+}
+
+// TestCheckRequiredTools_MCPServers verifies the always-on MCP tools'
+// servers must be configured in the on-disk .mcp.json (U28-WS1).
+func TestCheckRequiredTools_MCPServers(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name    string
+		mcpJSON string // "" means no .mcp.json
+		want    []string
+	}{
+		{name: "all configured", mcpJSON: `{"mcpServers":{"context7":{},"socket":{}}}`},
+		{name: "one missing", mcpJSON: `{"mcpServers":{"context7":{}}}`, want: []string{"tool_mcp_server_missing_socket-dev-mcp"}},
+		{name: "no file", want: []string{"tool_mcp_server_missing_context7", "tool_mcp_server_missing_socket-dev-mcp"}},
+		{name: "unparseable", mcpJSON: `{`, want: []string{"tool_mcp_server_missing_context7", "tool_mcp_server_missing_socket-dev-mcp"}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			dir := t.TempDir()
+			if tt.mcpJSON != "" {
+				if err := os.WriteFile(filepath.Join(dir, MCPConfigRelPath), []byte(tt.mcpJSON), 0o644); err != nil {
+					t.Fatal(err)
+				}
+			}
+			ctx := CheckContext{
+				ProjectRoot:        dir,
+				QsdevConfig:        &types.QsdevConfig{Tools: types.ToolsConfig{Enabled: []string{"context7", "socket-dev-mcp"}}},
+				AlwaysOnToolNames:  []string{"context7", "socket-dev-mcp"},
+				RequiredMCPServers: map[string]string{"context7": "context7", "socket-dev-mcp": "socket"},
+			}
+			var failed []string
+			for _, r := range CheckRequiredTools(ctx) {
+				if r.Status == StatusFail {
+					failed = append(failed, r.Name)
+				}
+			}
+			if !slices.Equal(failed, tt.want) {
+				t.Errorf("failed = %v, want %v", failed, tt.want)
 			}
 		})
 	}

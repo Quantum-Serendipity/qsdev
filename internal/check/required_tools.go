@@ -1,14 +1,25 @@
 package check
 
 import (
+	"maps"
+	"os"
+	"path/filepath"
 	"slices"
 
+	"github.com/Quantum-Serendipity/qsdev/internal/surgery"
 	"github.com/Quantum-Serendipity/qsdev/pkg/branding"
 )
 
+// MCPConfigRelPath is the project-relative path of the Claude Code MCP server
+// configuration.
+const MCPConfigRelPath = ".mcp.json"
+
 // CheckRequiredTools verifies that every always-on tool is recorded in
 // tools.enabled and not in tools.disabled. A tool in neither list was dropped
-// without the explicit `disable --force` opt-out.
+// without the explicit `disable --force` opt-out. It also verifies that the
+// on-disk .mcp.json configures the server of every always-on MCP tool the
+// project's expected generation configures (CheckContext.RequiredMCPServers),
+// so a tool recorded as enabled is never one whose server is gone.
 func CheckRequiredTools(ctx CheckContext) []CheckResult {
 	if ctx.QsdevConfig == nil {
 		return []CheckResult{
@@ -63,6 +74,8 @@ func CheckRequiredTools(ctx CheckContext) []CheckResult {
 		}
 	}
 
+	results = append(results, missingMCPServers(ctx)...)
+
 	if len(results) == 0 {
 		results = append(results, CheckResult{
 			Category: CategoryRequiredTools,
@@ -73,5 +86,33 @@ func CheckRequiredTools(ctx CheckContext) []CheckResult {
 		})
 	}
 
+	return results
+}
+
+// missingMCPServers returns a failure for each always-on tool whose server
+// ctx.RequiredMCPServers requires and the project's .mcp.json lacks.
+func missingMCPServers(ctx CheckContext) []CheckResult {
+	if len(ctx.RequiredMCPServers) == 0 {
+		return nil
+	}
+	// A missing or unreadable file configures no server; each required one
+	// is reported below.
+	content, _ := os.ReadFile(filepath.Join(ctx.ProjectRoot, MCPConfigRelPath))
+	var results []CheckResult
+	for _, tool := range slices.Sorted(maps.Keys(ctx.RequiredMCPServers)) {
+		server := ctx.RequiredMCPServers[tool]
+		if surgery.JSONHasMCPServer(content, server) {
+			continue
+		}
+		results = append(results, CheckResult{
+			Category: CategoryRequiredTools,
+			Name:     "tool_mcp_server_missing_" + tool,
+			Status:   StatusFail,
+			Severity: SeverityHigh,
+			Message:  "Always-on tool " + tool + " is enabled but its MCP server " + server + " is missing from " + MCPConfigRelPath,
+			Remediation: "Run `qsdev init --update` to restore the " + server + " server, or `qsdev disable " + tool +
+				" --force` to opt out explicitly",
+		})
+	}
 	return results
 }

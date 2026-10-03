@@ -9,6 +9,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/Quantum-Serendipity/qsdev/internal/catalog"
+	qsdevconfig "github.com/Quantum-Serendipity/qsdev/internal/config"
 	"github.com/Quantum-Serendipity/qsdev/pkg/branding"
 	"github.com/Quantum-Serendipity/qsdev/pkg/types"
 )
@@ -365,6 +367,50 @@ func TestReconcileProject(t *testing.T) {
 		}
 		if !strings.Contains(out.String(), `always-on tool "attach-guard" kept enabled`) {
 			t.Errorf("no warning for the dropped off:\n%s", out.String())
+		}
+	})
+
+	// U28-WS1: an answers file that dropped the servers of always-on MCP
+	// tools (mcp_servers: []) has them added back, and since the committed
+	// config listed them, each is warned about.
+	t.Run("committed always-on MCP servers dropped locally", func(t *testing.T) {
+		t.Parallel()
+		dir := t.TempDir()
+		enabled := true
+		cfg := types.QsdevConfig{
+			Version: types.ConfigVersionCurrent,
+			Tier:    "standard",
+			ClaudeCode: types.ClaudeCodeConfig{Enabled: &enabled,
+				MCPServers: catalog.MustDefault().AlwaysOnMCPServers()},
+		}
+		var mcpTools []string
+		for _, tool := range reg.All() {
+			if tool.Default == AlwaysOn {
+				cfg.Tools.Enabled = append(cfg.Tools.Enabled, tool.Name)
+				if tool.MCPServer != "" {
+					mcpTools = append(mcpTools, tool.Name)
+				}
+			}
+		}
+		if len(mcpTools) == 0 {
+			t.Fatal("catalog declares no always-on MCP tools")
+		}
+		if err := qsdevconfig.WriteProjectConfig(dir, cfg); err != nil {
+			t.Fatal(err)
+		}
+		a := &types.WizardAnswers{ClaudeCode: true, Tier: "standard", MCPServers: []string{}}
+		var out strings.Builder
+		if err := ReconcileProject(&out, dir, a, reg); err != nil {
+			t.Fatal(err)
+		}
+		for _, name := range mcpTools {
+			tool, _ := reg.ByName(name)
+			if !slices.Contains(a.MCPServers, tool.MCPServer) {
+				t.Errorf("MCPServers = %v, want %s's server %q restored", a.MCPServers, name, tool.MCPServer)
+			}
+			if want := `always-on tool "` + name + `" kept enabled`; !strings.Contains(out.String(), want) {
+				t.Errorf("output lacks %q:\n%s", want, out.String())
+			}
 		}
 	})
 

@@ -50,11 +50,11 @@ func LoadProjectPolicy(projectRoot string) (*ProjectPolicy, error) {
 	return ResolveProjectPolicy(project, local)
 }
 
-// CommittedTools returns the tools block of projectRoot's committed
-// .qsdev.yaml. It returns nil and no error when there is no committed config
-// (no opt-out is recorded), and an error when one exists but cannot be loaded,
+// CommittedConfig returns projectRoot's committed .qsdev.yaml as resolved on
+// its own (ProjectPolicy.Committed). It returns nil and no error when there
+// is no committed config, and an error when one exists but cannot be loaded,
 // so callers do not mistake a broken config for a missing one.
-func CommittedTools(projectRoot string) (*types.ToolsConfig, error) {
+func CommittedConfig(projectRoot string) (*types.QsdevConfig, error) {
 	policy, err := LoadProjectPolicy(projectRoot)
 	if errors.Is(err, fs.ErrNotExist) {
 		return nil, nil
@@ -62,7 +62,19 @@ func CommittedTools(projectRoot string) (*types.ToolsConfig, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &policy.Committed.Tools, nil
+	return policy.Committed, nil
+}
+
+// CommittedTools returns the tools block of projectRoot's committed
+// .qsdev.yaml. It returns nil and no error when there is no committed config
+// (no opt-out is recorded), and an error when one exists but cannot be loaded
+// (see CommittedConfig).
+func CommittedTools(projectRoot string) (*types.ToolsConfig, error) {
+	cfg, err := CommittedConfig(projectRoot)
+	if cfg == nil || err != nil {
+		return nil, err
+	}
+	return &cfg.Tools, nil
 }
 
 // ResolveProjectPolicy resolves an already-parsed project config and optional

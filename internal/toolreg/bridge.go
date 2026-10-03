@@ -72,6 +72,7 @@ func toolFromDef(name string, def catalog.ToolDef) (Tool, error) {
 		Prerequisites: def.Prerequisites,
 		Conflicts:     def.Conflicts,
 		OwnedFiles:    owned,
+		MCPServer:     def.MCPServerName,
 	}
 
 	// A tool may declare several behavior sources (agent-postmortem is both
@@ -82,6 +83,7 @@ func toolFromDef(name string, def catalog.ToolDef) (Tool, error) {
 	t.SkillBacked = def.SkillName != ""
 	if def.MCPServerName != "" {
 		enables = append(enables, mcpEnableFunc(def.MCPServerName))
+		forceOns = append(forceOns, mcpForceOnFunc(def.MCPServerName))
 		disables = append(disables, mcpDisableFunc(def.MCPServerName))
 	}
 	if def.SkillName != "" {

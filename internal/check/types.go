@@ -157,12 +157,16 @@ const (
 // CheckContext provides all dependencies for running checks.
 // Constructed by the command layer to avoid circular imports.
 type CheckContext struct {
-	ProjectRoot          string
-	BinaryVersion        string
-	QsdevConfig          *types.QsdevConfig
-	ConfigErr            error    // why QsdevConfig is nil: not found vs. failed to parse
-	ToolNames            []string // every registered tool, for config name validation
-	AlwaysOnToolNames    []string // tools that must never appear in tools.disabled
+	ProjectRoot       string
+	BinaryVersion     string
+	QsdevConfig       *types.QsdevConfig
+	ConfigErr         error    // why QsdevConfig is nil: not found vs. failed to parse
+	ToolNames         []string // every registered tool, for config name validation
+	AlwaysOnToolNames []string // tools that must never appear in tools.disabled
+	// RequiredMCPServers maps each always-on tool that the project's expected
+	// generation backs with an MCP server to that server, which the on-disk
+	// .mcp.json must configure.
+	RequiredMCPServers   map[string]string
 	MCPToolNames         []string // tools the MCP server can mount, for validating mcp.disabled_tools
 	ProfileNames         []string // project-type profiles, for validating `profile`
 	RequiredDenyRules    []string

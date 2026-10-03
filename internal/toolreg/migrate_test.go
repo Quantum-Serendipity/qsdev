@@ -338,7 +338,7 @@ func TestEnforceAlwaysOn_RespectsExplicitDisabled(t *testing.T) {
 
 // TestEnforceAlwaysOn_EnabledMeansBacked verifies, for every always-on
 // catalog tool, that a tool EnforceAlwaysOn records as enabled has what
-// backs it switched on (its toggle_field and skill_name), so it is
+// backs it switched on (its toggle_field, skill_name and mcp_server_name), so it is
 // generated: "enabled" is never a label without the configuration.
 func TestEnforceAlwaysOn_EnabledMeansBacked(t *testing.T) {
 	t.Parallel()
@@ -362,14 +362,17 @@ func TestEnforceAlwaysOn_EnabledMeansBacked(t *testing.T) {
 			if def.SkillName != "" && !slices.Contains(answers.Skills, def.SkillName) {
 				t.Errorf("skill %s missing from %v", def.SkillName, answers.Skills)
 			}
+			if def.MCPServerName != "" && !slices.Contains(answers.MCPServers, def.MCPServerName) {
+				t.Errorf("MCP server %s missing from %v", def.MCPServerName, answers.MCPServers)
+			}
 		})
 	}
 }
 
 // TestEnforceAlwaysOn_OverrideReportsOnlyExplicitOff verifies that only a
 // backing toggle switched off is reported: a toggle already on is not, and
-// a skill missing from the list is added silently. MCP servers are left
-// alone, since they feed tier inference.
+// a skill or MCP server missing from its list is added silently (U28-WS1:
+// an always-on MCP tool recorded as enabled has its server configured).
 func TestEnforceAlwaysOn_OverrideReportsOnlyExplicitOff(t *testing.T) {
 	t.Parallel()
 	reg := catalogRegistry(t)
@@ -387,8 +390,8 @@ func TestEnforceAlwaysOn_OverrideReportsOnlyExplicitOff(t *testing.T) {
 	if !slices.Contains(answers.Skills, "security-review-owasp") {
 		t.Errorf("Skills = %v, want the trail-of-bits-skills skill added", answers.Skills)
 	}
-	if len(answers.MCPServers) != 0 {
-		t.Errorf("MCPServers = %v, want enforcement to leave them alone", answers.MCPServers)
+	if want := catalog.MustDefault().AlwaysOnMCPServers(); !slices.Equal(slices.Sorted(slices.Values(answers.MCPServers)), want) {
+		t.Errorf("MCPServers = %v, want the always-on tools' servers %v", answers.MCPServers, want)
 	}
 }
 
@@ -556,5 +559,28 @@ func TestWarnSafetyBlockOptOut(t *testing.T) {
 				t.Errorf("warning %q does not name `qsdev enable %s`", got, ToolAttachGuard)
 			}
 		})
+	}
+}
+
+// TestEnforceAlwaysOn_MCPServerRespectsClientPolicy verifies enforcement
+// adds an always-on MCP tool's server only where the client MCP policy
+// permits it (U28-WS1).
+func TestEnforceAlwaysOn_MCPServerRespectsClientPolicy(t *testing.T) {
+	t.Parallel()
+	reg := catalogRegistry(t)
+	servers := catalog.MustDefault().AlwaysOnMCPServers()
+	blocked := servers[0]
+	answers := &types.WizardAnswers{ClaudeCode: true, Tier: "standard",
+		MCPPolicy: types.MCPPolicy{Blocked: []string{blocked}}}
+
+	EnforceAlwaysOn(answers, reg)
+
+	if slices.Contains(answers.MCPServers, blocked) {
+		t.Errorf("MCPServers = %v, want the blocked %q left out", answers.MCPServers, blocked)
+	}
+	for _, s := range servers[1:] {
+		if !slices.Contains(answers.MCPServers, s) {
+			t.Errorf("MCPServers = %v, want permitted %q added", answers.MCPServers, s)
+		}
 	}
 }

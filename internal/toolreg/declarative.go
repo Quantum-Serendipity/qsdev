@@ -15,6 +15,22 @@ func mcpEnableFunc(serverName string) func(*types.WizardAnswers) {
 	}
 }
 
+// mcpForceOnFunc returns a ForceOnFunc that adds the MCP server unless the
+// client MCP policy blocks it (a blocked server is never configured, so
+// recording it would only put it back into the committed mcp_servers). A
+// server missing from the list is not an explicit off (the committed opt-out
+// is tools.disabled), so it never reports an override; ReconcileProject warns
+// when the committed config listed a server the answers dropped.
+func mcpForceOnFunc(serverName string) ForceOnFunc {
+	enable := mcpEnableFunc(serverName)
+	return func(a *types.WizardAnswers) bool {
+		if a.MCPPolicy.Permits(serverName) {
+			enable(a)
+		}
+		return false
+	}
+}
+
 func mcpDisableFunc(serverName string) func(*types.WizardAnswers) {
 	return func(a *types.WizardAnswers) {
 		a.MCPServers = sliceutil.Remove(a.MCPServers, serverName)

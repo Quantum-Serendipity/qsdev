@@ -88,6 +88,12 @@ func TestEnvFileRelocationVerdicts(t *testing.T) {
 		{"ln into home directory", bash("ln -s /tmp/x/.bashrc ~/"), Deny},
 		{"ln -t into home directory", bash("ln -st ~ /tmp/x/.bashrc"), Deny},
 		{"append through symlink to rc file", bash("echo 'export X=1' >> notes.txt"), Deny},
+		// A link into a directory an earlier command of the line creates
+		// lands under the source's name, though the directory does not exist
+		// when the hook runs.
+		{"ln into directory mkdir creates", bash("mkdir -p fishcfg && ln -s /tmp/x/config.fish fishcfg"), Deny},
+		{"ln into home directory mkdir creates", bash("mkdir -p ~/.config/qsdev-no-such-dir-4242/fish && ln -s /tmp/x/config.fish ~/.config/qsdev-no-such-dir-4242/fish"), Deny},
+		{"ln into directory a sourced script may create", bash("source ./mk.sh; ln -s /tmp/x/.bashrc rcdir"), Deny},
 		{"source process substitution naming bashrc", bash("source <(echo 'echo x >> ~/.bashrc')"), Deny},
 
 		{"Write bashrc alias", write(filepath.Join(home, ".bashrc"), "alias ll='ls -l'\n"), Allow},
@@ -108,6 +114,7 @@ func TestEnvFileRelocationVerdicts(t *testing.T) {
 		{"sed -n bashrc", bash("sed -n 1p ~/.bashrc"), Allow},
 		{"sed -n expression bashrc", bash("sed -n -e 1,5p ~/.bashrc"), Allow},
 		{"link to bashrc", bash("ln -s ~/.bashrc rc-link.txt"), Allow},
+		{"link to bashrc after a read", bash("cat ~/.bashrc && ln -s ~/.bashrc rc-link.txt"), Allow},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

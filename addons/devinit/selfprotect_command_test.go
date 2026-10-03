@@ -174,6 +174,15 @@ func TestSelfprotectHook_Decisions(t *testing.T) {
 		{"shell -c rewrite of .npmrc is blocked", bash(`sh -c 'echo ignore-scripts=false >> .npmrc'`), 2, "GD-004"},
 		{"inline program rewriting .npmrc is blocked", bash(`python3 -c "open('.npmrc','w').write('')"`), 2, "GD-004"},
 		{"dd onto .npmrc is blocked", bash("dd if=/tmp/x of=.npmrc"), 2, "GD-004"},
+		// ln into a directory an earlier command of the line creates: the
+		// link lands under the source's name, though the directory does not
+		// exist when the hook runs.
+		{"ln -s into a directory mkdir -p creates is blocked", bash("mkdir -p pkg && ln -s ../evil/.npmrc pkg"), 2, "GD-004"},
+		{"ln -s into a directory mkdir creates is blocked", bash("mkdir pkg; ln -s ../evil/.npmrc pkg"), 2, "GD-004"},
+		{"hard ln into a directory mkdir creates is blocked", bash("mkdir -p pkg && ln ../evil/.npmrc pkg"), 2, "GD-004"},
+		{"ln -s .yarnrc.yml into a created directory is blocked", bash("mkdir -p pkg && ln -s ../evil/.yarnrc.yml pkg"), 2, "GD-004"},
+		{"ln into a new worktree is blocked", bash("git worktree add w && ln -s ../evil/.npmrc w"), 2, "GD-004"},
+		{"ln -s of .npmrc to a new file name is allowed", bash("ln -s ../shared/.npmrc npmrc-link.txt"), 0, ""},
 		{"yarn config set is blocked", bash("yarn config set enableScripts true"), 2, "GD-004"},
 		{"pnpm approve-builds is blocked", bash("pnpm approve-builds esbuild"), 2, "GD-004"},
 		{"pr text naming .npmrc is allowed", bash(`gh pr create --title "chore: harden .npmrc" --body "x"`), 0, ""},

@@ -37,8 +37,8 @@ func BashRewritesFile(ctx *EvalContext, names []string) (string, bool) {
 	if err != nil {
 		return mentioned, mentioned != ""
 	}
-	for _, sc := range scs {
-		targets, writes := writeTargets(sc)
+	for i, sc := range scs {
+		targets, writes := writeTargets(sc, scs[:i])
 		for _, t := range targets {
 			if n := guardedTarget(sc, t, names); n != "" {
 				return n, true
@@ -64,21 +64,27 @@ func BashRewritesFile(ctx *EvalContext, names []string) (string, bool) {
 // cmdscan.WrittenOperands models for it, or else every operand
 // mutationTargets lists for a command that is not read-only. A command that
 // only records files in git (recordsOnly) writes none of its operands.
-func writeTargets(sc scannedCommand) ([]string, bool) {
+// earlier are the commands of the line that run before sc, which may create
+// a directory sc writes into (see mayBeDir).
+func writeTargets(sc scannedCommand, earlier []scannedCommand) ([]string, bool) {
 	if recordsOnly(sc) {
 		return sc.WriteRedirects, len(sc.WriteRedirects) > 0
 	}
-	if ops, ok := cmdscan.WrittenOperands(sc.Command, func(w string) bool { return mayBeDir(sc, w) }); ok {
+	isDir := func(w string) bool { return mayBeDir(sc, w, earlier) }
+	if ops, ok := cmdscan.WrittenOperands(sc.Command, isDir); ok {
 		targets := slices.Concat(ops, sc.WriteRedirects)
 		return targets, len(targets) > 0
 	}
 	return slices.Concat(mutationTargets(sc), sc.WriteRedirects), len(sc.WriteRedirects) > 0 || isMutating(sc)
 }
 
-// mayBeDir reports whether word, used by sc, may name an existing directory:
-// it does, or where it resolves to is unknown.
-func mayBeDir(sc scannedCommand, word string) bool {
-	if hasGlobMeta(word) {
+// mayBeDir reports whether word, used by sc, may name a directory when sc
+// runs: it names one now, where it resolves to is unknown, or a command that
+// runs before sc on the line (earlier) may create or replace it (see
+// mayCreateFiles). The last covers `mkdir -p pkg && ln -s ../x/.npmrc pkg`,
+// where pkg does not exist yet when the hook runs.
+func mayBeDir(sc scannedCommand, word string, earlier []scannedCommand) bool {
+	if hasGlobMeta(word) || slices.ContainsFunc(earlier, mayCreateFiles) {
 		return true
 	}
 	p, ok := resolveWord(sc, word)
@@ -87,6 +93,14 @@ func mayBeDir(sc scannedCommand, word string) bool {
 	}
 	fi, err := os.Stat(p)
 	return err == nil && fi.IsDir()
+}
+
+// mayCreateFiles reports whether sc may create a file or directory anywhere:
+// it writes through a redirect, or it is not a read-only command. Which paths
+// such a command creates is not modelled (`tar -x`, `git clone`, a sourced
+// script), so any of them may be one a later command of the line uses.
+func mayCreateFiles(sc scannedCommand) bool {
+	return len(sc.WriteRedirects) > 0 || isMutating(sc)
 }
 
 // guardedTarget returns the entry of names that the write target word

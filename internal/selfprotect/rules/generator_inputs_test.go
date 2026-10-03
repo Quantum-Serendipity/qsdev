@@ -177,6 +177,11 @@ func TestGeneratorInputsVerdicts(t *testing.T) {
 		{"exec clustered -cl for cli", bash("exec -cl " + b.AppName + " claude update"), Deny},
 		{"exec clustered -ca for cli", bash("exec -ca name " + b.AppName + " claude update"), Deny},
 		{"sh -c exec -c for cli", bash(`bash -c 'exec -c ` + b.AppName + ` claude update'`), Deny},
+		// Regression (U18-WS1): the CLI named through a variable behind
+		// the wrapper, as `env -u` and `HOME=` already were.
+		{"env -i for variable cli", bash("Q=" + b.AppName + "; env -i $Q claude update"), Deny},
+		{"exec -c for variable cli", bash("Q=" + b.AppName + "; exec -c $Q claude update"), Deny},
+		{"exec -c for defaulted variable cli", bash("exec -c ${Q:-" + b.AppName + "} claude update"), Deny},
 		// A file that sets the dev shell's environment relocates the overlay
 		// for every later regeneration run in it.
 		{"Write devenv.local.nix org config", EvalContext{
@@ -296,6 +301,7 @@ func TestGeneratorInputsVerdicts(t *testing.T) {
 		{"read home for other program", bash("read HOME <<< /tmp/e; make"), Allow},
 		{"exec without -c for cli", bash("exec " + b.AppName + " status"), Allow},
 		{"exec -c for other program", bash("exec -c make"), Allow},
+		{"env -i expansion operand for other program", bash("env -i PATH=$PATH make test"), Allow},
 		{"Write devenv.local.nix other env", EvalContext{
 			ToolName: "Write", FilePath: filepath.Join(project, "devenv.local.nix"),
 			CanonicalPath: filepath.Join(project, "devenv.local.nix"), CWD: project,

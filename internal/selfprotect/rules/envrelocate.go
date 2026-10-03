@@ -69,8 +69,10 @@ func mayRunCLI(command string, cmds []cmdscan.Command) bool {
 	return anyCommandIn(cmds, 0, mayRun, func(string) bool { return true })
 }
 
-// commandMayRunCLI reports whether c may run the program app: its command
-// word is built from an expansion, or a word that can name the program (see
+// commandMayRunCLI reports whether c may run the program app: the word
+// naming the program it runs, also behind a wrapper (`env -i $Q ...`, `exec
+// -c $Q ...`, see cmdscan.Program), or the command string a wrapper runs, is
+// built from an expansion; or a word that can name the program (see
 // cmdscan.CommandWordIndexes) names app once quotes and escapes are removed
 // (`$'qsdev'`, `qs$'d'ev`), after brace expansion (`{qsdev,}`), or as a glob
 // that can match it (`qsde?`). Names are compared case-insensitively, as
@@ -80,7 +82,14 @@ func commandMayRunCLI(c cmdscan.Command, app string) bool {
 		return true
 	}
 	words := append([]string{c.Name}, c.Args...)
-	for _, i := range cmdscan.CommandWordIndexes(words) {
+	idx := cmdscan.CommandWordIndexes(words)
+	switch run := cmdscan.Program(words); {
+	case run.Index > 0 && c.WordHasExpansion(run.Index):
+		return true
+	case run.CommandString && slices.ContainsFunc(idx, c.WordHasExpansion):
+		return true
+	}
+	for _, i := range idx {
 		variants, ok := expandBraces(words[i])
 		if !ok {
 			return true

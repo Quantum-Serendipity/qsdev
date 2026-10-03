@@ -53,6 +53,17 @@ func ChangesDir(name string) bool { return dirChangers[name] }
 // longer looked up on PATH (`hash -p /opt/ruff ruff`).
 var lookupBinders = map[string]string{"hash": "p"}
 
+// WordHasExpansion reports whether word i of c (0 is Name, i is Args[i-1])
+// is built from an expansion, so its text is not necessarily what the shell
+// uses. A literal word that reads the same as an expanded one counts too,
+// which errs toward treating it as unknown.
+func (c Command) WordHasExpansion(i int) bool {
+	if i == 0 {
+		return c.NameHasExpansion
+	}
+	return i > 0 && i <= len(c.Args) && slices.Contains(c.ExpandedArgs, c.Args[i-1])
+}
+
 // ShellBuiltin returns the builtin the shell runs for c, when the program it
 // runs, directly or through the builtins command and builtin, is a literal
 // shell builtin (see IsShellBuiltin and ProgramRun.ShellRuns). A word built

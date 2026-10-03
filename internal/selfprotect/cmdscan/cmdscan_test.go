@@ -498,3 +498,35 @@ func TestCommandBindsCommand(t *testing.T) {
 		})
 	}
 }
+
+// TestWordHasExpansion pins which words of a command are built from an
+// expansion: the command word and arguments alike, by word index.
+func TestWordHasExpansion(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		line string
+		want []bool // per word, Name first
+	}{
+		{"env -i $Q claude", []bool{false, false, true, false}},
+		{"$X -c y", []bool{true, false, false}},
+		{"exec -c ${Q:-qsdev} update", []bool{false, false, true, false}},
+		{"ls a b", []bool{false, false, false}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.line, func(t *testing.T) {
+			t.Parallel()
+			cmds, err := Parse(tt.line)
+			if err != nil || len(cmds) != 1 {
+				t.Fatalf("Parse(%q) = %v, %v", tt.line, cmds, err)
+			}
+			for i, want := range tt.want {
+				if got := cmds[0].WordHasExpansion(i); got != want {
+					t.Errorf("WordHasExpansion(%d) = %v, want %v", i, got, want)
+				}
+			}
+			if cmds[0].WordHasExpansion(len(tt.want)) || cmds[0].WordHasExpansion(-1) {
+				t.Error("WordHasExpansion out of range = true, want false")
+			}
+		})
+	}
+}

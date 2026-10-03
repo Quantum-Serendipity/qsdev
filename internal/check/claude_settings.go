@@ -528,7 +528,7 @@ func checkHookPrograms(projectRoot string, actual claudesettings.Settings, lookP
 // programProblem returns why the shell cannot run program, a bare name or a
 // path, or nil when it can.
 func programProblem(projectRoot, program string, lookPath func(string) (string, error)) *runProblem {
-	if !strings.ContainsAny(program, `/\`) {
+	if isBareName(program) {
 		if _, err := lookPath(program); err != nil {
 			return &runProblem{program, "is not on PATH (the shell exits 127)",
 				fmt.Sprintf("Install %s on PATH or run 'qsdev init --update' to regenerate the hook", program)}
@@ -557,77 +557,158 @@ type hookRun struct {
 }
 
 // hookPrograms returns the programs a hook command runs whenever it runs, in
-// order, following wrappers (exec, env, timeout, see cmdscan.Program). Shell
-// builtins run no program and are taken to succeed, except the status tests
-// (statusTests, `command -v`); a program's exit status is unknown, so it is
-// a test too. A statement is skipped when it runs only conditionally: behind
-// ||, in a branch, loop or function (cmdscan.Guarded), or in an && list
-// after a test (`test -x prog && prog`, `[ -f .env ] && . ./.env`), but
-// `cd "$dir" && prog` and `cd "$dir" || exit 1; prog` run prog. Scanning
-// stops at a statement that may end the hook (exit, return, exec of a
-// command) unless it runs only when a builtin taken to succeed fails, so
-// `command -v prog || exit 0; prog` checks nothing. A leading unquoted ~ or
-// ~/ expands to the home directory, and ${CLAUDE_PROJECT_DIR} renders as
-// projectRoot. A program that is a project hook script (see
-// checkHookScripts), is built from any other expansion (including ~user),
-// or cannot be named is left out, as is every program of an unparseable
-// command. On Windows a POSIX absolute path is left out, as Git Bash maps
-// it into its own layer.
+// order, following wrappers (exec, env, timeout, see cmdscan.Program), the
+// script of `sh -c` and eval (cmdscan.ShellScript), and nothing for a shell
+// builtin or a call of a function the hook defines. A statement is skipped
+// when it runs only conditionally: behind ||, in a branch, loop or function
+// (cmdscan.Guarded), or in an && list after a command that tests something
+// (cmdscan.Command.Tested: `test -x prog && prog`, `[ -f .env ] && . ./.env`),
+// but `cd "$dir" && prog` and `cd "$dir" || exit 1; prog` run prog. Scanning
+// stops at a statement of the hook's own shell that may end it (exit, or
+// exec of a command, see cmdscan.EndsShell) unless it runs only when a
+// builtin taken to succeed fails, so `command -v prog || exit 0; prog`
+// checks nothing; an exit in a subshell, command substitution or pipeline
+// stage does not end the hook. Once the hook may have changed PATH (see
+// hookScan.changesPath) a bare program name is no longer checked, as it is
+// looked up on a PATH the check cannot know; a path still is. A leading
+// unquoted ~ or ~/ expands to the home directory, and ${CLAUDE_PROJECT_DIR}
+// renders as projectRoot. A program that is a project hook script (see
+// checkHookScripts), is built from any other expansion (including ~user), or
+// cannot be named is left out, as is every program of an unparseable
+// command. On Windows a POSIX absolute path is left out, as Git Bash maps it
+// into its own layer.
 func hookPrograms(projectRoot, command string) []hookRun {
-	cmds, err := cmdscan.ParseWithVars(command, map[string]string{claudeProjectDirVar: projectRoot})
+	s := hookScan{projectRoot: projectRoot, funcs: map[string]bool{}}
+	s.scan(command, 0)
+	return s.runs
+}
+
+// hookScan follows the programs a hook command runs (see hookPrograms).
+type hookScan struct {
+	projectRoot string
+	runs        []hookRun
+	funcs       map[string]bool // the shell functions the hook has defined
+	pathChanged bool            // PATH may no longer be the check's own
+}
+
+// scan adds the programs command runs, a hook command or, at depth > 0,
+// the script of `sh -c` or eval, and reports whether it ends the shell that
+// runs it.
+func (s *hookScan) scan(command string, depth int) bool {
+	cmds, err := cmdscan.ParseWithVars(command, map[string]string{claudeProjectDirVar: s.projectRoot})
 	if err != nil {
-		return nil
+		return false
 	}
-	var runs []hookRun
-	tested := false // a statement of the current && list has a status that tests something
 	for _, c := range cmds {
-		if c.Guard == cmdscan.Unguarded {
-			tested = false
-		}
-		if c.Name == "" {
+		if c.Defines != "" {
+			s.funcs[c.Defines] = true
 			continue
 		}
-		st := classifyStatement(projectRoot, c)
-		conditional := c.Guard == cmdscan.Guarded || c.Guard == cmdscan.GuardedByAnd && tested
-		if !conditional && st.run != nil {
-			runs = append(runs, *st.run)
+		changesPath := s.changesPath(c)
+		if c.Name == "" {
+			s.pathChanged = s.pathChanged || changesPath
+			continue
 		}
-		if st.ends && (!conditional || tested) {
-			break
+		st := s.classify(c)
+		conditional := c.Guard == cmdscan.Guarded || c.Guard == cmdscan.GuardedByAnd && c.Tested
+		if !conditional {
+			if st.run != nil {
+				s.runs = append(s.runs, *st.run)
+			}
+			if st.script != "" && depth < maxScriptNesting && s.scanScript(st, depth) && !c.Subshell {
+				return true
+			}
 		}
-		tested = tested || st.tests
+		s.pathChanged = s.pathChanged || changesPath
+		if st.ends && !c.Subshell && (c.Guard != cmdscan.Guarded || c.Tested) {
+			return true
+		}
 	}
-	return runs
+	return false
 }
+
+// scanScript scans the script st runs and reports whether it ends the
+// hook's shell: an eval script runs in it, a `sh -c` script in a child
+// shell, whose PATH and functions the hook's shell does not get back.
+func (s *hookScan) scanScript(st hookStatement, depth int) bool {
+	if st.evals {
+		return s.scan(st.script, depth+1)
+	}
+	pathChanged, funcs := s.pathChanged, maps.Clone(s.funcs)
+	s.scan(st.script, depth+1)
+	s.pathChanged, s.funcs = pathChanged, funcs
+	return false
+}
+
+// changesPath reports whether the statement c may change PATH for the rest
+// of the hook: it assigns PATH other than as the prefix assignment of a
+// program run from a file (`PATH=dir prog` sets it for prog only), assigns
+// a variable it cannot name, or sources code (cmdscan.SourcesCode), which
+// can set any variable.
+func (s *hookScan) changesPath(c cmdscan.Command) bool {
+	if c.AssignsDynamic {
+		return true
+	}
+	builtin, isBuiltin := c.ShellBuiltin()
+	if isBuiltin && cmdscan.SourcesCode(builtin) {
+		return true
+	}
+	if !slices.Contains(c.Assigns, pathVar) {
+		return false
+	}
+	return c.Name == "" || isBuiltin || s.callsFunction(c)
+}
+
+// callsFunction reports whether c calls a function the hook defined.
+func (s *hookScan) callsFunction(c cmdscan.Command) bool {
+	return !c.NameHasExpansion && s.funcs[c.Name] && cmdscan.ProgramWordIndex(append([]string{c.Name}, c.Args...)) == 0
+}
+
+// pathVar is the variable the shell looks bare program names up on.
+const pathVar = "PATH"
 
 // hookStatement is what one simple command of a hook command does, for
 // hookPrograms.
 type hookStatement struct {
-	run   *hookRun // the program to check, when it can be named
-	tests bool     // its exit status tests something, so && may guard a branch
-	ends  bool     // it can end the hook: exit, return, or exec of a command
+	run    *hookRun // the program to check, when it can be named
+	ends   bool     // it ends the shell running it: exit, or exec of a command
+	script string   // the script it runs through `sh -c` or eval
+	evals  bool     // script runs in the hook's own shell (eval)
 }
 
-// classifyStatement classifies the simple command c of a hook command.
-func classifyStatement(projectRoot string, c cmdscan.Command) hookStatement {
+// classify classifies the simple command c of a hook command.
+func (s *hookScan) classify(c cmdscan.Command) hookStatement {
 	words := append([]string{c.Name}, c.Args...)
 	run := cmdscan.Program(words)
-	if run.Index < 0 {
-		return hookStatement{tests: run.LookupOnly || run.CommandString, ends: run.Exec}
+	if run.Index < 0 || s.callsFunction(c) {
+		return hookStatement{ends: run.Exec}
 	}
+	var st hookStatement
+	if script, ok := cmdscan.ShellScript(words); ok && len(c.ExpandedArgs) == 0 && !c.NameHasExpansion {
+		st.script = script
+	}
+	if builtin, ok := c.ShellBuiltin(); ok {
+		st.ends, st.evals = cmdscan.EndsShell(builtin), st.script != ""
+		return st
+	}
+	st.ends = run.Exec
 	word := words[run.Index]
 	expanded := c.NameHasExpansion
 	if run.Index > 0 {
 		expanded = slices.Contains(c.ExpandedArgs, word)
 	}
-	if !expanded && run.ShellRuns && cmdscan.IsShellBuiltin(word) {
-		return hookStatement{tests: statusTests[word], ends: word == "exit" || word == "return"}
-	}
-	st := hookStatement{tests: true, ends: run.Exec}
-	if program, ok := namedProgram(projectRoot, word, expanded, slices.Contains(c.TildeWords, run.Index)); ok {
+	program, ok := namedProgram(s.projectRoot, word, expanded, slices.Contains(c.TildeWords, run.Index))
+	pathChanged := s.pathChanged || run.PathChanged || slices.Contains(c.Assigns, pathVar)
+	if ok && (!pathChanged || !isBareName(program)) {
 		st.run = &hookRun{program: program, args: words[run.Index+1:]}
 	}
 	return st
+}
+
+// isBareName reports whether program is a bare name, which the shell looks
+// up on PATH, rather than a path.
+func isBareName(program string) bool {
+	return !strings.ContainsAny(program, `/\`)
 }
 
 // namedProgram returns the program a hook's program word names, or false
@@ -651,11 +732,6 @@ func namedProgram(projectRoot, word string, expanded, tilde bool) (string, bool)
 	}
 	return word, true
 }
-
-// statusTests are the builtins whose exit status tests something (`test -x
-// prog && prog`), so a command after them in an && list may never run. Other
-// builtins, such as cd, are taken to succeed.
-var statusTests = map[string]bool{"test": true, "[": true, "false": true, "type": true, "hash": true}
 
 // homeProgram expands the leading ~ or ~/ of a program word the way the
 // shell does, to the home directory. ok is false for ~user, whose account

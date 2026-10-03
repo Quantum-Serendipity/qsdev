@@ -480,7 +480,8 @@ func TestCheckHookPrograms(t *testing.T) {
 		{name: "function body", command: `f() { nonexistent-bin; }; :`, event: "PreToolUse"},
 		{name: "cd and-chain then unresolvable program", command: `cd "$CLAUDE_PROJECT_DIR" && cd .claude && nonexistent-bin selfprotect`, event: "PreToolUse", wantSev: SeverityCritical, wantProg: "nonexistent-bin"},
 		{name: "cd or-exit then unresolvable program", command: `cd "$CLAUDE_PROJECT_DIR" || exit 1; nonexistent-bin selfprotect`, event: "PreToolUse", wantSev: SeverityCritical, wantProg: "nonexistent-bin"},
-		{name: "optional env file then unresolvable program", command: `cd "$CLAUDE_PROJECT_DIR"; [ -f .env ] && . ./.env; nonexistent-bin selfprotect`, event: "PreToolUse", wantSev: SeverityCritical, wantProg: "nonexistent-bin"},
+		{name: "optional env file then missing path program", command: `cd "$CLAUDE_PROJECT_DIR"; [ -f .env ] && . ./.env; ./bin/missing selfprotect`, event: "PreToolUse", wantSev: SeverityCritical, wantProg: "./bin/missing"},
+		{name: "optional env file then bare program", command: `cd "$CLAUDE_PROJECT_DIR"; [ -f .env ] && . ./.env; nonexistent-bin selfprotect`, event: "PreToolUse"},
 		{name: "if-guarded exit then program", command: `if ! command -v nonexistent-bin >/dev/null; then exit 0; fi; nonexistent-bin`, event: "PostToolUse"},
 		{name: "test-guarded exit then program", command: `[ -x ./bin/qsdev ] || exit 0; ./bin/qsdev selfprotect`, event: "PreToolUse"},
 		{name: "cd and-exit ends the hook", command: `cd "$CLAUDE_PROJECT_DIR" && exit 0; nonexistent-bin`, event: "PostToolUse"},
@@ -497,6 +498,33 @@ func TestCheckHookPrograms(t *testing.T) {
 		{name: "enable builtin", command: `enable -n test; gofmt -l .`, event: "PostToolUse"},
 		{name: "second unconditional program", command: `gofmt -l .; nonexistent-bin`, event: "PostToolUse", wantSev: SeverityHigh, wantProg: "nonexistent-bin"},
 		{name: "second program after a pipeline", command: `gofmt -l . | cat; nonexistent-bin selfprotect`, event: "PreToolUse", wantSev: SeverityCritical, wantProg: "nonexistent-bin"},
+		// A program looked up after the hook changes PATH may be found there.
+		{name: "export PATH then bare program", command: `export PATH="$CLAUDE_PROJECT_DIR/.venv/bin:$PATH"; nonexistent-bin check`, event: "PostToolUse"},
+		{name: "export node_modules PATH then bare program", command: `export PATH="$CLAUDE_PROJECT_DIR/node_modules/.bin:$PATH"; nonexistent-bin .`, event: "PostToolUse"},
+		{name: "prefix PATH then bare program", command: `PATH="$CLAUDE_PROJECT_DIR/.venv/bin:$PATH" nonexistent-bin check`, event: "PostToolUse"},
+		{name: "prefix PATH sets it for its command only", command: `PATH="$CLAUDE_PROJECT_DIR/.venv/bin:$PATH" gofmt -l .; nonexistent-bin selfprotect`, event: "PreToolUse", wantSev: SeverityCritical, wantProg: "nonexistent-bin"},
+		{name: "bare PATH assignment then bare program", command: `PATH="$CLAUDE_PROJECT_DIR/.venv/bin:$PATH"; nonexistent-bin check`, event: "PostToolUse"},
+		{name: "sourced venv then bare program", command: `cd "$CLAUDE_PROJECT_DIR" && . .venv/bin/activate && nonexistent-bin check`, event: "PostToolUse"},
+		{name: "eval then bare program", command: `eval "$(direnv export bash)"; nonexistent-bin check`, event: "PostToolUse"},
+		{name: "env -i then bare program", command: `env -i nonexistent-bin check`, event: "PostToolUse"},
+		{name: "env -u PATH then bare program", command: `env -u PATH nonexistent-bin check`, event: "PostToolUse"},
+		{name: "env PATH operand then bare program", command: `env PATH=/opt/bin nonexistent-bin check`, event: "PostToolUse"},
+		{name: "env other operand then bare program", command: `env A=1 nonexistent-bin selfprotect`, event: "PreToolUse", wantSev: SeverityCritical, wantProg: "nonexistent-bin"},
+		{name: "export PATH then missing path program", command: `export PATH="$CLAUDE_PROJECT_DIR/.venv/bin:$PATH"; ./bin/missing selfprotect`, event: "PreToolUse", wantSev: SeverityCritical, wantProg: "./bin/missing"},
+		// A shell function the hook defines is no program.
+		{name: "function call", command: `nonexistent-bin() { gofmt -l .; }; nonexistent-bin`, event: "PostToolUse"},
+		{name: "command bypasses the function", command: `nonexistent-bin() { :; }; command nonexistent-bin`, event: "PostToolUse", wantSev: SeverityHigh, wantProg: "nonexistent-bin"},
+		// Only an exit of the hook's own shell ends it.
+		{name: "exit in a subshell", command: `(exit 0); nonexistent-bin selfprotect`, event: "PreToolUse", wantSev: SeverityCritical, wantProg: "nonexistent-bin"},
+		{name: "exit in a pipeline stage", command: `exit 0 | cat; nonexistent-bin selfprotect`, event: "PreToolUse", wantSev: SeverityCritical, wantProg: "nonexistent-bin"},
+		{name: "exit in a command substitution", command: `x=$(exit 1); nonexistent-bin selfprotect`, event: "PreToolUse", wantSev: SeverityCritical, wantProg: "nonexistent-bin"},
+		{name: "top-level return", command: `return 0; nonexistent-bin selfprotect`, event: "PreToolUse", wantSev: SeverityCritical, wantProg: "nonexistent-bin"},
+		{name: "exit in sh -c", command: `sh -c 'exit 0'; nonexistent-bin selfprotect`, event: "PreToolUse", wantSev: SeverityCritical, wantProg: "nonexistent-bin"},
+		{name: "eval exit ends the hook", command: `eval exit 0; nonexistent-bin`, event: "PostToolUse"},
+		{name: "program in sh -c", command: `sh -c 'nonexistent-bin selfprotect'`, event: "PreToolUse", wantSev: SeverityCritical, wantProg: "nonexistent-bin"},
+		{name: "program in eval", command: `eval nonexistent-bin selfprotect`, event: "PreToolUse", wantSev: SeverityCritical, wantProg: "nonexistent-bin"},
+		{name: "test in a block after cd", command: `cd /tmp && { test -f y; nonexistent-bin selfprotect; }`, event: "PreToolUse", wantSev: SeverityCritical, wantProg: "nonexistent-bin"},
+		{name: "cd in a block after a test", command: `test -x ./bin/qsdev && { cd /tmp; nonexistent-bin selfprotect; }`, event: "PreToolUse"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

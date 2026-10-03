@@ -208,7 +208,10 @@ func WriteProjectConfig(projectRoot string, cfg types.QsdevConfig) error {
 // overlays, claude_code and tool decisions); keys the answers do not carry
 // (qsdev_version, security, profile, infra_profile, hooks, infrastructure,
 // client, git, java, cloud, tools.config, mcp) are kept as committed. A project without .qsdev.yaml
-// (e.g. a standalone `devenv init`) is left alone, and the file is rewritten
+// (e.g. a standalone `devenv init`) is left alone. The claude_code block is
+// replaced only when the answers configure Claude Code or the committed file
+// already disables it: answers that switch it off never disable it in the
+// committed file. The file is rewritten
 // only when a synced key actually changed or it is at an older schema
 // version, which is thereby migrated to the current one.
 func SyncProjectConfig(projectRoot string, answers types.WizardAnswers) error {
@@ -240,7 +243,13 @@ func SyncProjectConfig(projectRoot string, answers types.WizardAnswers) error {
 	synced.Services = fresh.Services
 	synced.Packages = fresh.Packages
 	synced.Overlays = fresh.Overlays
-	synced.ClaudeCode = fresh.ClaudeCode
+	// Turning Claude Code off is a committed change, never a local one (see
+	// AdoptCommitted): answers that say otherwise while the committed file
+	// enables it keep the committed block, so no day-2 command can drop the
+	// team's Claude Code configuration from a hand-edited answers file.
+	if answers.ClaudeCode || !ClaudeCodeEnabled(current) {
+		synced.ClaudeCode = fresh.ClaudeCode
+	}
 	synced.Tools.Enabled = fresh.Tools.Enabled
 	synced.Tools.Disabled = fresh.Tools.Disabled
 

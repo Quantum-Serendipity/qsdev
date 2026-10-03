@@ -67,7 +67,7 @@ func runEnable(cmd *cobra.Command, toolName string, opts enableOptions) error {
 	}
 
 	registry := toolreg.DefaultRegistry()
-	answers, tool, err := loadToolForEnable(cmdContext(cmd), registry, projectRoot, toolName)
+	answers, tool, err := loadToolForEnable(cmdContext(cmd), cmd.ErrOrStderr(), registry, projectRoot, toolName)
 	if err != nil {
 		return err
 	}
@@ -133,8 +133,8 @@ func runEnable(cmd *cobra.Command, toolName string, opts enableOptions) error {
 
 // loadToolForEnable loads saved answers, infers enabled tools, and looks up
 // the named tool in registry.
-func loadToolForEnable(ctx context.Context, registry *toolreg.Registry, projectRoot, toolName string) (types.WizardAnswers, *toolreg.Tool, error) {
-	answers, err := loadLifecycleAnswers(ctx, projectRoot)
+func loadToolForEnable(ctx context.Context, w io.Writer, registry *toolreg.Registry, projectRoot, toolName string) (types.WizardAnswers, *toolreg.Tool, error) {
+	answers, err := loadLifecycleAnswers(ctx, w, projectRoot)
 	if err != nil {
 		return types.WizardAnswers{}, nil, err
 	}
@@ -148,17 +148,19 @@ func loadToolForEnable(ctx context.Context, registry *toolreg.Registry, projectR
 }
 
 // loadLifecycleAnswers loads saved answers (empty if no prior init) and
-// refreshes them as update does — current detection plus tools reconciled
-// against the committed .qsdev.yaml — so the shared files enable/disable
-// regenerate match what the next update would produce.
-func loadLifecycleAnswers(ctx context.Context, projectRoot string) (types.WizardAnswers, error) {
+// refreshes them as update does — current detection plus the answers settled
+// against the committed .qsdev.yaml (see toolreg.SettleProject), with its
+// warnings written to w — so the shared files enable/disable regenerate match
+// what the next update would produce and the committed config they sync never
+// takes a choice only the local answers file made.
+func loadLifecycleAnswers(ctx context.Context, w io.Writer, projectRoot string) (types.WizardAnswers, error) {
 	answers, err := loadAnswersOrEmpty(projectRoot)
 	if err != nil {
 		return types.WizardAnswers{}, fmt.Errorf("loading answers: %w", err)
 	}
 	answers.ProjectRoot = projectRoot
 	answers.Detected = detect.Detect(ctx, projectRoot)
-	if err := toolreg.ReconcileProject(io.Discard, projectRoot, &answers, toolreg.DefaultRegistry()); err != nil {
+	if err := toolreg.SettleProject(w, projectRoot, &answers, toolreg.DefaultRegistry()); err != nil {
 		return types.WizardAnswers{}, err
 	}
 	return answers, nil
@@ -532,7 +534,7 @@ func runDisable(cmd *cobra.Command, toolName string, opts disableOptions) error 
 
 	registry := toolreg.DefaultRegistry()
 
-	answers, err := loadLifecycleAnswers(cmdContext(cmd), projectRoot)
+	answers, err := loadLifecycleAnswers(cmdContext(cmd), cmd.ErrOrStderr(), projectRoot)
 	if err != nil {
 		return err
 	}

@@ -689,20 +689,17 @@ func regenerateAndPersist(cmd *cobra.Command, answers types.WizardAnswers, opts 
 }
 
 // settleAgainstCommitted gives answers loaded from the local, gitignored
-// answers file the choices the committed .qsdev.yaml records, as init --update
-// does: the committed Claude Code and tier choices (see
-// qsdevconfig.AdoptCommitted) and the committed tool opt-outs (see
-// toolreg.ReconcileProject), writing any warnings to w. Without it a
-// hand-edited `attach-guard: false` or `claude_code: false` would be promoted
-// into the committed config by the day-2 commands that regenerate from those
-// answers.
+// answers file the choices the committed .qsdev.yaml records, as init
+// --update does (see toolreg.SettleProject), writing any warnings to w.
+// Without it a hand-edited `attach-guard: false` or `claude_code: false` would
+// be promoted into the committed config by the day-2 commands that regenerate
+// from those answers.
 func settleAgainstCommitted(w io.Writer, projectRoot string, answers *types.WizardAnswers) error {
-	qsdevconfig.AdoptCommitted(projectRoot, answers)
 	treg, err := toolreg.Default()
 	if err != nil {
 		return fmt.Errorf("loading tool registry: %w", err)
 	}
-	return toolreg.ReconcileProject(w, projectRoot, answers, treg)
+	return toolreg.SettleProject(w, projectRoot, answers, treg)
 }
 
 // writeAndPersist writes files to disk, records their state and saves the

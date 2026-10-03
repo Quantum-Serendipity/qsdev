@@ -57,7 +57,7 @@ func runRepairCommand(cmd *cobra.Command, opts repair.RepairOptions) error {
 	// Load answers reconciled against the committed .qsdev.yaml, as update
 	// and enable/disable do, so an opt-out recorded only in the answers file
 	// (not by `disable --force`) cannot drop a guardrail from the repair.
-	answers, err := loadLifecycleAnswers(cmd.Context(), projectRoot)
+	answers, err := loadLifecycleAnswers(cmd.Context(), cmd.ErrOrStderr(), projectRoot)
 	if err != nil {
 		return err
 	}

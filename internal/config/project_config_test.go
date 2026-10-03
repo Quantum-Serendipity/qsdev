@@ -56,6 +56,10 @@ git:
 	dayTwo.ExtraPackages = []string{"jq", "ripgrep"}
 	dayTwo.Overlays = []string{"./nix/overlay.nix"}
 	dayTwo.EnabledTools = map[string]bool{"gitleaks": true, "semgrep": true, "semble": false}
+	committedWithClaude := strings.Replace(committed, "  permission_level: standard\n",
+		"  permission_level: standard\n  skills: [security-review-owasp]\n  mcp_servers: [context7, github, socket]\n", 1)
+	localClaudeOff := base
+	localClaudeOff.ClaudeCode = false
 
 	tests := []struct {
 		name        string
@@ -100,6 +104,33 @@ git:
 					cfg.Client == nil || cfg.Client.Name != "acme" || cfg.Git.BranchPattern != "feat/*" ||
 					cfg.Tools.Config["gitleaks"]["mode"] != "strict" {
 					t.Errorf("keys the answers do not carry were not preserved: %+v", cfg)
+				}
+			},
+		},
+		{
+			// U28-WS1: a hand-edited claude_code: false in the local answers
+			// file is never promoted into the committed config, whichever
+			// day-2 command syncs it.
+			name:      "local claude_code false keeps the committed claude_code block",
+			committed: committedWithClaude,
+			answers:   localClaudeOff,
+			check: func(t *testing.T, cfg *types.QsdevConfig) {
+				t.Helper()
+				if !ClaudeCodeEnabled(cfg) || !slices.Equal(cfg.ClaudeCode.Skills, []string{"security-review-owasp"}) ||
+					!slices.Equal(cfg.ClaudeCode.MCPServers, []string{"context7", "github", "socket"}) {
+					t.Errorf("claude_code = %+v, want the committed block kept", cfg.ClaudeCode)
+				}
+			},
+		},
+		{
+			name:        "a committed claude_code false is synced from answers that agree",
+			committed:   strings.Replace(committed, "claude_code:\n  enabled: true\n  permission_level: standard\n", "claude_code:\n  enabled: false\n", 1),
+			answers:     withPackages(localClaudeOff, "jq"),
+			wantRewrite: true,
+			check: func(t *testing.T, cfg *types.QsdevConfig) {
+				t.Helper()
+				if ClaudeCodeEnabled(cfg) {
+					t.Errorf("claude_code = %+v, want disabled", cfg.ClaudeCode)
 				}
 			},
 		},
@@ -215,4 +246,10 @@ func TestWriteProjectConfig_RefusesSymlinkEscape(t *testing.T) {
 	if data, _ := os.ReadFile(outside); string(data) != "keep: true\n" {
 		t.Errorf("file outside the project was rewritten: %q", data)
 	}
+}
+
+// withPackages returns a copy of a with packages as its extra packages.
+func withPackages(a types.WizardAnswers, packages ...string) types.WizardAnswers {
+	a.ExtraPackages = packages
+	return a
 }

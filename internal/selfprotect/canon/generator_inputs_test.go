@@ -351,13 +351,17 @@ func TestIsProtected_AccountHomeOverlay(t *testing.T) {
 // package's account resolver.
 func TestExpandTilde_NamedAccount(t *testing.T) {
 	alice := filepath.Join(t.TempDir(), "alice")
+	corp := filepath.Join(t.TempDir(), "alice@corp.com")
 	orig := namedHomeDir
 	t.Cleanup(func() { namedHomeDir = orig })
 	var asked []string
 	namedHomeDir = func(name string) (string, error) {
 		asked = append(asked, name)
-		if name == "alice" {
+		switch name {
+		case "alice":
 			return alice, nil
+		case "alice@corp.com":
+			return corp, nil
 		}
 		return "", errors.New("no such account")
 	}
@@ -367,7 +371,12 @@ func TestExpandTilde_NamedAccount(t *testing.T) {
 		{"~alice", alice},
 		{"~alice/.config/x", filepath.Join(alice, ".config", "x")},
 		{"~bob/.config", "~bob/.config"},
+		// Regression (U18-WS1): a directory-service name (SSSD, AD) holds
+		// an @, and bash looks it up like any other.
+		{"~alice@corp.com", corp},
+		{"~alice@corp.com/.config", filepath.Join(corp, ".config")},
 		{"~+/.config", "~+/.config"},
+		{"~+2/x", "~+2/x"},
 		{"~-", "~-"},
 		{"~2/x", "~2/x"},
 		{"~-alice", "~-alice"},
@@ -379,7 +388,7 @@ func TestExpandTilde_NamedAccount(t *testing.T) {
 			t.Errorf("ExpandTilde(%q) = %q, %v; want %q", tt.in, got, err, tt.want)
 		}
 	}
-	if want := []string{"alice", "alice", "bob"}; !slices.Equal(asked, want) {
+	if want := []string{"alice", "alice", "bob", "alice@corp.com", "alice@corp.com"}; !slices.Equal(asked, want) {
 		t.Errorf("accounts looked up = %q, want %q", asked, want)
 	}
 }

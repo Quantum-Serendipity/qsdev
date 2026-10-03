@@ -320,36 +320,29 @@ func ExpandTilde(path string) (string, error) {
 }
 
 // tildeUser splits a ~name or ~name/rest path into the account name and the
-// rest. Bash takes the name up to the first slash; a name that is not a valid
-// login name (~+, ~-, ~2, ...) is not an account.
+// rest. Bash takes the name up to the first slash and passes it to getpwnam
+// whatever it holds, so a directory-service name such as alice@corp.com is
+// an account too; only the directory-stack forms are not (see
+// isTildeAccountName).
 func tildeUser(path string) (name, rest string, ok bool) {
 	after, found := strings.CutPrefix(path, "~")
 	if !found {
 		return "", "", false
 	}
 	name, rest, _ = strings.Cut(after, "/")
-	if name == "" || !isLoginName(name) {
+	if !isTildeAccountName(name) {
 		return "", "", false
 	}
 	return name, rest, true
 }
 
-// isLoginName reports whether name can be a login name: letters, digits, and
-// . _ - (and a trailing $ for machine accounts), not starting with - or a
-// digit-only name, which bash reads as a directory-stack index.
-func isLoginName(name string) bool {
-	if strings.HasPrefix(name, "-") || strings.Trim(name, "0123456789") == "" {
-		return false
-	}
-	for i, r := range name {
-		switch {
-		case r >= 'a' && r <= 'z', r >= 'A' && r <= 'Z', r >= '0' && r <= '9', r == '.', r == '_', r == '-':
-		case r == '$' && i == len(name)-1:
-		default:
-			return false
-		}
-	}
-	return true
+// isTildeAccountName reports whether name, the text between ~ and the first
+// slash, is looked up as an account: anything but the directory-stack forms
+// (~+, ~-, ~N, ~+N, ~-N). A name starting with + or - is not one either: no
+// account is called that (the user database reserves those for NIS compat
+// lines) and getent would read it as an option.
+func isTildeAccountName(name string) bool {
+	return name != "" && name[0] != '+' && name[0] != '-' && strings.Trim(name, "0123456789") != ""
 }
 
 // ProtectedHomes returns the home directories protected locations are

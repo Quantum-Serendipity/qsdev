@@ -1754,6 +1754,36 @@ func TestSP014_CLISecurityControlBlock(t *testing.T) {
 		{`if qsdev teardown; then :; fi`, Deny},
 		{`! FOO=1 qsdev teardown`, Deny},
 		{`xargs sh -c 'qsdev defaults "$@"' _`, Deny},
+		// Regression (U18-WS1 round 7): a quoted string is text only until
+		// the line hands it to something that runs it as code: a shell or
+		// interpreter on its input, a program that runs its operands
+		// through a shell, or a script file the line writes and runs.
+		{`echo "qsdev session allow" | sh`, Deny},
+		{`echo 'qsdev session allow' | bash`, Deny},
+		{`printf 'qsdev session allow\n' | bash`, Deny},
+		{`bash <<< "qsdev session allow"`, Deny},
+		{`sh <<< 'qsdev session allow'`, Deny},
+		{"bash <<EOF\nqsdev session allow\nEOF", Deny},
+		{`ssh localhost "qsdev session allow"`, Deny},
+		{`watch "qsdev session allow"`, Deny},
+		{`tmux new -d "qsdev session allow"`, Deny},
+		{`echo "qsdev session allow" > x.sh && sh x.sh`, Deny},
+		{`echo "qsdev session allow" > x.sh; chmod +x x.sh; ./x.sh`, Deny},
+		{`echo "import os; os.system('qsdev session allow')" | python3`, Deny},
+		{`find . -exec "qsdev" teardown \;`, Deny},
+		// Text that only names a command, quoted as one argument, is
+		// judged alike wherever the name stands in it.
+		{`echo "see qsdev teardown"`, Allow},
+		{`echo "run: qsdev teardown" > notes.md`, Allow},
+		{`git commit -m "docs: explain qsdev teardown"`, Allow},
+		{`git commit -m "qsdev teardown"`, Allow},
+		{`git commit -m "don't run qsdev teardown"`, Allow},
+		{`echo "docs mention qsdev session allow here"`, Allow},
+		{`git commit -m "docs: explain qsdev session allow"`, Allow},
+		{`grep "qsdev session allow" README.md`, Allow},
+		{`git log --grep="qsdev teardown" -n 5`, Allow},
+		{`rg -n "qsdev defaults pin" docs/ $DIR`, Allow},
+		{`grep -rn 'qsdev session allow' internal/ $EXTRA`, Allow},
 		// Computed words that cannot be an invocation stay open.
 		{"cp $a $b", Allow},
 		{"cd $DIR && ls", Allow},

@@ -237,7 +237,13 @@ type Invoked struct {
 // wrappers. An unquoted argument of another program that names it counts as
 // well, for a program may run its arguments (`find -exec`, `devenv shell`),
 // but only when the subcommand is written out: `grep qsdev *.go` is no
-// invocation. A quoted argument (`grep "qsdev teardown" docs/*`) is data. A
+// invocation. A quoted string of several words is one argument, text
+// (`grep "qsdev teardown" docs/*`, `git commit -m "explain qsdev
+// teardown"`), unless the text may run it as code: a shell, an interpreter
+// or another program that runs code it is given appears in it (`echo
+// "qsdev teardown" | sh`, `bash <<< "..."`, `ssh host "..."`, see
+// RunsCode), a wrapper runs a string (`env -S`), or a program run by its
+// path is a file the text names elsewhere (`echo ... > x.sh && ./x.sh`). A
 // quoted script string is split into commands like the rest of the text, so
 // a separator inside data (`echo "a; qsdev teardown"`) errs towards the
 // human gate.

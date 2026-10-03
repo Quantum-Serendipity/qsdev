@@ -94,6 +94,35 @@ func TestInvokedSpecs(t *testing.T) {
 		{"devenv shell qsdev defaults pin", literal},
 		{"devenv shell qsdev defaults $P", none},
 		{"echo pin | xargs devenv shell qsdev defaults", none},
+		// A quoted string of several words is text unless the line runs it
+		// as code; a word quoted on its own is the argument it spells.
+		{`echo "see qsdev teardown"`, none},
+		{`echo "run: qsdev teardown" > notes.md`, none},
+		{`git commit -m "qsdev teardown"`, none},
+		{`git commit -m "docs: explain qsdev teardown"`, none},
+		{`git commit -m "don't run qsdev teardown"`, none},
+		{`echo "docs mention qsdev defaults pin here"`, none},
+		{`grep "qsdev defaults pin" README.md`, none},
+		{`git log --grep="qsdev teardown" -n 5`, none},
+		{`rg -n "qsdev defaults pin" docs/ $DIR`, none},
+		{`echo "qsdev teardown" > notes.md; cat notes.md`, none},
+		{`echo "qsdev teardown" | sh`, literal},
+		{`echo 'qsdev defaults pin' | bash`, literal},
+		{`printf 'qsdev teardown\n' | bash`, literal},
+		{`printf 'cd /x\nqsdev teardown' | sh`, literal},
+		{`bash <<< "qsdev teardown"`, literal},
+		{`sh <<< 'qsdev defaults pin'`, literal},
+		{`ssh localhost "qsdev teardown"`, literal},
+		{`watch -n1 "qsdev teardown"`, literal},
+		{`tmux new -d "qsdev teardown"`, literal},
+		{`echo "qsdev teardown" | python3`, literal},
+		{`echo "qsdev teardown" | xargs -0 sh -c`, literal},
+		{`echo "qsdev teardown" > x.sh && sh x.sh`, literal},
+		{`echo "qsdev teardown" > x.sh; chmod +x x.sh; ./x.sh`, literal},
+		{`echo "qsdev teardown" | tee /tmp/x.sh; /tmp/x.sh`, literal},
+		{`env -S '-u HOME qsdev teardown'`, literal},
+		{`find . -exec "qsdev" teardown \;`, literal},
+		{`"C:\tools\qsdev.exe" teardown`, literal},
 	}
 	for _, tt := range tests {
 		t.Run(tt.command, func(t *testing.T) {
@@ -128,6 +157,8 @@ func TestInvokedSpecsLinear(t *testing.T) {
 		"invocation run":   strings.Repeat("qsdev defaults pin ", 50000),
 		"mention run":      "echo " + strings.Repeat("qsdev defaults ", 50000) + "pin",
 		"command line run": strings.Repeat("sh -c ", 50000) + "qsdev defaults pin",
+		"quoted text run":  `echo "` + strings.Repeat("qsdev defaults ", 50000) + `pin" | sh`,
+		"script path run":  strings.Repeat("./x.sh ", 50000) + "x.sh",
 	} {
 		start := time.Now()
 		InvokedSpecs(cmd, "qsdev", specs)

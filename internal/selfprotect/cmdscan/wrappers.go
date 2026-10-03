@@ -451,6 +451,30 @@ func ReadsStartupFiles(shell string, opts []string) bool {
 	return false
 }
 
+// codeRunners are the programs, besides the script shells and the programs
+// in commandLineOptions, that run text they are given as code: eval and
+// source (and its spelling "."); interpreters, which read a program from
+// their input or a file operand when not given one inline; and programs
+// that join their operands into a command line for a shell: ssh on the
+// remote host, watch, tmux and screen in a new window, at and batch later.
+var codeRunners = map[string]bool{
+	"eval": true, "source": true, ".": true,
+	"fish": true, "csh": true, "tcsh": true, "busybox": true,
+	"python": true, "python3": true, "node": true, "perl": true, "ruby": true, "php": true, "lua": true,
+	"ssh": true, "watch": true, "tmux": true, "screen": true, "at": true, "batch": true,
+}
+
+// RunsCode reports whether the program a command word names may run text it
+// is given as code: from an option's argument (`sh -c`, `pwsh -Command`),
+// from its operands, its input or a file (see codeRunners). A quoted string
+// given to such a program, or piped or written to a file it reads, may be a
+// command line.
+func RunsCode(word string) bool {
+	name := wrapperName(word)
+	_, commandLine := commandLineOptions[name]
+	return scriptShells[name] || commandLine || codeRunners[name]
+}
+
 // IsScriptShell reports whether the program named name is a shell that runs
 // a script string passed with -c.
 func IsScriptShell(name string) bool { return scriptShells[wrapperName(name)] }

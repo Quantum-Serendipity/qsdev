@@ -23,7 +23,6 @@ package userhome
 import (
 	"bufio"
 	"bytes"
-	"context"
 	"errors"
 	"fmt"
 	"io"
@@ -203,17 +202,24 @@ func getentPasswd(key string, field int) (*user.User, error) {
 
 // runGetent runs the getent binary at path for the passwd entry of key, with
 // an empty environment, and returns what it prints. A run that outlasts
-// getentTimeout is killed.
+// getentTimeout is killed. The kill timer stands in for a context deadline:
+// Account and Named have no caller context to derive one from
+// (catalog.OrgConfigPath, canon.ExpandTilde), and only the cmd and instance
+// layers may start a root context.
 func runGetent(path, key string) ([]byte, error) {
-	ctx, cancel := context.WithTimeout(context.Background(), getentTimeout)
-	defer cancel()
-	cmd := procexec.CommandContext(ctx, path, "passwd", key)
+	cmd := procexec.Command(path, "passwd", key)
 	cmd.Env = []string{}
-	out, err := cmd.Output()
-	if err != nil {
+	var stdout bytes.Buffer
+	cmd.Stdout = &stdout
+	if err := cmd.Start(); err != nil {
+		return nil, fmt.Errorf("starting %s passwd %s: %w", path, key, err)
+	}
+	timer := time.AfterFunc(getentTimeout, func() { _ = cmd.Process.Kill() })
+	defer timer.Stop()
+	if err := cmd.Wait(); err != nil {
 		return nil, fmt.Errorf("running %s passwd %s: %w", path, key, err)
 	}
-	return out, nil
+	return stdout.Bytes(), nil
 }
 
 // Account returns the home directory the user database records for the

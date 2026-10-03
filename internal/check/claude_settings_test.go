@@ -594,6 +594,19 @@ func TestCheckHookPrograms(t *testing.T) {
 		{name: "env -u PATH then bare program", command: `env -u PATH nonexistent-bin check`, event: "PostToolUse"},
 		{name: "env PATH operand then bare program", command: `env PATH=/opt/bin nonexistent-bin check`, event: "PostToolUse"},
 		{name: "env other operand then bare program", command: `env A=1 nonexistent-bin selfprotect`, event: "PreToolUse", wantSev: SeverityCritical, wantProg: "nonexistent-bin"},
+		// A PATH a script shell or eval is started with reaches its script.
+		{name: "prefix PATH on bash -c", command: `PATH="$CLAUDE_PROJECT_DIR/.venv/bin:$PATH" bash -c 'nonexistent-bin check'`, event: "PostToolUse"},
+		{name: "prefix PATH on sh -c", command: `PATH="$CLAUDE_PROJECT_DIR/.venv/bin:$PATH" sh -c 'nonexistent-bin check'`, event: "PostToolUse"},
+		{name: "prefix PATH on exec bash -c", command: `PATH="$CLAUDE_PROJECT_DIR/.venv/bin:$PATH" exec bash -c 'nonexistent-bin check'`, event: "PostToolUse"},
+		{name: "prefix PATH on timeout bash -c", command: `PATH="$CLAUDE_PROJECT_DIR/.venv/bin:$PATH" timeout 5 bash -c 'nonexistent-bin check'`, event: "PostToolUse"},
+		{name: "prefix PATH on eval", command: `PATH="$CLAUDE_PROJECT_DIR/.venv/bin:$PATH" eval 'nonexistent-bin check'`, event: "PostToolUse"},
+		{name: "prefix PATH on eval persists", command: `PATH="$CLAUDE_PROJECT_DIR/.venv/bin:$PATH" eval true; nonexistent-bin check`, event: "PostToolUse"},
+		{name: "env PATH operand on sh -c", command: `env PATH="$CLAUDE_PROJECT_DIR/.venv/bin:/usr/bin" sh -c 'nonexistent-bin check'`, event: "PostToolUse"},
+		{name: "env -i on sh -c", command: `env -i sh -c 'nonexistent-bin check'`, event: "PostToolUse"},
+		{name: "env -u PATH on bash -c", command: `env -u PATH bash -c 'nonexistent-bin check'`, event: "PostToolUse"},
+		{name: "prefix PATH on sh -c stays in the child", command: `PATH="$CLAUDE_PROJECT_DIR/.venv/bin:$PATH" sh -c 'gofmt -l .'; nonexistent-bin selfprotect`, event: "PreToolUse", wantSev: SeverityCritical, wantProg: "nonexistent-bin"},
+		{name: "prefix PATH on sh -c then missing path program", command: `PATH="$CLAUDE_PROJECT_DIR/.venv/bin:$PATH" sh -c './bin/missing selfprotect'`, event: "PreToolUse", wantSev: SeverityCritical, wantProg: "./bin/missing"},
+		{name: "env -C on sh -c then relative program", command: `env -C /tmp sh -c './bin/missing selfprotect'`, event: "PreToolUse"},
 		{name: "export PATH then missing path program", command: `export PATH="$CLAUDE_PROJECT_DIR/.venv/bin:$PATH"; ./bin/missing selfprotect`, event: "PreToolUse", wantSev: SeverityCritical, wantProg: "./bin/missing"},
 		// A shell function the hook defines is no program.
 		{name: "function call", command: `nonexistent-bin() { gofmt -l .; }; nonexistent-bin`, event: "PostToolUse"},
@@ -611,7 +624,10 @@ func TestCheckHookPrograms(t *testing.T) {
 		{name: "cd in a block after a test", command: `test -x ./bin/qsdev && { cd /tmp; nonexistent-bin selfprotect; }`, event: "PreToolUse"},
 		// A relative program path resolves in the directory the hook is in.
 		{name: "cd to project subdirectory then present relative program", command: `cd "$CLAUDE_PROJECT_DIR/.venv" && ./bin/ruff check`, event: "PostToolUse", scripts: map[string]os.FileMode{".venv/bin/ruff": 0o755}},
-		{name: "cd to project subdirectory then missing relative program", command: `cd "$CLAUDE_PROJECT_DIR/.venv" && ./bin/missing selfprotect`, event: "PreToolUse", wantSev: SeverityCritical, wantProg: "./bin/missing"},
+		{name: "cd to project subdirectory then missing relative program", command: `cd "$CLAUDE_PROJECT_DIR/.venv" && ./bin/missing selfprotect`, event: "PreToolUse", scripts: map[string]os.FileMode{".venv/bin/ruff": 0o755}, wantSev: SeverityCritical, wantProg: "./bin/missing"},
+		// A cd to a directory that is not there fails and leaves the shell where it was.
+		{name: "failed cd then relative program", command: `cd "$CLAUDE_PROJECT_DIR/nonexist" 2>/dev/null; ./.venv/bin/ruff check`, event: "PostToolUse", scripts: map[string]os.FileMode{".venv/bin/ruff": 0o755}},
+		{name: "failed cd then missing absolute program", command: `cd "$CLAUDE_PROJECT_DIR/nonexist" 2>/dev/null; "$CLAUDE_PROJECT_DIR"/bin/missing selfprotect`, event: "PreToolUse", wantSev: SeverityCritical, wantProg: rootVar + "/bin/missing"},
 		{name: "cd to frontend then present node program", command: `cd "$CLAUDE_PROJECT_DIR/frontend" && ./node_modules/.bin/eslint .`, event: "PostToolUse", scripts: map[string]os.FileMode{"frontend/node_modules/.bin/eslint": 0o755}},
 		{name: "cd to project root then missing relative program", command: `cd "$CLAUDE_PROJECT_DIR" && ./bin/missing selfprotect`, event: "PreToolUse", wantSev: SeverityCritical, wantProg: "./bin/missing"},
 		{name: "relative cd then relative program", command: `cd frontend && ./node_modules/.bin/eslint .`, event: "PostToolUse"},
@@ -724,6 +740,64 @@ func TestCheckHookPrograms_HomeTilde(t *testing.T) {
 			}
 			if len(results) != 1 || results[0].Metadata["program"] != tt.wantProg || results[0].Severity != SeverityCritical {
 				t.Fatalf("findings = %+v, want one critical finding naming %s", results, tt.wantProg)
+			}
+		})
+	}
+}
+
+// TestCheckHookPrograms_SymlinkDotDot pins that a relative program path
+// resolves physically, as the kernel opens it: a ".." after a symlinked
+// directory leaves the symlink's target, not the directory holding the
+// symlink.
+func TestCheckHookPrograms_SymlinkDotDot(t *testing.T) {
+	t.Parallel()
+	if runtime.GOOS == "windows" {
+		t.Skip("symlinks need privileges on Windows, and Git Bash resolves paths in its own layer")
+	}
+	base := t.TempDir()
+	project := filepath.Join(base, "proj")
+	writeTestFileMode(t, base, "ext/tool", "#!/bin/sh\n", 0o755)
+	writeTestFileMode(t, base, "ext/viainterp", "#!./link/../interp\n", 0o755)
+	writeTestFileMode(t, base, "ext/interp", "#!/bin/sh\n", 0o755)
+	if err := os.MkdirAll(filepath.Join(base, "ext", "inner"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(project, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(filepath.Join(base, "ext", "inner"), filepath.Join(project, "link")); err != nil {
+		t.Fatal(err)
+	}
+	tests := []struct {
+		name     string
+		command  string
+		wantProg string // empty: no finding
+	}{
+		{name: "cd into symlink then dot-dot program", command: `cd "$CLAUDE_PROJECT_DIR/link" && ../tool selfprotect`},
+		{name: "dot-dot after symlink in program path", command: `./link/../tool selfprotect`},
+		{name: "dot-dot after symlink in interpreter path", command: `cd "$CLAUDE_PROJECT_DIR" && ./link/../viainterp selfprotect`},
+		{name: "dot-dot after symlink to missing program", command: `./link/../missing selfprotect`, wantProg: "./link/../missing"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			cmd, err := json.Marshal(tt.command)
+			if err != nil {
+				t.Fatal(err)
+			}
+			actual, err := claudesettings.Parse([]byte(`{"hooks": {"PreToolUse": [{"matcher": "*", "hooks": [{"type": "command", "command": ` + string(cmd) + `}]}]}}`))
+			if err != nil {
+				t.Fatal(err)
+			}
+			results := checkHookPrograms(project, actual, lookPathNoBuiltins)
+			if tt.wantProg == "" {
+				if len(results) != 0 {
+					t.Fatalf("unexpected findings: %+v", results)
+				}
+				return
+			}
+			if len(results) != 1 || results[0].Metadata["program"] != tt.wantProg {
+				t.Fatalf("findings = %+v, want one naming %s", results, tt.wantProg)
 			}
 		})
 	}

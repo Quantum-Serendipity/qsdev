@@ -369,13 +369,10 @@ func scriptRunProblem(dir, path, label string, lookPath func(string) (string, er
 // interpreter, or nil. A relative interp is not checked when dir is "",
 // unknown.
 func absInterpreterProblem(dir, interp string) *runProblem {
-	p := interp
-	if !filepath.IsAbs(p) {
-		if dir == "" {
-			return nil
-		}
-		p = filepath.Join(dir, p)
+	if !filepath.IsAbs(interp) && dir == "" {
+		return nil
 	}
+	p := inDir(dir, interp)
 	fi, err := os.Stat(p)
 	if err != nil {
 		return &runProblem{interp, fmt.Sprintf("needs interpreter %s, which does not exist", interp), remediateInterpreter}
@@ -541,10 +538,7 @@ func programProblem(dir, program string, lookPath func(string) (string, error)) 
 		}
 		return nil
 	}
-	path := filepath.FromSlash(program)
-	if !filepath.IsAbs(path) {
-		path = filepath.Join(dir, path)
-	}
+	path := inDir(dir, filepath.FromSlash(program))
 	remediation := fmt.Sprintf("Restore %s or run 'qsdev init --update' to regenerate the hook", program)
 	info, err := os.Stat(path)
 	if err != nil {
@@ -554,6 +548,17 @@ func programProblem(dir, program string, lookPath func(string) (string, error)) 
 		return &runProblem{program, "is a directory (the shell exits 126)", remediation}
 	}
 	return scriptRunProblem(dir, path, program, lookPath)
+}
+
+// inDir returns the path the kernel opens for p in the working directory
+// dir: p itself when absolute, otherwise dir and p joined without lexical
+// cleaning, so a ".." after a symlinked component resolves physically, as
+// it does when the shell runs the program.
+func inDir(dir, p string) string {
+	if filepath.IsAbs(p) {
+		return p
+	}
+	return strings.TrimSuffix(dir, string(filepath.Separator)) + string(filepath.Separator) + p
 }
 
 // hookRun is one program a hook command runs, with its arguments.
@@ -647,13 +652,18 @@ func (s *hookScan) scan(command string, depth int) bool {
 // scanScript scans the script st runs and reports whether it ends the
 // hook's shell: an eval script runs in it, a `sh -c` script in a child
 // shell, whose PATH, functions and working directory the hook's shell does
-// not get back. A child shell that sources startup files first
+// not get back. Either starts with the PATH and directory the statement
+// gives its program (see hookStatement). A child shell that sources startup files first
 // (cmdscan.ScriptRun.ReadsStartup) starts with them unknown.
 func (s *hookScan) scanScript(st hookStatement, depth int) bool {
 	if st.evals {
+		// A prefix assignment of eval, a special builtin, persists in
+		// the hook's shell, so the script runs with it.
+		s.lookupChanged = st.lookupChanged
 		return s.scan(st.script, depth+1)
 	}
 	lookupChanged, funcs, dir := s.lookupChanged, maps.Clone(s.funcs), s.dir
+	s.lookupChanged, s.dir = st.lookupChanged, st.dir
 	if st.readsStartup {
 		s.lookupChanged, s.dir = true, ""
 	}
@@ -687,7 +697,8 @@ func (s *hookScan) changesLookup(c cmdscan.Command) bool {
 // pushd to a known absolute directory (cmdscan.Command.DirTarget, under the
 // project directory when built from an expansion, as namedProgram takes
 // it) moves there; one that may not run moves there only if already there.
-// Any other change of directory (cmdscan.ChangesDir), sourced code
+// A cd to a directory that does not exist fails, so it too leaves the
+// directory unknown. Any other change of directory (cmdscan.ChangesDir), sourced code
 // (cmdscan.SourcesCode) or a cd in a subshell, which a later statement may
 // or may not share, leaves it unknown.
 func (s *hookScan) track(c cmdscan.Command, mayNotRun bool) {
@@ -702,7 +713,9 @@ func (s *hookScan) track(c cmdscan.Command, mayNotRun bool) {
 	}
 	target = filepath.Clean(target)
 	switch {
-	case !known:
+	case !known || !isDir(target):
+		// A cd to a directory that is not there fails and leaves the
+		// shell where it was; which directory that is is not tracked.
 		s.dir = ""
 	case mayNotRun || c.Subshell:
 		if target != s.dir {
@@ -711,6 +724,12 @@ func (s *hookScan) track(c cmdscan.Command, mayNotRun bool) {
 	default:
 		s.dir = target
 	}
+}
+
+// isDir reports whether path names an existing directory.
+func isDir(path string) bool {
+	fi, err := os.Stat(path)
+	return err == nil && fi.IsDir()
 }
 
 // callsFunction reports whether c calls a function the hook defined.
@@ -729,6 +748,12 @@ type hookStatement struct {
 	script       string   // the script it runs through `sh -c` or eval
 	evals        bool     // script runs in the hook's own shell (eval)
 	readsStartup bool     // the shell running script sources startup files first
+	// lookupChanged and dir are the lookup state and working directory
+	// the statement's program, and so its script, starts with: a prefix
+	// PATH assignment or a wrapper such as env PATH=... changes the
+	// lookup, a wrapper such as env -C the directory.
+	lookupChanged bool
+	dir           string
 }
 
 // classify classifies the simple command c of a hook command.
@@ -738,7 +763,13 @@ func (s *hookScan) classify(c cmdscan.Command) hookStatement {
 	if run.Index < 0 || s.callsFunction(c) {
 		return hookStatement{ends: run.Exec}
 	}
-	var st hookStatement
+	st := hookStatement{
+		lookupChanged: s.lookupChanged || run.PathChanged || slices.Contains(c.Assigns, pathVar),
+		dir:           s.dir,
+	}
+	if run.DirChanged {
+		st.dir = ""
+	}
 	if script, ok := cmdscan.Script(words); ok && len(c.ExpandedArgs) == 0 && !c.NameHasExpansion {
 		st.script, st.evals, st.readsStartup = script.Script, script.Eval, script.ReadsStartup
 	}
@@ -753,13 +784,8 @@ func (s *hookScan) classify(c cmdscan.Command) hookStatement {
 		expanded = slices.Contains(c.ExpandedArgs, word)
 	}
 	program, ok := namedProgram(s.projectRoot, word, expanded, slices.Contains(c.TildeWords, run.Index))
-	lookupChanged := s.lookupChanged || run.PathChanged || slices.Contains(c.Assigns, pathVar)
-	dir := s.dir
-	if run.DirChanged {
-		dir = ""
-	}
-	if ok && s.resolvable(program, lookupChanged, dir) {
-		st.run = &hookRun{program: program, args: words[run.Index+1:], dir: dir}
+	if ok && s.resolvable(program, st.lookupChanged, st.dir) {
+		st.run = &hookRun{program: program, args: words[run.Index+1:], dir: st.dir}
 	}
 	return st
 }

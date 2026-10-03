@@ -711,12 +711,17 @@ func (s *hookScan) track(c cmdscan.Command, mayNotRun bool) {
 		slices.Contains(c.ExpandedArgs, target) && target != s.projectRoot && !strings.HasPrefix(target, s.projectRoot+"/") {
 		known = false
 	}
-	target = filepath.Clean(target)
-	switch {
-	case !known || !isDir(target):
+	if !known || !isDir(target) {
 		// A cd to a directory that is not there fails and leaves the
 		// shell where it was; which directory that is is not tracked.
+		// The target is checked as written, as the kernel resolves it:
+		// each component before a ".." must exist too, so
+		// `cd /p/nonexist/../sub` fails although /p/sub exists.
 		s.dir = ""
+		return
+	}
+	target = filepath.Clean(target)
+	switch {
 	case mayNotRun || c.Subshell:
 		if target != s.dir {
 			s.dir = ""

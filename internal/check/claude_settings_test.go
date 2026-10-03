@@ -640,6 +640,9 @@ func TestCheckHookPrograms(t *testing.T) {
 		{name: "cd to project subdirectory then missing relative program", command: `cd "$CLAUDE_PROJECT_DIR/.venv" && ./bin/missing selfprotect`, event: "PreToolUse", scripts: map[string]os.FileMode{".venv/bin/ruff": 0o755}, wantSev: SeverityCritical, wantProg: "./bin/missing"},
 		// A cd to a directory that is not there fails and leaves the shell where it was.
 		{name: "failed cd then relative program", command: `cd "$CLAUDE_PROJECT_DIR/nonexist" 2>/dev/null; ./.venv/bin/ruff check`, event: "PostToolUse", scripts: map[string]os.FileMode{".venv/bin/ruff": 0o755}},
+		// A POSIX kernel resolves a ".." after a missing component as an error; Windows drops both.
+		{name: "failed cd through a missing component then relative program", command: `cd "$CLAUDE_PROJECT_DIR/nonexist/../sub" 2>/dev/null; ./.venv/bin/ruff check`, event: "PostToolUse", scripts: map[string]os.FileMode{".venv/bin/ruff": 0o755, "sub/keep": 0o644}, posix: true},
+		{name: "failed cd to a missing parent then relative program", command: `cd "$CLAUDE_PROJECT_DIR/sub"; cd "$CLAUDE_PROJECT_DIR/nonexist/.." 2>/dev/null; ./tool check`, event: "PostToolUse", scripts: map[string]os.FileMode{"sub/tool": 0o755}, posix: true},
 		{name: "failed cd then missing absolute program", command: `cd "$CLAUDE_PROJECT_DIR/nonexist" 2>/dev/null; "$CLAUDE_PROJECT_DIR"/bin/missing selfprotect`, event: "PreToolUse", wantSev: SeverityCritical, wantProg: rootVar + "/bin/missing"},
 		{name: "cd to frontend then present node program", command: `cd "$CLAUDE_PROJECT_DIR/frontend" && ./node_modules/.bin/eslint .`, event: "PostToolUse", scripts: map[string]os.FileMode{"frontend/node_modules/.bin/eslint": 0o755}},
 		{name: "cd to project root then missing relative program", command: `cd "$CLAUDE_PROJECT_DIR" && ./bin/missing selfprotect`, event: "PreToolUse", wantSev: SeverityCritical, wantProg: "./bin/missing"},

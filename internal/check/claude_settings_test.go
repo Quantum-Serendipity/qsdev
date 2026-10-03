@@ -775,6 +775,8 @@ func TestCheckHookPrograms_SymlinkDotDot(t *testing.T) {
 	writeTestFileMode(t, base, "ext/tool", "#!/bin/sh\n", 0o755)
 	writeTestFileMode(t, base, "ext/viainterp", "#!./link/../interp\n", 0o755)
 	writeTestFileMode(t, base, "ext/interp", "#!/bin/sh\n", 0o755)
+	writeTestFileMode(t, base, "ext/sub/tool", "#!/bin/sh\n", 0o755)
+	writeTestFileMode(t, base, "proj/tool", "#!/bin/sh\n", 0o755)
 	if err := os.MkdirAll(filepath.Join(base, "ext", "inner"), 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -793,6 +795,10 @@ func TestCheckHookPrograms_SymlinkDotDot(t *testing.T) {
 		{name: "dot-dot after symlink in program path", command: `./link/../tool selfprotect`},
 		{name: "dot-dot after symlink in interpreter path", command: `cd "$CLAUDE_PROJECT_DIR" && ./link/../viainterp selfprotect`},
 		{name: "dot-dot after symlink to missing program", command: `./link/../missing selfprotect`, wantProg: "./link/../missing"},
+		// proj/sub does not exist, so the shell cannot land there; the cd
+		// leaves the directory physically at ext/sub, where ./tool runs.
+		{name: "cd through symlink dot-dot then program", command: `cd "$CLAUDE_PROJECT_DIR/link/../sub" 2>/dev/null; ./tool selfprotect`},
+		{name: "physical cd through symlink dot-dot and-chain program", command: `cd "$CLAUDE_PROJECT_DIR/link/../sub" && ./tool selfprotect`},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

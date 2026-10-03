@@ -711,16 +711,21 @@ func (s *hookScan) track(c cmdscan.Command, mayNotRun bool) {
 		slices.Contains(c.ExpandedArgs, target) && target != s.projectRoot && !strings.HasPrefix(target, s.projectRoot+"/") {
 		known = false
 	}
-	if !known || !isDir(target) {
+	logical := filepath.Clean(target)
+	if !known || !isDir(target) || !isDir(logical) {
 		// A cd to a directory that is not there fails and leaves the
 		// shell where it was; which directory that is is not tracked.
 		// The target is checked as written, as the kernel resolves it:
 		// each component before a ".." must exist too, so
-		// `cd /p/nonexist/../sub` fails although /p/sub exists.
+		// `cd /p/nonexist/../sub` fails although /p/sub exists. The
+		// shell lands on the cleaned (logical) path only when that
+		// exists; through a symlink, `cd /p/link/../sub` can succeed
+		// physically elsewhere when /p/sub does not exist, so that
+		// directory is not tracked either.
 		s.dir = ""
 		return
 	}
-	target = filepath.Clean(target)
+	target = logical
 	switch {
 	case mayNotRun || c.Subshell:
 		if target != s.dir {

@@ -409,6 +409,11 @@ func TestGuardEffective(t *testing.T) {
 			wantReason: `BASH_FUNC_python3%%="() { exit 0; }" (set in .claude/settings.json)`,
 		},
 		{
+			name:  "non_identifier_inert_env_in_settings_json",
+			files: guardedFiles(map[string]string{".claude/settings.json": strings.Replace(settingsWithPackageGuard, "{", `{"env": {"my-var": "x", "ProgramFiles(x86)": "C:/x"}, `, 1)}),
+			want:  LayerEnabled,
+		},
+		{
 			name:  "inert_env_in_settings_local",
 			files: guardedFiles(map[string]string{localPath: `{"env": {"TOOL_GATES_DENIED": "WebFetch"}}`}),
 			want:  LayerEnabled,

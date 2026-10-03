@@ -206,6 +206,13 @@ func TestCheckClaudeSettingsPosture(t *testing.T) {
 			failSev:  SeverityCritical,
 		},
 		{
+			// Names no shell imports pass, as on main, though they are not
+			// shell identifiers.
+			name:     "committed inert non-identifier env",
+			actual:   withEnv(`{"my-var": "x", "ProgramFiles(x86)": "C:/Program Files (x86)"}`),
+			expected: withEnv(`{"my-var": "x", "ProgramFiles(x86)": "C:/Program Files (x86)"}`),
+		},
+		{
 			name:     "local pyvenv launcher",
 			actual:   generatedSettings,
 			expected: generatedSettings,

@@ -83,24 +83,29 @@ var (
 		"NODE_OPTIONS", "PERL5LIB", "PERL5OPT", "RUBYOPT", "RUBYLIB",
 		"__PYVENV_LAUNCHER__",
 	}
-	launchEnvPrefixes = []string{"CLAUDE_CODE_SHELL", "PYTHON", "NIX_PYTHON", "LD_", "DYLD_", "BASH_FUNC_"}
+	launchEnvPrefixes = []string{"CLAUDE_CODE_SHELL", "PYTHON", "NIX_PYTHON", "LD_", "DYLD_", "BASH_FUNC_", "__BASH_FUNC"}
+	// launchEnvSuffixes are the exported-function name shapes bash variants
+	// import ("BASH_FUNC_name%%" upstream, "BASH_FUNC_name()" and Apple's
+	// "__BASH_FUNC<name>()" in patched builds). Matched on any name, failing
+	// safe, as no ordinary setting ends this way.
+	launchEnvSuffixes = []string{"%%", "()"}
 )
 
-// envIdentRe matches an env name a shell can read as a variable. Any other
-// name (bash's exported functions are "BASH_FUNC_name%%", older bash used
-// "name()") is never an ordinary setting, so it is treated as launch env
-// rather than trusted to be inert.
-var envIdentRe = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
-
 // IsLaunchEnv reports whether the env variable name decides which program a
-// hook command runs or what code it loads (see launchEnvNames), or is not a
-// plain variable name at all (see envIdentRe). Names are compared
+// hook command runs or what code it loads (see launchEnvNames), names an
+// exported bash function (see launchEnvSuffixes), or is malformed: empty, or
+// holding '=' or NUL, which reshape the environment block a child receives
+// ("PATH=x" set to "y" reaches it as PATH="x=y"; "=C:" is Windows' hidden
+// per-drive working directory). Other names that are not shell identifiers,
+// such as "my-var" or Windows' "ProgramFiles(x86)", are inert: no shell
+// imports them as a variable or function. Names are compared
 // case-insensitively, as Windows reads them.
 func IsLaunchEnv(name string) bool {
 	upper := strings.ToUpper(name)
-	return !envIdentRe.MatchString(name) ||
+	return name == "" || strings.ContainsAny(name, "=\x00") ||
 		slices.Contains(launchEnvNames, upper) ||
-		slices.ContainsFunc(launchEnvPrefixes, func(p string) bool { return strings.HasPrefix(upper, p) })
+		slices.ContainsFunc(launchEnvPrefixes, func(p string) bool { return strings.HasPrefix(upper, p) }) ||
+		slices.ContainsFunc(launchEnvSuffixes, func(sfx string) bool { return strings.HasSuffix(name, sfx) })
 }
 
 // ModeBypassPermissions is the permission mode that skips every permission

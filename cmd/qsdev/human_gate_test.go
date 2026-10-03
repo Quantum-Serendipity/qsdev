@@ -22,6 +22,8 @@ func guardrailWeakeningCommands(t *testing.T) [][]string {
 		{"claude", "update", "--force"},
 		{"repair", "--force"},
 		{"defaults", "reset", "--yes"},
+		{"defaults", "pin"},
+		{"defaults", "pin", "--global"},
 		{"update", "--configs-only", "--no-strict"},
 	}
 }

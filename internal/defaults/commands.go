@@ -34,6 +34,7 @@ func Command() *cobra.Command {
 		editCmd(),
 		pathCmd(),
 		resetCmd(),
+		pinCmd(),
 	)
 
 	return cmd
@@ -301,7 +302,8 @@ func loadFresh() (*catalog.Catalog, error) {
 		opts = append(opts, catalog.WithProjectConfigFile(projFile))
 	}
 
-	if orgFile := catalog.OrgConfigFile(); orgFile != "" {
+	// The overlay the catalog applies: the pinned one (catalog.OrgConfigPin).
+	if orgFile := catalog.PolicyOrgConfigFile(); orgFile != "" {
 		opts = append(opts, catalog.WithOrgConfigFile(orgFile))
 	}
 

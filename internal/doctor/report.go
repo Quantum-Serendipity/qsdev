@@ -115,7 +115,7 @@ func (r *Report) SetProjectToolchains(warnings []string) {
 }
 
 // SetOrgOverlayDrift attaches why the org overlay this run resolves is not
-// the one runs no human started read for the project ("" when it is).
+// the one the CLI reads for the project ("" when it is).
 func (r *Report) SetOrgOverlayDrift(drift string) {
 	r.OrgOverlayDrift = drift
 }
@@ -365,7 +365,7 @@ func FormatReport(w io.Writer, r *Report, useColor bool) {
 	// Org overlay
 	if r.OrgOverlayDrift != "" {
 		fmt.Fprintln(w, "Org Overlay")
-		fmt.Fprintf(w, "  %s %s; runs no human starts ignore it\n", warnSym, r.OrgOverlayDrift)
+		fmt.Fprintf(w, "  %s %s; it is ignored (approve it with '%s defaults pin' at your own terminal)\n", warnSym, r.OrgOverlayDrift, branding.Get().AppName)
 		fmt.Fprintln(w)
 	}
 

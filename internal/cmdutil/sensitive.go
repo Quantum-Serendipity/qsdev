@@ -197,13 +197,6 @@ func atTerminal(in io.Reader) bool {
 	return false
 }
 
-// HumanAtTerminal reports whether a human runs the CLI, as RequireHuman
-// decides it: no agent session marker is set and in is an interactive
-// terminal.
-func HumanAtTerminal(in io.Reader) bool {
-	return agentSessionMarker() == "" && atTerminal(in)
-}
-
 // RequireHuman refuses cmd unless a human runs it: an agent's tool calls run
 // inside its session (and usually without a terminal) and cannot answer a
 // confirmation prompt. A pseudo-terminal wrapper such as script(1) defeats the

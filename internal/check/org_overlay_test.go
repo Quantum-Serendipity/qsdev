@@ -15,12 +15,24 @@ func TestCheckOrgOverlay(t *testing.T) {
 		status CheckStatus
 	}{
 		{"pinned", "", StatusPass},
-		{"drifted", "the org overlay resolves to /x, not /y, which a human recorded at init", StatusWarn},
+		{"pinned with a source", "", StatusPass},
+		{"drifted", "the org overlay resolves to /x, not /y (pinned for the project)", StatusWarn},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
-			got := CheckOrgOverlay(CheckContext{OrgConfigDrift: tt.drift})
+			source := ""
+			if tt.name == "pinned with a source" {
+				source = "/etc/org/defaults.yaml (pinned for the project)"
+			}
+			got := CheckOrgOverlay(CheckContext{OrgConfigDrift: tt.drift, OrgConfigSource: source})
+			// Round 4: a pass names what is read, not a record that may not exist.
+			if source != "" && !strings.Contains(got.Message, source) {
+				t.Errorf("CheckOrgOverlay message %q, want the overlay read named", got.Message)
+			}
+			if tt.drift == "" && strings.Contains(got.Message, "recorded") {
+				t.Errorf("CheckOrgOverlay message %q claims a record", got.Message)
+			}
 			if got.Status != tt.status || got.Name != "org_overlay_pinned" {
 				t.Errorf("CheckOrgOverlay = %+v, want status %s", got, tt.status)
 			}

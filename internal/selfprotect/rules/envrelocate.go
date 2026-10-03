@@ -258,7 +258,7 @@ func mentionsProtectedEnv(text string) bool {
 // closed when the change cannot be reconstructed. It is defense in depth: a
 // relocation it cannot see (an imported .nix file, a sourced fragment, a name
 // spelled through an encoding) is caught by the CLI, which reads only the
-// overlay a human recorded (see catalog.OrgConfigPin).
+// overlay a human pinned (see catalog.OrgConfigPin).
 func envFileRelocation(ctx *EvalContext) string {
 	if cmdscan.IsShellTool(ctx.ToolName) {
 		if name, ok := BashRewritesFile(ctx, canon.EnvSourceFiles()); ok {

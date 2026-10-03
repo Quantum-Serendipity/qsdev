@@ -25,6 +25,13 @@ func OrgConfigPath() string {
 	if p := os.Getenv(branding.Get().EnvPrefix + "ORG_CONFIG"); p != "" {
 		return p
 	}
+	return defaultOrgConfigPath()
+}
+
+// defaultOrgConfigPath returns the overlay OrgConfigPath falls back to when
+// <EnvPrefix>ORG_CONFIG is unset: the account's home overlay, or "" inside a
+// test binary (see OrgConfigPath). A variable so tests can give it a home.
+var defaultOrgConfigPath = func() string {
 	if testing.Testing() {
 		return ""
 	}
@@ -54,7 +61,7 @@ func homeOrgConfigPath() string {
 	if err == nil {
 		return HomeOrgConfigPath(home)
 	}
-	if envHome, envErr := os.UserHomeDir(); envErr == nil {
+	if envHome, envErr := envHomeDir(); envErr == nil {
 		if p := HomeOrgConfigPath(envHome); fileExists(p) {
 			warnUnanchoredOverlay.Do(func() {
 				slog.Warn("ignoring the org defaults file below HOME: the user database has no home directory for this account; set "+
@@ -64,6 +71,13 @@ func homeOrgConfigPath() string {
 		}
 	}
 	return ""
+}
+
+// envHomeDir returns the home directory the environment names (HOME, or
+// USERPROFILE on Windows), which the agent can change; only a warning and the
+// test-binary pins location (pinsHome) use it.
+func envHomeDir() (string, error) {
+	return os.UserHomeDir()
 }
 
 // HomeOrgConfigPath returns the user-level defaults file below home,

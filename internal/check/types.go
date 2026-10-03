@@ -199,9 +199,13 @@ type CheckContext struct {
 	// command layer; nil when the project has no custom policy.
 	CustomConformance *CustomConformance
 	// OrgConfigDrift is why the org overlay this run resolves is not the one
-	// a run no human started may read for the project (see
-	// catalog.OrgConfigDrift), or "" when it is.
+	// the CLI reads for the project (see catalog.OrgConfigDrift), or "" when
+	// it is.
 	OrgConfigDrift string
+	// OrgConfigSource names the overlay the CLI reads for the project and
+	// why: pinned, or the account's home overlay when none is pinned (see
+	// catalog.ProjectOrgConfigSource).
+	OrgConfigSource string
 	// DeclaredEnv holds the environment variables the project's devenv
 	// modules (devenv.nix, devenv.local.nix) declare, read by the command
 	// layer; the cloud isolation check judges environment separation from

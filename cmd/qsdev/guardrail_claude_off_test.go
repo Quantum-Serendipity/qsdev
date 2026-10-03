@@ -6,6 +6,7 @@ import (
 	"os"
 	"path"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
@@ -202,7 +203,11 @@ func TestGuardrailInvariant_OrgOverlayCannotClaimSettings(t *testing.T) {
 	if err := os.WriteFile(overlayPath, []byte(overlay), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	overlayEnv := append(agentEnv(env), branding.Get().EnvPrefix+"ORG_CONFIG="+overlayPath)
+	orgConfig := branding.Get().EnvPrefix + "ORG_CONFIG=" + overlayPath
+	// A human pins the overlay first: without a pin every run ignores it
+	// (catalog.OrgConfigPin), and the invariant must hold for a pinned one.
+	mustQsdev(t, append(slices.Clone(env), orgConfig), dir, "defaults", "pin")
+	overlayEnv := append(agentEnv(env), orgConfig)
 
 	out, code := runQsdev(t, overlayEnv, dir, nil, "defaults", "validate")
 	if code == 0 || !strings.Contains(out, "registers the self-protection hook") {

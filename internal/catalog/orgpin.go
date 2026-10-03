@@ -1,33 +1,42 @@
 package catalog
 
 import (
+	"errors"
 	"fmt"
 	"log/slog"
 	"os"
+	"path/filepath"
 	"sync"
+	"testing"
 
-	"github.com/Quantum-Serendipity/qsdev/internal/state"
+	"gopkg.in/yaml.v3"
+
 	"github.com/Quantum-Serendipity/qsdev/pkg/branding"
 	"github.com/Quantum-Serendipity/qsdev/pkg/fileutil"
 )
 
-// OrgConfigPin is the org overlay a human approved for a project: the path
-// OrgConfigPath resolved when a human ran init at their own terminal, kept in
-// the project's state directory (state.OrgOverlayFile), which the
-// self-protection hook keeps the agent from changing.
+// OrgConfigPin is the org overlay a human approved: the path OrgConfigPath
+// resolved when a human ran '<app> defaults pin' (PinCommandHint), a
+// sensitive command the self-protection hook and the CLI's human gate keep
+// the agent from running. Pins are kept in the account's home configuration
+// directory (OrgPinsFile), next to the default overlay and protected with it,
+// so nothing in a checkout (a `git clean -fdX`, a fresh clone) removes one.
 //
 // It is what makes the overlay location structural rather than a matter of
-// which commands and files the hook recognises. A run no human started (an
-// agent's tool call, a script) reads the pinned overlay, not one that
+// which commands and files the hook recognises: every run reads the pinned
+// overlay, or without a pin the account's home overlay, not one that
 // <EnvPrefix>ORG_CONFIG points elsewhere however the variable reached the
-// process: a command line, an env file, a devenv import or a sourced shell
-// fragment.
+// process (a command line, an env file, a devenv import, a sourced shell
+// fragment, a wrapper that makes an agent's command look like a human's).
 type OrgConfigPin struct {
 	// Path is the overlay path recorded, already resolved (see
 	// fileutil.ResolvePath), or "" when none was resolved.
 	Path string
-	// Recorded is set when a pin was recorded for the project.
+	// Recorded is set when a pin was recorded for the project or the account.
 	Recorded bool
+	// Global is set when the pin is the account-wide one, not one recorded
+	// for the project.
+	Global bool
 }
 
 var (
@@ -40,50 +49,177 @@ var (
 )
 
 // UseOrgConfigPin makes the catalog read the overlay pin allows for the
-// project at projectRoot (see OrgConfigDrift and PolicyOrgConfigFile) instead
-// of whichever OrgConfigPath resolves. main calls it (via
-// instance.UseProjectDefaults) for a run no human started, before any command
-// runs; it has no effect once Default has loaded the catalog.
+// project at projectRoot ("" outside a project; see OrgConfigDrift and
+// PolicyOrgConfigFile) instead of whichever OrgConfigPath resolves. main
+// calls it (via instance.UseProjectDefaults) before any command runs; it has
+// no effect once Default has loaded the catalog.
 func UseOrgConfigPin(projectRoot string, pin OrgConfigPin) {
 	pinMu.Lock()
 	defer pinMu.Unlock()
 	pinActive, pinRoot, pinned = true, projectRoot, pin
 }
 
-// LoadOrgConfigPin returns the pin recorded for the project at projectRoot,
-// or a zero pin when none is recorded.
-func LoadOrgConfigPin(projectRoot string) (OrgConfigPin, error) {
-	path, ok, err := state.LoadOrgOverlay(projectRoot)
+// PinCommandHint names the command that records a pin, for messages.
+func PinCommandHint() string {
+	return "'" + branding.Get().AppName + " defaults pin'"
+}
+
+// orgPinsRecord is the content of OrgPinsFile.
+type orgPinsRecord struct {
+	// Global is the account-wide pin, nil when none is recorded; "" pins no
+	// overlay.
+	Global *string `yaml:"global,omitempty"`
+	// Projects maps a resolved project root to the overlay pinned for it.
+	Projects map[string]string `yaml:"projects,omitempty"`
+}
+
+// OrgPinsFile returns the file that holds the pins: org-overlay-pins.yaml in
+// the account's home configuration directory (branding.Config.OrgConfigDir
+// below the home directory the user database records, never HOME), which
+// the self-protection hook protects with the default overlay. It fails when
+// the account's home directory cannot be resolved.
+func OrgPinsFile() (string, error) {
+	home, err := pinsHome()
 	if err != nil {
-		return OrgConfigPin{}, fmt.Errorf("loading the recorded org overlay: %w", err)
+		return "", fmt.Errorf("resolving the account's home directory for the org overlay pins: %w", err)
 	}
-	return OrgConfigPin{Path: path, Recorded: ok}, nil
+	return filepath.Join(branding.Get().OrgConfigDir(home), "org-overlay-pins.yaml"), nil
+}
+
+// pinsHome returns the home directory OrgPinsFile lies below: the account's
+// (accountHome). Inside a test binary, which runs the CLI with an isolated
+// HOME, it is HOME, so no test reads or writes the developer's pins. A
+// variable for tests.
+var pinsHome = func() (string, error) {
+	if testing.Testing() {
+		return envHomeDir()
+	}
+	return accountHome()
+}
+
+// loadOrgPins reads OrgPinsFile; a missing file holds no pins.
+func loadOrgPins() (orgPinsRecord, string, error) {
+	file, err := OrgPinsFile()
+	if err != nil {
+		return orgPinsRecord{}, "", err
+	}
+	data, err := os.ReadFile(file)
+	if errors.Is(err, os.ErrNotExist) {
+		return orgPinsRecord{}, file, nil
+	}
+	if err != nil {
+		return orgPinsRecord{}, file, fmt.Errorf("reading %s: %w", file, err)
+	}
+	var rec orgPinsRecord
+	if err := yaml.Unmarshal(data, &rec); err != nil {
+		return orgPinsRecord{}, file, fmt.Errorf("parsing %s: %w", file, err)
+	}
+	return rec, file, nil
+}
+
+// pinKey returns the key a project's pin is stored under: its resolved root.
+func pinKey(projectRoot string) (string, error) {
+	key, err := fileutil.ResolvePath(projectRoot)
+	if err != nil {
+		return "", fmt.Errorf("resolving the project root %s: %w", projectRoot, err)
+	}
+	return key, nil
+}
+
+// LoadOrgConfigPin returns the pin that applies to the project at
+// projectRoot: the one recorded for it, else the account-wide one, else a
+// zero pin. projectRoot "" (outside a project) looks up the account-wide pin
+// only.
+func LoadOrgConfigPin(projectRoot string) (OrgConfigPin, error) {
+	rec, _, err := loadOrgPins()
+	if err != nil {
+		return OrgConfigPin{}, fmt.Errorf("loading the pinned org overlay: %w", err)
+	}
+	if projectRoot != "" {
+		key, err := pinKey(projectRoot)
+		if err != nil {
+			return OrgConfigPin{}, err
+		}
+		if p, ok := rec.Projects[key]; ok {
+			return OrgConfigPin{Path: p, Recorded: true}, nil
+		}
+	}
+	if rec.Global != nil {
+		return OrgConfigPin{Path: *rec.Global, Recorded: true, Global: true}, nil
+	}
+	return OrgConfigPin{}, nil
 }
 
 // RecordOrgConfigPin records the overlay path OrgConfigPath resolves as the
-// project's pin, for a human's init at their own terminal, and returns it.
-// A path the agent could write (see untrustedOrgConfigLocation) is refused
-// and nothing is recorded.
+// pin for the project at projectRoot, or as the account-wide pin when
+// projectRoot is "", and returns it. Only a human may call it (the defaults
+// pin command is sensitive). A path the agent could write (see
+// untrustedOrgConfigLocation) is refused and nothing is recorded.
 func RecordOrgConfigPin(projectRoot string) (string, error) {
 	path, err := resolveOrgConfig(OrgConfigPath())
 	if err != nil {
 		return "", err
 	}
 	if reason := untrustedOrgConfigLocation(path, projectRoot); reason != "" {
-		return "", fmt.Errorf("not recording the org overlay %s: %s", path, reason)
+		return "", fmt.Errorf("not pinning the org overlay %s: %s", path, reason)
 	}
-	if err := state.SaveOrgOverlay(projectRoot, path); err != nil {
-		return "", fmt.Errorf("recording the org overlay: %w", err)
+	rec, file, err := loadOrgPins()
+	if err != nil {
+		return "", err
+	}
+	if projectRoot == "" {
+		rec.Global = &path
+	} else {
+		key, err := pinKey(projectRoot)
+		if err != nil {
+			return "", err
+		}
+		if rec.Projects == nil {
+			rec.Projects = map[string]string{}
+		}
+		rec.Projects[key] = path
+	}
+	data, err := yaml.Marshal(rec)
+	if err != nil {
+		return "", fmt.Errorf("rendering %s: %w", file, err)
+	}
+	if err := os.MkdirAll(filepath.Dir(file), fileutil.ModeDirDefault); err != nil {
+		return "", fmt.Errorf("creating %s: %w", filepath.Dir(file), err)
+	}
+	if err := fileutil.WriteFileAtomic(file, data, fileutil.ModeReadWrite); err != nil {
+		return "", fmt.Errorf("writing %s: %w", file, err)
 	}
 	return path, nil
 }
 
+// pinnedOverlay returns the overlay pin allows: the pinned path, or without a
+// pin the account's home overlay.
+func pinnedOverlay(pin OrgConfigPin) string {
+	if pin.Recorded {
+		return pin.Path
+	}
+	return defaultOrgConfigPath()
+}
+
+// describePin names the overlay pin allows and where that comes from, for
+// a message.
+func describePin(pin OrgConfigPin) string {
+	switch {
+	case !pin.Recorded:
+		return describeOverlay(defaultOrgConfigPath()) + " (the account's home overlay; no overlay is pinned)"
+	case pin.Global:
+		return describeOverlay(pin.Path) + " (pinned for the account)"
+	default:
+		return describeOverlay(pin.Path) + " (pinned for the project)"
+	}
+}
+
 // OrgConfigDrift returns why the overlay OrgConfigPath resolves now is not
-// one a run no human started may read for the project at projectRoot, given
-// its pin, or "" when it may: it lies below the project or the temporary
-// directory, which the agent can write, or it is not the overlay a human
-// recorded. check and doctor report it; such a run reads the pinned overlay
-// instead (PolicyOrgConfigFile).
+// the one the catalog may read for the project at projectRoot, given its
+// pin, or "" when it is: it lies below the project or the temporary
+// directory, which the agent can write, or it is not the pinned overlay (the
+// account's home overlay without a pin). check and doctor report it; the
+// catalog reads the pinned overlay instead (PolicyOrgConfigFile).
 func OrgConfigDrift(projectRoot string, pin OrgConfigPin) string {
 	resolved, err := resolveOrgConfig(OrgConfigPath())
 	if err != nil {
@@ -92,14 +228,13 @@ func OrgConfigDrift(projectRoot string, pin OrgConfigPin) string {
 	if reason := untrustedOrgConfigLocation(resolved, projectRoot); reason != "" {
 		return fmt.Sprintf("the org overlay %s %s", resolved, reason)
 	}
-	if pin.Recorded && !sameOverlay(resolved, pin.Path) {
-		return fmt.Sprintf("the org overlay resolves to %s, not %s, which a human recorded at init (%s)",
-			describeOverlay(resolved), describeOverlay(pin.Path), state.OrgOverlayFile())
+	if !sameOverlay(resolved, pinnedOverlay(pin)) {
+		return fmt.Sprintf("the org overlay resolves to %s, not %s", describeOverlay(resolved), describePin(pin))
 	}
 	return ""
 }
 
-// ProjectOrgConfigDrift is OrgConfigDrift for the pin recorded for the
+// ProjectOrgConfigDrift is OrgConfigDrift for the pin that applies to the
 // project at projectRoot; a pin that cannot be read is reported too.
 func ProjectOrgConfigDrift(projectRoot string) string {
 	pin, err := LoadOrgConfigPin(projectRoot)
@@ -107,6 +242,17 @@ func ProjectOrgConfigDrift(projectRoot string) string {
 		return err.Error()
 	}
 	return OrgConfigDrift(projectRoot, pin)
+}
+
+// ProjectOrgConfigSource describes the overlay the catalog reads for the
+// project at projectRoot and why, for a report: the pinned one, or the
+// account's home overlay when nothing is pinned.
+func ProjectOrgConfigSource(projectRoot string) string {
+	pin, err := LoadOrgConfigPin(projectRoot)
+	if err != nil {
+		return err.Error()
+	}
+	return describePin(pin)
 }
 
 // PolicyOrgConfigFile returns the org overlay file the catalog applies: the
@@ -125,16 +271,13 @@ func PolicyOrgConfigFile() string {
 	if drift == "" {
 		return OrgConfigFile()
 	}
-	fallback := pin.Path
-	if !pin.Recorded {
-		fallback = homeOrgConfigPath()
-	}
+	fallback := pinnedOverlay(pin)
 	if fallback != "" && untrustedOrgConfigLocation(fallback, root) != "" {
 		fallback = ""
 	}
 	warnDrift.Do(func() {
 		slog.Warn("ignoring the org overlay this run resolves: "+drift+
-			"; a human can record another one by running '"+branding.Get().AppName+" init' at their own terminal",
+			"; to use it, run "+PinCommandHint()+" at your own terminal",
 			"using", describeOverlay(fallback))
 	})
 	if fallback == "" || !fileExists(fallback) {
@@ -157,10 +300,9 @@ func resolveOrgConfig(path string) (string, error) {
 }
 
 // sameOverlay reports whether the resolved overlay path resolved names the
-// recorded one, recorded, which is resolved again in case a symlink on it
-// changed.
-func sameOverlay(resolved, recorded string) bool {
-	again, err := resolveOrgConfig(recorded)
+// expected one, which is resolved again in case a symlink on it changed.
+func sameOverlay(resolved, expected string) bool {
+	again, err := resolveOrgConfig(expected)
 	return err == nil && again == resolved
 }
 

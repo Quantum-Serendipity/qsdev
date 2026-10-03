@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/Quantum-Serendipity/qsdev/internal/logging"
 	"github.com/Quantum-Serendipity/qsdev/internal/procexec"
 )
 
@@ -50,7 +51,10 @@ func Detect(ctx context.Context, name, versionArg string) Info {
 	ctx, cancel := context.WithTimeout(ctx, probeTimeout)
 	defer cancel()
 
-	cmd := procexec.VersionProbe(ctx, path, versionArg)
+	// A binary inside the project (node_modules/.bin, a venv, a committed
+	// bin/) is project code; VersionProbe refuses it and the tool is
+	// reported found without a version.
+	cmd := procexec.VersionProbe(ctx, logging.ProbeBoundary(), path, versionArg)
 	cmd.WaitDelay = probeWaitDelay
 	stdout := &limitedBuffer{max: maxProbeOutput}
 	stderr := &limitedBuffer{max: maxProbeOutput}

@@ -95,12 +95,67 @@ func isRepoToplevel(dir string) bool {
 // DetectProjectRoot returns the root of the qsdev project enclosing the
 // current directory (see FindProjectRoot), or "" if not inside a project.
 func DetectProjectRoot() string {
-	dir, err := os.Getwd()
+	dir, err := workingDir()
 	if err != nil {
 		return ""
 	}
 	root, _ := FindProjectRoot(dir)
 	return root
+}
+
+// ProbeBoundary returns the directory whose content belongs to the project
+// the current directory is in, as a version probe must see it: the nearest
+// repository toplevel at or above the working directory, or the working
+// directory itself outside a repository. It needs no qsdev marker, since a
+// repository not yet initialised is project content too. It returns "" when
+// that directory is the home directory or above it (run from ~, from a
+// dotfiles repository at ~, or from /), which is no project, or when the
+// working directory is unknown.
+func ProbeBoundary() string {
+	wd, err := workingDir()
+	if err != nil {
+		return ""
+	}
+	home, err := userHomeDir()
+	if err != nil {
+		home = ""
+	}
+	return probeBoundary(wd, home)
+}
+
+// probeBoundary is ProbeBoundary for the working directory wd and the home
+// directory home ("" when unknown).
+func probeBoundary(wd, home string) string {
+	wd = filepath.Clean(wd)
+	root, ok := walkUpUntil(wd, isRepoToplevel, nil)
+	if !ok {
+		root = wd
+	}
+	if home == "" {
+		return root
+	}
+	rootInfo, err := os.Stat(root)
+	if err != nil {
+		return root
+	}
+	if _, holdsHome := WalkUp(filepath.Clean(home), func(dir string) bool {
+		info, err := os.Stat(dir)
+		return err == nil && os.SameFile(info, rootInfo)
+	}); holdsHome {
+		return ""
+	}
+	return root
+}
+
+// workingDir is the one place the package reads the working directory.
+func workingDir() (string, error) {
+	return os.Getwd()
+}
+
+// userHomeDir is the one place the package resolves the home directory for
+// matching (GlobalLogDir resolves it for its own path).
+func userHomeDir() (string, error) {
+	return os.UserHomeDir()
 }
 
 // FindProjectRoot walks up from start to the nearest directory (start itself
@@ -139,7 +194,7 @@ func FindProjectRoot(start string) (string, bool) {
 // case-insensitive filesystem still matches the resolved working directory.
 // With no resolvable home directory it matches nothing.
 func HomeDirMatcher() func(dir string) bool {
-	home, err := os.UserHomeDir()
+	home, err := userHomeDir()
 	if err != nil || home == "" {
 		return func(string) bool { return false }
 	}

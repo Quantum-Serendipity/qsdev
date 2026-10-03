@@ -82,14 +82,16 @@ func NeutralDir() string {
 // VersionProbe returns a command that runs the binary at absPath with the
 // single argument flag to print its version. It serves data-driven tool
 // detection, where the binary comes from a catalog: absPath must be an
-// absolute path (as exec.LookPath returns) and flag one of --version,
-// version or -v. Anything else is never started: the command carries the
-// error in Err, which Start and Run return. The command runs in NeutralDir,
-// never in the caller's working directory, so repository content cannot
-// steer what the probe fetches or runs. It is the only name-agnostic exec
-// the forbid-exec guard allows.
-func VersionProbe(ctx context.Context, absPath, flag string) *exec.Cmd {
-	if err := checkVersionProbe(absPath, flag); err != nil {
+// absolute path (as exec.LookPath returns) to an existing file, flag one of
+// --version, version or -v, and the binary must lie outside project, the
+// directory whose content belongs to the project the caller works in ("" for
+// none). Anything else is never started: the command carries the error in
+// Err, which Start and Run return. The command runs in NeutralDir, never in
+// the caller's working directory, so repository content cannot steer what
+// the probe fetches or runs. It is the only name-agnostic exec the
+// forbid-exec guard allows.
+func VersionProbe(ctx context.Context, project, absPath, flag string) *exec.Cmd {
+	if err := checkVersionProbe(project, absPath, flag); err != nil {
 		cmd := &exec.Cmd{Path: absPath, Args: []string{absPath, flag}}
 		cmd.Err = err
 		return cmd
@@ -104,14 +106,57 @@ func IsVersionFlag(flag string) bool {
 	return slices.Contains(versionFlags, flag)
 }
 
-func checkVersionProbe(absPath, flag string) error {
+func checkVersionProbe(project, absPath, flag string) error {
 	if !filepath.IsAbs(absPath) {
 		return fmt.Errorf("procexec: version probe needs an absolute binary path, got %q", absPath)
 	}
 	if !IsVersionFlag(flag) {
 		return fmt.Errorf("procexec: version probe flag %q is not one of %q", flag, versionFlags)
 	}
+	return checkOutsideProject(project, absPath)
+}
+
+// checkOutsideProject refuses a binary that lies inside project by its own
+// path or by the path it resolves to. PATH can name such a binary
+// (node_modules/.bin, a virtualenv, a committed bin/), and running it is
+// running project code wherever the probe's cwd is. Both forms are checked:
+// the project chooses the lexical one (a project symlink can give any host
+// binary a catalog name) and the resolved one is what runs. A binary that
+// cannot be resolved is refused.
+func checkOutsideProject(project, absPath string) error {
+	resolved, err := filepath.EvalSymlinks(absPath)
+	if err != nil {
+		return fmt.Errorf("procexec: version probe binary %q: %w", absPath, err)
+	}
+	if project == "" {
+		return nil
+	}
+	projectInfo, err := os.Stat(project)
+	if err != nil {
+		return fmt.Errorf("procexec: version probe project: %w", err)
+	}
+	for _, p := range []string{absPath, resolved} {
+		if isUnder(projectInfo, filepath.Dir(p)) {
+			return fmt.Errorf("procexec: version probe binary %q is inside the project %s; it would run project code", absPath, project)
+		}
+	}
 	return nil
+}
+
+// isUnder reports whether dir, or any directory above it, is the directory
+// root describes. Comparing file identity (os.SameFile) rather than strings
+// holds across symlinked ancestors and case-insensitive filesystems.
+func isUnder(root os.FileInfo, dir string) bool {
+	for dir = filepath.Clean(dir); ; {
+		if info, err := os.Stat(dir); err == nil && os.SameFile(info, root) {
+			return true
+		}
+		parent := filepath.Dir(dir)
+		if parent == dir {
+			return false
+		}
+		dir = parent
+	}
 }
 
 // guard panics when ForbidExecEnv is set and argv is not a local probe. A

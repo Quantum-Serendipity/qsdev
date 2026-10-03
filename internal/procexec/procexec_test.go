@@ -5,6 +5,7 @@ import (
 	"go/ast"
 	"go/parser"
 	"go/token"
+	"maps"
 	"os"
 	"path/filepath"
 	"slices"
@@ -12,9 +13,19 @@ import (
 	"testing"
 )
 
-// guardPanic builds a command under the forbid-exec guard and returns the
-// panic message, or "" when the guard let it through.
-func guardPanic(t *testing.T, name string, args ...string) (msg string) {
+// constructors are the guarded entry points that take a name and argv. Each
+// is checked on its own, so a guard dropped from one cannot hide behind the
+// other's panic.
+var constructors = map[string]func(name string, args ...string){
+	"Command": func(name string, args ...string) { _ = Command(name, args...) },
+	"CommandContext": func(name string, args ...string) {
+		_ = CommandContext(context.Background(), name, args...)
+	},
+}
+
+// guardPanic builds a command with build under the forbid-exec guard and
+// returns the panic message, or "" when the guard let it through.
+func guardPanic(t *testing.T, build func(string, ...string), name string, args ...string) (msg string) {
 	t.Helper()
 	defer func() {
 		if r := recover(); r != nil {
@@ -24,8 +35,7 @@ func guardPanic(t *testing.T, name string, args ...string) (msg string) {
 			}
 		}
 	}()
-	_ = Command(name, args...)
-	_ = CommandContext(context.Background(), name, args...)
+	build(name, args...)
 	return ""
 }
 
@@ -88,44 +98,85 @@ func TestForbidExec(t *testing.T) {
 			} else {
 				t.Setenv(ForbidExecEnv, "")
 			}
-			msg := guardPanic(t, tt.argv[0], tt.argv[1:]...)
-			if got := msg != ""; got != tt.panics {
-				t.Fatalf("argv %q: panicked=%v (%q), want %v", tt.argv, got, msg, tt.panics)
-			}
-			if tt.panics && !strings.Contains(msg, strings.Join(tt.argv, " ")) {
-				t.Errorf("panic message %q does not name argv %q", msg, tt.argv)
+			for _, ctor := range slices.Sorted(maps.Keys(constructors)) {
+				msg := guardPanic(t, constructors[ctor], tt.argv[0], tt.argv[1:]...)
+				if got := msg != ""; got != tt.panics {
+					t.Errorf("%s argv %q: panicked=%v (%q), want %v", ctor, tt.argv, got, msg, tt.panics)
+					continue
+				}
+				if tt.panics && !strings.Contains(msg, strings.Join(tt.argv, " ")) {
+					t.Errorf("%s: panic message %q does not name argv %q", ctor, msg, tt.argv)
+				}
 			}
 		})
 	}
 }
 
-func TestForbidExec_VersionProbe(t *testing.T) {
-	abs, err := filepath.Abs(filepath.Join("bin", "tool"))
-	if err != nil {
+// touch creates an empty executable file at path and returns path.
+func touch(t *testing.T, path string) string {
+	t.Helper()
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		t.Fatal(err)
 	}
+	if err := os.WriteFile(path, nil, 0o755); err != nil { //nolint:gosec // test stub binary
+		t.Fatal(err)
+	}
+	return path
+}
+
+// symlink creates link -> target, skipping the test where the host cannot.
+func symlink(t *testing.T, target, link string) string {
+	t.Helper()
+	if err := os.MkdirAll(filepath.Dir(link), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(target, link); err != nil {
+		t.Skipf("symlinks unavailable: %v", err)
+	}
+	return link
+}
+
+func TestForbidExec_VersionProbe(t *testing.T) {
+	project, elsewhere := t.TempDir(), t.TempDir()
+	outside := touch(t, filepath.Join(elsewhere, "bin", "tool"))
 	tests := []struct {
 		name    string
-		path    string
+		project string
+		path    func(t *testing.T) string
 		flag    string
 		wantErr bool
 	}{
-		{"absolute --version", abs, "--version", false},
-		{"absolute version", abs, "version", false},
-		{"absolute -v", abs, "-v", false},
-		{"relative dot path", "./gradlew", "--version", true},
-		{"bare name", "npx", "version", true},
-		{"relative dir path", filepath.Join("node_modules", ".bin", "x"), "--version", true},
-		{"other flag", abs, "--help", true},
-		{"flag with value", abs, "--version=1", true},
-		{"empty flag", abs, "", true},
+		{"absolute --version", project, func(*testing.T) string { return outside }, "--version", false},
+		{"absolute version", project, func(*testing.T) string { return outside }, "version", false},
+		{"absolute -v", project, func(*testing.T) string { return outside }, "-v", false},
+		{"no project", "", func(*testing.T) string { return outside }, "--version", false},
+		{"relative dot path", project, func(*testing.T) string { return "./gradlew" }, "--version", true},
+		{"bare name", project, func(*testing.T) string { return "npx" }, "version", true},
+		{"relative dir path", project, func(*testing.T) string { return filepath.Join("node_modules", ".bin", "x") }, "--version", true},
+		{"other flag", project, func(*testing.T) string { return outside }, "--help", true},
+		{"flag with value", project, func(*testing.T) string { return outside }, "--version=1", true},
+		{"empty flag", project, func(*testing.T) string { return outside }, "", true},
+		{"missing binary", project, func(*testing.T) string {
+			return filepath.Join(elsewhere, "missing", "tool")
+		}, "--version", true},
+		// A binary inside the project is project code, whatever PATH says.
+		{"inside the project", project, func(t *testing.T) string {
+			return touch(t, filepath.Join(project, "node_modules", ".bin", "x"))
+		}, "--version", true},
+		{"outside link into the project", project, func(t *testing.T) string {
+			return symlink(t, touch(t, filepath.Join(project, "lib", "jq")), filepath.Join(elsewhere, "link", "jq"))
+		}, "--version", true},
+		{"project link to an outside binary", project, func(t *testing.T) string {
+			return symlink(t, outside, filepath.Join(project, "bin", "npx-alias"))
+		}, "version", true},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Setenv(ForbidExecEnv, "1")
-			cmd := VersionProbe(context.Background(), tt.path, tt.flag)
+			path := tt.path(t)
+			cmd := VersionProbe(context.Background(), tt.project, path, tt.flag)
 			if got := cmd.Err != nil; got != tt.wantErr {
-				t.Fatalf("VersionProbe(%q, %q).Err = %v, want error %v", tt.path, tt.flag, cmd.Err, tt.wantErr)
+				t.Fatalf("VersionProbe(%q, %q, %q).Err = %v, want error %v", tt.project, path, tt.flag, cmd.Err, tt.wantErr)
 			}
 			if tt.wantErr {
 				if err := cmd.Run(); err == nil {
@@ -133,7 +184,7 @@ func TestForbidExec_VersionProbe(t *testing.T) {
 				}
 				return
 			}
-			if want := []string{tt.path, tt.flag}; !slices.Equal(cmd.Args, want) {
+			if want := []string{path, tt.flag}; !slices.Equal(cmd.Args, want) {
 				t.Errorf("Args = %q, want %q", cmd.Args, want)
 			}
 			// An empty Dir means the caller's working directory, the

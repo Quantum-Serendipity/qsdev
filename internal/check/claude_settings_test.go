@@ -480,7 +480,8 @@ func TestCheckHookPrograms(t *testing.T) {
 		{name: "function body", command: `f() { nonexistent-bin; }; :`, event: "PreToolUse"},
 		{name: "cd and-chain then unresolvable program", command: `cd "$CLAUDE_PROJECT_DIR" && cd .claude && nonexistent-bin selfprotect`, event: "PreToolUse", wantSev: SeverityCritical, wantProg: "nonexistent-bin"},
 		{name: "cd or-exit then unresolvable program", command: `cd "$CLAUDE_PROJECT_DIR" || exit 1; nonexistent-bin selfprotect`, event: "PreToolUse", wantSev: SeverityCritical, wantProg: "nonexistent-bin"},
-		{name: "optional env file then missing path program", command: `cd "$CLAUDE_PROJECT_DIR"; [ -f .env ] && . ./.env; ./bin/missing selfprotect`, event: "PreToolUse", wantSev: SeverityCritical, wantProg: "./bin/missing"},
+		{name: "optional env file then missing absolute program", command: `cd "$CLAUDE_PROJECT_DIR"; [ -f .env ] && . ./.env; "$CLAUDE_PROJECT_DIR"/bin/missing selfprotect`, event: "PreToolUse", wantSev: SeverityCritical, wantProg: rootVar + "/bin/missing"},
+		{name: "optional env file may change directory", command: `cd "$CLAUDE_PROJECT_DIR"; [ -f .env ] && . ./.env; ./bin/missing selfprotect`, event: "PreToolUse"},
 		{name: "optional env file then bare program", command: `cd "$CLAUDE_PROJECT_DIR"; [ -f .env ] && . ./.env; nonexistent-bin selfprotect`, event: "PreToolUse"},
 		{name: "if-guarded exit then program", command: `if ! command -v nonexistent-bin >/dev/null; then exit 0; fi; nonexistent-bin`, event: "PostToolUse"},
 		{name: "test-guarded exit then program", command: `[ -x ./bin/qsdev ] || exit 0; ./bin/qsdev selfprotect`, event: "PreToolUse"},
@@ -525,6 +526,37 @@ func TestCheckHookPrograms(t *testing.T) {
 		{name: "program in eval", command: `eval nonexistent-bin selfprotect`, event: "PreToolUse", wantSev: SeverityCritical, wantProg: "nonexistent-bin"},
 		{name: "test in a block after cd", command: `cd /tmp && { test -f y; nonexistent-bin selfprotect; }`, event: "PreToolUse", wantSev: SeverityCritical, wantProg: "nonexistent-bin"},
 		{name: "cd in a block after a test", command: `test -x ./bin/qsdev && { cd /tmp; nonexistent-bin selfprotect; }`, event: "PreToolUse"},
+		// A relative program path resolves in the directory the hook is in.
+		{name: "cd to project subdirectory then present relative program", command: `cd "$CLAUDE_PROJECT_DIR/.venv" && ./bin/ruff check`, event: "PostToolUse", scripts: map[string]os.FileMode{".venv/bin/ruff": 0o755}},
+		{name: "cd to project subdirectory then missing relative program", command: `cd "$CLAUDE_PROJECT_DIR/.venv" && ./bin/missing selfprotect`, event: "PreToolUse", wantSev: SeverityCritical, wantProg: "./bin/missing"},
+		{name: "cd to frontend then present node program", command: `cd "$CLAUDE_PROJECT_DIR/frontend" && ./node_modules/.bin/eslint .`, event: "PostToolUse", scripts: map[string]os.FileMode{"frontend/node_modules/.bin/eslint": 0o755}},
+		{name: "cd to project root then missing relative program", command: `cd "$CLAUDE_PROJECT_DIR" && ./bin/missing selfprotect`, event: "PreToolUse", wantSev: SeverityCritical, wantProg: "./bin/missing"},
+		{name: "relative cd then relative program", command: `cd frontend && ./node_modules/.bin/eslint .`, event: "PostToolUse"},
+		{name: "cd to unknown directory then relative program", command: `cd "$OTHER" && ./bin/missing selfprotect`, event: "PreToolUse"},
+		{name: "pushd and popd then relative program", command: `pushd "$CLAUDE_PROJECT_DIR/sub" && popd && ./bin/missing selfprotect`, event: "PreToolUse"},
+		{name: "conditional cd then relative program", command: `[ -d "$CLAUDE_PROJECT_DIR/sub" ] && cd "$CLAUDE_PROJECT_DIR/sub"; ./bin/missing selfprotect`, event: "PreToolUse"},
+		{name: "cd in a function then relative program", command: `f() { cd /tmp; }; f; ./bin/missing selfprotect`, event: "PreToolUse"},
+		{name: "cd in a subshell then relative program", command: `(cd /tmp); ./bin/missing selfprotect`, event: "PreToolUse"},
+		{name: "cd elsewhere then missing absolute program", command: `cd /tmp && "$CLAUDE_PROJECT_DIR"/bin/missing selfprotect`, event: "PreToolUse", wantSev: SeverityCritical, wantProg: rootVar + "/bin/missing"},
+		{name: "cd in sh -c stays in the child", command: `sh -c 'cd /tmp'; ./bin/missing selfprotect`, event: "PreToolUse", wantSev: SeverityCritical, wantProg: "./bin/missing"},
+		{name: "eval cd then relative program", command: `eval cd /tmp; ./bin/missing selfprotect`, event: "PreToolUse"},
+		{name: "env -C then relative program", command: `env -C /tmp ./bin/missing selfprotect`, event: "PreToolUse"},
+		// A program whose failure the hook handles does not make it exit 127.
+		{name: "version probe or-exit then program", command: `nonexistent-bin --version >/dev/null 2>&1 || exit 0; nonexistent-bin check`, event: "PostToolUse"},
+		{name: "or-true program", command: `nonexistent-bin selfprotect || true`, event: "PreToolUse"},
+		{name: "negated program", command: `! nonexistent-bin selfprotect`, event: "PreToolUse"},
+		{name: "or-handled block runs its first program", command: `{ nonexistent-bin selfprotect; gofmt -l .; } || true`, event: "PreToolUse", wantSev: SeverityCritical, wantProg: "nonexistent-bin"},
+		{name: "and-list left operand is not handled", command: `nonexistent-bin selfprotect && true`, event: "PreToolUse", wantSev: SeverityCritical, wantProg: "nonexistent-bin"},
+		// hash -p binds a name without PATH.
+		{name: "hash -p then bare program", command: `hash -p "$CLAUDE_PROJECT_DIR/.venv/bin/ruff" nonexistent-bin; nonexistent-bin check`, event: "PostToolUse"},
+		{name: "hash -r then bare program", command: `hash -r; nonexistent-bin selfprotect`, event: "PreToolUse", wantSev: SeverityCritical, wantProg: "nonexistent-bin"},
+		// A script shell that reads startup files may change PATH first.
+		{name: "bash -lc program", command: `bash -lc 'nonexistent-bin check'`, event: "PostToolUse"},
+		{name: "bash --login -c program", command: `bash --login -c 'nonexistent-bin check'`, event: "PostToolUse"},
+		{name: "zsh -c program", command: `zsh -c 'nonexistent-bin check'`, event: "PostToolUse"},
+		{name: "bash -lc relative program", command: `bash -lc './bin/missing check'`, event: "PostToolUse"},
+		{name: "bash -lc absolute program", command: `bash -lc '"$CLAUDE_PROJECT_DIR"/bin/missing selfprotect'`, event: "PreToolUse", wantSev: SeverityCritical, wantProg: rootVar + "/bin/missing"},
+		{name: "login shell startup stays in the child", command: `bash -lc 'nonexistent-bin check'; nonexistent-bin selfprotect`, event: "PreToolUse", wantSev: SeverityCritical, wantProg: "nonexistent-bin"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

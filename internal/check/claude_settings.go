@@ -325,11 +325,12 @@ const (
 
 // scriptRunProblem returns why the shell cannot start the file at path
 // (named label in findings) as a program, or nil when it can. A relative
-// interpreter resolves against projectRoot, the hook's working directory. On Windows Claude
+// interpreter resolves against dir, the hook's working directory ("" when
+// unknown, see absInterpreterProblem). On Windows Claude
 // Code runs hooks through Git Bash, which has no exec bit, tolerates CRLF
 // interpreter lines and maps absolute interpreters such as /usr/bin/python3
 // into its own layer, so only env lookups are checked there.
-func scriptRunProblem(projectRoot, path, label string, lookPath func(string) (string, error)) *runProblem {
+func scriptRunProblem(dir, path, label string, lookPath func(string) (string, error)) *runProblem {
 	line, err := shebang.Read(path)
 	if err != nil {
 		return &runProblem{label, fmt.Sprintf("cannot be read: %v", err), remediateInterpreter}
@@ -346,7 +347,7 @@ func scriptRunProblem(projectRoot, path, label string, lookPath func(string) (st
 	case line.ViaEnv():
 		if posix {
 			// The kernel must find env itself before env looks up the program.
-			if p := absInterpreterProblem(projectRoot, line.Interpreter); p != nil {
+			if p := absInterpreterProblem(dir, line.Interpreter); p != nil {
 				return p
 			}
 		}
@@ -358,18 +359,22 @@ func scriptRunProblem(projectRoot, path, label string, lookPath func(string) (st
 			return &runProblem{prog, fmt.Sprintf("needs interpreter %q, which is not on PATH (the shell exits 127)", prog), remediateInterpreter}
 		}
 	case posix:
-		return absInterpreterProblem(projectRoot, line.Interpreter)
+		return absInterpreterProblem(dir, line.Interpreter)
 	}
 	return nil
 }
 
 // absInterpreterProblem returns why the kernel cannot run interp, a path
-// relative to projectRoot (the hook's working directory) unless absolute, as
-// an interpreter, or nil.
-func absInterpreterProblem(projectRoot, interp string) *runProblem {
+// relative to dir (the hook's working directory) unless absolute, as an
+// interpreter, or nil. A relative interp is not checked when dir is "",
+// unknown.
+func absInterpreterProblem(dir, interp string) *runProblem {
 	p := interp
 	if !filepath.IsAbs(p) {
-		p = filepath.Join(projectRoot, p)
+		if dir == "" {
+			return nil
+		}
+		p = filepath.Join(dir, p)
 	}
 	fi, err := os.Stat(p)
 	if err != nil {
@@ -505,7 +510,7 @@ func checkHookPrograms(projectRoot string, actual claudesettings.Settings, lookP
 		for _, m := range actual.Hooks[event] {
 			for _, h := range m.Hooks {
 				for _, run := range hookPrograms(projectRoot, h.Command) {
-					problem := programProblem(projectRoot, run.program, lookPath)
+					problem := programProblem(run.dir, run.program, lookPath)
 					if problem == nil {
 						continue
 					}
@@ -526,8 +531,9 @@ func checkHookPrograms(projectRoot string, actual claudesettings.Settings, lookP
 }
 
 // programProblem returns why the shell cannot run program, a bare name or a
-// path, or nil when it can.
-func programProblem(projectRoot, program string, lookPath func(string) (string, error)) *runProblem {
+// path, relative to dir, the hook's working directory, unless absolute, or
+// nil when it can.
+func programProblem(dir, program string, lookPath func(string) (string, error)) *runProblem {
 	if isBareName(program) {
 		if _, err := lookPath(program); err != nil {
 			return &runProblem{program, "is not on PATH (the shell exits 127)",
@@ -537,7 +543,7 @@ func programProblem(projectRoot, program string, lookPath func(string) (string, 
 	}
 	path := filepath.FromSlash(program)
 	if !filepath.IsAbs(path) {
-		path = filepath.Join(projectRoot, path)
+		path = filepath.Join(dir, path)
 	}
 	remediation := fmt.Sprintf("Restore %s or run 'qsdev init --update' to regenerate the hook", program)
 	info, err := os.Stat(path)
@@ -547,13 +553,14 @@ func programProblem(projectRoot, program string, lookPath func(string) (string, 
 	if info.IsDir() {
 		return &runProblem{program, "is a directory (the shell exits 126)", remediation}
 	}
-	return scriptRunProblem(projectRoot, path, program, lookPath)
+	return scriptRunProblem(dir, path, program, lookPath)
 }
 
 // hookRun is one program a hook command runs, with its arguments.
 type hookRun struct {
 	program string
 	args    []string
+	dir     string // the working directory a relative program resolves in, "" when unknown
 }
 
 // hookPrograms returns the programs a hook command runs whenever it runs, in
@@ -563,14 +570,21 @@ type hookRun struct {
 // when it runs only conditionally: behind ||, in a branch, loop or function
 // (cmdscan.Guarded), or in an && list after a command that tests something
 // (cmdscan.Command.Tested: `test -x prog && prog`, `[ -f .env ] && . ./.env`),
-// but `cd "$dir" && prog` and `cd "$dir" || exit 1; prog` run prog. Scanning
+// but `cd "$dir" && prog` and `cd "$dir" || exit 1; prog` run prog. A
+// program whose failure the hook handles (cmdscan.Command.FailureHandled:
+// `prog --version || exit 0`, `prog || true`) is skipped like one in an if
+// condition: a missing one does not make the hook exit 127. Scanning
 // stops at a statement of the hook's own shell that may end it (exit, or
 // exec of a command, see cmdscan.EndsShell) unless it runs only when a
 // builtin taken to succeed fails, so `command -v prog || exit 0; prog`
 // checks nothing; an exit in a subshell, command substitution or pipeline
-// stage does not end the hook. Once the hook may have changed PATH (see
-// hookScan.changesPath) a bare program name is no longer checked, as it is
-// looked up on a PATH the check cannot know; a path still is. A leading
+// stage does not end the hook. Once the hook may have changed how bare
+// names are looked up (see hookScan.changesLookup) a bare program name is
+// no longer checked, as it is looked up on a PATH the check cannot know; a
+// path still is. A relative path resolves in the project directory, or in
+// the absolute directory a cd or pushd moved to (cmdscan.Command.DirTarget);
+// once the hook may have moved anywhere else (see hookScan.track) only an
+// absolute path is checked. A leading
 // unquoted ~ or ~/ expands to the home directory, and ${CLAUDE_PROJECT_DIR}
 // renders as projectRoot. A program that is a project hook script (see
 // checkHookScripts), is built from any other expansion (including ~user), or
@@ -578,17 +592,18 @@ type hookRun struct {
 // command. On Windows a POSIX absolute path is left out, as Git Bash maps it
 // into its own layer.
 func hookPrograms(projectRoot, command string) []hookRun {
-	s := hookScan{projectRoot: projectRoot, funcs: map[string]bool{}}
+	s := hookScan{projectRoot: projectRoot, funcs: map[string]bool{}, dir: projectRoot}
 	s.scan(command, 0)
 	return s.runs
 }
 
 // hookScan follows the programs a hook command runs (see hookPrograms).
 type hookScan struct {
-	projectRoot string
-	runs        []hookRun
-	funcs       map[string]bool // the shell functions the hook has defined
-	pathChanged bool            // PATH may no longer be the check's own
+	projectRoot   string
+	runs          []hookRun
+	funcs         map[string]bool // the shell functions the hook has defined
+	lookupChanged bool            // bare names may no longer be looked up on the check's PATH
+	dir           string          // the working directory, "" once it is unknown
 }
 
 // scan adds the programs command runs, a hook command or, at depth > 0,
@@ -604,13 +619,14 @@ func (s *hookScan) scan(command string, depth int) bool {
 			s.funcs[c.Defines] = true
 			continue
 		}
-		changesPath := s.changesPath(c)
+		changesLookup := s.changesLookup(c)
 		if c.Name == "" {
-			s.pathChanged = s.pathChanged || changesPath
+			s.lookupChanged = s.lookupChanged || changesLookup
 			continue
 		}
 		st := s.classify(c)
-		conditional := c.Guard == cmdscan.Guarded || c.Guard == cmdscan.GuardedByAnd && c.Tested
+		mayNotRun := c.Guard == cmdscan.Guarded || c.Guard == cmdscan.GuardedByAnd && c.Tested
+		conditional := mayNotRun || c.FailureHandled
 		if !conditional {
 			if st.run != nil {
 				s.runs = append(s.runs, *st.run)
@@ -619,7 +635,8 @@ func (s *hookScan) scan(command string, depth int) bool {
 				return true
 			}
 		}
-		s.pathChanged = s.pathChanged || changesPath
+		s.lookupChanged = s.lookupChanged || changesLookup
+		s.track(c, mayNotRun)
 		if st.ends && !c.Subshell && (c.Guard != cmdscan.Guarded || c.Tested) {
 			return true
 		}
@@ -629,24 +646,30 @@ func (s *hookScan) scan(command string, depth int) bool {
 
 // scanScript scans the script st runs and reports whether it ends the
 // hook's shell: an eval script runs in it, a `sh -c` script in a child
-// shell, whose PATH and functions the hook's shell does not get back.
+// shell, whose PATH, functions and working directory the hook's shell does
+// not get back. A child shell that sources startup files first
+// (cmdscan.ScriptRun.ReadsStartup) starts with them unknown.
 func (s *hookScan) scanScript(st hookStatement, depth int) bool {
 	if st.evals {
 		return s.scan(st.script, depth+1)
 	}
-	pathChanged, funcs := s.pathChanged, maps.Clone(s.funcs)
+	lookupChanged, funcs, dir := s.lookupChanged, maps.Clone(s.funcs), s.dir
+	if st.readsStartup {
+		s.lookupChanged, s.dir = true, ""
+	}
 	s.scan(st.script, depth+1)
-	s.pathChanged, s.funcs = pathChanged, funcs
+	s.lookupChanged, s.funcs, s.dir = lookupChanged, funcs, dir
 	return false
 }
 
-// changesPath reports whether the statement c may change PATH for the rest
-// of the hook: it assigns PATH other than as the prefix assignment of a
-// program run from a file (`PATH=dir prog` sets it for prog only), assigns
-// a variable it cannot name, or sources code (cmdscan.SourcesCode), which
-// can set any variable.
-func (s *hookScan) changesPath(c cmdscan.Command) bool {
-	if c.AssignsDynamic {
+// changesLookup reports whether the statement c may change how bare
+// command names are looked up for the rest of the hook: it assigns PATH
+// other than as the prefix assignment of a program run from a file
+// (`PATH=dir prog` sets it for prog only), assigns a variable it cannot
+// name, binds a name to a file (cmdscan.Command.BindsCommand: `hash -p`),
+// or sources code (cmdscan.SourcesCode), which can set any variable.
+func (s *hookScan) changesLookup(c cmdscan.Command) bool {
+	if c.AssignsDynamic || c.BindsCommand() {
 		return true
 	}
 	builtin, isBuiltin := c.ShellBuiltin()
@@ -657,6 +680,37 @@ func (s *hookScan) changesPath(c cmdscan.Command) bool {
 		return false
 	}
 	return c.Name == "" || isBuiltin || s.callsFunction(c)
+}
+
+// track follows the hook's working directory past the statement c, which
+// may not run when mayNotRun is set. An unconditional cd or
+// pushd to a known absolute directory (cmdscan.Command.DirTarget, under the
+// project directory when built from an expansion, as namedProgram takes
+// it) moves there; one that may not run moves there only if already there.
+// Any other change of directory (cmdscan.ChangesDir), sourced code
+// (cmdscan.SourcesCode) or a cd in a subshell, which a later statement may
+// or may not share, leaves it unknown.
+func (s *hookScan) track(c cmdscan.Command, mayNotRun bool) {
+	builtin, ok := c.ShellBuiltin()
+	if !ok || !cmdscan.ChangesDir(builtin) && !cmdscan.SourcesCode(builtin) {
+		return
+	}
+	target, known := c.DirTarget()
+	if strings.ContainsRune(target, '$') ||
+		slices.Contains(c.ExpandedArgs, target) && target != s.projectRoot && !strings.HasPrefix(target, s.projectRoot+"/") {
+		known = false
+	}
+	target = filepath.Clean(target)
+	switch {
+	case !known:
+		s.dir = ""
+	case mayNotRun || c.Subshell:
+		if target != s.dir {
+			s.dir = ""
+		}
+	default:
+		s.dir = target
+	}
 }
 
 // callsFunction reports whether c calls a function the hook defined.
@@ -670,10 +724,11 @@ const pathVar = "PATH"
 // hookStatement is what one simple command of a hook command does, for
 // hookPrograms.
 type hookStatement struct {
-	run    *hookRun // the program to check, when it can be named
-	ends   bool     // it ends the shell running it: exit, or exec of a command
-	script string   // the script it runs through `sh -c` or eval
-	evals  bool     // script runs in the hook's own shell (eval)
+	run          *hookRun // the program to check, when it can be named
+	ends         bool     // it ends the shell running it: exit, or exec of a command
+	script       string   // the script it runs through `sh -c` or eval
+	evals        bool     // script runs in the hook's own shell (eval)
+	readsStartup bool     // the shell running script sources startup files first
 }
 
 // classify classifies the simple command c of a hook command.
@@ -684,11 +739,11 @@ func (s *hookScan) classify(c cmdscan.Command) hookStatement {
 		return hookStatement{ends: run.Exec}
 	}
 	var st hookStatement
-	if script, ok := cmdscan.ShellScript(words); ok && len(c.ExpandedArgs) == 0 && !c.NameHasExpansion {
-		st.script = script
+	if script, ok := cmdscan.Script(words); ok && len(c.ExpandedArgs) == 0 && !c.NameHasExpansion {
+		st.script, st.evals, st.readsStartup = script.Script, script.Eval, script.ReadsStartup
 	}
 	if builtin, ok := c.ShellBuiltin(); ok {
-		st.ends, st.evals = cmdscan.EndsShell(builtin), st.script != ""
+		st.ends = cmdscan.EndsShell(builtin)
 		return st
 	}
 	st.ends = run.Exec
@@ -698,11 +753,29 @@ func (s *hookScan) classify(c cmdscan.Command) hookStatement {
 		expanded = slices.Contains(c.ExpandedArgs, word)
 	}
 	program, ok := namedProgram(s.projectRoot, word, expanded, slices.Contains(c.TildeWords, run.Index))
-	pathChanged := s.pathChanged || run.PathChanged || slices.Contains(c.Assigns, pathVar)
-	if ok && (!pathChanged || !isBareName(program)) {
-		st.run = &hookRun{program: program, args: words[run.Index+1:]}
+	lookupChanged := s.lookupChanged || run.PathChanged || slices.Contains(c.Assigns, pathVar)
+	dir := s.dir
+	if run.DirChanged {
+		dir = ""
+	}
+	if ok && s.resolvable(program, lookupChanged, dir) {
+		st.run = &hookRun{program: program, args: words[run.Index+1:], dir: dir}
 	}
 	return st
+}
+
+// resolvable reports whether the check knows where the shell finds program:
+// a bare name on the check's PATH unless lookupChanged, a relative path in
+// dir unless that is unknown, or an absolute path.
+func (s *hookScan) resolvable(program string, lookupChanged bool, dir string) bool {
+	switch {
+	case isBareName(program):
+		return !lookupChanged
+	case filepath.IsAbs(filepath.FromSlash(program)) || strings.HasPrefix(program, "/"):
+		return true
+	default:
+		return dir != ""
+	}
 }
 
 // isBareName reports whether program is a bare name, which the shell looks

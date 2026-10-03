@@ -37,15 +37,14 @@ Configuration via environment variables:
                               extra read paths
 """
 
-from __future__ import annotations
-
 import sys
 
 # Keep this first: Python puts the script's own directory at the front of
 # sys.path, so a module planted beside this hook (json.py, re.py, a .pyc, a
 # package directory) would replace the stdlib module the hook imports and
 # could make it allow everything. -P, -I and PYTHONSAFEPATH leave the
-# directory out already.
+# directory out already. No `from __future__` import, which would load
+# __future__ before this scrub runs: keep annotations valid on Python 3.9.
 if __name__ == "__main__" and not (getattr(sys.flags, "safe_path", False) or sys.flags.isolated):
     del sys.path[0]
 

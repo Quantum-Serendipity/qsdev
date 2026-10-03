@@ -1016,6 +1016,32 @@ func TestPythonHooks_MinPythonMatchesGo(t *testing.T) {
 	}
 }
 
+// TestPythonHooks_ScrubSysPathFirst pins that every Python hook drops its own
+// directory from sys.path before it imports anything but sys. A `from
+// __future__ import ...` must be a module's first statement, so it would
+// import a planted __future__.py before the scrub could run.
+func TestPythonHooks_ScrubSysPathFirst(t *testing.T) {
+	t.Parallel()
+	importRe := regexp.MustCompile(`(?m)^[ \t]*(?:import|from)[ \t]+([A-Za-z_][A-Za-z0-9_.]*)`)
+	for rel, content := range claudecode.HookScriptContents() {
+		if path.Ext(rel) != ".py" {
+			continue
+		}
+		t.Run(path.Base(rel), func(t *testing.T) {
+			t.Parallel()
+			scrub := strings.Index(string(content), "del sys.path[0]")
+			if scrub < 0 {
+				t.Fatalf("%s never drops its own directory from sys.path", rel)
+			}
+			for _, m := range importRe.FindAllSubmatchIndex(content, -1) {
+				if name := string(content[m[2]:m[3]]); name != "sys" && m[0] < scrub {
+					t.Errorf("%s imports %s before dropping its own directory from sys.path", rel, name)
+				}
+			}
+		})
+	}
+}
+
 // TestPythonHooks_IgnorePlantedModules pins that no Python hook imports a
 // module planted beside it. Python puts a script's directory first on
 // sys.path, so a committed .claude/hooks/json.py would otherwise replace the
@@ -1043,7 +1069,7 @@ func TestPythonHooks_IgnorePlantedModules(t *testing.T) {
 			var planted []string
 			for _, m := range importRe.FindAllSubmatch(content, -1) {
 				name := string(m[1])
-				if name == "sys" || name == "__future__" || slices.Contains(planted, name) {
+				if name == "sys" || slices.Contains(planted, name) {
 					continue
 				}
 				planted = append(planted, name)

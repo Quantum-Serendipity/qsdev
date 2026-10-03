@@ -25,18 +25,14 @@ Configuration via environment variables:
   DESTRUCTIVE_PREVENTION_PRODUCTION_HOSTS   — comma-separated host name parts (default: prod,production,live,staging)
 """
 
-# Annotations stay unevaluated so the PEP 604 / PEP 585 forms below also load
-# on Python 3.9 (e.g. macOS's /usr/bin/python3); evaluating them there raised
-# TypeError at import, which exited 1 and failed open.
-from __future__ import annotations
-
 import sys
 
 # Keep this first: Python puts the script's own directory at the front of
 # sys.path, so a module planted beside this hook (json.py, re.py, a .pyc, a
 # package directory) would replace the stdlib module the hook imports and
 # could make it allow everything. -P, -I and PYTHONSAFEPATH leave the
-# directory out already.
+# directory out already. No `from __future__` import, which would load
+# __future__ before this scrub runs: keep annotations valid on Python 3.9.
 if __name__ == "__main__" and not (getattr(sys.flags, "safe_path", False) or sys.flags.isolated):
     del sys.path[0]
 
@@ -63,6 +59,7 @@ import subprocess  # noqa: E402
 import threading  # noqa: E402
 from datetime import datetime, timezone  # noqa: E402
 from pathlib import Path  # noqa: E402
+from typing import Optional  # noqa: E402
 
 # U17-WS7: moves to qsdev_hooklib
 # Oldest interpreter the hook supports (Go: types.MinHookPython). Below it,
@@ -203,7 +200,7 @@ class Cmd:
 
     __slots__ = ("argv", "redirects", "pipe_in", "pipeline", "parent")
 
-    def __init__(self, pipeline: int, pipe_in: bool = False, parent: Cmd | None = None):
+    def __init__(self, pipeline: int, pipe_in: bool = False, parent: Optional["Cmd"] = None):
         self.argv: list[str] = []
         self.redirects: list[tuple[str, str]] = []
         self.pipe_in = pipe_in          # stdin comes from the previous command
@@ -220,13 +217,13 @@ class _Parser:
         self.next_pipeline += 1
         return self.next_pipeline
 
-    def parse(self, text: str, depth: int, parent: Cmd | None) -> None:
+    def parse(self, text: str, depth: int, parent: Optional["Cmd"]) -> None:
         tokens = _tokenize(text)
         start = len(self.cmds)
         cur = Cmd(self._new_pipeline(), parent=parent)
         # Open substitutions/groups: (kind, command to resume after closing).
-        stack: list[tuple[str, Cmd | None]] = []
-        pending_redirect: str | None = None
+        stack: list[tuple[str, Optional[Cmd]]] = []
+        pending_redirect: Optional[str] = None
 
         def finish(c: Cmd) -> None:
             if c.argv or c.redirects:
@@ -492,7 +489,7 @@ def _anchor(p: str) -> str:
     return _normpath(p)
 
 
-def _absolute(path: str, cwd: str) -> str | None:
+def _absolute(path: str, cwd: str) -> Optional[str]:
     """A shell word naming a path as an absolute, slash-separated path that
     keeps any drive letter: ~, $HOME and ${HOME} are expanded, trailing `/*`
     globs dropped (`dir/*` reaches everything `dir` holds), and relative paths
@@ -513,14 +510,14 @@ def _absolute(path: str, cwd: str) -> str | None:
     return p
 
 
-def resolve_path(path: str, cwd: str) -> str | None:
+def resolve_path(path: str, cwd: str) -> Optional[str]:
     """Resolve a shell word naming a path (see _absolute) to the normalised,
     drive-less form paths are compared in. None when it cannot be resolved."""
     p = _absolute(path, cwd)
     return None if p is None else _anchor(p)  # a drive root compares like "/"
 
 
-def resolve_dir(path: str, cwd: str) -> str | None:
+def resolve_dir(path: str, cwd: str) -> Optional[str]:
     """Like resolve_path, but keeps the drive letter: for a directory the hook
     itself opens (the repository `git -C` or `cd` moves to), where a drive-less
     path would resolve against this process's current drive on Windows."""
@@ -682,7 +679,7 @@ def _find_deletes(args: list[str]) -> tuple[bool, list[str]]:
     return deletes, starts or ["."]
 
 
-def _rsync_delete_target(args: list[str]) -> str | None:
+def _rsync_delete_target(args: list[str]) -> Optional[str]:
     """The destination of an rsync that deletes extraneous files, else None."""
     if not any(a == "--del" or a.startswith("--delete") for a in args):
         return None
@@ -690,7 +687,7 @@ def _rsync_delete_target(args: list[str]) -> str | None:
     return positional[-1] if len(positional) >= 2 else None
 
 
-def check_filesystem(cmds: list[Cmd], cwd: str, project: str) -> tuple[str, str] | None:
+def check_filesystem(cmds: list[Cmd], cwd: str, project: str) -> Optional[tuple[str, str]]:
     whole_tree = (
         "Recursive deletion of root/home directory or the project tree detected.",
         "Use targeted rm on specific files or directories within the project.",
@@ -761,8 +758,8 @@ _PUSH_VALUE_OPTS = frozenset({"-o", "--push-option", "--repo", "--receive-pack",
 
 
 def _git_subcommand(
-    args: list[str], cwd: str | None,
-) -> tuple[str, list[str], str | None]:
+    args: list[str], cwd: Optional[str],
+) -> tuple[str, list[str], Optional[str]]:
     """git's subcommand, its arguments, and the directory it runs in (cwd as
     changed by -C); None when that directory cannot be resolved."""
     k = 0
@@ -782,7 +779,7 @@ def _git_subcommand(
 BRANCH_UNKNOWN = "(branch unknown)"
 
 
-def current_branch(repo_dir: str | None) -> str | None:
+def current_branch(repo_dir: Optional[str]) -> Optional[str]:
     """The branch checked out in repo_dir; None when HEAD is detached;
     BRANCH_UNKNOWN when repo_dir is unknown or git could not answer."""
     if repo_dir is None:
@@ -808,7 +805,7 @@ def _branch_of(ref: str) -> str:
     return ref
 
 
-def _push_rewrites_protected(args: list[str], repo_dir: str | None) -> bool:
+def _push_rewrites_protected(args: list[str], repo_dir: Optional[str]) -> bool:
     force = delete = False
     positional: list[str] = []
     k = 0
@@ -849,7 +846,7 @@ def _push_rewrites_protected(args: list[str], repo_dir: str | None) -> bool:
     return False
 
 
-def check_git(cmds: list[Cmd], cwd: str) -> tuple[str, str] | None:
+def check_git(cmds: list[Cmd], cwd: str) -> Optional[tuple[str, str]]:
     """Check for destructive git operations: force pushes and deletes of
     protected branches, hard resets, forced cleans and forced branch deletes."""
     for cmd, (cmd_cwd, known) in zip(cmds, tracked_dirs(cmds, cwd)):
@@ -924,7 +921,7 @@ def _sql_texts(cmds: list[Cmd], command: str) -> list[str]:
     return texts
 
 
-def check_database(cmds: list[Cmd], command: str) -> tuple[str, str] | None:
+def check_database(cmds: list[Cmd], command: str) -> Optional[tuple[str, str]]:
     for text in _sql_texts(cmds, command):
         for pattern, reason, remediation in DB_PATTERNS:
             if pattern.search(text):
@@ -991,7 +988,7 @@ _PS_DOWNLOAD_EXEC = re.compile(
 )
 
 
-def check_remote_code(cmds: list[Cmd], command: str, powershell: bool) -> tuple[str, str] | None:
+def check_remote_code(cmds: list[Cmd], command: str, powershell: bool) -> Optional[tuple[str, str]]:
     fetch_pipelines = {c.pipeline for c in cmds if _is_fetch(c)}
     for idx, cmd in enumerate(cmds):
         # Downloaded content piped into anything that executes stdin.
@@ -1124,7 +1121,7 @@ def _file_op_operands(name: str, args: list[str]) -> list[str]:
     return operands[-1:] if len(operands) > 1 else []
 
 
-def _outside_project_operand(name: str, args: list[str], cwd: str, project: str) -> str | None:
+def _outside_project_operand(name: str, args: list[str], cwd: str, project: str) -> Optional[str]:
     """The first operand cp/mv/rsync writes that resolves outside the project
     tree and outside the temp directories, else None."""
     project_real = _slash(os.path.realpath(project))
@@ -1143,7 +1140,7 @@ def _outside_project_operand(name: str, args: list[str], cwd: str, project: str)
     return None
 
 
-def check_cross_environment(cmds: list[Cmd], cwd: str, project: str) -> tuple[str, str] | None:
+def check_cross_environment(cmds: list[Cmd], cwd: str, project: str) -> Optional[tuple[str, str]]:
     """Check for operations targeting production or outside project scope."""
     for cmd, cwd in zip(cmds, working_dirs(cmds, cwd)):
         argv = effective_argv(cmd.argv)
@@ -1218,7 +1215,7 @@ def _terraform_subcommand(args: list[str]) -> tuple[str, list[str]]:
     return "", []
 
 
-def check_infrastructure(cmds: list[Cmd]) -> tuple[str, str] | None:
+def check_infrastructure(cmds: list[Cmd]) -> Optional[tuple[str, str]]:
     for cmd in cmds:
         argv = effective_argv(cmd.argv)
         if not argv:

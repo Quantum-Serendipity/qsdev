@@ -127,13 +127,24 @@ All notable changes to qsdev are recorded in this file. The format is based on
   recognises qsdev when it is quoted or brace-expanded too (`$'qsdev'`,
   `{qsdev,}`). The hook does not see inside a script file the agent runs
   (`HOME=/tmp/x sh ./script.sh`); the account-anchored lookup is what covers
-  that case. A file that sets the environment qsdev later runs in
-  (`devenv.nix`, `devenv.local.nix`, `.envrc.local`, `.env`, and the bash,
-  zsh, ksh, fish and PowerShell startup files) may not be changed by the agent
-  where it sets or removes `QSDEV_ORG_CONFIG` (SP-015), so a `devenv shell`
-  or `direnv exec` run after `direnv allow` keeps the org overlay; the agent
-  may change these files only with Edit or Write, which check that, not with
-  a shell command. Setting `HOME` for other programs
+  that case. A file that sets the environment qsdev later runs in, as the
+  generated environment and your shell load it (`devenv.yaml`,
+  `devenv.local.yaml`, `devenv.nix`, `devenv.local.nix`, and the bash, zsh,
+  ksh, fish and PowerShell startup files), may not be changed by the agent
+  where it sets or removes `QSDEV_ORG_CONFIG` (SP-015). The agent may change
+  these files only with Edit or Write, which check that; a shell command that
+  writes one is denied (`echo ... >> ~/.zshrc`, `sed -i`, `cp`, `mv`, `rm` or
+  `ln` onto one, `git restore devenv.nix`, an editor such as
+  `vim ~/.bashrc`), while reading one stays allowed (`cat`, `grep`,
+  `source` or `.`, `sed -n` whose script has no `w`, `W` or `e`, and the
+  source of `ln -s`). `.env` and `.envrc.local` are not covered: the
+  generated environment loads neither (its devenv.nix disables dotenv). SP-015
+  is defense in depth and does not see a relocation spelled another way: a
+  `.nix` file that `devenv.local.nix` or `devenv.local.yaml` imports, a
+  fragment a startup file sources (`~/.bash_aliases`, `~/.bashrc.d/`, fish's
+  `conf.d`, `~/.config/environment.d`, direnv's `direnvrc`), or a variable
+  name built through an encoding; the recorded overlay described below is
+  what covers those. Setting `HOME` for other programs
   (`HOME=$(mktemp -d) go test ./...`) stays allowed. Deleting or moving a
   directory above the overlay is denied also through `~name`
   (`rm -rf ~alice/.config`) and when the hook cannot resolve the path

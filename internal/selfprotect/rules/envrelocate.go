@@ -252,14 +252,20 @@ func mentionsProtectedEnv(text string) bool {
 // Edit of an environment source file (canon.EnvSourceFiles: devenv.local.nix,
 // a shell startup file, ...) whose content before or after names a
 // canon.ProtectedEnvVars variable (`{ env.QSDEV_ORG_CONFIG = "/tmp/x"; }`,
-// or removing the line that sets it), or a shell command that rewrites one of
+// or removing the line that sets it), or a shell command that writes one of
 // those files at all, since its content cannot be checked (`printf ... >>
-// ~/.bashrc`). It fails closed when the change cannot be reconstructed.
+// ~/.bashrc`); reading one is not a change (see BashRewritesFile). It fails
+// closed when the change cannot be reconstructed. It is defense in depth: a
+// relocation it cannot see (an imported .nix file, a sourced fragment, a name
+// spelled through an encoding) is caught by the CLI, which reads only the
+// overlay a human recorded (see catalog.OrgConfigPin).
 func envFileRelocation(ctx *EvalContext) string {
 	if cmdscan.IsShellTool(ctx.ToolName) {
 		if name, ok := BashRewritesFile(ctx, canon.EnvSourceFiles()); ok {
-			return "shell command changes " + name + ", which sets the environment " + branding.Get().AppName +
-				" runs in and is only checked for the Edit and Write tools; make the change with Edit or Write"
+			return "shell command writes " + name + ", which sets the environment " + branding.Get().AppName +
+				" runs in; only the Edit and Write tools can be checked for a change to " +
+				strings.Join(canon.ProtectedEnvVars(), " or ") +
+				" there, so make the change with Edit or Write (reading the file, also with source or sed -n, is allowed)"
 		}
 		return ""
 	}

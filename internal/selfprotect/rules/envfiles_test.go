@@ -12,11 +12,14 @@ import (
 )
 
 // TestEnvFileRelocationVerdicts covers U18-WS1 round 2: a file that sets the
-// environment the CLI runs in (devenv.local.nix, .envrc.local, a shell
+// environment the CLI runs in (devenv.local.nix, devenv.local.yaml, a shell
 // startup file) can set or drop the org-config variable for every later
 // regeneration, so a Write or Edit that changes such an assignment is denied,
-// and a shell rewrite of the file, whose content the hook cannot check, is
-// denied outright. The Write and Bash paths agree.
+// and a shell write of the file, whose content the hook cannot check, is
+// denied outright. The Write and Bash paths agree. Round 3: only files the
+// generated environment or the shell loads count (.env and .envrc.local are
+// not loaded), and a command that only reads one (source, sed -n, the source
+// of ln -s) is not a write; a write through a symlink still is.
 func TestEnvFileRelocationVerdicts(t *testing.T) {
 	t.Parallel()
 	b := branding.Get()
@@ -35,6 +38,11 @@ func TestEnvFileRelocationVerdicts(t *testing.T) {
 	}
 	if err := os.WriteFile(plain, []byte("alias ll='ls -l'\n"), 0o644); err != nil {
 		t.Fatal(err)
+	}
+
+	link := filepath.Join(dir, "notes.txt")
+	if err := os.Symlink(plain, link); err != nil {
+		t.Skipf("cannot create a symlink here: %v", err)
 	}
 
 	write := func(p, content string) EvalContext {
@@ -56,14 +64,13 @@ func TestEnvFileRelocationVerdicts(t *testing.T) {
 		want Verdict
 	}{
 		{"Write bashrc export", write(filepath.Join(home, ".bashrc"), "export "+orgEnv+"=/tmp/evil.yaml\n"), Deny},
-		{"Write envrc.local export", write(filepath.Join(dir, ".envrc.local"), "export "+orgEnv+"=/tmp/evil.yaml\n"), Deny},
+		{"Write devenv.local.yaml env import", write(filepath.Join(dir, "devenv.local.yaml"), "# "+orgEnv+"\nimports: [./x.nix]\n"), Deny},
 		{"Write zshenv export", write(filepath.Join(home, ".zshenv"), "export "+orgEnv+"=/tmp/evil.yaml\n"), Deny},
 		{"Write fish config", write(filepath.Join(home, ".config", "fish", "config.fish"), "set -gx "+orgEnv+" /tmp/evil.yaml\n"), Deny},
-		{"Write dotenv", write(filepath.Join(dir, ".env"), orgEnv+"=/tmp/evil.yaml\n"), Deny},
 		{"Write devenv.nix env", write(filepath.Join(dir, "devenv.nix"), "{ env."+orgEnv+" = \"/tmp/e\"; }\n"), Deny},
 		{"Write upper-case file name", write(filepath.Join(dir, "DEVENV.LOCAL.NIX"), "{ env."+orgEnv+" = \"/tmp/e\"; }\n"), Deny},
 		{"Write split nix name", write(filepath.Join(dir, "devenv.local.nix"), "{ env.\"${\""+orgEnv[:6]+"\" + \""+orgEnv[6:]+"\"}\" = \"/tmp/e\"; }\n"), Deny},
-		{"Write split shell name", write(filepath.Join(dir, ".envrc.local"), "export "+orgEnv[:6]+"\\\n"+orgEnv[6:]+"=/tmp/e\n"), Deny},
+		{"Write split shell name", write(filepath.Join(home, ".zshrc"), "export "+orgEnv[:6]+"\\\n"+orgEnv[6:]+"=/tmp/e\n"), Deny},
 		{"Edit changes org config value", edit(existing, "/etc/org/defaults.yaml", "/tmp/evil.yaml"), Deny},
 		{"Edit removes org config line", edit(existing, setLine, ""), Deny},
 		{"Edit other value in file setting org config", edit(existing, "env.API = \"x\"", "env.API = \"y\""), Deny},
@@ -71,8 +78,17 @@ func TestEnvFileRelocationVerdicts(t *testing.T) {
 		{"Edit without replacements", EvalContext{ToolName: "Edit", FilePath: plain, CanonicalPath: plain, CWD: dir}, Deny},
 		{"append to bashrc", bash("echo 'export " + orgEnv + "=/tmp/e' >> ~/.bashrc"), Deny},
 		{"append split name to bashrc", bash("printf 'export " + orgEnv[:6] + "%s=/tmp/e' " + orgEnv[6:] + " >> ~/.bashrc"), Deny},
-		{"copy over envrc.local", bash("cp /tmp/x .envrc.local"), Deny},
+		{"copy over devenv.local.nix", bash("cp /tmp/x devenv.local.nix"), Deny},
 		{"tee devenv.local.nix", bash("echo x | tee devenv.local.nix"), Deny},
+		{"sed in place on bashrc", bash("sed -i s/a/b/ ~/.bashrc"), Deny},
+		{"sed clustered in place on bashrc", bash("sed -ni p ~/.bashrc"), Deny},
+		{"sed long in place on bashrc", bash("sed --in-place s/a/b/ ~/.bashrc"), Deny},
+		{"sed w command to bashrc", bash("sed -n 'w ~/.bashrc' /tmp/x"), Deny},
+		{"ln over bashrc", bash("ln -sf /tmp/x ~/.bashrc"), Deny},
+		{"ln into home directory", bash("ln -s /tmp/x/.bashrc ~/"), Deny},
+		{"ln -t into home directory", bash("ln -st ~ /tmp/x/.bashrc"), Deny},
+		{"append through symlink to rc file", bash("echo 'export X=1' >> notes.txt"), Deny},
+		{"source process substitution naming bashrc", bash("source <(echo 'echo x >> ~/.bashrc')"), Deny},
 
 		{"Write bashrc alias", write(filepath.Join(home, ".bashrc"), "alias ll='ls -l'\n"), Allow},
 		{"Edit plain rc file", edit(plain, "ls -l", "ls -la"), Allow},
@@ -80,6 +96,18 @@ func TestEnvFileRelocationVerdicts(t *testing.T) {
 		{"Write unchanged file setting org config", write(existing, "{\n"+setLine+"  env.API = \"x\";\n}\n"), Allow},
 		{"cat bashrc", bash("cat ~/.bashrc"), Allow},
 		{"grep envrc.local", bash("grep -n PATH .envrc.local"), Allow},
+		// Round 3: files the generated environment does not load.
+		{"Write dotenv", write(filepath.Join(dir, ".env"), orgEnv+"=/tmp/evil.yaml\n"), Allow},
+		{"Write envrc.local", write(filepath.Join(dir, ".envrc.local"), "export "+orgEnv+"=/tmp/evil.yaml\n"), Allow},
+		{"copy dotenv example", bash("cp .env.example .env"), Allow},
+		{"append to dotenv", bash("echo DATABASE_URL=postgres://x >> .env"), Allow},
+		{"remove dotenv", bash("rm .env"), Allow},
+		// Round 3: reads of a loaded file are not writes.
+		{"source bashrc", bash("source ~/.bashrc"), Allow},
+		{"dot bashrc", bash(". ~/.bashrc"), Allow},
+		{"sed -n bashrc", bash("sed -n 1p ~/.bashrc"), Allow},
+		{"sed -n expression bashrc", bash("sed -n -e 1,5p ~/.bashrc"), Allow},
+		{"link to bashrc", bash("ln -s ~/.bashrc rc-link.txt"), Allow},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

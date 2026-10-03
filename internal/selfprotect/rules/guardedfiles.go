@@ -1,9 +1,13 @@
 package rules
 
 import (
+	"os"
 	"path"
+	"path/filepath"
 	"slices"
 	"strings"
+
+	"github.com/Quantum-Serendipity/qsdev/internal/selfprotect/cmdscan"
 )
 
 // BashRewritesFile reports which of names (lower-cased base names) a Bash
@@ -11,9 +15,12 @@ import (
 // analysis as the protected-path rules. Those files are guarded by a
 // before/after content check that only the Write and Edit tools go through, so
 // a shell rewrite (`echo ignore-scripts=false >> .npmrc`, `rm .npmrc`) would
-// bypass it. A line that mentions one of the names but cannot be parsed, or
-// whose mutating command uses an expansion that could carry the name, counts
-// as a rewrite (fail closed).
+// bypass it. A command known to leave a file unchanged does not count (see
+// writeTargets: `source .npmrc`, `sed -n 1p .npmrc`, the source of `ln -s`),
+// and a target is also matched by the file it resolves to, so a write
+// through a symlink to one of the files counts. A line that mentions one of
+// the names but cannot be parsed, or whose writing command uses an expansion
+// that could carry the name, counts as a rewrite (fail closed).
 func BashRewritesFile(ctx *EvalContext, names []string) (string, bool) {
 	if ctx.ToolName != "Bash" {
 		return "", false
@@ -31,14 +38,9 @@ func BashRewritesFile(ctx *EvalContext, names []string) (string, bool) {
 		return mentioned, mentioned != ""
 	}
 	for _, sc := range scs {
-		targets := sc.WriteRedirects
-		mutates := len(sc.WriteRedirects) > 0
-		if !recordsOnly(sc) {
-			targets = slices.Concat(mutationTargets(sc), sc.WriteRedirects)
-			mutates = mutates || isMutating(sc)
-		}
+		targets, writes := writeTargets(sc)
 		for _, t := range targets {
-			if n := guardedName(t, names); n != "" {
+			if n := guardedTarget(sc, t, names); n != "" {
 				return n, true
 			}
 			// An inline program (`sh -c 'echo x >> .npmrc'`, `python3 -c
@@ -50,11 +52,62 @@ func BashRewritesFile(ctx *EvalContext, names []string) (string, bool) {
 				}
 			}
 		}
-		if mentioned != "" && sc.HasExpansion && mutates {
+		if mentioned != "" && sc.HasExpansion && writes {
 			return mentioned, true
 		}
 	}
 	return "", false
+}
+
+// writeTargets returns the words naming the files sc may write, and whether
+// it may write any file: its write redirects, plus the operands
+// cmdscan.WrittenOperands models for it, or else every operand
+// mutationTargets lists for a command that is not read-only. A command that
+// only records files in git (recordsOnly) writes none of its operands.
+func writeTargets(sc scannedCommand) ([]string, bool) {
+	if recordsOnly(sc) {
+		return sc.WriteRedirects, len(sc.WriteRedirects) > 0
+	}
+	if ops, ok := cmdscan.WrittenOperands(sc.Command, func(w string) bool { return mayBeDir(sc, w) }); ok {
+		targets := slices.Concat(ops, sc.WriteRedirects)
+		return targets, len(targets) > 0
+	}
+	return slices.Concat(mutationTargets(sc), sc.WriteRedirects), len(sc.WriteRedirects) > 0 || isMutating(sc)
+}
+
+// mayBeDir reports whether word, used by sc, may name an existing directory:
+// it does, or where it resolves to is unknown.
+func mayBeDir(sc scannedCommand, word string) bool {
+	if hasGlobMeta(word) {
+		return true
+	}
+	p, ok := resolveWord(sc, word)
+	if !ok || !isRooted(p) {
+		return true
+	}
+	fi, err := os.Stat(p)
+	return err == nil && fi.IsDir()
+}
+
+// guardedTarget returns the entry of names that the write target word
+// names (see guardedName), or that the existing file it resolves to from
+// sc's working directory is named, following symlinks, or "".
+func guardedTarget(sc scannedCommand, word string, names []string) string {
+	if n := guardedName(word, names); n != "" {
+		return n
+	}
+	if isFlag(word) || hasGlobMeta(word) {
+		return ""
+	}
+	p, ok := resolveWord(sc, word)
+	if !ok || !isRooted(p) {
+		return ""
+	}
+	resolved, err := filepath.EvalSymlinks(p)
+	if err != nil || resolved == p {
+		return ""
+	}
+	return guardedName(resolved, names)
 }
 
 // gitIndexSubcommands record working-tree files in git without changing them.

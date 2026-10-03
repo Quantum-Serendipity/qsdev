@@ -827,14 +827,19 @@ func ProtectedEnvVars() []string {
 	return slices.Clone(brandedTables().envVars)
 }
 
-// envSourceFiles are the lower-cased base names of the files a shell or the
-// dev environment reads variables from before the CLI runs: devenv's
-// configuration (devenv.nix, and devenv.local.nix, the documented place for
-// local env), direnv's local file and dotenv file, and the shell startup files
-// of bash, zsh, ksh, fish and PowerShell. A ProtectedEnvVars variable one of
-// them sets reaches every later regeneration run in that environment.
+// envSourceFiles are the lower-cased base names of the files that set the
+// environment a later CLI run inherits, as the generated environment and the
+// shell load them: devenv's configuration (devenv.yaml and devenv.local.yaml,
+// whose imports devenv loads, devenv.nix, and devenv.local.nix, the
+// documented place for local env), and the startup files of bash, zsh, ksh,
+// fish and PowerShell and pam_environment. The generated environment loads no
+// other file: devenv.nix disables dotenv (so .env is not read) and .envrc runs
+// only devenv's own direnvrc (so .envrc.local is not read); a test in the
+// devenv addon pins that. What these files import or source (another .nix
+// file, a ~/.bashrc.d fragment) is not listed: see catalog.OrgConfigPin for
+// the control that does not depend on it.
 var envSourceFiles = []string{
-	"devenv.nix", "devenv.local.nix", ".envrc.local", ".env",
+	"devenv.yaml", "devenv.local.yaml", "devenv.nix", "devenv.local.nix",
 	".profile", ".bashrc", ".bash_profile", ".bash_login",
 	".zshenv", ".zprofile", ".zshrc", ".zlogin",
 	".kshrc", ".mkshrc", "config.fish", ".pam_environment",

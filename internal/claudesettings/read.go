@@ -22,7 +22,8 @@ type Effective struct {
 	// Settings is the merged view.
 	Settings
 	// User, Project and Local are the parsed files, nil when the file is
-	// absent or (User) not read.
+	// absent or (User) not read. A file whose Unloadable is set is not part
+	// of the merged view.
 	User, Project, Local *Settings
 	// Sources maps KeyDisableAllHooks, KeyDefaultMode,
 	// KeyDisableBypassPermissionsMode and EnvSourceKey of each env variable
@@ -47,6 +48,10 @@ type ReadOptions struct {
 //   - an env variable set locally wins;
 //   - defaultMode and disableBypassPermissionsMode set locally win;
 //   - hooks are disabled when either file disables them.
+//
+// A file Claude Code refuses to load (Settings.Unloadable) contributes
+// nothing to the merged view, as in Claude Code; it is still returned in
+// Project or Local.
 //
 // An empty projectRoot yields an empty view. User and managed settings are
 // not read, so the result does not depend on the machine.
@@ -115,8 +120,12 @@ func readFile(path, label string) (*Settings, error) {
 	return &s, nil
 }
 
-// overlay merges s, read from rel, over the view built so far.
+// overlay merges s, read from rel, over the view built so far, unless Claude
+// Code refuses to load it.
 func (e *Effective) overlay(rel string, s Settings) {
+	if s.Unloadable != "" {
+		return
+	}
 	e.Deny = append(e.Deny, s.Deny...)
 	for event, matchers := range s.Hooks {
 		e.Hooks[event] = append(e.Hooks[event], matchers...)

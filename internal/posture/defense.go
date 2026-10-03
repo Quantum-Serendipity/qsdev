@@ -6,11 +6,14 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"runtime"
 	"slices"
 	"strings"
 	"sync"
 
 	"github.com/Quantum-Serendipity/qsdev/internal/claudesettings"
+	"github.com/Quantum-Serendipity/qsdev/internal/selfprotect/cmdscan"
+	"github.com/Quantum-Serendipity/qsdev/internal/shebang"
 	"github.com/Quantum-Serendipity/qsdev/internal/state"
 	"github.com/Quantum-Serendipity/qsdev/pkg/branding"
 	"github.com/Quantum-Serendipity/qsdev/pkg/ecosystem"
@@ -151,6 +154,9 @@ func (in assessmentInput) judgeGuard() guardState {
 	switch {
 	case err != nil:
 		return disabled(fmt.Sprintf("Claude settings unreadable: %v", err))
+	case settings.Project != nil && settings.Project.Unloadable != "":
+		return disabled(fmt.Sprintf("Claude Code does not load %s (%s), so none of its hooks or deny rules apply",
+			claudesettings.ProjectRelPath, settings.Project.Unloadable))
 	case settings.DisableAllHooks:
 		return disabled(fmt.Sprintf("hooks disabled (%s in %s)",
 			claudesettings.KeyDisableAllHooks, strings.Join(settings.Sources[claudesettings.KeyDisableAllHooks], ", ")))
@@ -162,23 +168,47 @@ func (in assessmentInput) judgeGuard() guardState {
 	if reason := in.guardModified(); reason != "" {
 		return disabled(reason)
 	}
+	if reason := in.guardUnrunnable(); reason != "" {
+		return disabled(reason)
+	}
 	for _, name := range slices.Sorted(maps.Keys(settings.Env)) {
 		if value := settings.Env[name]; value != "" && claudesettings.IsLaunchEnv(name) {
 			return disabled(fmt.Sprintf("hook commands run with %s=%q (set in %s), which decides what program or code a hook runs, so the hook may never run package-guard.py",
 				name, value, strings.Join(settings.Sources[claudesettings.EnvSourceKey(name)], ", ")))
 		}
 	}
-	if !settings.RunsScript(claudesettings.EventPreToolUse, "Bash", packageGuardPath, branding.Get().AppName, claudesettings.GuardHookTimeout) {
-		return disabled(fmt.Sprintf("package-guard.py not registered as a blocking PreToolUse hook matching Bash "+
-			"(not async, timeout at least %ds) in %s or %s",
-			claudesettings.GuardHookTimeout, claudesettings.ProjectRelPath, claudesettings.LocalRelPath))
+	for _, tool := range cmdscan.ShellTools {
+		if !settings.RunsScript(claudesettings.EventPreToolUse, tool, packageGuardPath, branding.Get().AppName, claudesettings.GuardHookTimeout) {
+			return disabled(fmt.Sprintf("package-guard.py not registered as a blocking PreToolUse hook matching %s "+
+				"(not async, timeout at least %ds) in %s or %s, so %s commands run unguarded",
+				tool, claudesettings.GuardHookTimeout, claudesettings.ProjectRelPath, claudesettings.LocalRelPath, tool))
+		}
 	}
 	unread := "user/managed"
 	if in.userSettingsRead {
 		unread = "managed"
 	}
 	return guardState{Status: LayerEnabled, Reason: "package-guard.py unmodified and registered as a PreToolUse hook " +
-		"matching Bash (" + unread + " settings not inspected)"}
+		"matching " + strings.Join(cmdscan.ShellTools, ", ") + " (" + unread + " settings not inspected)"}
+}
+
+// guardUnrunnable returns why the kernel cannot start package-guard.py on
+// this platform, or "": a CRLF interpreter line (which the content comparison
+// ignores) makes the fail-closed hook block every shell command without
+// checking any.
+func (in assessmentInput) guardUnrunnable() string {
+	if in.ProjectPath == "" {
+		return ""
+	}
+	line, err := shebang.Read(filepath.Join(in.ProjectPath, filepath.FromSlash(packageGuardPath)))
+	switch {
+	case err != nil:
+		return fmt.Sprintf("package-guard.py unreadable: %v", err)
+	case line.CRLFFails(runtime.GOOS):
+		return "package-guard.py has a CRLF interpreter line, so it cannot start: every shell command is blocked " +
+			"and none is checked; convert " + packageGuardPath + " to LF line endings"
+	}
+	return ""
 }
 
 // guardModified returns why package-guard.py on disk cannot be credited as the

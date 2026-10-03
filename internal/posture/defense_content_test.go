@@ -4,9 +4,11 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/Quantum-Serendipity/qsdev/internal/catalog"
+	"github.com/Quantum-Serendipity/qsdev/internal/selfprotect/cmdscan"
 	"github.com/Quantum-Serendipity/qsdev/internal/state"
 	"github.com/Quantum-Serendipity/qsdev/pkg/types"
 )
@@ -46,9 +48,13 @@ const preCommitWithLockAudit = `repos:
         name: Lock file change audit
 `
 
+// guardMatcher is the matcher key of the package guard's registration, as
+// the generator writes it: every tool that runs a shell command.
+var guardMatcher = `"matcher": "` + strings.Join(cmdscan.ShellTools, "|") + `"`
+
 // settingsWithPackageGuard is a .claude/settings.json registering the package
 // guard as a PreToolUse hook, as the generator writes it.
-const settingsWithPackageGuard = `{"hooks": {"PreToolUse": [{"matcher": "Bash", "hooks": [
+var settingsWithPackageGuard = `{"hooks": {"PreToolUse": [{` + guardMatcher + `, "hooks": [
   {"type": "command", "command": "\"${CLAUDE_PROJECT_DIR}\"/.claude/hooks/package-guard.py"}]}]}}`
 
 // writeProjectFiles writes files (relative path -> content) under a fresh

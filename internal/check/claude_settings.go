@@ -62,6 +62,10 @@ func CheckClaudeSettingsPosture(ctx CheckContext) []CheckResult {
 	}
 
 	var results []CheckResult
+	if actual.Unloadable != "" {
+		results = append(results, unloadableResult(ClaudeSettingsRelPath, actual.Unloadable, StatusFail, SeverityCritical,
+			"so none of its hooks (self-protection, package guard) or deny rules apply"))
+	}
 	if actual.DisableAllHooks {
 		results = append(results, postureResult("claude_all_hooks_disabled", StatusFail, SeverityCritical,
 			fmt.Sprintf("%s sets %s, so no generated hook (self-protection, package guard) runs", ClaudeSettingsRelPath, claudesettings.KeyDisableAllHooks),
@@ -117,6 +121,17 @@ func CheckExpectedGeneration(ctx CheckContext) []CheckResult {
 	}
 	return []CheckResult{postureResult("expected_generation_failed", StatusFail, SeverityCritical,
 		message+"; the Claude Code hook registrations and permission mode cannot be verified", remediation)}
+}
+
+// unloadableResult reports that Claude Code refuses to load the settings file
+// rel for reason (see claudesettings.Settings.Unloadable); effect says what
+// the project loses.
+func unloadableResult(rel, reason string, status CheckStatus, severity CheckSeverity, effect string) CheckResult {
+	r := postureResult("claude_settings_unloadable", status, severity,
+		fmt.Sprintf("Claude Code does not load %s (%s: a PreToolUse or PermissionRequest hook entry it cannot load), %s", rel, reason, effect),
+		"Fix or remove the named hook entry in "+rel+", or run 'qsdev init --update' to restore the generated settings")
+	r.FilePath = rel
+	return r
 }
 
 func checkDisableBypass(actual, expected claudesettings.Settings) []CheckResult {
@@ -326,7 +341,7 @@ func scriptRunProblem(projectRoot, path, label string, lookPath func(string) (st
 		return &runProblem{label, "is not executable for this user (the shell exits 126)", remediateInterpreter}
 	case line.Interpreter == "":
 		return nil // no #! line: the shell runs it as a shell script
-	case posix && strings.ContainsRune(line.Interpreter+line.Arg, '\r'):
+	case line.CRLFFails(runtime.GOOS):
 		return &runProblem{named, "has a CRLF interpreter line, so the kernel looks for an interpreter or argument ending in a carriage return", remediateCRLF}
 	case line.ViaEnv():
 		if posix {
@@ -369,9 +384,11 @@ func absInterpreterProblem(projectRoot, interp string) *runProblem {
 // checkLocalOverride reports each way the per-machine settings (the
 // project's settings.local.json and, when userDir is set, the user
 // settings.json beneath it) weaken the committed settings.json in the
-// effective settings. Disabling hooks fails at critical, as a gutted guard
-// script does: it switches off self-protection and the package guard
-// together. Defaulting to bypassPermissions fails at high. CI never sees
+// effective settings. Disabling hooks, or setting an env variable that
+// decides what program or code a hook runs (see launchEnvOverrides), fails at
+// critical, as a gutted guard script does: it switches off self-protection
+// and the package guard together. A settings.local.json Claude Code cannot
+// load warns. Defaulting to bypassPermissions fails at high. CI never sees
 // these files, but the agent on this machine runs without its guardrails.
 // Changing disableBypassPermissionsMode or a hook-policy env variable warns.
 // Weakenings the committed file already has are reported by the checks above.
@@ -386,17 +403,37 @@ func checkLocalOverride(projectRoot, userDir string, project claudesettings.Sett
 	}
 
 	var results []CheckResult
-	if user := eff.User; user != nil && !project.DisableAllHooks && user.DisableAllHooks {
-		r := postureResult("claude_settings_user_override", StatusFail, SeverityCritical,
-			fmt.Sprintf("%s sets %s, so no generated hook (self-protection, package guard) runs on this machine",
-				claudesettings.UserLabel, claudesettings.KeyDisableAllHooks),
-			"Remove "+claudesettings.KeyDisableAllHooks+" from "+claudesettings.UserLabel)
-		r.Metadata = map[string]string{"source": claudesettings.UserLabel}
-		results = append(results, r)
+	if user := eff.User; user != nil && user.Unloadable == "" {
+		userOverride := func(msg, remediation string) {
+			r := postureResult("claude_settings_user_override", StatusFail, SeverityCritical,
+				claudesettings.UserLabel+" "+msg, remediation)
+			r.Metadata = map[string]string{"source": claudesettings.UserLabel}
+			results = append(results, r)
+		}
+		if !project.DisableAllHooks && user.DisableAllHooks {
+			userOverride(fmt.Sprintf("sets %s, so no generated hook (self-protection, package guard) runs on this machine",
+				claudesettings.KeyDisableAllHooks), "Remove "+claudesettings.KeyDisableAllHooks+" from "+claudesettings.UserLabel)
+		}
+		// Only the variables the project files do not override take effect.
+		userEnv := map[string]string{}
+		for k, v := range user.Env {
+			if slices.Equal(eff.Sources[claudesettings.EnvSourceKey(k)], []string{claudesettings.UserLabel}) {
+				userEnv[k] = v
+			}
+		}
+		for _, msg := range launchEnvOverrides(userEnv) {
+			userOverride(msg, "Remove the variable from "+claudesettings.UserLabel+"'s "+claudesettings.KeyEnv)
+		}
 	}
 	local := eff.Local
 	if local == nil {
 		return results
+	}
+	if local.Unloadable != "" {
+		// Its overrides below are reported all the same: fixing the entry
+		// puts them in force.
+		results = append(results, unloadableResult(claudesettings.LocalRelPath, local.Unloadable, StatusWarn, SeverityMedium,
+			"so none of its own hooks or deny rules apply on this machine"))
 	}
 	add := func(status CheckStatus, severity CheckSeverity, msg string) {
 		r := postureResult("claude_settings_local_override", status, severity,

@@ -62,12 +62,19 @@ const EnvShellPrefix = "CLAUDE_CODE_SHELL_PREFIX"
 
 // launchEnvNames and launchEnvPrefixes name the env variables that decide
 // which program a hook command runs or what code it loads before the hook's
-// own: the shell's command search and startup files, the dynamic loader's
-// preloads and search paths, the interpreters' module paths and options, and
-// Claude Code's hook shell settings (EnvShellPrefix among them). A settings
-// "env" that sets one can make a registered guard run something else.
+// own: the shell's command search and startup files, the shell Claude Code
+// runs hooks with (SHELL, CLAUDE_CODE_GIT_BASH_PATH for Git Bash on Windows,
+// and the CLAUDE_CODE_SHELL settings, EnvShellPrefix among them), the
+// dynamic loader's preloads and search paths, the interpreters' module
+// paths and options, and the home directories that hold Python's user
+// site-packages, whose .pth files run before any script. A settings "env"
+// that sets one can make a registered guard run something else.
 var (
-	launchEnvNames    = []string{"PATH", "BASH_ENV", "ENV", "SHELLOPTS", "BASHOPTS", "IFS", "NODE_OPTIONS", "PERL5LIB", "PERL5OPT", "RUBYOPT", "RUBYLIB"}
+	launchEnvNames = []string{
+		"PATH", "SHELL", "BASH_ENV", "ENV", "SHELLOPTS", "BASHOPTS", "IFS", "CLAUDE_CODE_GIT_BASH_PATH",
+		"HOME", "USERPROFILE", "APPDATA",
+		"NODE_OPTIONS", "PERL5LIB", "PERL5OPT", "RUBYOPT", "RUBYLIB",
+	}
 	launchEnvPrefixes = []string{"CLAUDE_CODE_SHELL", "PYTHON", "LD_", "DYLD_"}
 )
 
@@ -112,11 +119,17 @@ type Settings struct {
 	// Env is the "env" object; a value that is not a string is kept as
 	// absent, since it cannot be the policy qsdev generated.
 	Env map[string]string
+	// Unloadable is why Claude Code applies none of this file, or "" when it
+	// loads it: a PreToolUse or PermissionRequest hook entry it cannot load
+	// makes it refuse the whole file, deny rules included (see
+	// unloadableHooks). The other fields still hold what the file says.
+	Unloadable string
 }
 
 // Matcher is one matcher entry of a hook event. Invalid is set when the
 // "matcher" key is present but not a string: Claude Code's settings schema
-// rejects it, so none of the entry's hooks runs.
+// rejects it, so none of the entry's hooks runs (and, for a guard event, the
+// file is not loaded at all: see Settings.Unloadable).
 type Matcher struct {
 	Matcher string
 	Invalid bool
@@ -132,11 +145,12 @@ type Matcher struct {
 // "args" (spawn the command as an executable with no shell), "shell" or
 // "once" change whether or how the command runs, so a hook carrying any key
 // qsdev does not know is never credited, including keys Claude Code adds
-// later. Invalid is set when a key Parse interprets holds a value of a type
-// Claude Code's settings schema does not accept (a non-string "if" or
-// "statusMessage", a non-boolean "async", ...): Claude Code then skips the
-// hook, or the whole settings file, so it never runs, whatever the other
-// fields read as.
+// later. Invalid is set when Claude Code cannot load the hook entry: it is
+// not an object, its type is missing or unknown, or a key of its type's
+// schema holds a value of another type (a non-string "if", a non-boolean
+// "async", ...; see hookProblem). Claude Code then skips the hook, or, for a
+// PreToolUse or PermissionRequest hook, the whole settings file (see
+// Settings.Unloadable), so it never runs, whatever the other fields read as.
 type Hook struct {
 	Type    string
 	Command string
@@ -147,23 +161,9 @@ type Hook struct {
 	Invalid bool
 }
 
-// hookKeyTypes maps each hook key Parse interprets to the check of the value
-// type Claude Code's settings schema accepts for it.
-var hookKeyTypes = map[string]func(any) bool{
-	"type":          isString,
-	"command":       isString,
-	"if":            isString,
-	"statusMessage": isString,
-	"async":         isBool,
-	"asyncRewake":   isBool,
-	"timeout":       isPositiveNumber,
-}
-
-func isString(v any) bool { _, ok := v.(string); return ok }
-
-func isBool(v any) bool { _, ok := v.(bool); return ok }
-
-func isPositiveNumber(v any) bool { n, ok := v.(float64); return ok && n > 0 }
+// interpretedHookKeys are the hook keys Parse reads into Hook fields; every
+// other key is listed in Hook.Extra.
+var interpretedHookKeys = []string{"type", "command", "if", "statusMessage", "async", "asyncRewake", "timeout"}
 
 // Parse reads the posture keys of a settings document. Keys are matched
 // exactly, as Claude Code reads them: encoding/json matches struct fields
@@ -196,7 +196,9 @@ func Parse(data []byte) (Settings, error) {
 		}
 	}
 
-	events, _ := root[KeyHooks].(map[string]any)
+	rawHooks, hasHooks := root[KeyHooks]
+	s.Unloadable = unloadableHooks(rawHooks, hasHooks)
+	events, _ := rawHooks.(map[string]any)
 	s.Hooks = make(map[string][]Matcher, len(events))
 	for event, v := range events {
 		entries, _ := v.([]any)
@@ -228,14 +230,11 @@ func parseMatcher(v any) Matcher {
 				he.Timeout = n
 			}
 		}
+		he.Invalid = hookProblem(h) != ""
 		var extra []string
-		for k, v := range hm {
-			valid, interpreted := hookKeyTypes[k]
-			switch {
-			case !interpreted:
+		for k := range hm {
+			if !slices.Contains(interpretedHookKeys, k) {
 				extra = append(extra, k)
-			case !valid(v):
-				he.Invalid = true
 			}
 		}
 		slices.Sort(extra)

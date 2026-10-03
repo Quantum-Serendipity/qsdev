@@ -6,6 +6,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"gopkg.in/yaml.v3"
@@ -13,6 +14,7 @@ import (
 	"github.com/Quantum-Serendipity/qsdev/addons/claudecode"
 	"github.com/Quantum-Serendipity/qsdev/internal/evidence"
 	"github.com/Quantum-Serendipity/qsdev/internal/posture"
+	"github.com/Quantum-Serendipity/qsdev/internal/selfprotect/cmdscan"
 	"github.com/Quantum-Serendipity/qsdev/internal/state"
 	"github.com/Quantum-Serendipity/qsdev/pkg/types"
 )
@@ -213,7 +215,7 @@ func TestEvidenceCmd_EnforcedLayerAddressed(t *testing.T) {
 	}
 	for rel, content := range map[string]string{
 		claudecode.PackageGuardPath: string(claudecode.PackageGuardContent()),
-		".claude/settings.json": `{"hooks": {"PreToolUse": [{"matcher": "Bash", "hooks": [` +
+		".claude/settings.json": `{"hooks": {"PreToolUse": [{"matcher": "` + strings.Join(cmdscan.ShellTools, "|") + `", "hooks": [` +
 			`{"type": "command", "command": "\"${CLAUDE_PROJECT_DIR}\"/.claude/hooks/package-guard.py"}]}]}}`,
 	} {
 		abs := filepath.Join(dir, filepath.FromSlash(rel))

@@ -58,6 +58,16 @@ func writeManifest(t *testing.T, root string, entries map[string]string) {
 	writeFile(t, root, state.ManifestFile(), b.String())
 }
 
+// crlfGuardStatus and crlfGuardReason are what a guard with a CRLF
+// interpreter line is judged on this platform: Git Bash on Windows starts it,
+// other kernels cannot.
+var crlfGuardStatus, crlfGuardReason = func() (LayerStatus, string) {
+	if runtime.GOOS == "windows" {
+		return LayerEnabled, ""
+	}
+	return LayerDisabled, "CRLF interpreter line"
+}()
+
 // guardLayers are the layers that only the package guard provides.
 var guardLayers = []string{"pretooluse-hooks", "age-gating", "install-script-blocking"}
 
@@ -119,7 +129,7 @@ func TestGuardEffective(t *testing.T) {
 		{
 			name: "matcher_NeverMatchesAnything",
 			files: guardedFiles(map[string]string{
-				".claude/settings.json": strings.Replace(settingsWithPackageGuard, `"matcher": "Bash"`, `"matcher": "NeverMatchesAnything"`, 1),
+				".claude/settings.json": strings.Replace(settingsWithPackageGuard, guardMatcher, `"matcher": "NeverMatchesAnything"`, 1),
 			}),
 			want:       LayerDisabled,
 			wantReason: "not registered as a blocking PreToolUse hook matching Bash",
@@ -143,7 +153,7 @@ func TestGuardEffective(t *testing.T) {
 		{
 			name: "hook_type_prompt",
 			files: guardedFiles(map[string]string{
-				".claude/settings.json": strings.Replace(settingsWithPackageGuard, `"type": "command"`, `"type": "prompt"`, 1),
+				".claude/settings.json": strings.Replace(settingsWithPackageGuard, `"type": "command"`, `"type": "prompt", "prompt": "x"`, 1),
 			}),
 			want:       LayerDisabled,
 			wantReason: "not registered as a blocking PreToolUse hook matching Bash",
@@ -204,7 +214,7 @@ func TestGuardEffective(t *testing.T) {
 		{
 			name: "matcher_go_flag_group",
 			files: guardedFiles(map[string]string{
-				".claude/settings.json": strings.Replace(settingsWithPackageGuard, `"matcher": "Bash"`, `"matcher": "(?i)bash"`, 1),
+				".claude/settings.json": strings.Replace(settingsWithPackageGuard, guardMatcher, `"matcher": "(?i)bash"`, 1),
 			}),
 			want:       LayerDisabled,
 			wantReason: "not registered as a blocking PreToolUse hook matching Bash",
@@ -212,28 +222,28 @@ func TestGuardEffective(t *testing.T) {
 		{
 			name: "matcher_quantified_anchor",
 			files: guardedFiles(map[string]string{
-				".claude/settings.json": strings.Replace(settingsWithPackageGuard, `"matcher": "Bash"`, `"matcher": "^?Bash|PowerShell|Monitor"`, 1),
+				".claude/settings.json": strings.Replace(settingsWithPackageGuard, guardMatcher, `"matcher": "^?Bash|PowerShell|Monitor"`, 1),
 			}),
 			want: LayerDisabled,
 		},
 		{
 			name: "matcher_starred_end_anchor",
 			files: guardedFiles(map[string]string{
-				".claude/settings.json": strings.Replace(settingsWithPackageGuard, `"matcher": "Bash"`, `"matcher": "Bash|PowerShell|Monitor|$*"`, 1),
+				".claude/settings.json": strings.Replace(settingsWithPackageGuard, guardMatcher, `"matcher": "Bash|PowerShell|Monitor|$*"`, 1),
 			}),
 			want: LayerDisabled,
 		},
 		{
 			name: "matcher_number",
 			files: guardedFiles(map[string]string{
-				".claude/settings.json": strings.Replace(settingsWithPackageGuard, `"matcher": "Bash"`, `"matcher": 5`, 1),
+				".claude/settings.json": strings.Replace(settingsWithPackageGuard, guardMatcher, `"matcher": 5`, 1),
 			}),
 			want: LayerDisabled,
 		},
 		{
 			name: "matcher_null",
 			files: guardedFiles(map[string]string{
-				".claude/settings.json": strings.Replace(settingsWithPackageGuard, `"matcher": "Bash"`, `"matcher": null`, 1),
+				".claude/settings.json": strings.Replace(settingsWithPackageGuard, guardMatcher, `"matcher": null`, 1),
 			}),
 			want: LayerDisabled,
 		},
@@ -268,9 +278,27 @@ func TestGuardEffective(t *testing.T) {
 		{
 			name: "matcher_comma_list",
 			files: guardedFiles(map[string]string{
-				".claude/settings.json": strings.Replace(settingsWithPackageGuard, `"matcher": "Bash"`, `"matcher": "Edit, Bash"`, 1),
+				".claude/settings.json": strings.Replace(settingsWithPackageGuard, guardMatcher, `"matcher": "Edit, Bash,PowerShell , Monitor"`, 1),
 			}),
 			want: LayerEnabled,
+		},
+		{
+			// The generator registers the guard for every shell tool: one
+			// left out runs its commands unguarded.
+			name: "matcher_bash_only",
+			files: guardedFiles(map[string]string{
+				".claude/settings.json": strings.Replace(settingsWithPackageGuard, guardMatcher, `"matcher": "Bash"`, 1),
+			}),
+			want:       LayerDisabled,
+			wantReason: "matching PowerShell",
+		},
+		{
+			name: "matcher_bash_and_powershell",
+			files: guardedFiles(map[string]string{
+				".claude/settings.json": strings.Replace(settingsWithPackageGuard, guardMatcher, `"matcher": "Bash|PowerShell"`, 1),
+			}),
+			want:       LayerDisabled,
+			wantReason: "so Monitor commands run unguarded",
 		},
 		{
 			name: "command_relative_path",
@@ -303,10 +331,13 @@ func TestGuardEffective(t *testing.T) {
 			want:  LayerEnabled,
 		},
 		{
-			name:  "crlf_checkout",
-			files: guardedFiles(nil),
-			disk:  map[string]string{packageGuardPath: strings.ReplaceAll(pristineGuard, "\n", "\r\n")},
-			want:  LayerEnabled,
+			// The content matches, line endings aside, but outside Windows the
+			// kernel cannot start a script with a CRLF interpreter line.
+			name:       "crlf_checkout",
+			files:      guardedFiles(nil),
+			disk:       map[string]string{packageGuardPath: strings.ReplaceAll(pristineGuard, "\n", "\r\n")},
+			want:       crlfGuardStatus,
+			wantReason: crlfGuardReason,
 		},
 		{
 			name:       "no_generator_template",
@@ -346,6 +377,18 @@ func TestGuardEffective(t *testing.T) {
 			wantReason: `Path="/tmp/evil" (set in ` + localPath + ")",
 		},
 		{
+			name:       "home_in_settings_json",
+			files:      guardedFiles(map[string]string{".claude/settings.json": strings.Replace(settingsWithPackageGuard, "{", `{"env": {"HOME": "fakehome"}, `, 1)}),
+			want:       LayerDisabled,
+			wantReason: `HOME="fakehome" (set in .claude/settings.json)`,
+		},
+		{
+			name:       "git_bash_path_in_settings_local",
+			files:      guardedFiles(map[string]string{localPath: `{"env": {"CLAUDE_CODE_GIT_BASH_PATH": "tools/bash.exe"}}`}),
+			want:       LayerDisabled,
+			wantReason: `CLAUDE_CODE_GIT_BASH_PATH="tools/bash.exe"`,
+		},
+		{
 			name:  "inert_env_in_settings_local",
 			files: guardedFiles(map[string]string{localPath: `{"env": {"TOOL_GATES_DENIED": "WebFetch"}}`}),
 			want:  LayerEnabled,
@@ -374,7 +417,7 @@ func TestGuardEffective(t *testing.T) {
 		{
 			name: "matcher_leading_close_bracket",
 			files: guardedFiles(map[string]string{
-				".claude/settings.json": strings.Replace(settingsWithPackageGuard, `"matcher": "Bash"`, `"matcher": "[]]?Bash"`, 1),
+				".claude/settings.json": strings.Replace(settingsWithPackageGuard, guardMatcher, `"matcher": "[]]?Bash"`, 1),
 			}),
 			want:       LayerDisabled,
 			wantReason: "not registered as a blocking PreToolUse hook matching Bash",
@@ -525,6 +568,64 @@ func gradeAtMost(grade, worst string) bool {
 	}
 	order = append(order, "F")
 	return slices.Index(order, grade) >= slices.Index(order, worst)
+}
+
+// TestGuardEffective_UnloadableSibling pins that a PreToolUse or
+// PermissionRequest entry Claude Code cannot load, sitting beside an intact
+// guard registration, turns the guard off: Claude Code then applies nothing
+// from that settings file. The same entry in settings.local.json drops only
+// that file, so the committed guard stays in force.
+func TestGuardEffective_UnloadableSibling(t *testing.T) {
+	t.Parallel()
+	sibling := func(event, entry string) string {
+		return strings.Replace(settingsWithPackageGuard, `{"hooks": {"PreToolUse": [`,
+			`{"hooks": {"`+event+`": [`+entry+`], "PreToolUse": [`, 1)
+	}
+	withPreToolUse := func(entry string) string {
+		return strings.Replace(settingsWithPackageGuard, `]}]}}`, `]}, `+entry+`]}}`, 1)
+	}
+	tests := []struct {
+		name     string
+		settings string
+	}{
+		{"hook if number", withPreToolUse(`{"matcher": "Write", "hooks": [{"type": "command", "command": "true", "if": 1}]}`)},
+		{"hook command not a string", withPreToolUse(`{"matcher": "Write", "hooks": [{"type": "command", "command": true}]}`)},
+		{"hook timeout string", withPreToolUse(`{"matcher": "Write", "hooks": [{"type": "command", "command": "true", "timeout": "x"}]}`)},
+		{"hook not an object", withPreToolUse(`{"matcher": "Write", "hooks": [5]}`)},
+		{"hook type unknown", withPreToolUse(`{"matcher": "Write", "hooks": [{"type": "bogus"}]}`)},
+		{"hook command missing", withPreToolUse(`{"matcher": "Write", "hooks": [{"type": "command"}]}`)},
+		{"hooks not an array", withPreToolUse(`{"matcher": "Write", "hooks": {"type": "command", "command": "true"}}`)},
+		{"matcher not a string", withPreToolUse(`{"matcher": ["Write"], "hooks": []}`)},
+		{"entry not an object", withPreToolUse(`"Write"`)},
+		{"permission request entry", sibling("PermissionRequest", `{"hooks": [{"type": "command", "command": "true", "once": "yes"}]}`)},
+		{"permission request not an array", strings.Replace(settingsWithPackageGuard, `{"hooks": {`, `{"hooks": {"PermissionRequest": {}, `, 1)},
+		{"guard hooks nested under another event", sibling("PostToolUse", `{"matcher": "*", "hooks": [], "PreToolUse": [{"hooks": []}]}`)},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			for _, file := range []string{".claude/settings.json", ".claude/settings.local.json"} {
+				files := guardedFiles(map[string]string{file: tt.settings})
+				if file != ".claude/settings.json" {
+					// The local file carries only the bad entry's file; the
+					// committed one keeps the guard.
+					files = guardedFiles(map[string]string{file: strings.Replace(tt.settings, "package-guard.py", "other.py", 1)})
+				}
+				dir, genState := writeProjectFiles(t, files)
+				cov := AssessDefenseLayers(dir, testAssessOpts, map[string]bool{"attach-guard": true}, types.DetectedProject{}, genState, 3)
+				got := layerByName(t, cov, "pretooluse-hooks")
+				if file == ".claude/settings.json" {
+					if got.Status != LayerDisabled || !strings.Contains(got.Reason, "Claude Code does not load .claude/settings.json") {
+						t.Errorf("sibling in %s: pretooluse-hooks = %q (%s), want disabled because the file is not loaded", file, got.Status, got.Reason)
+					}
+					continue
+				}
+				if got.Status != LayerEnabled {
+					t.Errorf("sibling in %s: pretooluse-hooks = %q (%s), want enabled: only the local file is dropped", file, got.Status, got.Reason)
+				}
+			}
+		})
+	}
 }
 
 // TestAssess_GuttedGuard is the K1/K2 regression test: an emptied guard, or

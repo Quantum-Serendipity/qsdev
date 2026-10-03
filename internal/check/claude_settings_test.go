@@ -213,6 +213,90 @@ func TestCheckClaudeSettingsPosture(t *testing.T) {
 			local:    `{"DisableAllHooks": true, "Permissions": {"defaultMode": "bypassPermissions"}}`,
 		},
 		{
+			// Claude Code applies none of a file holding a PreToolUse entry
+			// it cannot load: the intact guard beside it is off.
+			name:     "unloadable sibling: if number",
+			actual:   withPreToolUse(`{"matcher": "Write", "hooks": [{"type": "command", "command": "true", "if": 1}]}`),
+			expected: generatedSettings,
+			wantFail: []string{"claude_settings_unloadable"},
+			failSev:  SeverityCritical,
+		},
+		{
+			name:     "unloadable sibling: timeout string",
+			actual:   withPreToolUse(`{"matcher": "Write", "hooks": [{"type": "command", "command": "true", "timeout": "x"}]}`),
+			expected: generatedSettings,
+			wantFail: []string{"claude_settings_unloadable"},
+			failSev:  SeverityCritical,
+		},
+		{
+			name:     "unloadable sibling: hook not an object",
+			actual:   withPreToolUse(`{"matcher": "Write", "hooks": [5]}`),
+			expected: generatedSettings,
+			wantFail: []string{"claude_settings_unloadable"},
+			failSev:  SeverityCritical,
+		},
+		{
+			name:     "unloadable sibling: unknown hook type",
+			actual:   withPreToolUse(`{"matcher": "Write", "hooks": [{"type": "bogus"}]}`),
+			expected: generatedSettings,
+			wantFail: []string{"claude_settings_unloadable"},
+			failSev:  SeverityCritical,
+		},
+		{
+			name:     "unloadable sibling: hooks not an array",
+			actual:   withPreToolUse(`{"matcher": "Write", "hooks": 1}`),
+			expected: generatedSettings,
+			wantFail: []string{"claude_settings_unloadable"},
+			failSev:  SeverityCritical,
+		},
+		{
+			name:     "unloadable sibling: PermissionRequest not an array",
+			actual:   strings.Replace(generatedSettings, `"hooks": {`, `"hooks": {"PermissionRequest": "x", `, 1),
+			expected: generatedSettings,
+			wantFail: []string{"claude_settings_unloadable"},
+			failSev:  SeverityCritical,
+		},
+		{
+			name:     "bad entry of another event is only dropped",
+			actual:   strings.Replace(generatedSettings, `"hooks": {`, `"hooks": {"PostToolUse": [{"hooks": [{"type": "bogus"}]}], `, 1),
+			expected: generatedSettings,
+		},
+		{
+			name:     "local unloadable warns",
+			actual:   generatedSettings,
+			expected: generatedSettings,
+			local:    `{"hooks": {"PreToolUse": [{"hooks": [{"type": "bogus"}]}]}}`,
+			wantWarn: []string{"claude_settings_unloadable"},
+		},
+		{
+			// Status refuses the guard when the user file sets a launch-env
+			// variable; check agrees.
+			name:     "user launch env",
+			actual:   generatedSettings,
+			expected: generatedSettings,
+			user:     `{"env": {"PYTHONPATH": "/tmp/x"}}`,
+			wantFail: []string{"claude_settings_user_override"},
+			failSev:  SeverityCritical,
+		},
+		{
+			name:     "user launch env overridden by the project",
+			actual:   withEnv(`{"HOME": ""}`),
+			expected: generatedSettings,
+			user:     `{"env": {"HOME": "fakehome"}}`,
+		},
+		{
+			name:     "user inert env",
+			actual:   generatedSettings,
+			expected: generatedSettings,
+			user:     `{"env": {"MY_VAR": "x"}}`,
+		},
+		{
+			name:     "unloadable user file is not applied",
+			actual:   generatedSettings,
+			expected: generatedSettings,
+			user:     `{"disableAllHooks": true, "hooks": {"PreToolUse": [5]}}`,
+		},
+		{
 			name:     "local parse error",
 			actual:   generatedSettings,
 			expected: generatedSettings,
@@ -281,6 +365,12 @@ func TestCheckClaudeSettingsPosture(t *testing.T) {
 			}
 		})
 	}
+}
+
+// withPreToolUse returns generatedSettings with entry appended to its
+// PreToolUse matchers.
+func withPreToolUse(entry string) string {
+	return strings.Replace(generatedSettings, "\n  ]}", ",\n    "+entry+"\n  ]}", 1)
 }
 
 // withEnv returns generatedSettings with the given "env" object.

@@ -65,6 +65,14 @@ func Parse(head []byte) Line {
 // interpreter line.
 const blanks = " \t"
 
+// CRLFFails reports whether the kernel of goos cannot start the script
+// because the line ends in CRLF: the '\r' stays on the interpreter or its
+// argument, so the interpreter (or, through env, the program) is looked up
+// with it and not found. Windows (Git Bash) tolerates it.
+func (l Line) CRLFFails(goos string) bool {
+	return goos != "windows" && strings.ContainsRune(l.Interpreter+l.Arg, '\r')
+}
+
 // ViaEnv reports whether the interpreter is env, which looks the program up
 // on PATH.
 func (l Line) ViaEnv() bool {

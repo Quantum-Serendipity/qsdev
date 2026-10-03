@@ -132,3 +132,27 @@ func TestLine_EnvProgram(t *testing.T) {
 		})
 	}
 }
+
+func TestLine_CRLFFails(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		head string
+		goos string
+		want bool
+	}{
+		{"#!/usr/bin/env python3\r\n", "linux", true},
+		{"#!/usr/bin/env python3\r\n", "darwin", true},
+		{"#!/usr/bin/env python3\r\n", "windows", false},
+		{"#!/bin/sh\r\n", "linux", true},
+		{"#!/usr/bin/env python3\n", "linux", false},
+		{"no interpreter line\r\n", "linux", false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.goos+"/"+strings.TrimSpace(tt.head), func(t *testing.T) {
+			t.Parallel()
+			if got := Parse([]byte(tt.head)).CRLFFails(tt.goos); got != tt.want {
+				t.Errorf("Parse(%q).CRLFFails(%q) = %v, want %v", tt.head, tt.goos, got, tt.want)
+			}
+		})
+	}
+}

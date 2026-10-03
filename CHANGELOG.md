@@ -164,9 +164,18 @@ All notable changes to qsdev are recorded in this file. The format is based on
   however it was set (a command line, a devenv import, a sourced shell
   fragment, a variable name spelled through an encoding), is ignored with a
   warning until you pin it. `qsdev defaults pin` is a command only a human
-  may run: qsdev refuses it inside an agent session or without a terminal,
-  and the self-protection hook denies it to the agent however it is wrapped
-  (`env -u CLAUDECODE script -qec '...'`). Pins are kept in
+  may run: qsdev refuses it inside an agent session or without a terminal
+  (a check an agent can spoof, so it is not what holds), and the
+  self-protection hook (SP-014) denies it to the agent through wrappers
+  (`env -u CLAUDECODE script -qec '...'`, `sh -c`, `eval`) and when a word
+  of it is computed: a command word or subcommand word built from a
+  variable, a command substitution, a brace expansion or a glob
+  (`Q=qsdev; $Q defaults pin`, `qsdev defaults $P`,
+  `qsdev defaults $(echo pin)`), or supplied by xargs
+  (`echo pin | xargs qsdev defaults`), is treated as the sensitive word it
+  may stand for. The same holds for every other human-only command. A
+  command whose program and subcommand words are all computed (`$A $B`)
+  is not recognised. Pins are kept in
   `~/.config/qsdev/org-overlay-pins.yaml`, which the hook protects with the
   overlay, so nothing the agent does in a checkout (`git clean -fdX`, a fresh
   clone) removes one; an overlay below the project or the temporary

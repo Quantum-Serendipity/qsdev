@@ -99,7 +99,16 @@ func fakePasswd(t *testing.T, content string) {
 	}
 	orig := passwdFile
 	passwdFile = p
+	resetPasswdCache(t)
 	t.Cleanup(func() { passwdFile = orig })
+}
+
+// resetPasswdCache empties the lookup cache now and when t ends, so a test
+// that replaces the passwd database sees its own answers.
+func resetPasswdCache(t *testing.T) {
+	t.Helper()
+	passwdCache.Clear()
+	t.Cleanup(passwdCache.Clear)
 }
 
 // fakeGetent installs a getent script as the only one getentPaths finds (or
@@ -113,6 +122,7 @@ func fakeGetent(t *testing.T, nssHome string) {
 	}
 	missing := filepath.Join(t.TempDir(), "missing", "getent")
 	orig := getentPaths
+	resetPasswdCache(t)
 	t.Cleanup(func() { getentPaths = orig })
 	if nssHome == "" {
 		getentPaths = []string{missing}
@@ -193,5 +203,49 @@ func TestNamed(t *testing.T) {
 	}
 	if got, err := Named("nobody-" + strconv.Itoa(os.Getpid())); err == nil {
 		t.Errorf("Named(unknown) = %q, want an error", got)
+	}
+}
+
+// TestLookupPasswdMemoized pins that a passwd lookup runs getent at most once
+// per key for the life of the process, failures included: a guard hook
+// expands every ~name word of a command several times, and an account the
+// database does not know would otherwise cost a getent run (up to
+// getentTimeout when NSS hangs) on each expansion (U18-WS1). Not parallel: it
+// replaces package variables.
+func TestLookupPasswdMemoized(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("getent is not used on Windows")
+	}
+	fakePasswd(t, "root:x:0:0::/root:/bin/sh\n")
+	dir := t.TempDir()
+	runs := filepath.Join(dir, "runs")
+	script := filepath.Join(dir, "getent")
+	body := "#!/bin/sh\n" +
+		"echo run >> '" + runs + "'\n" +
+		"case \"$2\" in nssuser) echo 'nssuser:*:54321:100::/home/nssuser:/bin/sh' ;; *) exit 2 ;; esac\n"
+	if err := os.WriteFile(script, []byte(body), 0o755); err != nil { // #nosec G306 -- test executable
+		t.Fatal(err)
+	}
+	orig := getentPaths
+	getentPaths = []string{script}
+	resetPasswdCache(t)
+	t.Cleanup(func() { getentPaths = orig })
+
+	for range 3 {
+		if _, err := lookupPasswd("nouser", nameField); err == nil {
+			t.Fatal("lookupPasswd(nouser) succeeded, want an error")
+		}
+		u, err := lookupPasswd("nssuser", nameField)
+		if err != nil || u.HomeDir != "/home/nssuser" {
+			t.Fatalf("lookupPasswd(nssuser) = %+v, %v; want home /home/nssuser", u, err)
+		}
+		u.HomeDir = "/tmp/changed" // the caller's copy, not the cached entry
+	}
+	data, err := os.ReadFile(runs)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n := strings.Count(string(data), "run"); n != 2 {
+		t.Errorf("getent ran %d times for 3 lookups each of two keys, want 2 (one per key)", n)
 	}
 }

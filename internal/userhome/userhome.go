@@ -23,6 +23,7 @@ package userhome
 import (
 	"bufio"
 	"bytes"
+	"context"
 	"errors"
 	"fmt"
 	"io"
@@ -31,6 +32,7 @@ import (
 	"runtime"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/Quantum-Serendipity/qsdev/internal/procexec"
@@ -84,10 +86,51 @@ const (
 	uidField  = 2
 )
 
+// passwdKey identifies one passwd lookup: the key and the field it is
+// matched against.
+type passwdKey struct {
+	key   string
+	field int
+}
+
+// passwdResult is the outcome of one passwd lookup, kept by passwdCache.
+type passwdResult struct {
+	user *user.User
+	err  error
+}
+
+// passwdCache memoizes lookupPasswd for the life of the process, failures
+// included: a guard hook expands every ~name word of a command, several
+// times over, and an account missing from /etc/passwd costs a getent run
+// (up to getentTimeout when NSS hangs) on each lookup. The user database
+// does not change in a way that matters within one short-lived run.
+var passwdCache sync.Map // passwdKey -> passwdResult
+
 // lookupPasswd returns the passwd entry whose field number field is key: from
 // passwdFile, or, when that has none (a directory-service account), from
-// getent (see getentPasswd).
+// getent (see getentPasswd). Results, failures included, are memoized (see
+// passwdCache); the returned entry is a copy the caller may change.
 func lookupPasswd(key string, field int) (*user.User, error) {
+	k := passwdKey{key, field}
+	if v, ok := passwdCache.Load(k); ok {
+		return copyUser(v.(passwdResult))
+	}
+	u, err := lookupPasswdUncached(key, field)
+	passwdCache.Store(k, passwdResult{u, err})
+	return copyUser(passwdResult{u, err})
+}
+
+// copyUser returns r's entry as a fresh copy, or r's error.
+func copyUser(r passwdResult) (*user.User, error) {
+	if r.err != nil {
+		return nil, r.err
+	}
+	u := *r.user
+	return &u, nil
+}
+
+// lookupPasswdUncached is lookupPasswd without the memoization.
+func lookupPasswdUncached(key string, field int) (*user.User, error) {
 	if key == "" {
 		return nil, errors.New("looking up an empty account key")
 	}
@@ -162,19 +205,15 @@ func getentPasswd(key string, field int) (*user.User, error) {
 // an empty environment, and returns what it prints. A run that outlasts
 // getentTimeout is killed.
 func runGetent(path, key string) ([]byte, error) {
-	cmd := procexec.Command(path, "passwd", key)
+	ctx, cancel := context.WithTimeout(context.Background(), getentTimeout)
+	defer cancel()
+	cmd := procexec.CommandContext(ctx, path, "passwd", key)
 	cmd.Env = []string{}
-	var stdout bytes.Buffer
-	cmd.Stdout = &stdout
-	if err := cmd.Start(); err != nil {
-		return nil, fmt.Errorf("starting %s passwd %s: %w", path, key, err)
-	}
-	timer := time.AfterFunc(getentTimeout, func() { _ = cmd.Process.Kill() })
-	defer timer.Stop()
-	if err := cmd.Wait(); err != nil {
+	out, err := cmd.Output()
+	if err != nil {
 		return nil, fmt.Errorf("running %s passwd %s: %w", path, key, err)
 	}
-	return stdout.Bytes(), nil
+	return out, nil
 }
 
 // Account returns the home directory the user database records for the

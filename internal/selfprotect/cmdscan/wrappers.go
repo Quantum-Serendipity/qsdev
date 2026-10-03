@@ -42,6 +42,18 @@ var wrapperLookups = map[string][]string{
 	"command": {"-v", "-V"},
 }
 
+// wrapperEnvResets are options with which a wrapper runs its command with
+// an empty environment (`env -i`), and wrapperEnvUnsets those that remove
+// the variable they name from it (`env -u PATH`).
+var (
+	wrapperEnvResets = map[string][]string{"env": {"-", "-i", "--ignore-environment"}}
+	wrapperEnvUnsets = map[string][]string{"env": {"-u", "--unset"}}
+)
+
+// wrapperSetsEnv are the wrappers whose NAME=value operands set a variable
+// in the environment of the command they run.
+var wrapperSetsEnv = map[string]bool{"env": true}
+
 // scriptShells run a script string passed with -c.
 var scriptShells = map[string]bool{
 	"sh": true, "bash": true, "zsh": true, "dash": true, "ksh": true, "mksh": true, "ash": true,
@@ -122,6 +134,10 @@ type ProgramRun struct {
 	// Exec is set when exec, reached by the shell, runs the program: the
 	// shell is replaced by it, so nothing after the statement runs.
 	Exec bool
+	// PathChanged is set when a wrapper before the program changes the PATH
+	// it is looked up on: env given -i, -, --ignore-environment, -u PATH or a
+	// PATH=value operand (see wrapperEnvResets).
+	PathChanged bool
 }
 
 // RunsProgram reports whether the words run a program, named or not.
@@ -160,8 +176,12 @@ func Program(words []string) ProgramRun {
 				if slices.ContainsFunc(opts, func(o WrapperOption) bool { return o.Is(wrapperLookups[name]...) }) {
 					return ProgramRun{Index: -1, LookupOnly: true}
 				}
+				run.PathChanged = run.PathChanged || slices.ContainsFunc(opts, func(o WrapperOption) bool {
+					return o.Is(wrapperEnvResets[name]...) || o.Is(wrapperEnvUnsets[name]...) && o.Arg == "PATH"
+				})
 				i += n
 			case w != "" && w[0] >= '0' && w[0] <= '9', isAssignment(w):
+				run.PathChanged = run.PathChanged || wrapperSetsEnv[name] && strings.HasPrefix(w, "PATH=")
 				i++
 			default:
 				break operands

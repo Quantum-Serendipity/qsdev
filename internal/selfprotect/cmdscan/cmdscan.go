@@ -82,6 +82,24 @@ type Command struct {
 	// Guard says whether the statement runs whenever the shell reaches it
 	// or only depending on how other commands exit.
 	Guard Guard
+	// Tested is set when whether a guarded statement runs depends on the
+	// exit status of a command that tests something (see StatusTests): the
+	// left operand of an && or || list, or an if, while or until condition,
+	// holding a program, whose status is unknown, a status test such as
+	// `test` or `command -v`, or a test clause. A statement guarded only by
+	// builtins taken to succeed, such as cd, is not Tested, so in
+	// `cd "$dir" && prog` prog runs whenever the shell reaches it.
+	Tested bool
+	// Subshell is set when the statement runs in a subshell of the line's
+	// shell: inside ( ), a command or process substitution, a stage of a
+	// pipeline of more than one stage, or a background or coprocess
+	// statement. An exit there, or a variable it sets, does not reach the
+	// rest of the line.
+	Subshell bool
+	// Defines names the shell function the statement defines
+	// (`f() { ...; }`), emitted as a nameless Command before its body. A
+	// later call of that name runs the function, not a program.
+	Defines string
 }
 
 // Guard says whether a statement runs whenever the shell reaches it, or only
@@ -289,7 +307,8 @@ func ParseWithVars(command string, vars map[string]string) ([]Command, error) {
 	}
 
 	pipelineIDs := assignPipelines(file)
-	guards := assignGuards(file)
+	guards := assignGuards(file, vars)
+	subshells := assignSubshells(file, pipelineIDs)
 
 	var cmds []Command
 	syntax.Walk(file, func(node syntax.Node) bool {
@@ -299,8 +318,6 @@ func ParseWithVars(command string, vars map[string]string) ([]Command, error) {
 		}
 
 		var c Command
-		c.Pipeline = pipelineIDs[stmt]
-		c.Guard = guards[stmt]
 		// A simple command contributes its command word and arguments. Compound
 		// commands (blocks, subshells, loops) have no CallExpr here — Walk still
 		// descends into their inner statements — but redirects on the compound
@@ -308,31 +325,8 @@ func ParseWithVars(command string, vars map[string]string) ([]Command, error) {
 		hasWord := false
 		switch cmd := stmt.Cmd.(type) {
 		case *syntax.CallExpr:
-			for _, a := range cmd.Assigns {
-				name, _, exp := assignText(a, vars)
-				c.Assigns = append(c.Assigns, name)
-				c.HasExpansion = c.HasExpansion || exp
-			}
-			if len(cmd.Args) > 0 {
-				hasWord = true
-				name, exp := wordText(cmd.Args[0], vars)
-				c.Name = name
-				c.NameHasExpansion = exp
-				c.HasExpansion = c.HasExpansion || exp
-				for i, w := range cmd.Args {
-					if leadingTilde(w) {
-						c.TildeWords = append(c.TildeWords, i)
-					}
-				}
-				for _, w := range cmd.Args[1:] {
-					t, e := wordText(w, vars)
-					c.Args = append(c.Args, t)
-					c.HasExpansion = c.HasExpansion || e
-					if e {
-						c.ExpandedArgs = append(c.ExpandedArgs, t)
-					}
-				}
-			}
+			c = callCommand(cmd, vars)
+			hasWord = len(cmd.Args) > 0
 		case *syntax.DeclClause:
 			// export/declare/local/readonly/typeset/nameref: a builtin that
 			// sets (and may export) variables for later commands.
@@ -343,7 +337,14 @@ func ParseWithVars(command string, vars map[string]string) ([]Command, error) {
 				c.Args = append(c.Args, text)
 				c.HasExpansion = c.HasExpansion || exp
 			}
+		case *syntax.FuncDecl:
+			hasWord = true
+			c.Defines = cmd.Name.Value
 		}
+		c.Pipeline = pipelineIDs[stmt]
+		c.Guard = guards[stmt].guard
+		c.Tested = guards[stmt].tested
+		c.Subshell = subshells[stmt]
 
 		other := stmtAssigns(stmt, vars)
 		c.Assigns = append(c.Assigns, other.names...)
@@ -378,6 +379,38 @@ func ParseWithVars(command string, vars map[string]string) ([]Command, error) {
 	return cmds, nil
 }
 
+// callCommand renders the simple command call: its prefix assignments,
+// command word and arguments (see Command).
+func callCommand(call *syntax.CallExpr, vars map[string]string) Command {
+	var c Command
+	for _, a := range call.Assigns {
+		name, _, exp := assignText(a, vars)
+		c.Assigns = append(c.Assigns, name)
+		c.HasExpansion = c.HasExpansion || exp
+	}
+	if len(call.Args) == 0 {
+		return c
+	}
+	name, exp := wordText(call.Args[0], vars)
+	c.Name = name
+	c.NameHasExpansion = exp
+	c.HasExpansion = c.HasExpansion || exp
+	for i, w := range call.Args {
+		if leadingTilde(w) {
+			c.TildeWords = append(c.TildeWords, i)
+		}
+	}
+	for _, w := range call.Args[1:] {
+		t, e := wordText(w, vars)
+		c.Args = append(c.Args, t)
+		c.HasExpansion = c.HasExpansion || e
+		if e {
+			c.ExpandedArgs = append(c.ExpandedArgs, t)
+		}
+	}
+	return c
+}
+
 // assignPipelines maps each simple-command statement that is a stage of a pipe
 // chain to a shared, non-zero pipeline id (in left-to-right order). Statements
 // not in any pipeline are absent from the map, so a lookup yields 0. Walk visits
@@ -408,30 +441,48 @@ func assignPipelines(root syntax.Node) map[*syntax.Stmt]int {
 	return ids
 }
 
-// assignGuards maps each guarded statement to its Guard; a lookup of any
-// other yields Unguarded. Walk visits a statement before the statements
-// nested in it, so each passes its own guard down, raised by && or || for
-// the right operand and to Guarded inside any compound command other than a
-// block, a subshell or time.
-func assignGuards(root syntax.Node) map[*syntax.Stmt]Guard {
-	guards := make(map[*syntax.Stmt]Guard)
+// stmtGuard is how a statement's running depends on other commands: its
+// Guard, and whether a command that tests something decides it (see
+// Command.Tested).
+type stmtGuard struct {
+	guard  Guard
+	tested bool
+}
+
+// assignGuards maps each guarded statement to its stmtGuard; a lookup of any
+// other yields an Unguarded, untested one. Walk visits a statement before the
+// statements nested in it, so each passes its own guard down, raised by &&
+// or || for the right operand and to Guarded inside any compound command
+// other than a block, a subshell or time. The right operand of && or ||, and
+// the bodies of if, while and until, are also Tested when their left operand
+// or condition tests something (see statusTests).
+func assignGuards(root syntax.Node, vars map[string]string) map[*syntax.Stmt]stmtGuard {
+	guards := make(map[*syntax.Stmt]stmtGuard)
 	simple := simpleSuccess{}
-	raise := func(s *syntax.Stmt, g Guard) {
-		if s != nil && g > guards[s] {
-			guards[s] = g
+	tests := statusTests{vars: vars, memo: map[*syntax.Stmt]bool{}}
+	raise := func(s *syntax.Stmt, g Guard, tested bool) {
+		if s == nil {
+			return
 		}
+		cur := guards[s]
+		guards[s] = stmtGuard{guard: max(cur.guard, g), tested: cur.tested || tested}
 	}
 	// raiseChildren raises the statements nearest under node, nested in
 	// stmt, to g; each passes it on when the walk below reaches it, so every
 	// node is visited a bounded number of times however deep the nesting.
-	raiseChildren := func(stmt *syntax.Stmt, node syntax.Node, g Guard) {
+	raiseChildren := func(stmt *syntax.Stmt, node syntax.Node, g Guard, tested bool) {
 		syntax.Walk(node, func(n syntax.Node) bool {
 			if s, ok := n.(*syntax.Stmt); ok && s != stmt {
-				raise(s, g)
+				raise(s, g, tested)
 				return false
 			}
 			return true
 		})
+	}
+	raiseAll := func(stmts []*syntax.Stmt, g Guard, tested bool) {
+		for _, s := range stmts {
+			raise(s, g, tested)
+		}
 	}
 	syntax.Walk(root, func(n syntax.Node) bool {
 		stmt, ok := n.(*syntax.Stmt)
@@ -439,18 +490,30 @@ func assignGuards(root syntax.Node) map[*syntax.Stmt]Guard {
 			return true
 		}
 		g := guards[stmt]
-		raiseChildren(stmt, stmt, g) // command substitutions run with the statement
+		raiseChildren(stmt, stmt, g.guard, g.tested) // command substitutions run with the statement
 		switch cmd := stmt.Cmd.(type) {
 		case nil, *syntax.CallExpr, *syntax.DeclClause, *syntax.Block, *syntax.Subshell, *syntax.TimeClause:
 		case *syntax.BinaryCmd:
+			tested := g.tested || tests.of(cmd.X)
 			switch {
 			case cmd.Op == syntax.OrStmt, cmd.Op == syntax.AndStmt && !simple.of(cmd.X):
-				raise(cmd.Y, Guarded)
+				raise(cmd.Y, Guarded, tested)
 			case cmd.Op == syntax.AndStmt:
-				raise(cmd.Y, GuardedByAnd)
+				raise(cmd.Y, GuardedByAnd, tested)
 			}
+		case *syntax.IfClause:
+			// Each branch is decided by its condition and those before it.
+			tested := g.tested
+			for c := cmd; c != nil; c = c.Else {
+				raiseAll(c.Cond, Guarded, tested)
+				tested = tested || tests.any(c.Cond)
+				raiseAll(c.Then, Guarded, tested)
+			}
+		case *syntax.WhileClause:
+			raiseAll(cmd.Cond, Guarded, g.tested)
+			raiseAll(cmd.Do, Guarded, g.tested || tests.any(cmd.Cond))
 		default:
-			raiseChildren(stmt, cmd, Guarded)
+			raiseChildren(stmt, cmd, Guarded, g.tested)
 		}
 		return true
 	})

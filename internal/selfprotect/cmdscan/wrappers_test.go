@@ -88,6 +88,15 @@ func TestProgram(t *testing.T) {
 		{"command exec", []string{"command", "exec", "git"}, ProgramRun{Index: 2, Exec: true}},
 		{"external wrapper", []string{"timeout", "5", "cd", "/tmp"}, ProgramRun{Index: 2}},
 		{"exec behind an external wrapper", []string{"env", "exec", "git"}, ProgramRun{Index: 2}},
+		{"env -i", []string{"env", "-i", "ruff"}, ProgramRun{Index: 2, PathChanged: true}},
+		{"env -", []string{"env", "-", "ruff"}, ProgramRun{Index: 2, PathChanged: true}},
+		{"env --ignore-env", []string{"env", "--ignore-env", "ruff"}, ProgramRun{Index: 2, PathChanged: true}},
+		{"env -u PATH", []string{"env", "-u", "PATH", "ruff"}, ProgramRun{Index: 3, PathChanged: true}},
+		{"env -uPATH", []string{"env", "-uPATH", "ruff"}, ProgramRun{Index: 2, PathChanged: true}},
+		{"env -u HOME", []string{"env", "-u", "HOME", "ruff"}, ProgramRun{Index: 3}},
+		{"env PATH operand", []string{"timeout", "5", "env", "PATH=/opt/bin", "ruff"}, ProgramRun{Index: 4, PathChanged: true}},
+		{"env other operand", []string{"env", "A=1", "ruff"}, ProgramRun{Index: 2}},
+		{"PATH operand of another wrapper", []string{"sudo", "PATH=/opt/bin", "ruff"}, ProgramRun{Index: 2}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -104,7 +113,8 @@ func TestProgram(t *testing.T) {
 }
 
 // TestShellBuiltinsCoverVarBuiltins pins that every builtin cmdscan models
-// elsewhere is a shell builtin, so the tables cannot drift apart. nameref
+// elsewhere (variable setters, command and builtin, status tests, exit and
+// the sourcing builtins) is a shell builtin, so the tables cannot drift apart. nameref
 // parses as a declaration (mksh, zsh) but bash runs it from PATH.
 func TestShellBuiltinsCoverVarBuiltins(t *testing.T) {
 	t.Parallel()
@@ -114,8 +124,10 @@ func TestShellBuiltinsCoverVarBuiltins(t *testing.T) {
 			names = append(names, name)
 		}
 	}
-	for name := range shellRunWrappers {
-		names = append(names, name)
+	for _, table := range []map[string]bool{shellRunWrappers, statusBuiltins, shellEnders, shellSourcers} {
+		for name := range table {
+			names = append(names, name)
+		}
 	}
 	for _, name := range names {
 		if !IsShellBuiltin(name) {

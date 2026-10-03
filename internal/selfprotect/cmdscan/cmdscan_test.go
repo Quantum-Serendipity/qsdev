@@ -1,6 +1,9 @@
 package cmdscan
 
-import "testing"
+import (
+	"slices"
+	"testing"
+)
 
 func TestParse_SegmentsAndArgs(t *testing.T) {
 	t.Parallel()
@@ -232,5 +235,155 @@ func TestParse_Guard(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+func TestParse_Tested(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		command string
+		tested  []string // names of the commands that are Tested
+	}{
+		{"cd x && b", nil},
+		{"test -f x && b", []string{"b"}},
+		{"prog && b", []string{"b"}},
+		{"command -v x && b", []string{"b"}},
+		{"command cd x && b", nil},
+		{"cd x || b", nil},
+		{"[ -x p ] || b", []string{"b"}},
+		{"cd x && { test -f y; b; }", nil},
+		{"test -f x && { cd y; b; }", []string{"cd", "b"}},
+		{"cd x && test -f y && b", []string{"b"}},
+		{"if ! command -v x; then b; fi", []string{"b"}},
+		{"if cd x; then b; fi", nil},
+		{"if cd x; then a; elif test -f y; then b; else c; fi", []string{"b", "c"}},
+		{"while test -f x; do b; done", []string{"b"}},
+		{"[[ -x p ]] && b", []string{"b"}},
+		{"x=$(prog) || b", []string{"b"}},
+		{"export A=1 && b", nil},
+		{"f() { a; }; b", nil},
+	}
+	for _, tt := range tests {
+		t.Run(tt.command, func(t *testing.T) {
+			t.Parallel()
+			cmds, err := Parse(tt.command)
+			if err != nil {
+				t.Fatal(err)
+			}
+			for _, c := range cmds {
+				if c.Name == "" {
+					continue
+				}
+				if want := slices.Contains(tt.tested, c.Name); c.Tested != want {
+					t.Errorf("%s: Tested = %v, want %v", c.Name, c.Tested, want)
+				}
+			}
+		})
+	}
+}
+
+func TestParse_Subshell(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		command  string
+		subshell []string // names of the commands that run in a subshell
+	}{
+		{"a; b && c", nil},
+		{"{ a; b; }", nil},
+		{"(a; b); c", []string{"a", "b"}},
+		{"a | b; c", []string{"a", "b"}},
+		{"x=$(a); b", []string{"a"}},
+		{"b $(a)", []string{"a"}},
+		{"b <(a)", []string{"a"}},
+		{"a & b", []string{"a"}},
+		{"{ a; b; } | c", []string{"a", "b", "c"}},
+		{"(a | b)", []string{"a", "b"}},
+		{"if a; then b; fi", nil},
+	}
+	for _, tt := range tests {
+		t.Run(tt.command, func(t *testing.T) {
+			t.Parallel()
+			cmds, err := Parse(tt.command)
+			if err != nil {
+				t.Fatal(err)
+			}
+			for _, c := range cmds {
+				if c.Name == "" {
+					continue
+				}
+				if want := slices.Contains(tt.subshell, c.Name); c.Subshell != want {
+					t.Errorf("%s: Subshell = %v, want %v", c.Name, c.Subshell, want)
+				}
+			}
+		})
+	}
+}
+
+func TestParse_Defines(t *testing.T) {
+	t.Parallel()
+	cmds, err := Parse("f() { a; }; function g { b; }; f")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var order []string
+	for _, c := range cmds {
+		switch {
+		case c.Defines != "":
+			if c.Name != "" || len(c.Args) > 0 {
+				t.Errorf("definition of %s has a command word: %+v", c.Defines, c)
+			}
+			order = append(order, "def "+c.Defines)
+		default:
+			order = append(order, c.Name)
+		}
+	}
+	if want := []string{"def f", "a", "def g", "b", "f"}; !slices.Equal(order, want) {
+		t.Errorf("commands = %q, want %q", order, want)
+	}
+}
+
+func TestCommandShellBuiltin(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		command string
+		want    string // empty: no builtin
+	}{
+		{"cd /tmp", "cd"},
+		{"command cd /tmp", "cd"},
+		{"builtin exit 1", "exit"},
+		{"timeout 5 cd /tmp", ""},
+		{"exec cd /tmp", ""},
+		{"/usr/bin/cd /tmp", ""},
+		{"$X /tmp", ""},
+		{`command "$X" /tmp`, ""},
+		{"export A=1", "export"},
+		{"gofmt -l .", ""},
+	}
+	for _, tt := range tests {
+		t.Run(tt.command, func(t *testing.T) {
+			t.Parallel()
+			cmds, err := Parse(tt.command)
+			if err != nil || len(cmds) != 1 {
+				t.Fatalf("Parse(%q) = %+v, %v", tt.command, cmds, err)
+			}
+			got, ok := cmds[0].ShellBuiltin()
+			if got != tt.want || ok != (tt.want != "") {
+				t.Errorf("ShellBuiltin() = %q, %v, want %q", got, ok, tt.want)
+			}
+		})
+	}
+}
+
+func TestEndsShellAndSourcesCode(t *testing.T) {
+	t.Parallel()
+	for name, want := range map[string]bool{"exit": true, "return": false, "logout": false, "exec": false} {
+		if got := EndsShell(name); got != want {
+			t.Errorf("EndsShell(%q) = %v, want %v", name, got, want)
+		}
+	}
+	for name, want := range map[string]bool{".": true, "source": true, "eval": true, "cd": false, "export": false} {
+		if got := SourcesCode(name); got != want {
+			t.Errorf("SourcesCode(%q) = %v, want %v", name, got, want)
+		}
 	}
 }

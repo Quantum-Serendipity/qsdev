@@ -1015,3 +1015,53 @@ func TestPythonHooks_MinPythonMatchesGo(t *testing.T) {
 		})
 	}
 }
+
+// TestPythonHooks_IgnorePlantedModules pins that no Python hook imports a
+// module planted beside it. Python puts a script's directory first on
+// sys.path, so a committed .claude/hooks/json.py would otherwise replace the
+// stdlib json and could make an unchanged guard exit 0 for every call. Each
+// hook runs from a copy of the hooks directory holding a module, named after
+// every module the hook imports, that exits 7 on import.
+func TestPythonHooks_IgnorePlantedModules(t *testing.T) {
+	t.Parallel()
+	python, err := exec.LookPath("python3")
+	if err != nil {
+		t.Skip("python3 not available; skipping hook behaviour test")
+	}
+	importRe := regexp.MustCompile(`(?m)^(?:import|from)\s+([A-Za-z_][A-Za-z0-9_]*)`)
+	for rel, content := range claudecode.HookScriptContents() {
+		if path.Ext(rel) != ".py" {
+			continue
+		}
+		t.Run(path.Base(rel), func(t *testing.T) {
+			t.Parallel()
+			dir := t.TempDir()
+			script := filepath.Join(dir, path.Base(rel))
+			if err := os.WriteFile(script, content, 0o755); err != nil {
+				t.Fatal(err)
+			}
+			var planted []string
+			for _, m := range importRe.FindAllSubmatch(content, -1) {
+				name := string(m[1])
+				if name == "sys" || name == "__future__" || slices.Contains(planted, name) {
+					continue
+				}
+				planted = append(planted, name)
+				if err := os.WriteFile(filepath.Join(dir, name+".py"), []byte("import os\nos._exit(7)\n"), 0o644); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if !slices.Contains(planted, "json") {
+				t.Fatalf("planted %v: want json among them (every hook reads its JSON input)", planted)
+			}
+			cmd := exec.Command(python, script)
+			cmd.Dir = dir
+			cmd.Stdin = strings.NewReader("not json")
+			cmd.Env = append(os.Environ(), "PYTHONDONTWRITEBYTECODE=1", "PYTHONSAFEPATH=", "HOME="+dir, "CLAUDE_AUDIT_DIR="+dir)
+			out, err := cmd.CombinedOutput()
+			if exitErr, ok := errors.AsType[*exec.ExitError](err); ok && exitErr.ExitCode() == 7 {
+				t.Errorf("%s imported a module planted beside it (exit 7)\n%s", rel, out)
+			}
+		})
+	}
+}

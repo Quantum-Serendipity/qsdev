@@ -96,6 +96,13 @@ type Command struct {
 	// statement. An exit there, or a variable it sets, does not reach the
 	// rest of the line.
 	Subshell bool
+	// FailureHandled is set when the line tests the statement's exit
+	// status: it decides the status of the left operand of ||, of an if,
+	// while or until condition, or of a negated pipeline. Its failing,
+	// a program the shell cannot find (status 127) included, then only
+	// picks what runs next (`prog --version || exit 0`, `prog || true`)
+	// rather than becoming the status the line exits with.
+	FailureHandled bool
 	// Defines names the shell function the statement defines
 	// (`f() { ...; }`), emitted as a nameless Command before its body. A
 	// later call of that name runs the function, not a program.
@@ -309,6 +316,7 @@ func ParseWithVars(command string, vars map[string]string) ([]Command, error) {
 	pipelineIDs := assignPipelines(file)
 	guards := assignGuards(file, vars)
 	subshells := assignSubshells(file, pipelineIDs)
+	handled := assignFailureHandled(file)
 
 	var cmds []Command
 	syntax.Walk(file, func(node syntax.Node) bool {
@@ -345,6 +353,7 @@ func ParseWithVars(command string, vars map[string]string) ([]Command, error) {
 		c.Guard = guards[stmt].guard
 		c.Tested = guards[stmt].tested
 		c.Subshell = subshells[stmt]
+		c.FailureHandled = handled[stmt]
 
 		other := stmtAssigns(stmt, vars)
 		c.Assigns = append(c.Assigns, other.names...)

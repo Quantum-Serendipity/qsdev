@@ -50,6 +50,11 @@ var (
 	wrapperEnvUnsets = map[string][]string{"env": {"-u", "--unset"}}
 )
 
+// wrapperChdirs are options with which a wrapper runs its command in the
+// directory they name (`env -C dir prog`), where a relative program path
+// resolves.
+var wrapperChdirs = map[string][]string{"env": {"-C", "--chdir"}, "sudo": {"-D", "--chdir"}}
+
 // wrapperSetsEnv are the wrappers whose NAME=value operands set a variable
 // in the environment of the command they run.
 var wrapperSetsEnv = map[string]bool{"env": true}
@@ -138,6 +143,10 @@ type ProgramRun struct {
 	// it is looked up on: env given -i, -, --ignore-environment, -u PATH or a
 	// PATH=value operand (see wrapperEnvResets).
 	PathChanged bool
+	// DirChanged is set when a wrapper before the program runs it in
+	// another working directory (see wrapperChdirs), so a relative program
+	// path resolves there.
+	DirChanged bool
 }
 
 // RunsProgram reports whether the words run a program, named or not.
@@ -179,6 +188,7 @@ func Program(words []string) ProgramRun {
 				run.PathChanged = run.PathChanged || slices.ContainsFunc(opts, func(o WrapperOption) bool {
 					return o.Is(wrapperEnvResets[name]...) || o.Is(wrapperEnvUnsets[name]...) && o.Arg == "PATH"
 				})
+				run.DirChanged = run.DirChanged || slices.ContainsFunc(opts, func(o WrapperOption) bool { return o.Is(wrapperChdirs[name]...) })
 				i += n
 			case w != "" && w[0] >= '0' && w[0] <= '9', isAssignment(w):
 				run.PathChanged = run.PathChanged || wrapperSetsEnv[name] && strings.HasPrefix(w, "PATH=")
@@ -307,12 +317,32 @@ func isAssignment(w string) bool {
 }
 
 // ShellScript returns the script the words run through a shell's -c option
-// (`sh -c '...'`, `bash -ec '...'`) or eval.
+// (`sh -c '...'`, `bash -ec '...'`) or eval (see Script).
 func ShellScript(words []string) (string, bool) {
+	run, ok := Script(words)
+	return run.Script, ok
+}
+
+// ScriptRun describes a script string the words run (see Script).
+type ScriptRun struct {
+	// Script is the script string.
+	Script string
+	// Eval is set when eval runs it in the shell itself, rather than a
+	// shell started with -c.
+	Eval bool
+	// ReadsStartup is set when the shell started for it sources startup
+	// files before the script (see ReadsStartupFiles), which can set any
+	// variable, PATH included, or change directory.
+	ReadsStartup bool
+}
+
+// Script returns the script the words run through a shell's -c option
+// (`sh -c '...'`, `bash -ec '...'`) or eval.
+func Script(words []string) (ScriptRun, bool) {
 	for _, i := range CommandWordIndexes(words) {
 		name := wrapperName(words[i])
 		if name == "eval" {
-			return strings.Join(words[i+1:], " "), true
+			return ScriptRun{Script: strings.Join(words[i+1:], " "), Eval: true}, true
 		}
 		if !scriptShells[name] {
 			continue
@@ -320,11 +350,43 @@ func ShellScript(words []string) (string, bool) {
 		rest := words[i+1:]
 		for j, a := range rest {
 			if len(a) > 1 && a[0] == '-' && a[1] != '-' && strings.ContainsRune(a[1:], 'c') && j+1 < len(rest) {
-				return rest[j+1], true
+				return ScriptRun{Script: rest[j+1], ReadsStartup: ReadsStartupFiles(name, rest[:j+1])}, true
 			}
 		}
 	}
-	return "", false
+	return ScriptRun{}, false
+}
+
+// startupShells are the script shells that source a startup file even for
+// a non-interactive, non-login -c script: zsh always reads ~/.zshenv.
+var startupShells = map[string]bool{"zsh": true}
+
+// startupShortOptions and startupLongOptions are the options with which a
+// script shell sources startup files before its -c script: a login shell reads ~/.profile (bash also
+// ~/.bash_profile or ~/.bash_login), an interactive one ~/.bashrc or $ENV.
+// Short options also count inside a cluster such as -lc.
+var (
+	startupShortOptions = "li"
+	startupLongOptions  = []string{"--login"}
+)
+
+// ReadsStartupFiles reports whether the script shell named shell, given the
+// option words opts before its script, sources startup files (see
+// startupShells and startupOptions) that can change any variable, PATH
+// included, before the script runs.
+func ReadsStartupFiles(shell string, opts []string) bool {
+	if startupShells[wrapperName(shell)] {
+		return true
+	}
+	for _, o := range opts {
+		switch {
+		case slices.Contains(startupLongOptions, o):
+			return true
+		case len(o) > 1 && o[0] == '-' && o[1] != '-' && strings.ContainsAny(o[1:], startupShortOptions):
+			return true
+		}
+	}
+	return false
 }
 
 // IsScriptShell reports whether the program named name is a shell that runs

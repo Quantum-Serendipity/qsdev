@@ -97,6 +97,10 @@ func TestProgram(t *testing.T) {
 		{"env PATH operand", []string{"timeout", "5", "env", "PATH=/opt/bin", "ruff"}, ProgramRun{Index: 4, PathChanged: true}},
 		{"env other operand", []string{"env", "A=1", "ruff"}, ProgramRun{Index: 2}},
 		{"PATH operand of another wrapper", []string{"sudo", "PATH=/opt/bin", "ruff"}, ProgramRun{Index: 2}},
+		{"env -C", []string{"env", "-C", "/tmp", "./bin/ruff"}, ProgramRun{Index: 3, DirChanged: true}},
+		{"env --chdir=", []string{"env", "--chdir=/tmp", "./bin/ruff"}, ProgramRun{Index: 2, DirChanged: true}},
+		{"sudo -D", []string{"sudo", "-D", "/tmp", "./bin/ruff"}, ProgramRun{Index: 3, DirChanged: true}},
+		{"nice -n is no chdir", []string{"nice", "-n", "5", "./bin/ruff"}, ProgramRun{Index: 3}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -124,11 +128,12 @@ func TestShellBuiltinsCoverVarBuiltins(t *testing.T) {
 			names = append(names, name)
 		}
 	}
-	for _, table := range []map[string]bool{shellRunWrappers, statusBuiltins, shellEnders, shellSourcers} {
+	for _, table := range []map[string]bool{shellRunWrappers, statusBuiltins, shellEnders, shellSourcers, dirChangers} {
 		for name := range table {
 			names = append(names, name)
 		}
 	}
+	names = slices.AppendSeq(names, maps.Keys(lookupBinders))
 	for _, name := range names {
 		if !IsShellBuiltin(name) {
 			t.Errorf("%s is modelled as a builtin but IsShellBuiltin(%q) is false", name, name)
@@ -165,6 +170,44 @@ func TestShellScript(t *testing.T) {
 	}
 	if !IsScriptShell("/bin/bash") || IsScriptShell("python3") {
 		t.Error("IsScriptShell misclassifies bash or python3")
+	}
+}
+
+func TestScript(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name  string
+		words []string
+		want  ScriptRun
+	}{
+		{"sh -c", []string{"sh", "-c", "ruff check"}, ScriptRun{Script: "ruff check"}},
+		{"bash -ec", []string{"bash", "-ec", "ruff check"}, ScriptRun{Script: "ruff check"}},
+		{"bash -lc", []string{"bash", "-lc", "ruff check"}, ScriptRun{Script: "ruff check", ReadsStartup: true}},
+		{"bash -l -c", []string{"bash", "-l", "-c", "ruff check"}, ScriptRun{Script: "ruff check", ReadsStartup: true}},
+		{"bash --login -c", []string{"bash", "--login", "-c", "ruff check"}, ScriptRun{Script: "ruff check", ReadsStartup: true}},
+		{"bash -ic", []string{"bash", "-ic", "ruff check"}, ScriptRun{Script: "ruff check", ReadsStartup: true}},
+		{"zsh -c", []string{"/usr/bin/zsh", "-c", "ruff check"}, ScriptRun{Script: "ruff check", ReadsStartup: true}},
+		{"script operands are no options", []string{"bash", "-c", "ruff check", "-l"}, ScriptRun{Script: "ruff check"}},
+		{"eval", []string{"eval", "ruff", "check"}, ScriptRun{Script: "ruff check", Eval: true}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			got, ok := Script(tt.words)
+			if !ok || got != tt.want {
+				t.Errorf("Script(%q) = %+v, %v; want %+v, true", tt.words, got, ok, tt.want)
+			}
+		})
+	}
+	if _, ok := Script([]string{"python3", "-c", "print()"}); ok {
+		t.Error("Script(python3 -c) found a shell script")
+	}
+}
+
+func TestReadsStartupFiles_NoStartupOption(t *testing.T) {
+	t.Parallel()
+	if ReadsStartupFiles("bash", []string{"-e", "--norc"}) {
+		t.Error(`ReadsStartupFiles("bash", -e --norc) = true`)
 	}
 }
 

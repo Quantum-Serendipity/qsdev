@@ -1,7 +1,9 @@
 package cmdscan
 
 import (
+	"path/filepath"
 	"slices"
+	"strings"
 
 	"mvdan.cc/sh/v3/syntax"
 )
@@ -36,18 +38,40 @@ func EndsShell(name string) bool { return shellEnders[name] }
 // itself, which can set any variable for later commands (see shellSourcers).
 func SourcesCode(name string) bool { return shellSourcers[name] }
 
+// dirChangers are the builtins that change the working directory of the
+// shell running them, so a relative path a later command runs resolves
+// elsewhere.
+var dirChangers = map[string]bool{"cd": true, "pushd": true, "popd": true}
+
+// ChangesDir reports whether the builtin name changes the working directory
+// of the shell that runs it (see dirChangers). Sourced code (SourcesCode)
+// can change it too.
+func ChangesDir(name string) bool { return dirChangers[name] }
+
+// lookupBinders are the builtins that, given one of the options listed,
+// bind a command name to a file for later commands, so the name is no
+// longer looked up on PATH (`hash -p /opt/ruff ruff`).
+var lookupBinders = map[string]string{"hash": "p"}
+
 // ShellBuiltin returns the builtin the shell runs for c, when the program it
 // runs, directly or through the builtins command and builtin, is a literal
 // shell builtin (see IsShellBuiltin and ProgramRun.ShellRuns). A word built
 // from an expansion is not known to name one.
 func (c Command) ShellBuiltin() (string, bool) {
+	name, _, ok := c.builtinCall()
+	return name, ok
+}
+
+// builtinCall returns the builtin the shell runs for c (see ShellBuiltin)
+// and the arguments it is given.
+func (c Command) builtinCall() (string, []string, bool) {
 	if c.Name == "" {
-		return "", false
+		return "", nil, false
 	}
 	words := append([]string{c.Name}, c.Args...)
 	run := Program(words)
 	if run.Index < 0 || !run.ShellRuns {
-		return "", false
+		return "", nil, false
 	}
 	word := words[run.Index]
 	expanded := c.NameHasExpansion
@@ -55,9 +79,54 @@ func (c Command) ShellBuiltin() (string, bool) {
 		expanded = slices.Contains(c.ExpandedArgs, word)
 	}
 	if expanded || !IsShellBuiltin(word) {
+		return "", nil, false
+	}
+	return word, words[run.Index+1:], true
+}
+
+// BindsCommand reports whether c binds a command name to a file for later
+// commands of its shell without a PATH lookup (see lookupBinders).
+func (c Command) BindsCommand() bool {
+	name, args, ok := c.builtinCall()
+	if !ok {
+		return false
+	}
+	letters, binds := lookupBinders[name]
+	if !binds {
+		return false
+	}
+	for _, a := range args {
+		if a == "--" || len(a) < 2 || a[0] != '-' {
+			return false
+		}
+		if strings.ContainsAny(a[1:], letters) {
+			return true
+		}
+	}
+	return false
+}
+
+// DirTarget returns the directory c changes its shell's working directory
+// to, when that is known: c runs cd or pushd with one absolute operand and
+// no options. A relative operand may be found on CDPATH, and popd, an option
+// or no operand take the directory from elsewhere, so none is known. The
+// operand is returned as rendered, expansions included.
+func (c Command) DirTarget() (string, bool) {
+	name, args, ok := c.builtinCall()
+	if !ok || name != "cd" && name != "pushd" {
 		return "", false
 	}
-	return word, true
+	if len(args) > 0 && args[0] == "--" {
+		args = args[1:]
+	}
+	if len(args) != 1 {
+		return "", false
+	}
+	op := args[0]
+	if !strings.HasPrefix(op, "/") && !filepath.IsAbs(op) {
+		return "", false
+	}
+	return op, true
 }
 
 // statusTest reports whether the exit status of the simple command c tests
@@ -171,4 +240,57 @@ func assignSubshells(root syntax.Node, pipelines map[*syntax.Stmt]int) map[*synt
 	}
 	mark(root, false)
 	return subs
+}
+
+// assignFailureHandled returns the statements whose failure the line
+// handles (see Command.FailureHandled): those deciding the exit status of
+// the left operand of ||, of an if, while or until condition, or of a
+// negated statement. A list's status is that of whichever of its operands
+// ran last, a block's or subshell's that of its last statement, and a
+// pipeline's that of its last stage.
+func assignFailureHandled(root syntax.Node) map[*syntax.Stmt]bool {
+	handled := make(map[*syntax.Stmt]bool)
+	var mark func(s *syntax.Stmt)
+	markLast := func(stmts []*syntax.Stmt) {
+		if len(stmts) > 0 {
+			mark(stmts[len(stmts)-1])
+		}
+	}
+	mark = func(s *syntax.Stmt) {
+		if s == nil || handled[s] {
+			return
+		}
+		handled[s] = true
+		switch cmd := s.Cmd.(type) {
+		case *syntax.BinaryCmd:
+			if cmd.Op == syntax.AndStmt || cmd.Op == syntax.OrStmt {
+				mark(cmd.X)
+			}
+			mark(cmd.Y)
+		case *syntax.Block:
+			markLast(cmd.Stmts)
+		case *syntax.Subshell:
+			markLast(cmd.Stmts)
+		case *syntax.TimeClause:
+			mark(cmd.Stmt)
+		}
+	}
+	syntax.Walk(root, func(n syntax.Node) bool {
+		switch n := n.(type) {
+		case *syntax.Stmt:
+			if n.Negated {
+				mark(n)
+			}
+		case *syntax.BinaryCmd:
+			if n.Op == syntax.OrStmt {
+				mark(n.X)
+			}
+		case *syntax.IfClause:
+			markLast(n.Cond)
+		case *syntax.WhileClause:
+			markLast(n.Cond)
+		}
+		return true
+	})
+	return handled
 }

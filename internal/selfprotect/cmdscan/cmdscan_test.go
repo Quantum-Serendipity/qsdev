@@ -387,3 +387,114 @@ func TestEndsShellAndSourcesCode(t *testing.T) {
 		}
 	}
 }
+
+func TestParse_FailureHandled(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		command string
+		handled []string // names of the commands whose failure the line handles
+	}{
+		{"a; b", nil},
+		{"a || exit 0; b", []string{"a"}},
+		{"a || b", []string{"a"}},
+		{"a && b", nil},
+		{"a && b || c", []string{"a", "b"}},
+		{"{ a; b; } || c", []string{"b"}},
+		{"(a; b) || c", []string{"b"}},
+		{"a | b || c", []string{"b"}},
+		{"! a; b", []string{"a"}},
+		{"if a; then b; elif c; then d; fi", []string{"a", "c"}},
+		{"while a; do b; done", []string{"a"}},
+		{"until a; do b; done", []string{"a"}},
+		{"time a || b", []string{"a"}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.command, func(t *testing.T) {
+			t.Parallel()
+			cmds, err := Parse(tt.command)
+			if err != nil {
+				t.Fatal(err)
+			}
+			for _, c := range cmds {
+				if c.Name == "" {
+					continue
+				}
+				if want := slices.Contains(tt.handled, c.Name); c.FailureHandled != want {
+					t.Errorf("%s: FailureHandled = %v, want %v", c.Name, c.FailureHandled, want)
+				}
+			}
+		})
+	}
+}
+
+func TestChangesDir(t *testing.T) {
+	t.Parallel()
+	for name, want := range map[string]bool{"cd": true, "pushd": true, "popd": true, "export": false, "source": false} {
+		if got := ChangesDir(name); got != want {
+			t.Errorf("ChangesDir(%q) = %v, want %v", name, got, want)
+		}
+	}
+}
+
+func TestCommandDirTarget(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		command string
+		want    string // empty: not known
+	}{
+		{"cd /srv/app", "/srv/app"},
+		{"cd -- /srv/app", "/srv/app"},
+		{"pushd /srv/app", "/srv/app"},
+		{"command cd /srv/app", "/srv/app"},
+		{"cd frontend", ""},
+		{"cd", ""},
+		{"cd -", ""},
+		{"cd -P /srv/app", ""},
+		{"pushd +1", ""},
+		{"popd", ""},
+		{"timeout 5 cd /srv/app", ""},
+		{"echo /srv/app", ""},
+	}
+	for _, tt := range tests {
+		t.Run(tt.command, func(t *testing.T) {
+			t.Parallel()
+			cmds, err := Parse(tt.command)
+			if err != nil || len(cmds) != 1 {
+				t.Fatalf("Parse(%q) = %+v, %v", tt.command, cmds, err)
+			}
+			got, ok := cmds[0].DirTarget()
+			if got != tt.want || ok != (tt.want != "") {
+				t.Errorf("DirTarget() = %q, %v, want %q", got, ok, tt.want)
+			}
+		})
+	}
+}
+
+func TestCommandBindsCommand(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		command string
+		want    bool
+	}{
+		{"hash -p /opt/ruff ruff", true},
+		{"hash -tp /opt/ruff ruff", true},
+		{"builtin hash -p /opt/ruff ruff", true},
+		{"hash -r", false},
+		{"hash ruff", false},
+		{"hash -- -p", false},
+		{"timeout 5 hash -p /opt/ruff ruff", false},
+		{"ruff -p", false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.command, func(t *testing.T) {
+			t.Parallel()
+			cmds, err := Parse(tt.command)
+			if err != nil || len(cmds) != 1 {
+				t.Fatalf("Parse(%q) = %+v, %v", tt.command, cmds, err)
+			}
+			if got := cmds[0].BindsCommand(); got != tt.want {
+				t.Errorf("BindsCommand() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}

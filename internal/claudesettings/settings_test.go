@@ -496,6 +496,14 @@ func TestIsLaunchEnv(t *testing.T) {
 		{"PYTHONUSERBASE", true},
 		{"NIX_PYTHONPATH", true},
 		{"NIX_PYTHONPREFIX", true},
+		{"PYTHONPLATLIBDIR", true},
+		{"PYTHONSTARTUP", true},
+		{"PYTHONPYCACHEPREFIX", true},
+		{"PYTHONWARNINGS", true},
+		{"PYTHONBREAKPOINT", true},
+		{"PYTHONINSPECT", true},
+		{"PYTHONEXECUTABLE", true},
+		{"pythonpath", true},
 		{"__PYVENV_LAUNCHER__", true},
 		{"BASH_FUNC_qsdev%%", true},
 		{"BASH_FUNC_python3%%", true},
@@ -519,6 +527,14 @@ func TestIsLaunchEnv(t *testing.T) {
 		{"TOOL_GATES_DENIED", false},
 		{"ENVIRONMENT", false},
 		{"MYPATH", false},
+		// PYTHON* variables that only tune how the hook's code runs load none.
+		{"PYTHONUNBUFFERED", false},
+		{"PYTHONDONTWRITEBYTECODE", false},
+		{"PYTHONIOENCODING", false},
+		{"PYTHONUTF8", false},
+		{"PYTHONHASHSEED", false},
+		{"PYTHONSAFEPATH", false},
+		{"PYTHONNOUSERSITE", false},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

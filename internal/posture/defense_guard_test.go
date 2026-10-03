@@ -414,6 +414,17 @@ func TestGuardEffective(t *testing.T) {
 			want:  LayerEnabled,
 		},
 		{
+			name:  "inert_python_env_in_settings_json",
+			files: guardedFiles(map[string]string{".claude/settings.json": strings.Replace(settingsWithPackageGuard, "{", `{"env": {"PYTHONUNBUFFERED": "1", "PYTHONDONTWRITEBYTECODE": "1"}, `, 1)}),
+			want:  LayerEnabled,
+		},
+		{
+			name:       "python_warnings_in_settings_local",
+			files:      guardedFiles(map[string]string{localPath: `{"env": {"PYTHONWARNINGS": "error::evil.Category"}}`}),
+			want:       LayerDisabled,
+			wantReason: `PYTHONWARNINGS="error::evil.Category" (set in ` + localPath + ")",
+		},
+		{
 			name:  "inert_env_in_settings_local",
 			files: guardedFiles(map[string]string{localPath: `{"env": {"TOOL_GATES_DENIED": "WebFetch"}}`}),
 			want:  LayerEnabled,

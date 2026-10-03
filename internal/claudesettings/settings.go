@@ -69,7 +69,9 @@ const EnvShellPrefix = "CLAUDE_CODE_SHELL_PREFIX"
 // dynamic loader's preloads and search paths, the interpreters' module
 // paths and options, and the home directories that hold Python's user
 // site-packages, whose .pth files run before any script. The Python names
-// include nixpkgs' NIX_PYTHON* (its sitecustomize adds NIX_PYTHONPATH's
+// are the variables CPython reads that choose or add code (pythonEnvNames);
+// the rest of PYTHON*, such as PYTHONUNBUFFERED or PYTHONIOENCODING, only
+// tune how the hook's own code runs. They also include nixpkgs' NIX_PYTHON* (its sitecustomize adds NIX_PYTHONPATH's
 // entries as site directories, .pth files and all) and macOS framework
 // Python's __PYVENV_LAUNCHER__ (it picks the pyvenv.cfg, so the
 // site-packages, Python starts from). BASH_FUNC_ names are bash's exported
@@ -83,7 +85,20 @@ var (
 		"NODE_OPTIONS", "PERL5LIB", "PERL5OPT", "RUBYOPT", "RUBYLIB",
 		"__PYVENV_LAUNCHER__",
 	}
-	launchEnvPrefixes = []string{"CLAUDE_CODE_SHELL", "PYTHON", "NIX_PYTHON", "LD_", "DYLD_", "BASH_FUNC_", "__BASH_FUNC"}
+	// pythonEnvNames are the CPython variables that load code or pick which
+	// code loads: the stdlib and module search paths (PYTHONHOME, PYTHONPATH,
+	// PYTHONPLATLIBDIR), the user site-packages base (PYTHONUSERBASE), the
+	// bytecode cache (PYTHONPYCACHEPREFIX), the modules PYTHONWARNINGS
+	// categories and PYTHONBREAKPOINT import, the startup file and
+	// interactive prompt (PYTHONSTARTUP, PYTHONINSPECT), and macOS's
+	// PYTHONEXECUTABLE, which sets sys.executable and so the venv and site
+	// Python starts from. PYTHONSAFEPATH and PYTHONNOUSERSITE are not among
+	// them: any value they hold only removes path entries.
+	pythonEnvNames = []string{
+		"PYTHONHOME", "PYTHONPATH", "PYTHONPLATLIBDIR", "PYTHONUSERBASE", "PYTHONPYCACHEPREFIX",
+		"PYTHONWARNINGS", "PYTHONBREAKPOINT", "PYTHONSTARTUP", "PYTHONINSPECT", "PYTHONEXECUTABLE",
+	}
+	launchEnvPrefixes = []string{"CLAUDE_CODE_SHELL", "NIX_PYTHON", "LD_", "DYLD_", "BASH_FUNC_", "__BASH_FUNC"}
 	// launchEnvSuffixes are the exported-function name shapes bash variants
 	// import ("BASH_FUNC_name%%" upstream, "BASH_FUNC_name()" and Apple's
 	// "__BASH_FUNC<name>()" in patched builds). Matched on any name, failing
@@ -103,7 +118,7 @@ var (
 func IsLaunchEnv(name string) bool {
 	upper := strings.ToUpper(name)
 	return name == "" || strings.ContainsAny(name, "=\x00") ||
-		slices.Contains(launchEnvNames, upper) ||
+		slices.Contains(launchEnvNames, upper) || slices.Contains(pythonEnvNames, upper) ||
 		slices.ContainsFunc(launchEnvPrefixes, func(p string) bool { return strings.HasPrefix(upper, p) }) ||
 		slices.ContainsFunc(launchEnvSuffixes, func(sfx string) bool { return strings.HasSuffix(name, sfx) })
 }

@@ -213,6 +213,19 @@ func TestCheckClaudeSettingsPosture(t *testing.T) {
 			expected: withEnv(`{"my-var": "x", "ProgramFiles(x86)": "C:/Program Files (x86)"}`),
 		},
 		{
+			// PYTHON* names that load no code pass, as on main.
+			name:     "committed inert python env",
+			actual:   withEnv(`{"PYTHONUNBUFFERED": "1", "PYTHONDONTWRITEBYTECODE": "1", "PYTHONIOENCODING": "utf-8"}`),
+			expected: withEnv(`{"PYTHONUNBUFFERED": "1", "PYTHONDONTWRITEBYTECODE": "1", "PYTHONIOENCODING": "utf-8"}`),
+		},
+		{
+			name:     "committed python startup file",
+			actual:   withEnv(`{"PYTHONSTARTUP": "tools/x.py"}`),
+			expected: generatedSettings,
+			wantFail: []string{"claude_hook_launch_env"},
+			failSev:  SeverityCritical,
+		},
+		{
 			name:     "local pyvenv launcher",
 			actual:   generatedSettings,
 			expected: generatedSettings,

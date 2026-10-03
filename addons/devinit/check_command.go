@@ -188,6 +188,7 @@ func runCheck(cmd *cobra.Command, format check.OutputFormat, auditLevel check.Au
 	}
 
 	ctx.CustomConformance = evaluateCustomConformance(projectRoot, scan)
+	ctx.OrgConfigDrift = catalog.ProjectOrgConfigDrift(projectRoot)
 
 	// Environment separation for cloud providers is judged from what the
 	// devenv modules declare; no cloud CLI runs.

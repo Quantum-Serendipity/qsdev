@@ -13,6 +13,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/Quantum-Serendipity/qsdev/internal/catalog"
 	"github.com/Quantum-Serendipity/qsdev/internal/cmdutil"
 	"github.com/Quantum-Serendipity/qsdev/internal/container"
 	"github.com/Quantum-Serendipity/qsdev/internal/doctor"
@@ -90,6 +91,9 @@ func runDoctor(cmd *cobra.Command, jsonOutput, checkMode bool) error {
 		LookPath:  exec.LookPath,
 	}))
 	report.SetProjectToolchains(toolchainWarnings)
+	if projectRoot != "" {
+		report.SetOrgOverlayDrift(catalog.ProjectOrgConfigDrift(projectRoot))
+	}
 	slog.Info("doctor check complete",
 		"required_tools", len(report.RequiredTools),
 		"optional_tools", len(report.OptionalTools),

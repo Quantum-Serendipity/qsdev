@@ -1,0 +1,178 @@
+package catalog
+
+import (
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+
+	"github.com/Quantum-Serendipity/qsdev/pkg/branding"
+)
+
+// pinWorld is an isolated layout for the org overlay pin tests: a project, a
+// temporary directory (TMPDIR, TMP and TEMP point at it) and two overlay
+// files outside both.
+type pinWorld struct {
+	project, tmp, home string
+	homeOverlay, other string
+}
+
+// newPinWorld builds a pinWorld and makes the account's home directory its
+// home. Not parallel-safe: it sets the environment and package variables.
+func newPinWorld(t *testing.T) pinWorld {
+	t.Helper()
+	base, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	w := pinWorld{
+		project: filepath.Join(base, "project"),
+		tmp:     filepath.Join(base, "tmp"),
+		home:    filepath.Join(base, "home"),
+		other:   filepath.Join(base, "elsewhere", "defaults.yaml"),
+	}
+	w.homeOverlay = HomeOrgConfigPath(w.home)
+	for _, d := range []string{w.project, w.tmp, filepath.Dir(w.homeOverlay), filepath.Dir(w.other)} {
+		if err := os.MkdirAll(d, 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, f := range []string{w.homeOverlay, w.other} {
+		if err := os.WriteFile(f, []byte("version: 1\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, v := range []string{"TMPDIR", "TMP", "TEMP"} {
+		t.Setenv(v, w.tmp)
+	}
+	t.Setenv(branding.Get().EnvPrefix+"ORG_CONFIG", "")
+	orig := accountHome
+	accountHome = func() (string, error) { return w.home, nil }
+	t.Cleanup(func() { accountHome = orig })
+	t.Cleanup(func() {
+		pinMu.Lock()
+		pinActive, pinRoot, pinned = false, "", OrgConfigPin{}
+		pinMu.Unlock()
+	})
+	return w
+}
+
+// writeAt writes an overlay at p and returns p.
+func writeAt(t *testing.T, p string) string {
+	t.Helper()
+	if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(p, []byte("version: 1\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	return p
+}
+
+// TestPolicyOrgConfigFile pins the structural org overlay control (U18-WS1
+// round 3): a run no human started reads the overlay a human recorded at
+// init, whatever <EnvPrefix>ORG_CONFIG says (the hook cannot see every way
+// the variable is set: a devenv import, a sourced fragment, an encoded
+// name), and never one below the project or the temporary directory.
+func TestPolicyOrgConfigFile(t *testing.T) {
+	env := branding.Get().EnvPrefix + "ORG_CONFIG"
+	tests := []struct {
+		name      string
+		orgConfig func(w pinWorld) string // the variable's value
+		pin       func(w pinWorld) OrgConfigPin
+		want      func(w pinWorld) string
+		drifts    bool
+	}{
+		{
+			name:      "variable points away from the recorded overlay",
+			orgConfig: func(w pinWorld) string { return w.other },
+			pin:       func(w pinWorld) OrgConfigPin { return OrgConfigPin{Path: w.homeOverlay, Recorded: true} },
+			want:      func(w pinWorld) string { return w.homeOverlay },
+			drifts:    true,
+		},
+		{
+			name:      "recorded overlay",
+			orgConfig: func(w pinWorld) string { return w.other },
+			pin:       func(w pinWorld) OrgConfigPin { return OrgConfigPin{Path: w.other, Recorded: true} },
+			want:      func(w pinWorld) string { return w.other },
+		},
+		{
+			name:      "recorded no overlay",
+			orgConfig: func(w pinWorld) string { return w.other },
+			pin:       func(pinWorld) OrgConfigPin { return OrgConfigPin{Recorded: true} },
+			want:      func(pinWorld) string { return "" },
+			drifts:    true,
+		},
+		{
+			name:      "overlay below the project without a pin",
+			orgConfig: func(w pinWorld) string { return writeAt(t, filepath.Join(w.project, "x.yaml")) },
+			pin:       func(pinWorld) OrgConfigPin { return OrgConfigPin{} },
+			want:      func(w pinWorld) string { return w.homeOverlay },
+			drifts:    true,
+		},
+		{
+			name:      "overlay below the temporary directory without a pin",
+			orgConfig: func(w pinWorld) string { return writeAt(t, filepath.Join(w.tmp, "x", "defaults.yaml")) },
+			pin:       func(pinWorld) OrgConfigPin { return OrgConfigPin{} },
+			want:      func(w pinWorld) string { return w.homeOverlay },
+			drifts:    true,
+		},
+		{
+			name:      "overlay elsewhere without a pin",
+			orgConfig: func(w pinWorld) string { return w.other },
+			pin:       func(pinWorld) OrgConfigPin { return OrgConfigPin{} },
+			want:      func(w pinWorld) string { return w.other },
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			w := newPinWorld(t)
+			t.Setenv(env, tt.orgConfig(w))
+			pin := tt.pin(w)
+			if drift := OrgConfigDrift(w.project, pin); (drift != "") != tt.drifts {
+				t.Errorf("OrgConfigDrift = %q, want drift %v", drift, tt.drifts)
+			}
+			if got, want := PolicyOrgConfigFile(), OrgConfigFile(); got != want {
+				t.Errorf("PolicyOrgConfigFile() without a pin in force = %q, want %q", got, want)
+			}
+			UseOrgConfigPin(w.project, pin)
+			if got, want := PolicyOrgConfigFile(), tt.want(w); got != want {
+				t.Errorf("PolicyOrgConfigFile() = %q, want %q", got, want)
+			}
+		})
+	}
+}
+
+// TestRecordOrgConfigPin pins what a human's init records: the resolved
+// overlay path, read back by LoadOrgConfigPin, and nothing for an overlay
+// below the project.
+func TestRecordOrgConfigPin(t *testing.T) {
+	env := branding.Get().EnvPrefix + "ORG_CONFIG"
+	w := newPinWorld(t)
+
+	if pin, err := LoadOrgConfigPin(w.project); err != nil || pin.Recorded {
+		t.Fatalf("LoadOrgConfigPin before recording = %+v, %v; want none recorded", pin, err)
+	}
+	t.Setenv(env, w.other)
+	if got, err := RecordOrgConfigPin(w.project); err != nil || got != w.other {
+		t.Fatalf("RecordOrgConfigPin = %q, %v; want %q", got, err, w.other)
+	}
+	pin, err := LoadOrgConfigPin(w.project)
+	if err != nil || !pin.Recorded || pin.Path != w.other {
+		t.Fatalf("LoadOrgConfigPin = %+v, %v; want %q recorded", pin, err, w.other)
+	}
+	if drift := ProjectOrgConfigDrift(w.project); drift != "" {
+		t.Errorf("ProjectOrgConfigDrift after recording = %q, want none", drift)
+	}
+
+	t.Setenv(env, writeAt(t, filepath.Join(w.project, "evil.yaml")))
+	if _, err := RecordOrgConfigPin(w.project); err == nil || !strings.Contains(err.Error(), "below the project") {
+		t.Errorf("RecordOrgConfigPin for an overlay below the project = %v, want a refusal", err)
+	}
+	if pin, err := LoadOrgConfigPin(w.project); err != nil || pin.Path != w.other {
+		t.Errorf("LoadOrgConfigPin after a refusal = %+v, %v; want %q kept", pin, err, w.other)
+	}
+	if drift := ProjectOrgConfigDrift(w.project); !strings.Contains(drift, "below the project") {
+		t.Errorf("ProjectOrgConfigDrift = %q, want the overlay below the project reported", drift)
+	}
+}

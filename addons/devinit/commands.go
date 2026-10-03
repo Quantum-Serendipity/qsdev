@@ -47,10 +47,16 @@ Claude Code configuration (.claude/settings.json, CLAUDE.md, hooks, skills)
 for the current project. Detects existing languages and frameworks, applies
 project-type profiles, and writes all files atomically.`,
 		RunE: func(cmd *cobra.Command, args []string) error {
+			var err error
 			if opts.Update {
-				return runUpdate(cmd, updateOptionsFromInit(opts))
+				err = runUpdate(cmd, updateOptionsFromInit(opts))
+			} else {
+				err = runInitWithModeDetection(cmd, opts)
 			}
-			return runInitWithModeDetection(cmd, opts)
+			if err == nil && !opts.DryRun && !opts.ListProfiles {
+				recordOrgOverlay(cmd)
+			}
+			return err
 		},
 	}
 

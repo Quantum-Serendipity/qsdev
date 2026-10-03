@@ -198,6 +198,10 @@ type CheckContext struct {
 	// (.qsdev-policy.yaml) as evaluated against a posture assessment by the
 	// command layer; nil when the project has no custom policy.
 	CustomConformance *CustomConformance
+	// OrgConfigDrift is why the org overlay this run resolves is not the one
+	// a run no human started may read for the project (see
+	// catalog.OrgConfigDrift), or "" when it is.
+	OrgConfigDrift string
 	// DeclaredEnv holds the environment variables the project's devenv
 	// modules (devenv.nix, devenv.local.nix) declare, read by the command
 	// layer; the cloud isolation check judges environment separation from

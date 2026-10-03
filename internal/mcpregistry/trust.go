@@ -92,7 +92,7 @@ func LaunchVariants(def catalog.MCPServerDef) []LaunchSpec {
 func TrustedDefinitions(extra map[string][]LaunchSpec) map[string][]LaunchSpec {
 	trusted := make(map[string][]LaunchSpec)
 	var opts []catalog.LoadOption
-	if org := catalog.OrgConfigFile(); org != "" {
+	if org := catalog.PolicyOrgConfigFile(); org != "" {
 		opts = append(opts, catalog.WithOrgConfigFile(org))
 	}
 	if cat, err := catalog.Load(opts...); err == nil {

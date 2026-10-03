@@ -142,6 +142,24 @@ All notable changes to qsdev are recorded in this file. The format is based on
   relative to a `cd` the hook cannot resolve (`cd $HOME/.config && rm -rf
   qsdev`), and when it goes through `trash-put`, `gio trash`/`gio move` or
   `tar --remove-files`.
+  qsdev also records, when you run `qsdev init` yourself at your own
+  terminal (including `qsdev init --update` and joining a project), the org
+  overlay it resolved, in `.devinit/.qsdev-org-overlay.yaml`, which the agent
+  may not change. A qsdev run that no human started (an agent's tool call, or
+  any run without a terminal, such as a script or CI) reads only that
+  overlay: when `QSDEV_ORG_CONFIG` points elsewhere, however it was set (a
+  command line, a devenv import, a sourced shell fragment, a variable name
+  spelled through an encoding), qsdev ignores it with a warning and reads
+  the recorded one. Without a record (a project no human has re-initialized
+  since this change), such a run ignores an overlay below the project or the
+  temporary directory and reads the one in your account's home directory
+  instead. `qsdev check` and `qsdev devenv doctor` report an overlay that
+  those runs ignore. To switch overlays, set `QSDEV_ORG_CONFIG` and run
+  `qsdev init` at your terminal; a CI job that points `QSDEV_ORG_CONFIG` at a
+  file below the temporary directory must move it elsewhere. Execution
+  contexts that do not inherit the environment the hook checks
+  (`systemd-run --user`, a `tmux` session started earlier) are not modelled
+  by the hook; the recorded overlay is what covers them.
   The overlay is protected at the location the hook process sees; a variable
   set outside the agent's commands (for example in the environment Claude
   Code was started with) moves it. Reading them is still allowed, as are

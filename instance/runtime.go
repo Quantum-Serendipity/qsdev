@@ -2,6 +2,8 @@ package instance
 
 import (
 	"fmt"
+	"log/slog"
+	"os"
 	"sync"
 
 	gdevinstance "fastcat.org/go/gdev/instance"
@@ -82,10 +84,23 @@ func buildVersionOverride(vi version.BuildInfo, overridden bool) (ver, commit st
 // add deny rules and hooks or raise compliance; anything else stops the
 // command with an error. Call it after SetBranding (the file's location
 // follows the app name) and before the command runs.
+//
+// For a run no human started (cmdutil.HumanAtTerminal), it also pins the org
+// overlay to the one a human recorded at init (catalog.UseOrgConfigPin), so
+// an agent's command, or a file it wrote that sets <EnvPrefix>ORG_CONFIG,
+// cannot point a regeneration at an overlay of its own.
 func UseProjectDefaults() {
 	root, err := cmdutil.ProjectRoot()
 	if err != nil {
 		return
 	}
 	catalog.SetProjectRoot(root)
+	if cmdutil.HumanAtTerminal(os.Stdin) {
+		return
+	}
+	pin, err := catalog.LoadOrgConfigPin(root)
+	if err != nil {
+		slog.Warn("reading no org overlay a human recorded", "error", err)
+	}
+	catalog.UseOrgConfigPin(root, pin)
 }

@@ -63,6 +63,39 @@ func TestParse_Unloadable(t *testing.T) {
 		{"single matcher under an unknown event", withHooks(`{"Pretooluse": {"matcher": "Bash", "hooks": [{"type": "command", "command": "g"}]}}`), "hooks.Pretooluse is not a hook event"},
 		{"hooks is a single matcher", withHooks(guard), `"hooks" is a single matcher`},
 		{"hooks is an array of matchers", withHooks(`[` + guard + `]`), `"hooks" is an array of matchers`},
+
+		// Guard hooks declared outside "hooks" refuse the file too.
+		{"top-level guard event", `{"PreToolUse": true, "hooks": {}}`, "at the top level"},
+		{"top-level guard matchers", `{"PreToolUse": [` + guard + `]}`, "at the top level"},
+		{"top-level permission request", `{"PermissionRequest": [1]}`, "at the top level"},
+		{"guard event under permissions", `{"permissions": {"deny": [], "PreToolUse": [1]}}`, "permissions holds"},
+		{"matcher under another key", `{"x": {"hooks": [1]}}`, "x holds"},
+		{"guard event three levels down", `{"x": {"a": {"b": {"PreToolUse": [1]}}}}`, "x holds"},
+		{"guard event under an event-named key", `{"Stop": {"PreToolUse": [1]}}`, "Stop holds"},
+		{"matcher under an event-named key does not count", `{"Stop": {"hooks": [1]}}`, ""},
+		{"guard event four levels down", `{"x": {"a": {"b": {"c": {"PreToolUse": [1]}}}}}`, "x holds"},
+		{"guard event five levels down is not searched", `{"x": {"a": {"b": {"c": {"d": {"PreToolUse": [1]}}}}}}`, ""},
+		{"empty guard event at top level", `{"PreToolUse": [], "PermissionRequest": null}`, ""},
+		{"exempt env", `{"env": {"PreToolUse": "1"}}`, ""},
+		{"exempt mcpServers", `{"mcpServers": {"s": {"PreToolUse": [1], "hooks": [1]}}}`, ""},
+		{"exempt key nested elsewhere", `{"x": {"env": {"PreToolUse": [1]}}}`, ""},
+		{"isolation is dropped first", `{"isolation": {"PreToolUse": [1]}}`, ""},
+		{"additionalMarketplaces folds into an exempt key", `{"additionalMarketplaces": {"m": {"PreToolUse": [1]}}}`, ""},
+		{"non-string permission rules are dropped first", `{"permissions": {"deny": [{"PreToolUse": [1]}], "allow": [{"hooks": [1]}]}}`, ""},
+		{"permission rules not a list are refused", `{"permissions": {"ask": {"PreToolUse": [1]}}}`, "permissions."},
+
+		// A posture key of a type Claude Code's schema rejects refuses the
+		// file rather than reading as the policy it seems to set.
+		{"disableAllHooks string", `{"disableAllHooks": "false"}`, `"disableAllHooks" is not a boolean`},
+		{"disableAllHooks null", `{"disableAllHooks": null}`, `"disableAllHooks" is not a boolean`},
+		{"env an array", `{"env": ["A=b"]}`, `"env" is not an object`},
+		{"permissions an array", `{"permissions": []}`, `"permissions" is not an object`},
+		{"deny not an array", `{"permissions": {"deny": "Bash(curl *)"}}`, "permissions.deny is not an array"},
+		{"allow not an array", `{"permissions": {"allow": {}}}`, "permissions.allow is not an array"},
+		{"defaultMode not a string", `{"permissions": {"defaultMode": 1}}`, "permissions.defaultMode is not a string"},
+		{"disableBypass other value", `{"permissions": {"disableBypassPermissionsMode": "enable"}}`, `permissions.disableBypassPermissionsMode is not "disable"`},
+		{"disableBypass boolean", `{"permissions": {"disableBypassPermissionsMode": true}}`, `is not "disable"`},
+		{"posture keys well typed", `{"disableAllHooks": false, "env": {"A": "b"}, "permissions": {"allow": [], "deny": [5], "ask": [], "defaultMode": "manual", "disableBypassPermissionsMode": "disable"}}`, ""},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

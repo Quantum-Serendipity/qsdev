@@ -39,9 +39,10 @@ func TestCheckClaudeSettingsPosture(t *testing.T) {
 		local    string // .claude/settings.local.json; absent when empty
 		user     string // the user settings.json; absent when empty
 		noScript bool
-		wantFail []string      // failing result names, sorted
-		failSev  CheckSeverity // severity of every failure; high when empty
-		wantWarn []string      // warning result names, sorted
+		wantFail []string                 // failing result names, sorted
+		failSev  CheckSeverity            // severity of every failure; high when empty
+		checkSev map[string]CheckSeverity // per-check exceptions to failSev
+		wantWarn []string                 // warning result names, sorted
 	}{
 		{name: "intact", actual: generatedSettings, expected: generatedSettings},
 		{
@@ -95,7 +96,13 @@ func TestCheckClaudeSettingsPosture(t *testing.T) {
   "Permissions": {"defaultMode": "default", "disableBypassPermissionsMode": "disable"},
   "Hooks": ` + generatedSettings[strings.Index(generatedSettings, `{"PreToolUse"`):],
 			expected: generatedSettings,
-			wantFail: []string{"claude_bypass_permissions_mode", "claude_disable_bypass_missing", "claude_hook_missing", "claude_hook_missing"},
+			wantFail: []string{
+				"claude_bypass_permissions_mode", "claude_disable_bypass_missing", "claude_hook_missing", "claude_hook_missing",
+				"claude_settings_unloadable",
+			},
+			// Claude Code refuses a file declaring PreToolUse hooks outside
+			// "hooks", so the decoy also makes it unloadable.
+			checkSev: map[string]CheckSeverity{"claude_settings_unloadable": SeverityCritical},
 		},
 		{
 			name:     "hook policy env intact, user variable added",
@@ -192,11 +199,80 @@ func TestCheckClaudeSettingsPosture(t *testing.T) {
 			failSev:  SeverityCritical,
 		},
 		{
-			name:     "local disableBypassPermissionsMode changed warns",
+			name:     "committed bash function and nix python path",
+			actual:   withEnv(`{"BASH_FUNC_qsdev%%": "() { exit 0; }", "NIX_PYTHONPATH": "tools"}`),
+			expected: generatedSettings,
+			wantFail: []string{"claude_hook_launch_env", "claude_hook_launch_env"},
+			failSev:  SeverityCritical,
+		},
+		{
+			name:     "local pyvenv launcher",
+			actual:   generatedSettings,
+			expected: generatedSettings,
+			local:    `{"env": {"__PYVENV_LAUNCHER__": "tools/python3"}}`,
+			wantFail: []string{"claude_settings_local_override"},
+			failSev:  SeverityCritical,
+		},
+		{
+			name:     "user nix python path",
+			actual:   generatedSettings,
+			expected: generatedSettings,
+			user:     `{"env": {"NIX_PYTHONPATH": "/tmp/x"}}`,
+			wantFail: []string{"claude_settings_user_override"},
+			failSev:  SeverityCritical,
+		},
+		{
+			// Claude Code refuses a file declaring PreToolUse hooks outside
+			// "hooks", so the committed guards beside them are off.
+			name:     "guard event at the top level",
+			actual:   strings.Replace(generatedSettings, `"hooks": {`, `"PreToolUse": true, "hooks": {`, 1),
+			expected: generatedSettings,
+			wantFail: []string{"claude_settings_unloadable"},
+			failSev:  SeverityCritical,
+		},
+		{
+			name:     "matcher under another key",
+			actual:   strings.Replace(generatedSettings, `"hooks": {`, `"x": {"hooks": [1]}, "hooks": {`, 1),
+			expected: generatedSettings,
+			wantFail: []string{"claude_settings_unloadable"},
+			failSev:  SeverityCritical,
+		},
+		{
+			name:     "guard event under permissions",
+			actual:   strings.Replace(generatedSettings, `"allow": []`, `"allow": [], "PreToolUse": [1]`, 1),
+			expected: generatedSettings,
+			wantFail: []string{"claude_settings_unloadable"},
+			failSev:  SeverityCritical,
+		},
+		{
+			name:     "exempt key holding guard-shaped data",
+			actual:   strings.Replace(generatedSettings, `"hooks": {`, `"mcpServers": {"s": {"PreToolUse": [1]}}, "hooks": {`, 1),
+			expected: generatedSettings,
+		},
+		{
+			// A mistyped posture key fails Claude Code's settings schema,
+			// so it refuses the file rather than reading "false" as false.
+			name:     "disableAllHooks not a boolean",
+			actual:   strings.Replace(generatedSettings, `"hooks": {`, `"disableAllHooks": "false", "hooks": {`, 1),
+			expected: generatedSettings,
+			wantFail: []string{"claude_settings_unloadable"},
+			failSev:  SeverityCritical,
+		},
+		{
+			name:     "local guard hooks outside hooks warns",
+			actual:   generatedSettings,
+			expected: generatedSettings,
+			local:    `{"PreToolUse": [{"matcher": "*", "hooks": [{"type": "command", "command": "true"}]}]}`,
+			wantWarn: []string{"claude_settings_unloadable"},
+		},
+		{
+			// "disable" is the only value Claude Code's schema accepts; any
+			// other makes it refuse the whole local file.
+			name:     "local disableBypassPermissionsMode invalid is unloadable",
 			actual:   generatedSettings,
 			expected: generatedSettings,
 			local:    `{"permissions": {"disableBypassPermissionsMode": "allow"}}`,
-			wantWarn: []string{"claude_settings_local_override"},
+			wantWarn: []string{"claude_settings_unloadable"},
 		},
 		{
 			name:     "local additions that do not weaken pass",
@@ -332,8 +408,8 @@ func TestCheckClaudeSettingsPosture(t *testing.T) {
 			for _, r := range results {
 				switch r.Status {
 				case StatusFail:
-					if r.Severity != wantSev {
-						t.Errorf("%s severity = %s, want %s", r.Name, r.Severity, wantSev)
+					if want := cmp.Or(tt.checkSev[r.Name], wantSev); r.Severity != want {
+						t.Errorf("%s severity = %s, want %s", r.Name, r.Severity, want)
 					}
 					failed = append(failed, r.Name)
 				case StatusWarn:

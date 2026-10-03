@@ -182,11 +182,11 @@ func unloadableHooks(raw any, present bool) string {
 		list, isList := v.([]any)
 		switch {
 		case !slices.Contains(hookEvents, event):
-			if holdsGuardHooks(v, 3, !isList, false) {
+			if holdsGuardHooks(v, 3, !isList, false, nil) {
 				return fmt.Sprintf("hooks.%s is not a hook event but holds %s/%s hooks", event, EventPreToolUse, EventPermissionRequest)
 			}
 		case !isList:
-			if slices.Contains(guardEvents, event) && v != nil || holdsGuardHooks(v, 3, false, false) {
+			if slices.Contains(guardEvents, event) && v != nil || holdsGuardHooks(v, 3, false, false, nil) {
 				return fmt.Sprintf("hooks.%s is not an array of matchers", event)
 			}
 		default:
@@ -204,7 +204,7 @@ func unloadableHooks(raw any, present bool) string {
 // of an event's list, when that refuses the whole file, or "". guard says the
 // event is a guard event; for any other event a bad entry is only dropped.
 func matcherEntryProblem(v any, guard bool) string {
-	if holdsGuardHooks(v, 3, false, false) {
+	if holdsGuardHooks(v, 3, false, false, nil) {
 		return fmt.Sprintf("holds %s/%s hooks where a matcher was expected", EventPreToolUse, EventPermissionRequest)
 	}
 	if !guard {
@@ -281,8 +281,9 @@ func mentionsGuardHooks(v any) bool {
 // holdsGuardHooks reports whether v holds guard-event hooks within depth
 // levels: an object with a guard-event key, or, while matchers counts, a
 // matcher-like object. Nesting under an event-name key stops matchers
-// counting, and a typed hook entry inside a "hooks" array is not searched.
-func holdsGuardHooks(v any, depth int, matchers, inHooksList bool) bool {
+// counting, a typed hook entry inside a "hooks" array is not searched, and
+// neither is the value of an object key listed in unscanned.
+func holdsGuardHooks(v any, depth int, matchers, inHooksList bool, unscanned []string) bool {
 	if hasGuardEventKey(v) || matchers && matcherLike(v) {
 		return true
 	}
@@ -291,17 +292,109 @@ func holdsGuardHooks(v any, depth int, matchers, inHooksList bool) bool {
 	}
 	switch val := v.(type) {
 	case []any:
-		return slices.ContainsFunc(val, func(e any) bool { return holdsGuardHooks(e, depth-1, matchers, inHooksList) })
+		return slices.ContainsFunc(val, func(e any) bool { return holdsGuardHooks(e, depth-1, matchers, inHooksList, unscanned) })
 	case map[string]any:
 		if inHooksList && isString(val["type"]) {
 			return false
 		}
 		for k, e := range val {
+			if slices.Contains(unscanned, k) {
+				continue
+			}
 			_, isList := e.([]any)
-			if holdsGuardHooks(e, depth-1, matchers && !slices.Contains(hookEvents, k), k == "hooks" && isList) {
+			if holdsGuardHooks(e, depth-1, matchers && !slices.Contains(hookEvents, k), k == "hooks" && isList, unscanned) {
 				return true
 			}
 		}
 	}
 	return false
+}
+
+// unscannedSettingsKeys are the keys whose values Claude Code never searches
+// for guard hooks declared outside "hooks": their values are server, plugin
+// or environment maps, not hook configuration.
+var unscannedSettingsKeys = []string{
+	"mcpServers", "managedMcpServers", "lspServers", "pluginConfigs", "enabledPlugins",
+	"extraKnownMarketplaces", "env", "skillOverrides", "modelSettings",
+}
+
+// droppedBeforeScanKeys are top-level keys Claude Code removes before that
+// search: "isolation" is honoured only from managed settings, and
+// "additionalMarketplaces" is an alias it folds into "extraKnownMarketplaces"
+// (or drops when that key is set).
+var droppedBeforeScanKeys = []string{"isolation", "additionalMarketplaces"}
+
+// permissionRuleKeys are the permissions lists from which Claude Code drops
+// every non-string entry before that search, so none of them can hold hooks.
+var permissionRuleKeys = []string{"allow", KeyDeny, "ask"}
+
+// guardHooksOutsideHooks returns why Claude Code applies none of the settings
+// document root because it declares PreToolUse/PermissionRequest hooks
+// somewhere other than "hooks" (at the top level, or within three levels of
+// any other key not in unscannedSettingsKeys), or "".
+func guardHooksOutsideHooks(root map[string]any) string {
+	if hasGuardEventKey(root) {
+		return fmt.Sprintf(`%s/%s hooks are declared at the top level, outside "hooks"`, EventPreToolUse, EventPermissionRequest)
+	}
+	for _, key := range slices.Sorted(maps.Keys(root)) {
+		if key == KeyHooks || slices.Contains(unscannedSettingsKeys, key) || slices.Contains(droppedBeforeScanKeys, key) {
+			continue
+		}
+		v := root[key]
+		if perms, ok := v.(map[string]any); ok && key == KeyPermissions {
+			v = withoutRuleLists(perms)
+		}
+		if holdsGuardHooks(v, 3, !slices.Contains(hookEvents, key), false, unscannedSettingsKeys) {
+			return fmt.Sprintf(`%s holds %s/%s hooks outside "hooks"`, key, EventPreToolUse, EventPermissionRequest)
+		}
+	}
+	return ""
+}
+
+// withoutRuleLists returns a copy of perms without the permissionRuleKeys
+// lists, which Claude Code strips of every non-string entry.
+func withoutRuleLists(perms map[string]any) map[string]any {
+	out := maps.Clone(perms)
+	for _, k := range permissionRuleKeys {
+		if _, isList := out[k].([]any); isList {
+			delete(out, k)
+		}
+	}
+	return out
+}
+
+// settingsSchemaProblem returns why Claude Code's settings schema rejects
+// root, so that it applies none of the file, or "". Only the keys qsdev reads
+// for posture (see Parse) are modelled: a mistyped one would otherwise read
+// as a policy Claude Code never applies, such as a "disableAllHooks" of
+// "false" read as false. The rest of Claude Code's schema is not.
+func settingsSchemaProblem(root map[string]any) string {
+	if v, ok := root[KeyDisableAllHooks]; ok && !isBool(v) {
+		return fmt.Sprintf("%q is not a boolean", KeyDisableAllHooks)
+	}
+	if v, ok := root[KeyEnv]; ok && !isObject(v) {
+		return fmt.Sprintf("%q is not an object", KeyEnv)
+	}
+	raw, ok := root[KeyPermissions]
+	if !ok {
+		return ""
+	}
+	perms, ok := raw.(map[string]any)
+	if !ok {
+		return fmt.Sprintf("%q is not an object", KeyPermissions)
+	}
+	for _, k := range permissionRuleKeys {
+		if v, present := perms[k]; present {
+			if _, isList := v.([]any); !isList {
+				return fmt.Sprintf("%s.%s is not an array", KeyPermissions, k)
+			}
+		}
+	}
+	if v, present := perms[KeyDefaultMode]; present && !isString(v) {
+		return fmt.Sprintf("%s.%s is not a string", KeyPermissions, KeyDefaultMode)
+	}
+	if v, present := perms[KeyDisableBypassPermissionsMode]; present && v != "disable" {
+		return fmt.Sprintf(`%s.%s is not "disable"`, KeyPermissions, KeyDisableBypassPermissionsMode)
+	}
+	return ""
 }

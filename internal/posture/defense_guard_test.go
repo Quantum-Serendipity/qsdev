@@ -389,6 +389,26 @@ func TestGuardEffective(t *testing.T) {
 			wantReason: `CLAUDE_CODE_GIT_BASH_PATH="tools/bash.exe"`,
 		},
 		{
+			name:       "nix_pythonpath_in_settings_local",
+			files:      guardedFiles(map[string]string{localPath: `{"env": {"NIX_PYTHONPATH": "tools"}}`}),
+			want:       LayerDisabled,
+			wantReason: `NIX_PYTHONPATH="tools" (set in ` + localPath + ")",
+		},
+		{
+			name:       "pyvenv_launcher_in_settings_local",
+			files:      guardedFiles(map[string]string{localPath: `{"env": {"__PYVENV_LAUNCHER__": "tools/python3"}}`}),
+			want:       LayerDisabled,
+			wantReason: `__PYVENV_LAUNCHER__="tools/python3"`,
+		},
+		{
+			// bash imports an exported function even as /bin/sh, so it
+			// replaces the program the guard command names.
+			name:       "bash_function_in_settings_json",
+			files:      guardedFiles(map[string]string{".claude/settings.json": strings.Replace(settingsWithPackageGuard, "{", `{"env": {"BASH_FUNC_python3%%": "() { exit 0; }"}, `, 1)}),
+			want:       LayerDisabled,
+			wantReason: `BASH_FUNC_python3%%="() { exit 0; }" (set in .claude/settings.json)`,
+		},
+		{
 			name:  "inert_env_in_settings_local",
 			files: guardedFiles(map[string]string{localPath: `{"env": {"TOOL_GATES_DENIED": "WebFetch"}}`}),
 			want:  LayerEnabled,
@@ -584,6 +604,10 @@ func TestGuardEffective_UnloadableSibling(t *testing.T) {
 	withPreToolUse := func(entry string) string {
 		return strings.Replace(settingsWithPackageGuard, `]}]}}`, `]}, `+entry+`]}}`, 1)
 	}
+	// withKey adds a top-level key beside "hooks".
+	withKey := func(kv string) string {
+		return strings.Replace(settingsWithPackageGuard, `{"hooks": {`, `{`+kv+`, "hooks": {`, 1)
+	}
 	tests := []struct {
 		name     string
 		settings string
@@ -600,6 +624,12 @@ func TestGuardEffective_UnloadableSibling(t *testing.T) {
 		{"permission request entry", sibling("PermissionRequest", `{"hooks": [{"type": "command", "command": "true", "once": "yes"}]}`)},
 		{"permission request not an array", strings.Replace(settingsWithPackageGuard, `{"hooks": {`, `{"hooks": {"PermissionRequest": {}, `, 1)},
 		{"guard hooks nested under another event", sibling("PostToolUse", `{"matcher": "*", "hooks": [], "PreToolUse": [{"hooks": []}]}`)},
+		{"guard event at the top level", withKey(`"PreToolUse": true`)},
+		{"guard matchers at the top level", withKey(`"PermissionRequest": [{"matcher": "*", "hooks": [{"type": "command", "command": "true"}]}]`)},
+		{"guard event under permissions", withKey(`"permissions": {"PreToolUse": [1]}`)},
+		{"matcher under another key", withKey(`"x": {"hooks": [1]}`)},
+		{"disableAllHooks not a boolean", withKey(`"disableAllHooks": "false"`)},
+		{"disableBypassPermissionsMode not disable", withKey(`"permissions": {"disableBypassPermissionsMode": "off"}`)},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

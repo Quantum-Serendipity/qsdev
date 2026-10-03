@@ -1,6 +1,7 @@
 package claudesettings
 
 import (
+	"cmp"
 	"encoding/json"
 	"path"
 	"regexp"
@@ -67,23 +68,38 @@ const EnvShellPrefix = "CLAUDE_CODE_SHELL_PREFIX"
 // and the CLAUDE_CODE_SHELL settings, EnvShellPrefix among them), the
 // dynamic loader's preloads and search paths, the interpreters' module
 // paths and options, and the home directories that hold Python's user
-// site-packages, whose .pth files run before any script. A settings "env"
-// that sets one can make a registered guard run something else.
+// site-packages, whose .pth files run before any script. The Python names
+// include nixpkgs' NIX_PYTHON* (its sitecustomize adds NIX_PYTHONPATH's
+// entries as site directories, .pth files and all) and macOS framework
+// Python's __PYVENV_LAUNCHER__ (it picks the pyvenv.cfg, so the
+// site-packages, Python starts from). BASH_FUNC_ names are bash's exported
+// functions, which bash imports even as /bin/sh and which then shadow the
+// hook's program. A settings "env" that sets one can make a registered guard
+// run something else.
 var (
 	launchEnvNames = []string{
 		"PATH", "SHELL", "BASH_ENV", "ENV", "SHELLOPTS", "BASHOPTS", "IFS", "CLAUDE_CODE_GIT_BASH_PATH",
 		"HOME", "USERPROFILE", "APPDATA",
 		"NODE_OPTIONS", "PERL5LIB", "PERL5OPT", "RUBYOPT", "RUBYLIB",
+		"__PYVENV_LAUNCHER__",
 	}
-	launchEnvPrefixes = []string{"CLAUDE_CODE_SHELL", "PYTHON", "LD_", "DYLD_"}
+	launchEnvPrefixes = []string{"CLAUDE_CODE_SHELL", "PYTHON", "NIX_PYTHON", "LD_", "DYLD_", "BASH_FUNC_"}
 )
 
+// envIdentRe matches an env name a shell can read as a variable. Any other
+// name (bash's exported functions are "BASH_FUNC_name%%", older bash used
+// "name()") is never an ordinary setting, so it is treated as launch env
+// rather than trusted to be inert.
+var envIdentRe = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
+
 // IsLaunchEnv reports whether the env variable name decides which program a
-// hook command runs or what code it loads (see launchEnvNames). Names are
-// compared case-insensitively, as Windows reads them.
+// hook command runs or what code it loads (see launchEnvNames), or is not a
+// plain variable name at all (see envIdentRe). Names are compared
+// case-insensitively, as Windows reads them.
 func IsLaunchEnv(name string) bool {
 	upper := strings.ToUpper(name)
-	return slices.Contains(launchEnvNames, upper) ||
+	return !envIdentRe.MatchString(name) ||
+		slices.Contains(launchEnvNames, upper) ||
 		slices.ContainsFunc(launchEnvPrefixes, func(p string) bool { return strings.HasPrefix(upper, p) })
 }
 
@@ -121,8 +137,10 @@ type Settings struct {
 	Env map[string]string
 	// Unloadable is why Claude Code applies none of this file, or "" when it
 	// loads it: a PreToolUse or PermissionRequest hook entry it cannot load
-	// makes it refuse the whole file, deny rules included (see
-	// unloadableHooks). The other fields still hold what the file says.
+	// (see unloadableHooks), such hooks declared outside "hooks" (see
+	// guardHooksOutsideHooks) or a posture key of the wrong type (see
+	// settingsSchemaProblem) makes it refuse the whole file, deny rules
+	// included. The other fields still hold what the file says.
 	Unloadable string
 }
 
@@ -197,7 +215,7 @@ func Parse(data []byte) (Settings, error) {
 	}
 
 	rawHooks, hasHooks := root[KeyHooks]
-	s.Unloadable = unloadableHooks(rawHooks, hasHooks)
+	s.Unloadable = cmp.Or(settingsSchemaProblem(root), guardHooksOutsideHooks(root), unloadableHooks(rawHooks, hasHooks))
 	events, _ := rawHooks.(map[string]any)
 	s.Hooks = make(map[string][]Matcher, len(events))
 	for event, v := range events {

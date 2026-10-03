@@ -128,8 +128,8 @@ func CheckExpectedGeneration(ctx CheckContext) []CheckResult {
 // the project loses.
 func unloadableResult(rel, reason string, status CheckStatus, severity CheckSeverity, effect string) CheckResult {
 	r := postureResult("claude_settings_unloadable", status, severity,
-		fmt.Sprintf("Claude Code does not load %s (%s: a PreToolUse or PermissionRequest hook entry it cannot load), %s", rel, reason, effect),
-		"Fix or remove the named hook entry in "+rel+", or run 'qsdev init --update' to restore the generated settings")
+		fmt.Sprintf("Claude Code does not load %s (%s), %s", rel, reason, effect),
+		"Fix or remove the named entry in "+rel+", or run 'qsdev init --update' to restore the generated settings")
 	r.FilePath = rel
 	return r
 }

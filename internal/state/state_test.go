@@ -441,6 +441,7 @@ func TestIsRecordedOutput(t *testing.T) {
 	states := []types.GeneratedState{
 		{Files: map[string]types.FileState{"a.md": {Hash: ComputeHash([]byte("old"))}}},
 		{Files: map[string]types.FileState{"a.md": {Hash: ComputeHash([]byte("devenv"))}}},
+		{Files: map[string]types.FileState{"a.md": {Hash: ComputeHash([]byte("x\ny\n"))}}},
 	}
 	tests := []struct {
 		name    string
@@ -452,6 +453,8 @@ func TestIsRecordedOutput(t *testing.T) {
 		{"matches later state", "a.md", "devenv", true},
 		{"user content", "a.md", "mine", false},
 		{"untracked path", "b.md", "old", false},
+		{"CRLF checkout of a state", "a.md", "x\r\ny\r\n", true},
+		{"lone CR is content", "a.md", "x\ry\n", false},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -513,3 +516,57 @@ func TestCheckContent(t *testing.T) {
 }
 
 func ptr(s string) *string { return &s }
+
+// TestTextComparisons pins how a CRLF checkout (Git's core.autocrlf) of
+// generated LF content compares: it is the same text and matches the
+// recorded hash, a lone CR is content, and a script whose interpreter line
+// would then end in CR holds the output only where the kernel tolerates it.
+func TestTextComparisons(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name                 string
+		existing, content    string
+		equal                bool
+		holdsLinux, holdsWin bool
+	}{
+		{"identical", "a\nb\n", "a\nb\n", true, true, true},
+		{"CRLF checkout", "a\r\nb\r\n", "a\nb\n", true, true, true},
+		{"mixed endings", "a\r\nb\n", "a\nb\n", true, true, true},
+		{"lone CR", "a\rb\n", "a\nb\n", false, false, false},
+		{"different text", "a\r\nc\r\n", "a\nb\n", false, false, false},
+		{"CRLF script", "#!/bin/sh\r\necho\r\n", "#!/bin/sh\necho\n", true, false, true},
+		{"identical CRLF script", "#!/bin/sh\r\n", "#!/bin/sh\r\n", true, true, true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			existing, content := []byte(tt.existing), []byte(tt.content)
+			if got := EqualText(existing, content); got != tt.equal {
+				t.Errorf("EqualText = %v, want %v", got, tt.equal)
+			}
+			if got := MatchesHash(existing, ComputeHash(content)); got != tt.equal {
+				t.Errorf("MatchesHash = %v, want %v", got, tt.equal)
+			}
+			if got := HoldsOutput(existing, content, "linux"); got != tt.holdsLinux {
+				t.Errorf("HoldsOutput(linux) = %v, want %v", got, tt.holdsLinux)
+			}
+			if got := HoldsOutput(existing, content, "windows"); got != tt.holdsWin {
+				t.Errorf("HoldsOutput(windows) = %v, want %v", got, tt.holdsWin)
+			}
+		})
+	}
+}
+
+// TestCheckFile_CRLFCheckout pins that a CRLF checkout of the recorded
+// content is unmodified.
+func TestCheckFile_CRLFCheckout(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "a.md"), []byte("x\r\ny\r\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	fs := types.FileState{Hash: ComputeHash([]byte("x\ny\n"))}
+	if got := CheckFile(dir, "a.md", fs); got.Status != types.Unmodified {
+		t.Errorf("CheckFile of a CRLF checkout = %v, want %v", got.Status, types.Unmodified)
+	}
+}

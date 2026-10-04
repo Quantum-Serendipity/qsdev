@@ -1,6 +1,8 @@
 package main
 
 import (
+	"bytes"
+	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
@@ -9,7 +11,7 @@ import (
 
 // cloneOf commits the initialised project at dir and returns a fresh clone of
 // it: the committed tree only, with no local init state or answers.
-func cloneOf(t *testing.T, env []string, dir string) string {
+func cloneOf(t *testing.T, env []string, dir string, cloneArgs ...string) string {
 	t.Helper()
 	git := func(wd string, args ...string) {
 		t.Helper()
@@ -23,7 +25,7 @@ func cloneOf(t *testing.T, env []string, dir string) string {
 	git(dir, "add", "-A")
 	git(dir, "-c", "commit.gpgsign=false", "commit", "-q", "--no-verify", "-m", "init")
 	clone := filepath.Join(t.TempDir(), "clone")
-	git(dir, "clone", "-q", dir, clone)
+	git(dir, append(append([]string{"clone", "-q"}, cloneArgs...), dir, clone)...)
 	return clone
 }
 
@@ -92,6 +94,40 @@ func TestJoin_RenamedCloneRegeneratesCommittedFiles(t *testing.T) {
 	}
 	if strings.Contains(out, "local changes") {
 		t.Errorf("join reported a local change in a pristine clone:\n%s", out)
+	}
+	if status := gitStatus(t, env, clone); status != "" {
+		t.Errorf("join changed the committed tree:\n%s", status)
+	}
+}
+
+// TestJoin_CRLFCheckoutRegeneratesNothing is the join regression for a clone
+// whose text files Git checked out with CRLF line endings (core.autocrlf, the
+// Git for Windows default): the committed files are the generated content in
+// another line-ending spelling, so joining reports no local change and leaves
+// the committed tree as Git sees it untouched.
+func TestJoin_CRLFCheckoutRegeneratesNothing(t *testing.T) {
+	t.Parallel()
+	env := guardrailEnv(t)
+	dir, _ := initialisedProject(t, env, false)
+	clone := cloneOf(t, env, dir, "-c", "core.autocrlf=true")
+	data, err := os.ReadFile(filepath.Join(clone, "CLAUDE.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Contains(data, []byte("\r\n")) {
+		t.Fatal("core.autocrlf=true checked CLAUDE.md out without CRLF line endings")
+	}
+	// Scripts are pinned to LF by the generated .gitattributes: a CR on the
+	// interpreter line would stop them starting.
+	if data, err := os.ReadFile(filepath.Join(clone, ".envrc")); err != nil || bytes.Contains(data, []byte("\r")) {
+		t.Fatalf(".envrc checked out with CR line endings (err %v)", err)
+	}
+	out, code := runQsdev(t, env, clone, nil, "init", "--yes")
+	if code != 0 {
+		t.Fatalf("join: exit %d\n%s", code, out)
+	}
+	if strings.Contains(out, "local changes") {
+		t.Errorf("join reported a local change in a CRLF checkout:\n%s", out)
 	}
 	if status := gitStatus(t, env, clone); status != "" {
 		t.Errorf("join changed the committed tree:\n%s", status)

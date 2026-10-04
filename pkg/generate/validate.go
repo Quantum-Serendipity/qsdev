@@ -85,7 +85,9 @@ func ValidateContent(path string, content []byte) error {
 // claude subcommands), so content WriteFiles rejects is never written by
 // another command. Like WriteFiles it never writes outside projectRoot: a
 // path, symlinked parent directory or symlinked file that resolves outside
-// the root is refused with an error wrapping fileutil.ErrOutsideRoot.
+// the root is refused with an error wrapping fileutil.ErrOutsideRoot. A
+// script is pinned to LF line endings in .gitattributes, as WriteFiles pins
+// it.
 func WriteGeneratedFile(projectRoot string, f types.GeneratedFile) error {
 	if !f.SkipValidation {
 		if err := ValidateContent(f.Path, f.Content); err != nil {
@@ -96,6 +98,7 @@ func WriteGeneratedFile(projectRoot string, f types.GeneratedFile) error {
 	if mode == 0 {
 		mode = fileutil.ModeReadWrite
 	}
+	pinScriptLineEndings(projectRoot, []types.GeneratedFile{f})
 	if err := fileutil.WriteFileAtomicInRoot(projectRoot, filepath.FromSlash(f.Path), f.Content, mode); err != nil {
 		return fmt.Errorf("writing %s: %w", f.Path, err)
 	}

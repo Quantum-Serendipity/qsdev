@@ -10,6 +10,7 @@ import (
 	"sort"
 	"time"
 
+	"github.com/Quantum-Serendipity/qsdev/internal/shebang"
 	"github.com/Quantum-Serendipity/qsdev/pkg/types"
 )
 
@@ -51,17 +52,46 @@ func RecordFiles(files []types.GeneratedFile) types.GeneratedState {
 	return state
 }
 
-// IsRecordedOutput reports whether content is exactly what one of states
-// recorded for relPath, i.e. a file on disk holding it is unmodified qsdev
-// output that may be regenerated in place rather than a file the user owns.
+// IsRecordedOutput reports whether content is what one of states recorded
+// for relPath, exactly or as a CRLF checkout of it (see MatchesHash), i.e. a
+// file on disk holding it is unmodified qsdev output that may be regenerated
+// in place rather than a file the user owns.
 func IsRecordedOutput(states []types.GeneratedState, relPath string, content []byte) bool {
-	hash := ComputeHash(content)
 	for _, st := range states {
-		if recorded, ok := st.Files[relPath]; ok && recorded.Hash == hash {
+		if recorded, ok := st.Files[relPath]; ok && MatchesHash(content, recorded.Hash) {
 			return true
 		}
 	}
 	return false
+}
+
+// MatchesHash reports whether data is the content hash names, exactly or as
+// a checkout of it whose lines end in CRLF (Git's core.autocrlf, the Git for
+// Windows default, converts LF to CRLF in the working tree while the
+// repository keeps LF). Recorded hashes are over the generated LF content.
+func MatchesHash(data []byte, hash string) bool {
+	if ComputeHash(data) == hash {
+		return true
+	}
+	return bytes.Contains(data, []byte("\r\n")) && ComputeHash(crlfToLF(data)) == hash
+}
+
+// HoldsOutput reports whether existing, a file's content on disk, holds the
+// generated content: exactly, or as a CRLF checkout of it (EqualText) that
+// still works on goos. A script whose interpreter line then ends in CR cannot
+// be started by the Linux or macOS kernel, so that spelling does not hold it
+// there and the script must be rewritten.
+func HoldsOutput(existing, content []byte, goos string) bool {
+	if bytes.Equal(existing, content) {
+		return true
+	}
+	return EqualText(existing, content) && !shebang.Parse(existing).CRLFFails(goos)
+}
+
+// EqualText reports whether a and b are the same text once CRLF line endings
+// are read as LF: one is the other as a CRLF checkout. A lone CR is content.
+func EqualText(a, b []byte) bool {
+	return bytes.Equal(a, b) || bytes.Equal(crlfToLF(a), crlfToLF(b))
 }
 
 // OrphanedFiles returns paths that exist in oldState but are not present in
@@ -93,12 +123,13 @@ func CheckModified(stored types.GeneratedState, projectRoot string) map[string]F
 }
 
 // CheckFile compares the generated file at relPath under projectRoot with its
-// recorded state: it is unmodified only when both the content hash and, where
+// recorded state: it is unmodified only when both the content hash (of the
+// file or of its CRLF checkout read as LF, see MatchesHash) and, where
 // recorded and meaningful, the permission bits match. An empty file is
 // content like any other.
 func CheckFile(projectRoot, relPath string, fs types.FileState) FileStatus {
 	return checkOnDisk(projectRoot, relPath, fs.Hash, fs.Mode, func(data []byte) bool {
-		return ComputeHash(data) == fs.Hash
+		return MatchesHash(data, fs.Hash)
 	})
 }
 
@@ -109,9 +140,8 @@ func CheckFile(projectRoot, relPath string, fs types.FileState) FileStatus {
 // want is unmodified; any other difference, a lone CR included, is not. mode
 // is compared as CheckFile compares the recorded mode.
 func CheckContent(projectRoot, relPath string, want []byte, mode os.FileMode) FileStatus {
-	normalized := crlfToLF(want)
 	return checkOnDisk(projectRoot, relPath, ComputeHash(want), mode, func(data []byte) bool {
-		return bytes.Equal(crlfToLF(data), normalized)
+		return EqualText(data, want)
 	})
 }
 

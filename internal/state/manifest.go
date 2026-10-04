@@ -137,11 +137,17 @@ func ExpectedState(genState types.GeneratedState, manifest Manifest) types.Gener
 	return expected
 }
 
-// WriteManifest writes m to ManifestFile under projectRoot atomically.
+// WriteManifest writes m to ManifestFile under projectRoot atomically. A
+// manifest already holding that text, perhaps as a CRLF checkout (Git's
+// core.autocrlf), is left alone: rewriting it would only make Git report the
+// committed file modified.
 func WriteManifest(projectRoot string, m Manifest) error {
 	data, err := m.Marshal()
 	if err != nil {
 		return fmt.Errorf("rendering manifest: %w", err)
+	}
+	if existing, err := os.ReadFile(filepath.Join(projectRoot, ManifestFile())); err == nil && EqualText(existing, data) {
+		return nil
 	}
 	if err := fileutil.WriteFileAtomicInRoot(projectRoot, ManifestFile(), data, fileutil.ModeReadWrite); err != nil {
 		return fmt.Errorf("writing manifest %s: %w", ManifestFile(), err)

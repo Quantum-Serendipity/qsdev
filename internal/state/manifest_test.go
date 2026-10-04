@@ -255,3 +255,39 @@ func TestLoadManifest_DropsLocalOnlyEntry(t *testing.T) {
 		t.Errorf("LoadManifest() = %v, want %v", got, want)
 	}
 }
+
+// TestWriteManifest_KeepsCRLFCheckout pins that rewriting the manifest a CRLF
+// checkout (Git's core.autocrlf) already holds leaves the file untouched, so
+// Git does not report the committed manifest modified, while a manifest with
+// other entries is rewritten.
+func TestWriteManifest_KeepsCRLFCheckout(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	m := BuildManifest(RecordFiles([]types.GeneratedFile{
+		{Path: "a.md", Content: []byte("a"), Strategy: types.Overwrite},
+		{Path: "b.md", Content: []byte("b"), Strategy: types.Overwrite},
+	}))
+	data, err := m.Marshal()
+	if err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(dir, ManifestFile())
+	crlf := []byte(strings.ReplaceAll(string(data), "\n", "\r\n"))
+	if err := os.WriteFile(path, crlf, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := WriteManifest(dir, m); err != nil {
+		t.Fatalf("WriteManifest() error: %v", err)
+	}
+	if got, _ := os.ReadFile(path); string(got) != string(crlf) {
+		t.Errorf("WriteManifest rewrote the CRLF checkout of the same manifest:\n%q", got)
+	}
+
+	delete(m, "b.md")
+	if err := WriteManifest(dir, m); err != nil {
+		t.Fatalf("WriteManifest() error: %v", err)
+	}
+	if got, _ := os.ReadFile(path); strings.Contains(string(got), "b.md") {
+		t.Errorf("WriteManifest kept a stale manifest:\n%q", got)
+	}
+}

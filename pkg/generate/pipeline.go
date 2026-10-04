@@ -28,7 +28,10 @@ const SidecarSuffix = ".new"
 //
 // Each file's MergeStrategy is enforced when the file already exists (see
 // existingContent), so no caller can accidentally overwrite user content by
-// omitting a merge option.
+// omitting a merge option. An existing file holding the generated content as
+// a CRLF checkout (Git's core.autocrlf) is that content and is left alone,
+// and every generated script is pinned to LF line endings in .gitattributes
+// (see scriptAttributeLines).
 func WriteFiles(files []types.GeneratedFile, opts PipelineOptions) (WriteResult, error) {
 	if !filepath.IsAbs(opts.ProjectRoot) {
 		return WriteResult{}, fmt.Errorf("project root must be absolute: %q", opts.ProjectRoot)
@@ -47,6 +50,12 @@ func WriteFiles(files []types.GeneratedFile, opts PipelineOptions) (WriteResult,
 	resolvedRoot, err := filepath.EvalSymlinks(opts.ProjectRoot)
 	if err != nil {
 		return WriteResult{}, fmt.Errorf("resolving project root symlinks: %w", err)
+	}
+
+	if !opts.DryRun {
+		// Before the scripts are written, so a partial write never leaves
+		// one to be committed without its line-ending pin.
+		pinScriptLineEndings(opts.ProjectRoot, files)
 	}
 
 	w := &fileWriter{
@@ -229,7 +238,8 @@ type existingDecision struct {
 //   - Overwrite, LibraryManaged: replace with the generated content.
 //   - Skip: keep the existing file (it belongs to the user, or cannot be
 //     read) unless it is unmodified qsdev output — the generated content
-//     itself, or content matching a recorded state hash — which is
+//     itself, or content matching a recorded state hash, either perhaps as
+//     a CRLF checkout (state.EqualText, state.MatchesHash) — which is
 //     regenerated in place (skip-if-exists; Force does not override this).
 //   - ManualMerge: replace only when the existing file is known qsdev output
 //     (identical content, or content matching a recorded state hash) or the
@@ -260,20 +270,22 @@ func (w *fileWriter) existingContent(file types.GeneratedFile, fullPath string) 
 
 	switch file.Strategy {
 	case types.Skip:
-		if bytes.Equal(existing, file.Content) || w.isRecordedOutput(file.Path, existing) {
+		if state.EqualText(existing, file.Content) || w.isRecordedOutput(file.Path, existing) {
 			return existingDecision{content: file.Content}, nil
 		}
 		return existingDecision{skip: true}, nil
 
 	case types.ManualMerge:
-		if w.opts.Force || bytes.Equal(existing, file.Content) || w.isRecordedOutput(file.Path, existing) {
+		if w.opts.Force || state.EqualText(existing, file.Content) || w.isRecordedOutput(file.Path, existing) {
 			return existingDecision{content: file.Content}, nil
 		}
 		return existingDecision{sidecar: true}, nil
 
 	case types.SectionMarker, types.ThreeWayMerge:
-		if len(bytes.TrimSpace(existing)) == 0 {
-			// Empty on-disk file: nothing to preserve, write generated content.
+		if len(bytes.TrimSpace(existing)) == 0 || state.EqualText(existing, file.Content) {
+			// Empty on-disk file, or the generated content itself (perhaps
+			// as a CRLF checkout): nothing to preserve, write generated
+			// content.
 			return existingDecision{content: file.Content}, nil
 		}
 		merged, err := w.mergeExisting(file, existing)

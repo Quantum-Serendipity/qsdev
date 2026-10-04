@@ -38,7 +38,7 @@ func TestMain(m *testing.M) {
 	_ = os.Setenv(branding.Get().EnvNoUpdate, "1")
 	instance.DefaultRuntime()
 	gdevaddons.Initialize()
-	gdevinstance.TestMain(m)
+	gdevinstance.TestMain(templateCleanupRunner{m})
 }
 
 const bogusSubcommand = "qsdev-no-such-subcommand"

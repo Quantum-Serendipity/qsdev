@@ -46,6 +46,8 @@ func guardrailEnv(t *testing.T) []string {
 	for _, kv := range os.Environ() {
 		name, _, _ := strings.Cut(kv, "=")
 		switch {
+		case name == "GORACE": // replaced by raceOptions below
+			continue
 		case name == "HOME", name == "TMPDIR", name == "TMP", name == "TEMP", name == "USERPROFILE",
 			strings.EqualFold(name, "APPDATA"), strings.EqualFold(name, "LOCALAPPDATA"),
 			strings.HasPrefix(name, "XDG_"), strings.HasPrefix(name, "CLAUDE"),
@@ -67,7 +69,16 @@ func guardrailEnv(t *testing.T) []string {
 		b.EnvNoUpdate+"=1",
 		cliHelperEnv+"=1",
 		humanHelperEnv+"=1",
+		raceOptions(),
 	)
+}
+
+// raceOptions returns the caller's GORACE setting with the race runtime's
+// exit delay switched off. A -race build sleeps atexit_sleep_ms (default one
+// second) before every exit, and these tests start hundreds of qsdev
+// processes; reports and exit codes are unaffected.
+func raceOptions() string {
+	return "GORACE=" + strings.TrimSpace(os.Getenv("GORACE")+" atexit_sleep_ms=0")
 }
 
 // agentEnv returns env as an AI agent's tool call sees it: inside a Claude
@@ -299,6 +310,12 @@ func assertGuardrails(t *testing.T, dir string, optedOut bool) {
 // block opted out through the documented command when optedOut is set.
 func initialisedProject(t *testing.T, env []string, optedOut bool) (string, bool) {
 	t.Helper()
+	return cachedProject(t, "initialised", env, optedOut, prepareInitialisedProject)
+}
+
+// prepareInitialisedProject runs the commands behind initialisedProject.
+func prepareInitialisedProject(t *testing.T, env []string, optedOut bool) (string, bool) {
+	t.Helper()
 	dir := newGuardrailProject(t, env)
 	mustQsdev(t, env, dir, "init", "--yes")
 	if optedOut {
@@ -312,6 +329,12 @@ func initialisedProject(t *testing.T, env []string, optedOut bool) (string, bool
 // is set it checks that `disable --force` is refused and reports that no
 // opt-out is committed.
 func claudeOnlyProject(t *testing.T, env []string, optedOut bool) (string, bool) {
+	t.Helper()
+	return cachedProject(t, "claude-only", env, optedOut, prepareClaudeOnlyProject)
+}
+
+// prepareClaudeOnlyProject runs the commands behind claudeOnlyProject.
+func prepareClaudeOnlyProject(t *testing.T, env []string, optedOut bool) (string, bool) {
 	t.Helper()
 	dir := newGuardrailProject(t, env)
 	mustQsdev(t, env, dir, "claude", "init", "--yes")
@@ -444,7 +467,8 @@ func TestGuardrailInvariant_EveryCommandPath(t *testing.T) {
 					t.Run(name, func(t *testing.T) {
 						t.Parallel()
 						env := guardrailEnv(t)
-						dir, committed := cp.prepare(t, env, optedOut)
+						// Every subset of a path starts from the same project.
+						dir, committed := cachedProject(t, "path "+cp.name, env, optedOut, cp.prepare)
 						seedHostileAnswers(t, dir, s)
 						args := cp.argsFor(committed)
 						if out, code := runQsdev(t, env, dir, nil, args...); code > cp.maxExit {

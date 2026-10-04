@@ -57,7 +57,7 @@ func TestHumanGate_SelfprotectBlocksSensitiveCommands(t *testing.T) {
 	env := guardrailEnv(t)
 	dir := newGuardrailProject(t, env)
 	app := branding.Get().AppName
-	verdict := func(command string) (string, int) {
+	verdict := func(t *testing.T, command string) (string, int) {
 		t.Helper()
 		payload, err := json.Marshal(map[string]any{
 			"hook_event_name": "PreToolUse",
@@ -70,16 +70,23 @@ func TestHumanGate_SelfprotectBlocksSensitiveCommands(t *testing.T) {
 		}
 		return runQsdev(t, agentEnv(env), dir, bytes.NewReader(payload), "selfprotect")
 	}
+	// Each verdict is a separate hook process reading the same project.
 	for _, args := range append(guardrailWeakeningCommands(t),
 		[]string{"self-update", "--no-strict"}, []string{"session", "allow", "X", "--session", "s"}) {
 		command := app + " " + strings.Join(args, " ")
-		if out, code := verdict(command); code != 2 || !strings.Contains(out, "SP-014") {
-			t.Errorf("selfprotect on %q: exit %d, want 2 with SP-014\n%s", command, code, out)
-		}
+		t.Run("deny "+command, func(t *testing.T) {
+			t.Parallel()
+			if out, code := verdict(t, command); code != 2 || !strings.Contains(out, "SP-014") {
+				t.Errorf("selfprotect on %q: exit %d, want 2 with SP-014\n%s", command, code, out)
+			}
+		})
 	}
 	for _, command := range []string{app + " status", app + " teardown --dry-run", app + " disable context7"} {
-		if out, code := verdict(command); code != 0 {
-			t.Errorf("selfprotect on %q: exit %d, want 0\n%s", command, code, out)
-		}
+		t.Run("allow "+command, func(t *testing.T) {
+			t.Parallel()
+			if out, code := verdict(t, command); code != 0 {
+				t.Errorf("selfprotect on %q: exit %d, want 0\n%s", command, code, out)
+			}
+		})
 	}
 }

@@ -363,13 +363,33 @@ func ProtectedHomes() []string {
 // symlink — including a dangling final one, which a write follows to create
 // its target.
 func Canonicalize(path string) (string, error) {
+	return canonicalize(nil, path)
+}
+
+// canonicalize is Canonicalize making its filesystem lookups through r.
+//
+// A non-nil r walks the path first. A walk that ends below a missing
+// component is the answer Canonicalize gives for that path: EvalSymlinks
+// Lstat-s the same components in the same order, so it fails at the same
+// missing one (not with a permission or loop error, which would have failed
+// the walk first) and Canonicalize falls through to resolveMissing, this
+// same walk. Taking it directly lets every path of r share the Lstat of each
+// directory instead of each EvalSymlinks re-reading its whole prefix. Any
+// other path (one that exists, or whose walk fails) takes the tiers below,
+// so their answers and errors are unchanged.
+func canonicalize(r *Resolver, path string) (string, error) {
 	expanded, err := ExpandTilde(path)
 	if err != nil {
 		return "", fmt.Errorf("canonicalizing path: %w", err)
 	}
+	if r != nil {
+		if canonical, missing, err := r.walk(expanded); err == nil && missing {
+			return canonical, nil
+		}
+	}
 
 	// Tier 1: the full path exists (including through symlinks).
-	resolved, err := filepath.EvalSymlinks(expanded)
+	resolved, err := r.EvalSymlinks(expanded)
 	if err == nil {
 		abs, absErr := filepath.Abs(resolved)
 		if absErr != nil {
@@ -384,7 +404,8 @@ func Canonicalize(path string) (string, error) {
 	}
 
 	// Tier 2: resolve the existing part and append the missing tail.
-	return resolveMissing(expanded)
+	resolved, _, err = r.walk(expanded)
+	return resolved, err
 }
 
 // maxSymlinkHops bounds symlink expansion in resolveMissing (Linux's
@@ -405,17 +426,24 @@ var errTooManySymlinks = errors.New("too many levels of symbolic links")
 // missing tail (a ".." pops it) and joined once at the end: joining component
 // by component re-cleans the whole path each time, O(depth^2).
 func resolveMissing(p string) (string, error) {
+	resolved, _, err := (*Resolver)(nil).walk(p)
+	return resolved, err
+}
+
+// walk is resolveMissing making its filesystem lookups through r. It also
+// reports whether the path ends below a missing component.
+func (r *Resolver) walk(p string) (canonical string, missing bool, err error) {
 	start, err := absWithoutClean(p)
 	if err != nil {
-		return "", fmt.Errorf("resolving absolute path: %w", err)
+		return "", false, fmt.Errorf("resolving absolute path: %w", err)
 	}
 
 	vol := filepath.VolumeName(start)
 	resolved := vol + string(filepath.Separator)
 	pending := splitPath(start[len(vol):])
-	// missing holds the components from the first missing one on; resolved
-	// is the existing directory they hang below.
-	var missing []string
+	// tail holds the components from the first missing one on; resolved is
+	// the existing directory they hang below.
+	var tail []string
 	hops := 0
 
 	for len(pending) > 0 {
@@ -424,31 +452,31 @@ func resolveMissing(p string) (string, error) {
 		switch {
 		case comp == ".":
 			continue
-		case comp == ".." && len(missing) > 0:
+		case comp == ".." && len(tail) > 0:
 			// A kernel walk fails at the missing component, so the path only
 			// reaches a file when the consumer cleans it lexically first
 			// (<dir>/missing/../lnk/x -> <dir>/lnk/x); once the tail is
 			// popped empty, resume resolving so a symlink after the ".." is
 			// still followed.
-			missing = missing[:len(missing)-1]
+			tail = tail[:len(tail)-1]
 			continue
 		case comp == "..":
 			resolved = filepath.Dir(resolved)
 			continue
-		case len(missing) > 0:
-			missing = append(missing, comp)
+		case len(tail) > 0:
+			tail = append(tail, comp)
 			continue
 		}
 
 		next := filepath.Join(resolved, comp)
-		info, err := os.Lstat(next)
+		info, err := r.lstat(next)
 		switch {
 		case errors.Is(err, fs.ErrNotExist) || errors.Is(err, syscall.ENOTDIR):
-			resolved = normalizeExisting(resolved)
-			missing = append(missing, comp)
+			resolved = normalizeExisting(r, resolved)
+			tail = append(tail, comp)
 			continue
 		case err != nil:
-			return "", fmt.Errorf("canonicalizing path %q: %w", p, err)
+			return "", false, fmt.Errorf("canonicalizing path %q: %w", p, err)
 		case info.Mode()&fs.ModeSymlink == 0:
 			resolved = next
 			continue
@@ -456,11 +484,11 @@ func resolveMissing(p string) (string, error) {
 
 		hops++
 		if hops > maxSymlinkHops {
-			return "", fmt.Errorf("canonicalizing path %q: %w", p, errTooManySymlinks)
+			return "", false, fmt.Errorf("canonicalizing path %q: %w", p, errTooManySymlinks)
 		}
-		target, err := os.Readlink(next)
+		target, err := r.readlink(next)
 		if err != nil {
-			return "", fmt.Errorf("canonicalizing path %q: %w", p, err)
+			return "", false, fmt.Errorf("canonicalizing path %q: %w", p, err)
 		}
 		if isRooted(target) {
 			// An absolute target restarts resolution at its root (the current
@@ -474,7 +502,7 @@ func resolveMissing(p string) (string, error) {
 		}
 		pending = append(splitPath(target), pending...)
 	}
-	return filepath.Join(append([]string{resolved}, missing...)...), nil
+	return filepath.Join(append([]string{resolved}, tail...)...), len(tail) > 0, nil
 }
 
 // normalizeExisting returns the platform's canonical spelling of dir, an
@@ -483,8 +511,8 @@ func resolveMissing(p string) (string, error) {
 // .claude) and fixes the case of each component, which a component-wise
 // Lstat walk does not; elsewhere it returns dir unchanged. On error dir is
 // kept as-is.
-func normalizeExisting(dir string) string {
-	if norm, err := filepath.EvalSymlinks(dir); err == nil {
+func normalizeExisting(r *Resolver, dir string) string {
+	if norm, err := r.EvalSymlinks(dir); err == nil {
 		return norm
 	}
 	return dir
@@ -645,13 +673,22 @@ var staticSegments = []segmentEntry{
 // whole path components: a directory segment ("x/y/") matches the directory
 // itself or anything below it, a file segment ("x/y") matches only at the end.
 // Component boundaries are required, so "foo.claude/hooks/x" does not match
-// ".claude/hooks/".
+// ".claude/hooks/". It runs for every segment on every path a rule checks, so
+// it scans key in place rather than building bounded copies of it.
 func hasPathSegment(key, seg string) bool {
-	bounded := "/" + key
-	if strings.HasSuffix(seg, "/") {
-		return strings.Contains(bounded+"/", "/"+seg)
+	name, dir := strings.CutSuffix(seg, "/")
+	for from := 0; from <= len(key); {
+		i := strings.Index(key[from:], name)
+		if i < 0 {
+			return false
+		}
+		start, end := from+i, from+i+len(name)
+		if (start == 0 || key[start-1] == '/') && (end == len(key) || dir && key[end] == '/') {
+			return true
+		}
+		from = start + 1
 	}
-	return strings.HasSuffix(bounded, "/"+seg)
+	return false
 }
 
 // matchOptions describe how the host filesystem compares names.

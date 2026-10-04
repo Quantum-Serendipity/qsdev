@@ -40,6 +40,9 @@ type scannedCommand struct {
 	// "/.config", a glob stays a glob), joined with any relative cd after it,
 	// or "" when nothing is known (popd, `cd -`).
 	cwdHint string
+	// fs answers the filesystem questions about the evaluation's paths (see
+	// EvalContext.fs); nil asks the filesystem afresh each time.
+	fs *canon.Resolver
 }
 
 // scannedCommands returns the parsed commands annotated with their effective
@@ -59,7 +62,7 @@ func (ctx *EvalContext) scannedCommands() ([]scannedCommand, error) {
 	}
 	out := make([]scannedCommand, 0, len(cmds))
 	for _, c := range cmds {
-		sc := scannedCommand{Command: c, cwd: st.cwd, inProtectedDir: st.inProtected, cwdUnknown: st.unknown, cwdHint: st.hint}
+		sc := scannedCommand{Command: c, cwd: st.cwd, inProtectedDir: st.inProtected, cwdUnknown: st.unknown, cwdHint: st.hint, fs: &ctx.fs}
 		out = append(out, sc)
 		st.apply(sc)
 	}
@@ -164,8 +167,8 @@ func isProtectedDir(dir string) bool {
 // protected directory (so `settings.json` under a .claude directory counts).
 // An absolute path is also checked after canonicalization, so a symlink that
 // leads into a protected directory (`/tmp/c/settings.json` with /tmp/c ->
-// ~/.claude) is recognised.
-func resolvedProtected(p string) bool {
+// ~/.claude) is recognised. Filesystem lookups go through fs.
+func resolvedProtected(fs *canon.Resolver, p string) bool {
 	p = filepath.Clean(p)
 	if pathProtected(p) {
 		return true
@@ -173,7 +176,7 @@ func resolvedProtected(p string) bool {
 	if !isRooted(p) {
 		return false
 	}
-	canonical, err := canon.Canonicalize(p)
+	canonical, err := fs.Canonicalize(p)
 	return err == nil && canonical != p && pathProtected(canonical)
 }
 
@@ -430,7 +433,7 @@ func refersProtected(sc scannedCommand, p string) bool {
 			}
 			continue
 		}
-		if resolvedProtected(resolved) {
+		if resolvedProtected(sc.fs, resolved) {
 			return true
 		}
 	}

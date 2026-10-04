@@ -169,7 +169,7 @@ func findStartCanReachProtected(sc scannedCommand, start string) bool {
 			return true
 		}
 	}
-	return isProtectedAncestor(p)
+	return isProtectedAncestor(sc.fs, p)
 }
 
 // compileFindPattern returns the matcher of one find name/path predicate for

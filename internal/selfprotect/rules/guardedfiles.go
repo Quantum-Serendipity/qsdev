@@ -1,9 +1,7 @@
 package rules
 
 import (
-	"os"
 	"path"
-	"path/filepath"
 	"slices"
 	"strings"
 
@@ -91,7 +89,7 @@ func mayBeDir(sc scannedCommand, word string, earlier []scannedCommand) bool {
 	if !ok || !isRooted(p) {
 		return true
 	}
-	fi, err := os.Stat(p)
+	fi, err := sc.fs.Stat(p)
 	return err == nil && fi.IsDir()
 }
 
@@ -117,7 +115,7 @@ func guardedTarget(sc scannedCommand, word string, names []string) string {
 	if !ok || !isRooted(p) {
 		return ""
 	}
-	resolved, err := filepath.EvalSymlinks(p)
+	resolved, err := sc.fs.EvalSymlinks(p)
 	if err != nil || resolved == p {
 		return ""
 	}

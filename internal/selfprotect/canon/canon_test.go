@@ -555,7 +555,7 @@ func resolveMissingReference(p string) (string, error) {
 		switch {
 		case errors.Is(err, fs.ErrNotExist) || errors.Is(err, syscall.ENOTDIR):
 			missing = true
-			resolved = filepath.Join(normalizeExisting(resolved), comp)
+			resolved = filepath.Join(normalizeExisting(nil, resolved), comp)
 			continue
 		case err != nil:
 			return "", err
@@ -692,5 +692,38 @@ func BenchmarkResolveMissing_DeepTail(b *testing.B) {
 				}
 			}
 		})
+	}
+}
+
+// hasPathSegmentReference is the original hasPathSegment, which built
+// bounded copies of key for every segment.
+func hasPathSegmentReference(key, seg string) bool {
+	bounded := "/" + key
+	if strings.HasSuffix(seg, "/") {
+		return strings.Contains(bounded+"/", "/"+seg)
+	}
+	return strings.HasSuffix(bounded, "/"+seg)
+}
+
+// TestHasPathSegment_MatchesReference checks the in-place scan against the
+// original on component boundaries, repeated and overlapping matches, and
+// empty keys and segments.
+func TestHasPathSegment_MatchesReference(t *testing.T) {
+	t.Parallel()
+	keys := []string{
+		"", "/", "a", "/a", "a/", "//", "a//b", ".claude", "/home/u/.claude/hooks/x",
+		"foo.claude/hooks/x", "/x/.claude/hooks", "/x/.claude/hooksy", ".claude/.claude/hooks/",
+		"/p/.config/app/.config/app", "aaa/aa", "/a/b/a/b/c",
+	}
+	segs := []string{
+		"", "/", "a", "a/", "aa", "aa/", ".claude/hooks/", ".claude/hooks", ".claude/", "hooks/x",
+		".config/app/", "a/b/c", "b/a/", "x",
+	}
+	for _, key := range keys {
+		for _, seg := range segs {
+			if got, want := hasPathSegment(key, seg), hasPathSegmentReference(key, seg); got != want {
+				t.Errorf("hasPathSegment(%q, %q) = %v, want %v", key, seg, got, want)
+			}
+		}
 	}
 }

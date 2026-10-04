@@ -2,7 +2,6 @@ package rules
 
 import (
 	"maps"
-	"os"
 	"path"
 	"path/filepath"
 	"slices"
@@ -95,7 +94,7 @@ func ancestorCandidates(sc scannedCommand) []string {
 		return out
 	}
 	resolved, known := resolveWord(sc, dest)
-	if !known || hasGlobMeta(dest) || noTargetDirectory(sc) || !isDir(resolved) {
+	if !known || hasGlobMeta(dest) || noTargetDirectory(sc) || !isDir(sc.fs, resolved) {
 		return append(out, dest)
 	}
 	for _, src := range sources {
@@ -131,9 +130,10 @@ func noTargetDirectory(sc scannedCommand) bool {
 	return false
 }
 
-// isDir reports whether p is an existing directory (following symlinks).
-func isDir(p string) bool {
-	info, err := os.Stat(p)
+// isDir reports whether p is an existing directory (following symlinks),
+// asking fs.
+func isDir(fs *canon.Resolver, p string) bool {
+	info, err := fs.Stat(p)
 	return err == nil && info.IsDir()
 }
 
@@ -159,12 +159,12 @@ func wordReachesProtectedAncestor(sc scannedCommand, p string) bool {
 		}
 		if isRelativePath(v) && sc.cwdUnknown {
 			joined := path.Join(filepath.ToSlash(sc.cwdHint), filepath.ToSlash(v))
-			if tailReachesAncestor(joined) || rootedReachesAncestor(joined) {
+			if tailReachesAncestor(joined) || rootedReachesAncestor(sc.fs, joined) {
 				return true
 			}
 			continue
 		}
-		if resolved, known := resolveWord(sc, v); known && rootedReachesAncestor(resolved) {
+		if resolved, known := resolveWord(sc, v); known && rootedReachesAncestor(sc.fs, resolved) {
 			return true
 		}
 	}
@@ -173,8 +173,8 @@ func wordReachesProtectedAncestor(sc scannedCommand, p string) bool {
 
 // rootedReachesAncestor reports whether p, once a leading ~ is expanded, is
 // an absolute path or glob that can name a directory at or above a home- or
-// system-anchored protected location.
-func rootedReachesAncestor(p string) bool {
+// system-anchored protected location. Filesystem lookups go through fs.
+func rootedReachesAncestor(fs *canon.Resolver, p string) bool {
 	p = filepath.Clean(expandTilde(p))
 	if !isRooted(p) {
 		return false
@@ -182,19 +182,19 @@ func rootedReachesAncestor(p string) bool {
 	if hasGlobMeta(p) {
 		return globReachesAncestor(p)
 	}
-	return isProtectedAncestor(p)
+	return isProtectedAncestor(fs, p)
 }
 
 // isProtectedAncestor reports whether the absolute path p is a protected
 // location or a directory above one, under its spelling as written or its
 // symlink-resolved one. The comparison is on path keys with a trailing
 // separator, so ~/.conf is not taken for an ancestor of ~/.config/<app>/.
-func isProtectedAncestor(p string) bool {
+func isProtectedAncestor(fs *canon.Resolver, p string) bool {
 	locs := canon.ProtectedLocations()
 	if locs == nil {
 		return true // the table could not be built: fail closed
 	}
-	for _, s := range pathSpellings(p) {
+	for _, s := range pathSpellings(fs, p) {
 		prefix := strings.TrimSuffix(canon.PathKey(s), "/") + "/"
 		for _, loc := range locs {
 			key := canon.PathKey(loc)

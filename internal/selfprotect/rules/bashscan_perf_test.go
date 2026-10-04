@@ -41,6 +41,10 @@ var adversarialPayloads = []struct {
 	// 20,000 path variants, each canonicalized against the filesystem: linear
 	// but syscall-bound, so it gets a wider CPU budget.
 	{name: "many comma group words", build: repeatAfter("echo ", "{a,b} ", ""), n: 10000, cpuBudget: 3 * time.Second, want: Allow},
+	// The same words as operands of commands that also stat, resolve and
+	// symlink-resolve each one (hook targets, ancestors, guarded files).
+	{name: "many removed comma group words", build: repeatAfter("rm ", "{a,b} ", ""), n: 10000, cpuBudget: 3 * time.Second, want: Allow},
+	{name: "many moved comma group words", build: repeatAfter("mv ", "{a,b} ", "d"), n: 10000, cpuBudget: 3 * time.Second, want: Allow},
 	// A cd chain is quadratic: the working directory grows one component per
 	// cd and every later command handles it. Doubling it measures about 3
 	// (4 asymptotically); the cubic canonicalization before the fix measured

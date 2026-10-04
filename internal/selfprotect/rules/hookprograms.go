@@ -77,6 +77,9 @@ type hookTargets struct {
 	home string
 	// dirKeys memoizes the keys of each directory's spellings.
 	dirKeys map[string][]string
+	// fs answers the filesystem questions about the paths checked against
+	// the targets (nil asks the filesystem afresh).
+	fs *canon.Resolver
 }
 
 // hookTargetsFor returns the hook command targets, computed on first use and
@@ -88,14 +91,14 @@ func (ctx *EvalContext) hookTargetsFor() *hookTargets {
 		if ctx.hookEnv != nil {
 			env = *ctx.hookEnv
 		}
-		ctx.hookTargets = env.targets()
+		ctx.hookTargets = env.targets(&ctx.fs)
 	}
 	return ctx.hookTargets
 }
 
 // targets resolves every hook command registered in the settings files.
-func (e hookEnv) targets() *hookTargets {
-	t := &hookTargets{files: make(map[string]bool), names: make(map[string][]string), dirKeys: make(map[string][]string)}
+func (e hookEnv) targets(fs *canon.Resolver) *hookTargets {
+	t := &hookTargets{files: make(map[string]bool), names: make(map[string][]string), dirKeys: make(map[string][]string), fs: fs}
 	if home, err := os.UserHomeDir(); err == nil {
 		t.home = home
 	}
@@ -173,9 +176,9 @@ func (e hookEnv) addPathLookup(t *hookTargets, name string, followShebang bool) 
 		for _, n := range names {
 			p := filepath.Join(dir, n)
 			t.addInDir(dir, n)
-			if info, err := os.Stat(p); err == nil && !info.IsDir() && found == "" {
+			if info, err := t.fs.Stat(p); err == nil && !info.IsDir() && found == "" {
 				found = p
-				if resolved, err := canon.Canonicalize(p); err == nil {
+				if resolved, err := t.fs.Canonicalize(p); err == nil {
 					t.files[canon.PathKey(resolved)] = true // the file a symlinked program runs
 				}
 			}
@@ -193,7 +196,7 @@ func (e hookEnv) addPathLookup(t *hookTargets, name string, followShebang bool) 
 
 // add records file p under its written and symlink-resolved spellings.
 func (t *hookTargets) add(p string) {
-	for _, s := range pathSpellings(p) {
+	for _, s := range pathSpellings(t.fs, p) {
 		t.files[canon.PathKey(s)] = true
 	}
 	t.addForms(p)
@@ -204,7 +207,7 @@ func (t *hookTargets) add(p string) {
 func (t *hookTargets) addInDir(dir, name string) {
 	keys, ok := t.dirKeys[dir]
 	if !ok {
-		for _, d := range pathSpellings(dir) {
+		for _, d := range pathSpellings(t.fs, dir) {
 			keys = append(keys, canon.PathKey(d))
 		}
 		t.dirKeys[dir] = keys
@@ -233,7 +236,7 @@ func (t *hookTargets) addForms(p string) {
 
 // has reports whether path p (absolute) is a hook target.
 func (t *hookTargets) has(p string) bool {
-	for _, s := range pathSpellings(p) {
+	for _, s := range pathSpellings(t.fs, p) {
 		if t.files[canon.PathKey(s)] {
 			return true
 		}
@@ -241,11 +244,12 @@ func (t *hookTargets) has(p string) bool {
 	return false
 }
 
-// pathSpellings returns p cleaned and, when it resolves, symlink-resolved.
-func pathSpellings(p string) []string {
+// pathSpellings returns p cleaned and, when it resolves through fs,
+// symlink-resolved.
+func pathSpellings(fs *canon.Resolver, p string) []string {
 	p = filepath.Clean(p)
 	out := []string{p}
-	if resolved, err := canon.Canonicalize(p); err == nil && resolved != p {
+	if resolved, err := fs.Canonicalize(p); err == nil && resolved != p {
 		out = append(out, resolved)
 	}
 	return out
@@ -338,7 +342,8 @@ func (t *hookTargets) writesIn(scs []scannedCommand, depth int) string {
 		}
 		nested := make([]scannedCommand, len(sub))
 		for i, c := range sub {
-			nested[i] = scannedCommand{Command: c, cwd: sc.cwd, cwdUnknown: sc.cwdUnknown, cwdHint: sc.cwdHint, inProtectedDir: sc.inProtectedDir}
+			nested[i] = sc // runs where sc does
+			nested[i].Command = c
 		}
 		if p := t.writesIn(nested, depth+1); p != "" {
 			return p
@@ -438,7 +443,7 @@ func (t *hookTargets) copyIntoDir(sc scannedCommand) string {
 		dest = resolved
 	}
 	var names []string
-	for _, d := range pathSpellings(dest) {
+	for _, d := range pathSpellings(t.fs, dest) {
 		names = append(names, t.names[canon.PathKey(d)]...)
 	}
 	for _, src := range sources {

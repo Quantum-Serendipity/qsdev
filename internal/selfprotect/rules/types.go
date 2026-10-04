@@ -66,6 +66,12 @@ type EvalContext struct {
 	mentions, mutates         bool
 	mentionsDone, mutatesDone bool
 
+	// fs answers every filesystem question the rules ask about the paths of
+	// this one decision, so each distinct path or directory is looked up once
+	// however many words name it. scannedCommands and hookTargetsFor hand it
+	// out; the context must not be copied once they have.
+	fs canon.Resolver
+
 	// hookEnv overrides the session description SP-011 resolves hook
 	// commands from (tests only; nil describes the running session), and
 	// hookTargets memoizes the result. Read through hookTargetsFor.

@@ -35,9 +35,10 @@ func TestOpaqueExpansions(t *testing.T) {
 
 // TestInvokedSpecs pins where the program counts as invoked and whether the
 // match rests on computed words: in command position and in command lines
-// other programs run, every literal or computed form; as an unquoted
-// argument of another program, only a written-out subcommand; as a quoted
-// argument, never; and never with a literal help or version flag.
+// other programs run, every literal or computed form (never with a literal
+// help or version flag); as a mention (an argument, a word of a quoted
+// string, an assignment's value), only a written-out subcommand, whichever
+// program takes the text.
 func TestInvokedSpecs(t *testing.T) {
 	t.Parallel()
 	specs := []CommandSpec{
@@ -48,6 +49,7 @@ func TestInvokedSpecs(t *testing.T) {
 		none = iota
 		literal
 		computed
+		mention
 	)
 	tests := []struct {
 		command string
@@ -59,10 +61,13 @@ func TestInvokedSpecs(t *testing.T) {
 		{"rg qsdev *.md", none},
 		{"qsdev --version $V", none},
 		{"qsdev $CMD --help", none},
-		{`grep -l "qsdev teardown" docs/*`, none},
 		{"cat qsdev $X", none},
+		{"echo qsdev $X", none},
+		{"grep qsdev $FILE", none},
+		{`rg "qsdev" docs | head; node build.js`, none},
 		{"qsdev help defaults pin", none},
 		{"qsdev -h $X", none},
+		{"qsdev defaults pin --help", none},
 		{"qsdev defaults pin --reason=--help", literal},
 		{"qsdev defaults pin --reason --help", literal},
 		{"qsdev defaults pin -- --help", literal},
@@ -70,6 +75,12 @@ func TestInvokedSpecs(t *testing.T) {
 		{"qsdev --config=x defaults x pin", none},
 		// The computed forms the previous fix closed stay closed.
 		{"Q=qsdev; $Q defaults pin", computed},
+		{"Q=qsdev; $Q $S defaults pin", computed},
+		{`c=qsdev; s="defaults pin"; $c $s`, computed},
+		{"c=qsdev; $c $s", computed},
+		{"Q=qsdev; $Q", none},
+		{"Q=qsdev; $Q --help", none},
+		{"$A $B", none},
 		{"P=pin; qsdev defaults $P", computed},
 		{"qsdev defaults $(echo pin)", computed},
 		{"echo pin | xargs qsdev defaults", computed},
@@ -90,54 +101,82 @@ func TestInvokedSpecs(t *testing.T) {
 		{`powershell -command "qsdev teardown"`, literal},
 		{`CMD /C "qsdev teardown"`, literal},
 		{`sh -c "$Q defaults pin"`, computed},
-		// An unquoted argument with the subcommand written out.
-		{`find . -exec qsdev teardown \;`, literal},
-		{"devenv shell qsdev defaults pin", literal},
+		// An argument, a word of a quoted string or an assignment's value
+		// names the program as a mention: with the subcommand written out
+		// it matches whichever program takes it, since many run text they
+		// are given as code; data that only names the command matches too.
+		{`find . -exec qsdev teardown \;`, mention},
+		{`find . -exec "qsdev" teardown \;`, mention},
+		{"devenv shell qsdev defaults pin", mention},
 		{"devenv shell qsdev defaults $P", none},
 		{"echo pin | xargs devenv shell qsdev defaults", none},
-		// A quoted string of several words is text unless the line runs it
-		// as code; a word quoted on its own is the argument it spells.
-		{`echo "see qsdev teardown"`, none},
-		{`echo "run: qsdev teardown" > notes.md`, none},
-		{`git commit -m "qsdev teardown"`, none},
-		{`git commit -m "docs: explain qsdev teardown"`, none},
-		{`git commit -m "don't run qsdev teardown"`, none},
-		{`echo "docs mention qsdev defaults pin here"`, none},
-		{`grep "qsdev defaults pin" README.md`, none},
-		{`git log --grep="qsdev teardown" -n 5`, none},
-		{`rg -n "qsdev defaults pin" docs/ $DIR`, none},
-		{`echo "qsdev teardown" > notes.md; cat notes.md`, none},
-		{`echo "qsdev teardown" | sh`, literal},
-		{`echo 'qsdev defaults pin' | bash`, literal},
-		{`printf 'qsdev teardown\n' | bash`, literal},
+		{`echo "qsdev teardown" | sh`, mention},
+		{`echo 'qsdev defaults pin' | bash`, mention},
+		{`printf 'qsdev teardown\n' | bash`, mention},
 		{`printf 'cd /x\nqsdev teardown' | sh`, literal},
-		{`bash <<< "qsdev teardown"`, literal},
-		{`sh <<< 'qsdev defaults pin'`, literal},
-		{`ssh localhost "qsdev teardown"`, literal},
-		{`watch -n1 "qsdev teardown"`, literal},
-		{`tmux new -d "qsdev teardown"`, literal},
-		{`echo "qsdev teardown" | python3`, literal},
-		{`echo "qsdev teardown" | xargs -0 sh -c`, literal},
-		{`echo "qsdev teardown" > x.sh && sh x.sh`, literal},
-		{`echo "qsdev teardown" > x.sh; chmod +x x.sh; ./x.sh`, literal},
-		{`echo "qsdev teardown" | tee /tmp/x.sh; /tmp/x.sh`, literal},
-		{`env -S '-u HOME qsdev teardown'`, literal},
-		{`find . -exec "qsdev" teardown \;`, literal},
+		{`bash <<< "qsdev teardown"`, mention},
+		{`read -r x <<< "qsdev teardown"; $x`, mention},
+		{`ssh localhost "qsdev teardown"`, mention},
+		{`echo "qsdev teardown" > x.sh && sh x.sh`, mention},
+		{`trap "qsdev teardown" EXIT`, mention},
+		{`git rebase -x "qsdev teardown" HEAD~1`, mention},
+		{`flock /tmp/l -c "qsdev teardown"`, mention},
+		{`parallel ::: "qsdev teardown"`, mention},
+		{`parallel ::: "qsdev teardown" --help`, mention},
+		{`npx -c "qsdev teardown"`, mention},
+		{`npm exec -c "qsdev defaults pin"`, mention},
+		{`vim -c '!qsdev teardown'`, mention},
+		{`ex -c '!qsdev teardown'`, mention},
+		{`less -c "!qsdev teardown" x`, mention},
+		{`osascript -e 'do shell script "qsdev teardown"'`, mention},
+		{`sed -n '1e qsdev teardown' x`, mention},
+		{`expect -c 'spawn qsdev teardown'`, mention},
+		{`gdb -batch -ex "shell qsdev teardown"`, mention},
+		{`git -c alias.z='!qsdev teardown' z`, mention},
+		{`x="qsdev teardown"; $x`, mention},
+		{`x='qsdev defaults pin'; ${x}`, mention},
+		{`set -- "qsdev teardown"; $1`, mention},
+		{`PROMPT_COMMAND="qsdev teardown" bash -i`, mention},
+		{`GIT_EDITOR="qsdev teardown" git commit`, mention},
+		{`GIT_SSH_COMMAND="qsdev teardown" git fetch`, mention},
+		{`EDITOR="qsdev teardown" crontab -e`, mention},
+		{`echo "see qsdev teardown"`, mention},
+		{`echo "run: qsdev teardown" > notes.md`, mention},
+		{`git commit -m "qsdev teardown"`, mention},
+		{`git commit -m "docs: explain qsdev teardown"`, mention},
+		{`grep -l "qsdev teardown" docs/*`, mention},
+		{`git log --grep="qsdev teardown" -n 5`, mention},
+		{`rg -n "qsdev defaults pin" docs/ $DIR`, mention},
+		// A mention needs the name to start a word and the subcommand
+		// written out after it.
+		{`echo "myqsdev teardown"`, none},
+		{`echo "qsdev-teardown"`, none},
+		{`echo "qsdev" teardown2`, none},
+		{`git commit -m "qsdev $X"`, none},
+		{`env -S '-u HOME qsdev teardown'`, mention},
 		{`"C:\tools\qsdev.exe" teardown`, literal},
 	}
 	for _, tt := range tests {
 		t.Run(tt.command, func(t *testing.T) {
 			t.Parallel()
+			// The most certain hit decides: literal, then mention, then
+			// computed.
+			rank := map[int]int{none: 0, computed: 1, mention: 2, literal: 3}
 			got := none
 			for _, h := range InvokedSpecs(tt.command, "qsdev", specs) {
-				if h.Computed && got == none {
-					got = computed
-				} else if !h.Computed {
-					got = literal
+				kind := literal
+				switch {
+				case h.Computed:
+					kind = computed
+				case h.Mention:
+					kind = mention
+				}
+				if rank[kind] > rank[got] {
+					got = kind
 				}
 			}
 			if got != tt.want {
-				t.Errorf("InvokedSpecs(%q) = %d, want %d (0 none, 1 literal, 2 computed)", tt.command, got, tt.want)
+				t.Errorf("InvokedSpecs(%q) = %d, want %d (0 none, 1 literal, 2 computed, 3 mention)", tt.command, got, tt.want)
 			}
 		})
 	}
@@ -159,7 +198,8 @@ func TestInvokedSpecsLinear(t *testing.T) {
 		"mention run":      func(n int) string { return "echo " + strings.Repeat("qsdev defaults ", n) + "pin" },
 		"command line run": func(n int) string { return strings.Repeat("sh -c ", n) + "qsdev defaults pin" },
 		"quoted text run":  func(n int) string { return `echo "` + strings.Repeat("qsdev defaults ", n) + `pin" | sh` },
-		"script path run":  func(n int) string { return strings.Repeat("./x.sh ", n) + "x.sh" },
+		"mention flag run": func(n int) string { return "echo " + strings.Repeat("qsdev -v ", n) },
+		"assignment run":   func(n int) string { return strings.Repeat("x=qsdev ", n) + "defaults pin" },
 	} {
 		testutil.AssertLinearTime(t, "InvokedSpecs on "+name, 25000, func(n int) {
 			InvokedSpecs(build(n), "qsdev", specs)

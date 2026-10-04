@@ -3,41 +3,26 @@ package cmdscan
 import (
 	"slices"
 	"strings"
+	"unicode"
 )
 
 // This file finds where a command line may run a program, judged on the raw
 // text rather than a parse (see InvokedSpecs): the text is split into simple
-// commands at shell operators and into words at blanks, with quotes removed,
-// and only a word in command position, or one that may be a program another
-// program runs, counts; a word of a quoted string of several words counts
-// only when the text may run that string as code.
-
-// shellWord is one word of the raw text.
-type shellWord struct {
-	// path is the word with its quotes removed and its backslashes kept,
-	// as a Windows path is written.
-	path string
-	// inString is set when the word is part of a quoted string that holds
-	// several words ("qsdev teardown"): the shell passes that string to its
-	// program as one argument, so it is text, which only a program that runs
-	// text as code reads as a command (see runsQuotedText). A word quoted on
-	// its own ("qsdev") is the argument it spells, which a program may run.
-	inString bool
-}
+// commands at shell operators and into words at blanks, with quotes removed.
+// A word in command position counts as the program; a word anywhere else
+// that names it (an argument, a word of a quoted string, an assignment's
+// value) counts as a mention, which matches only with its subcommand written
+// out.
 
 // simpleCommand is the words of one simple command of the raw text, from a
 // command separator to the next.
 type simpleCommand struct {
-	words []shellWord
+	// paths holds each word with its quotes removed and its backslashes
+	// kept, as a Windows path is written.
+	paths []string
 	// texts holds each word with its quotes and backslashes removed, as the
 	// shell's escapes read it (q\sdev is qsdev).
 	texts []string
-	// programs holds the indexes of the words in command position: the
-	// program word of the command and of each command line it runs.
-	programs []int
-	// runsString is set when a wrapper runs a string as a command line
-	// (`env -S '...'`).
-	runsString bool
 	// invs are the places the command may run the program.
 	invs []invocation
 }
@@ -49,12 +34,20 @@ type invocation struct {
 	// literalProgram is set when the program word names the program itself;
 	// otherwise it is a word whose value is unknown (a variable, a command
 	// substitution, a word xargs replaces), and at least one path word must
-	// be literal for a match, so that every `cp $a $b` is not one.
+	// be literal for a match, so that every `cp $a $b` is not one, unless
+	// anchored is set.
 	literalProgram bool
-	// mention is set when the word is an argument of another program that
-	// may run it (`find -exec`, `devenv shell`) or may only name it (`grep
-	// qsdev`): only a fully literal invocation then matches, so a glob or a
-	// variable after it does not stand for a computed subcommand.
+	// anchored is set when the program word is computed and the text assigns
+	// the program's name to a variable (`Q=qsdev; $Q $S`), which the word may
+	// expand: a computed path word after it then matches too.
+	anchored bool
+	// mention is set when the word is not in command position: an argument
+	// of another program, which may run it (`find -exec`, `devenv shell`) or
+	// only name it (`grep qsdev`), a word of a quoted string, which another
+	// program may run as code (`trap "..." EXIT`, `git rebase -x "..."`), or
+	// an assignment's value (`x="qsdev ..."; $x`). Only a fully literal
+	// invocation then matches, so a glob or a variable after it does not
+	// stand for a computed subcommand.
 	mention bool
 	// open is set when words the text does not show may follow the command:
 	// xargs appends what it reads from its input.
@@ -74,43 +67,35 @@ const wordBreaks = " \t<>"
 // one may then be taken for a command, which errs towards the human gate.
 // Quotes nest as the shell reads them (a " inside '...' does not open a
 // string), and every quote character is dropped from the words, so a quote
-// cannot hide a program name. A word that shares a quoted string with
-// another word is marked inString.
+// cannot hide a program name.
 func splitCommands(text string) []*simpleCommand {
 	var cmds []*simpleCommand
 	cur := &simpleCommand{}
 	var b strings.Builder
-	// quote is the quote character of the open string, or 0; multiWord is
-	// set once the open string holds a break, so every word in it from then
-	// on, and the one the break ends, is part of a string of several words.
+	// quote is the quote character of the open string, or 0.
 	var quote byte
-	multiWord, inString := false, false
 	endWord := func() {
 		if b.Len() > 0 {
-			cur.words = append(cur.words, shellWord{path: b.String(), inString: inString})
+			cur.paths = append(cur.paths, b.String())
 			cur.texts = append(cur.texts, strings.ReplaceAll(b.String(), `\`, ""))
 		}
 		b.Reset()
-		inString = false
 	}
 	for i := 0; i < len(text); i++ {
 		r := text[i]
 		if r == '\'' || r == '"' {
 			switch quote {
 			case 0:
-				quote, multiWord = r, false
+				quote = r
 			case r:
 				quote = 0
 			}
 			continue
 		}
-		isBreak := strings.IndexByte(commandBreaks+wordBreaks, r) >= 0
-		multiWord = multiWord || quote != 0 && isBreak
-		inString = inString || quote != 0 && multiWord
 		switch {
 		case strings.IndexByte(commandBreaks, r) >= 0:
 			endWord()
-			if len(cur.words) > 0 {
+			if len(cur.paths) > 0 {
 				cmds = append(cmds, cur)
 				cur = &simpleCommand{}
 			}
@@ -121,7 +106,7 @@ func splitCommands(text string) []*simpleCommand {
 		}
 	}
 	endWord()
-	if len(cur.words) > 0 {
+	if len(cur.paths) > 0 {
 		cmds = append(cmds, cur)
 	}
 	return cmds
@@ -143,13 +128,10 @@ func commandsInvoking(command, app string) []*simpleCommand {
 	var out []*simpleCommand
 	for _, text := range []string{command, opaqueExpansions(command), printedEscapes(command)} {
 		cmds := splitCommands(text)
-		names := programNames(app, cmds)
+		refs := newProgramRefs(app, cmds)
 		for _, c := range cmds {
-			c.findPrograms(names)
-		}
-		textRuns := runsQuotedText(cmds)
-		for _, c := range cmds {
-			c.findMentions(names, textRuns)
+			c.findPrograms(refs)
+			c.findMentions(refs)
 			if len(c.invs) > 0 {
 				out = append(out, c)
 			}
@@ -192,25 +174,44 @@ func printedEscapes(command string) string {
 // printedEscape maps the escapes printedEscapes reads to what they print.
 var printedEscape = map[byte]byte{'n': '\n', 'r': '\r', 't': '\t'}
 
-// programNames reports whether a word names the program app: by its program
-// name with or without backslashes (case-folded: Windows and macOS resolve
-// QSDEV to qsdev), or as an alias cmds define for it.
-func programNames(app string, cmds []*simpleCommand) func(w shellWord, text string) bool {
-	var aliases []string
-	for _, c := range cmds {
-		aliases = append(aliases, appAliases(c.texts, app)...)
-	}
-	return func(w shellWord, text string) bool {
-		return strings.EqualFold(ProgramName(w.path), app) || strings.EqualFold(ProgramName(text), app) ||
-			slices.Contains(aliases, text)
-	}
+// programRefs is how the simple commands of a text may refer to the program
+// app.
+type programRefs struct {
+	app string
+	// aliases are the names the text defines as aliases for app.
+	aliases []string
+	// assigned is set when the text assigns app's name to a variable
+	// (`Q=qsdev`, `export Q=/usr/bin/qsdev`).
+	assigned bool
 }
 
-// findPrograms records the words of c in command position, and the
-// invocations of the program names names among them: the program word of c,
-// or of a command line it runs (`sh -c`, eval, `script -c`), followed past
-// reserved words, assignments and wrappers (see Program).
-func (c *simpleCommand) findPrograms(names func(shellWord, string) bool) {
+// newProgramRefs finds how cmds refer to app.
+func newProgramRefs(app string, cmds []*simpleCommand) programRefs {
+	r := programRefs{app: app}
+	for _, c := range cmds {
+		r.aliases = append(r.aliases, appAliases(c.texts, app)...)
+		r.assigned = r.assigned || slices.ContainsFunc(c.texts, func(w string) bool {
+			_, value, _ := strings.Cut(w, "=")
+			return isAssignment(w) && strings.EqualFold(ProgramName(value), app)
+		})
+	}
+	return r
+}
+
+// names reports whether a word, as written (path) and as the shell reads it
+// (text), names the program: by its program name with or without
+// backslashes (case-folded: Windows and macOS resolve QSDEV to qsdev), or as
+// an alias the text defines for it.
+func (r programRefs) names(path, text string) bool {
+	return strings.EqualFold(ProgramName(path), r.app) || strings.EqualFold(ProgramName(text), r.app) ||
+		slices.Contains(r.aliases, text)
+}
+
+// findPrograms records the invocations of the program refs refers to in
+// command position in c: the program word of c, or of a command line it runs
+// (`sh -c`, eval, `script -c`), followed past reserved words, assignments and
+// wrappers (see Program).
+func (c *simpleCommand) findPrograms(refs programRefs) {
 	for start := 0; start < len(c.texts); {
 		for start < len(c.texts) && (commandPrefixWords[c.texts[start]] || isAssignment(c.texts[start])) {
 			start++
@@ -220,7 +221,6 @@ func (c *simpleCommand) findPrograms(names func(shellWord, string) bool) {
 		switch {
 		case run.CommandString:
 			// The wrapper's command line starts with its option's argument.
-			c.runsString = true
 			p = start + run.StringRest - 1
 			c.setWord(p, run.StringHead)
 			start = p
@@ -230,14 +230,14 @@ func (c *simpleCommand) findPrograms(names func(shellWord, string) bool) {
 			continue
 		}
 		p = start + run.Index
-		c.programs = append(c.programs, p)
 		viaXargs := slices.ContainsFunc(c.texts[start:p], func(w string) bool { return wrapperName(w) == "xargs" })
 		inv := invocation{at: p, open: viaXargs}
 		switch name := ProgramName(c.texts[p]); {
-		case names(c.words[p], c.texts[p]):
+		case refs.names(c.paths[p], c.texts[p]):
 			inv.literalProgram = true
 			c.invs = append(c.invs, inv)
 		case IsDynamicWord(name):
+			inv.anchored = refs.assigned
 			c.invs = append(c.invs, inv)
 		case viaXargs:
 			// xargs may replace this word with the program (-I, -J).
@@ -253,62 +253,48 @@ func (c *simpleCommand) findPrograms(names func(shellWord, string) bool) {
 	}
 }
 
-// findMentions records, as mentions, the arguments of c that name the
-// program names names: a program may run its arguments (`find -exec`,
-// `devenv shell`). A word in a quoted string of several words counts only
-// when textRuns is set: the text may run such a string as code.
-func (c *simpleCommand) findMentions(names func(shellWord, string) bool, textRuns bool) {
-	for i, w := range c.words {
-		if (!w.inString || textRuns) && names(w, c.texts[i]) {
+// findMentions records, as mentions, the words of c that name the program
+// refs refers to, or that end in its name after a character other than a
+// letter, digit or underscore (`x=qsdev`, `--grep=qsdev`, `!qsdev`): an
+// argument a program may run (`find -exec`, `devenv shell`), a word of a
+// quoted string a program may run as code (`trap`, `git rebase -x`, `ssh`,
+// `echo ... | sh`), or an assignment's value a later word expands (`x="...";
+// $x`). Which program takes the text, and whether it runs it, is not
+// judged, so text that only names a command (`git commit -m "explain qsdev
+// teardown"`) matches too. A word findPrograms found in command position is
+// no mention.
+func (c *simpleCommand) findMentions(refs programRefs) {
+	programs := make(map[int]bool, len(c.invs))
+	for _, inv := range c.invs {
+		programs[inv.at] = true
+	}
+	for i, text := range c.texts {
+		if !programs[i] && (refs.names(c.paths[i], text) || endsWithName(text, refs.app)) {
 			c.invs = append(c.invs, invocation{at: i, literalProgram: true, mention: true})
 		}
 	}
 }
 
-// runsQuotedText reports whether cmds may run a quoted string as code, so
-// that "qsdev teardown" is a command rather than text: a word in command
-// position, or an unquoted argument (which find -exec, xargs or devenv shell
-// may run), names a program that runs code it is given (see RunsCode); a
-// wrapper runs a string as a command line (`env -S '...'`); or a program run
-// by its path is a file another word names, as one the text writes and then
-// runs (`echo ... > x.sh && ./x.sh`).
-func runsQuotedText(cmds []*simpleCommand) bool {
-	scripts := map[string]bool{}
-	for _, c := range cmds {
-		if c.runsString {
-			return true
-		}
-		for _, p := range c.programs {
-			if RunsCode(c.texts[p]) {
-				return true
-			}
-			if strings.ContainsAny(c.texts[p], `/\`) {
-				scripts[wrapperName(c.texts[p])] = true
-			}
-		}
+// endsWithName reports whether word ends in name (case-folded) after nothing
+// or a character other than a letter, digit or underscore: where the name
+// starts a word of the text the shell or another program may run.
+func endsWithName(word, name string) bool {
+	n := len(word) - len(name)
+	if n < 0 || !strings.EqualFold(word[n:], name) {
+		return false
 	}
-	for _, c := range cmds {
-		programs := make(map[int]bool, len(c.programs))
-		for _, p := range c.programs {
-			programs[p] = true
-		}
-		for i, w := range c.words {
-			if programs[i] {
-				continue
-			}
-			if !w.inString && RunsCode(c.texts[i]) || scripts[wrapperName(c.texts[i])] {
-				return true
-			}
-		}
+	if n == 0 {
+		return true
 	}
-	return false
+	r := rune(word[n-1])
+	return r != '_' && !unicode.IsLetter(r) && !unicode.IsDigit(r)
 }
 
 // setWord makes the word at i read as text: the first word of a command line
 // whose option holds it attached (`--command=qsdev`).
 func (c *simpleCommand) setWord(i int, text string) {
 	if c.texts[i] != text {
-		c.words[i] = shellWord{path: text, inString: c.words[i].inString}
+		c.paths[i] = text
 		c.texts[i] = text
 	}
 }

@@ -1719,12 +1719,14 @@ func TestSP014_CLISecurityControlBlock(t *testing.T) {
 		{"qsdev teardown $X --dry-run", Allow},
 		// Regression (U18-WS1 round 6): the program named as an argument
 		// of another program, followed by a glob or a variable, is not a
-		// computed invocation; a quoted argument is data; help and version
-		// forms print instead of running.
+		// computed invocation; help and version forms print instead of
+		// running.
 		{"grep -rn qsdev internal/*.go", Allow},
 		{"rg qsdev *.md", Allow},
-		{`grep -l "qsdev teardown" docs/*`, Allow},
-		{`git commit -m "qsdev teardown is gated"`, Allow},
+		{"grep qsdev $FILE", Allow},
+		{"echo qsdev $X", Allow},
+		{`rg "qsdev" docs | head; node build.js`, Allow},
+		{`git commit -m "fix qsdev $X"`, Allow},
 		// The fixture has no command with a --version flag of its own; the
 		// real tree has one (self-update), so there this is denied.
 		{"qsdev --version $V", Allow},
@@ -1754,16 +1756,18 @@ func TestSP014_CLISecurityControlBlock(t *testing.T) {
 		{`if qsdev teardown; then :; fi`, Deny},
 		{`! FOO=1 qsdev teardown`, Deny},
 		{`xargs sh -c 'qsdev defaults "$@"' _`, Deny},
-		// Regression (U18-WS1 round 7): a quoted string is text only until
-		// the line hands it to something that runs it as code: a shell or
-		// interpreter on its input, a program that runs its operands
-		// through a shell, or a script file the line writes and runs.
+		// Regression (U18-WS1 round 8): a quoted string, an assignment's
+		// value or an argument that names the program with a sensitive
+		// subcommand counts whichever program takes it, for many run text
+		// they are given as code; text that only mentions the command is
+		// denied too (as on main), with a message saying so.
 		{`echo "qsdev session allow" | sh`, Deny},
 		{`echo 'qsdev session allow' | bash`, Deny},
 		{`printf 'qsdev session allow\n' | bash`, Deny},
 		{`bash <<< "qsdev session allow"`, Deny},
 		{`sh <<< 'qsdev session allow'`, Deny},
 		{"bash <<EOF\nqsdev session allow\nEOF", Deny},
+		{"cat <<'EOF' > x.sh\nqsdev session allow\nEOF", Deny},
 		{`ssh localhost "qsdev session allow"`, Deny},
 		{`watch "qsdev session allow"`, Deny},
 		{`tmux new -d "qsdev session allow"`, Deny},
@@ -1771,19 +1775,56 @@ func TestSP014_CLISecurityControlBlock(t *testing.T) {
 		{`echo "qsdev session allow" > x.sh; chmod +x x.sh; ./x.sh`, Deny},
 		{`echo "import os; os.system('qsdev session allow')" | python3`, Deny},
 		{`find . -exec "qsdev" teardown \;`, Deny},
-		// Text that only names a command, quoted as one argument, is
-		// judged alike wherever the name stands in it.
-		{`echo "see qsdev teardown"`, Allow},
-		{`echo "run: qsdev teardown" > notes.md`, Allow},
-		{`git commit -m "docs: explain qsdev teardown"`, Allow},
-		{`git commit -m "qsdev teardown"`, Allow},
-		{`git commit -m "don't run qsdev teardown"`, Allow},
-		{`echo "docs mention qsdev session allow here"`, Allow},
-		{`git commit -m "docs: explain qsdev session allow"`, Allow},
-		{`grep "qsdev session allow" README.md`, Allow},
-		{`git log --grep="qsdev teardown" -n 5`, Allow},
-		{`rg -n "qsdev defaults pin" docs/ $DIR`, Allow},
-		{`grep -rn 'qsdev session allow' internal/ $EXTRA`, Allow},
+		{`x="qsdev session allow"; $x`, Deny},
+		{`x='qsdev session allow'; $x`, Deny},
+		{`x="qsdev session allow"; ${x}`, Deny},
+		{`x="qsdev defaults pin"; $x`, Deny},
+		{`read -r x <<< "qsdev session allow"; $x`, Deny},
+		{`set -- "qsdev session allow"; $1`, Deny},
+		{`trap "qsdev session allow" EXIT`, Deny},
+		{`bash -c 'trap "qsdev session allow" EXIT'`, Deny},
+		{`git rebase -x "qsdev session allow" HEAD~1`, Deny},
+		{`git rebase --exec "qsdev session allow" HEAD~1`, Deny},
+		{`flock /tmp/l -c "qsdev session allow"`, Deny},
+		{`parallel ::: "qsdev session allow"`, Deny},
+		{`parallel ::: "qsdev session allow" --help`, Deny},
+		{`npx -c "qsdev session allow"`, Deny},
+		{`npm exec -c "qsdev session allow"`, Deny},
+		{`vim -c '!qsdev session allow'`, Deny},
+		{`ex -c '!qsdev session allow'`, Deny},
+		{`less -c "!qsdev session allow" x`, Deny},
+		{`osascript -e 'do shell script "qsdev session allow"'`, Deny},
+		{`sed -n '1e qsdev session allow' x`, Deny},
+		{`expect -c 'spawn qsdev session allow'`, Deny},
+		{`gdb -batch -ex "shell qsdev session allow"`, Deny},
+		{`awk 'BEGIN{system("qsdev session allow")}'`, Deny},
+		{`git -c core.pager="qsdev session allow" log`, Deny},
+		{`git -c alias.z='!qsdev session allow' z`, Deny},
+		{`PROMPT_COMMAND="qsdev session allow" bash -i`, Deny},
+		{`GIT_EDITOR="qsdev session allow" git commit`, Deny},
+		{`GIT_SSH_COMMAND="qsdev session allow" git fetch`, Deny},
+		{`EDITOR="qsdev session allow" crontab -e`, Deny},
+		{`echo "see qsdev teardown"`, Deny},
+		{`echo "run: qsdev teardown" > notes.md`, Deny},
+		{`git commit -m "docs: explain qsdev teardown"`, Deny},
+		{`git commit -m "qsdev teardown is gated"`, Deny},
+		{`grep -l "qsdev teardown" docs/*`, Deny},
+		{`grep "qsdev session allow" README.md`, Deny},
+		{`git log --grep="qsdev teardown" -n 5`, Deny},
+		{`rg -n "qsdev defaults pin" docs/ $DIR`, Deny},
+		// Text that names the program without a sensitive subcommand
+		// written out after it stays open, whatever else the line runs.
+		{`git commit -m "docs: explain qsdev status" && python3 scripts/check.py`, Allow},
+		{`echo "see qsdev docs" && ./gotest.sh`, Allow},
+		{`git commit -m "teardown is gated in qsdev"`, Allow},
+		{`echo "myqsdev teardown"`, Allow},
+		// Computed program and subcommand words in command position stay
+		// denied; the program's name assigned to a variable anchors them.
+		{"Q=qsdev; $Q $S", Deny},
+		{`c=qsdev; s="session allow"; $c $s`, Deny},
+		{"c=qsdev; $c $s", Deny},
+		{"qsdev $CMD $ARGS", Deny},
+		{"$A $B", Allow},
 		// Computed words that cannot be an invocation stay open.
 		{"cp $a $b", Allow},
 		{"cd $DIR && ls", Allow},
@@ -1815,16 +1856,25 @@ func TestSP014_CLISecurityControlBlock(t *testing.T) {
 }
 
 // TestSP014_Reason pins that SP-014 names a guardrail-weakening command only
-// when it is written out, and otherwise says the command line is computed,
-// so a denial never names a command that may never run.
+// when it is written out, says the command line mentions it when it is
+// written outside command position (text the agent may reword), and
+// otherwise says the command line is computed, so a denial never names a
+// command that may never run.
 func TestSP014_Reason(t *testing.T) {
 	t.Parallel()
-	const computed = "a computed qsdev command"
+	const (
+		computed = "a computed qsdev command"
+		mentions = "the command line mentions 'qsdev teardown', which weakens a guardrail"
+	)
 	tests := []struct {
 		command, want string
 	}{
 		{"qsdev defaults pin", "'qsdev defaults pin' weakens a guardrail"},
-		{"echo qsdev teardown", "'qsdev teardown' weakens a guardrail"},
+		{"echo qsdev teardown", mentions},
+		{`git commit -m "explain qsdev teardown"`, mentions},
+		{`x="qsdev session allow"; $x`, "the command line mentions 'qsdev session allow'"},
+		{`echo "qsdev teardown"; qsdev defaults pin`, "'qsdev defaults pin' weakens a guardrail"},
+		{"Q=qsdev; $Q $S", computed},
 		{"P=pin; qsdev defaults $P", computed},
 		{"qsdev defaults $(echo pin)", computed},
 		{"Q=qsdev; $Q defaults pin", computed},
@@ -1840,6 +1890,36 @@ func TestSP014_Reason(t *testing.T) {
 			v, reason := sp014.Evaluate(&ctx)
 			if v != Deny || !strings.HasPrefix(reason, tt.want) {
 				t.Errorf("SP-014(%q) = %v (%q), want deny starting %q", tt.command, v, reason, tt.want)
+			}
+		})
+	}
+}
+
+// TestSP014_VersionValue pins that `qsdev --version $V` is denied for a tree
+// with a command that defines a --version flag of its own (self-update): $V
+// may be `x self-update --no-strict`, which cobra reads as that flag's value
+// and self-update's flags.
+func TestSP014_VersionValue(t *testing.T) {
+	t.Parallel()
+	specs := []cmdscan.CommandSpec{{
+		Path:     [][]string{{"self-update"}},
+		ReadOnly: []string{"--help", "-h"},
+		Flags:    []cmdscan.FlagCond{{Spellings: []string{"--no-strict"}, Value: true}},
+	}}
+	tests := []struct {
+		command string
+		verdict Verdict
+	}{
+		{"qsdev --version $V", Deny},
+		{"qsdev --version x self-update --no-strict", Deny},
+		{"qsdev $CMD --help", Allow},
+	}
+	for _, tt := range tests {
+		t.Run(tt.command, func(t *testing.T) {
+			t.Parallel()
+			ctx := EvalContext{ToolName: "Bash", Command: tt.command, SensitiveCommands: specs}
+			if v, reason := sp014.Evaluate(&ctx); v != tt.verdict {
+				t.Errorf("SP-014(%q) = %v (%s), want %v", tt.command, v, reason, tt.verdict)
 			}
 		})
 	}

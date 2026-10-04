@@ -175,14 +175,19 @@ All notable changes to qsdev are recorded in this file. The format is based on
   (`echo pin | xargs qsdev defaults`), is treated as the sensitive word it
   may stand for. The same holds for every other human-only command. A
   command whose program and subcommand words are all computed (`$A $B`)
-  is not recognised. Only a word that may run as the program counts: a
-  quoted string of several words is text, unless the command line may run
-  it as code (`echo "..." | sh`, `bash <<< "..."`, `ssh host "..."`,
-  `watch`, `tmux`, a script it writes and runs), and the CLI named as an
-  argument of another program counts only with its subcommand written out,
-  so `grep -rn qsdev internal/*.go`, `grep -l "qsdev teardown" docs/*` and
-  `git commit -m "docs: explain qsdev teardown"` stay open, as do `--help` and `--version` (except `--version` before a
-  computed word, which `self-update --version` may take as its value).
+  is recognised only when the line assigns `qsdev` to a variable
+  (`Q=qsdev; $Q $S`). The CLI named anywhere else (an argument, a quoted
+  string, an assignment's value) with a human-only subcommand written out
+  after it counts whichever program receives the text, since many run text
+  as code (`trap "..." EXIT`, `git rebase -x "..."`, `x="..."; $x`,
+  `GIT_EDITOR="..."`); text that only mentions such a command
+  (`git commit -m "explain qsdev teardown"`, `grep -l "qsdev teardown"
+  docs/*`) is denied too, as before, with a message saying it mentions the
+  command, so reword it or run it yourself. The CLI named as data and
+  followed by a glob or a variable is not a computed command, so
+  `grep -rn qsdev internal/*.go` and `rg qsdev *.md` stay open, as do
+  `--help` and `--version` (except `--version` before a computed word,
+  which `self-update --version` may take as its value).
   Pins are kept in
   `~/.config/qsdev/org-overlay-pins.yaml`, which the hook protects with the
   overlay, so nothing the agent does in a checkout (`git clean -fdX`, a fresh

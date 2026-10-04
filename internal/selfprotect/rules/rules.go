@@ -529,15 +529,31 @@ var sp014 = Rule{
 		if len(hits) == 0 {
 			return Allow, ""
 		}
-		at := max(slices.IndexFunc(hits, func(h cmdscan.Invoked) bool { return !h.Computed }), 0)
-		return Deny, sensitiveInvocationReason(app, hits[at])
+		return Deny, sensitiveInvocationReason(app, mostCertain(hits))
 	},
 }
 
+// mostCertain returns the hit SP-014 reports: a command run as written over
+// one the text mentions, and either over a computed one.
+func mostCertain(hits []cmdscan.Invoked) cmdscan.Invoked {
+	rank := func(h cmdscan.Invoked) int {
+		switch {
+		case h.Computed:
+			return 0
+		case h.Mention:
+			return 1
+		}
+		return 2
+	}
+	return slices.MaxFunc(hits, func(a, b cmdscan.Invoked) int { return rank(a) - rank(b) })
+}
+
 // sensitiveInvocationReason describes what SP-014 found: the guardrail-
-// weakening command written out, or, when the match rests on words the shell
-// computes, that the command line may run one, without naming a command
-// that may never run.
+// weakening command written out; a command the text mentions outside command
+// position, which another program may run as code (`trap "..." EXIT`) or
+// which may be data (a commit message, a search pattern); or, when the match
+// rests on words the shell computes, that the command line may run one,
+// without naming a command that may never run.
 func sensitiveInvocationReason(app string, hit cmdscan.Invoked) string {
 	if hit.Computed {
 		return fmt.Sprintf("a computed %s command (a program or subcommand word the shell expands, "+
@@ -547,8 +563,14 @@ func sensitiveInvocationReason(app string, hit cmdscan.Invoked) string {
 	for i, names := range hit.Spec.Path {
 		path[i] = names[0]
 	}
-	return fmt.Sprintf("'%s %s' weakens a guardrail and requires a human at their own terminal",
-		app, strings.Join(path, " "))
+	command := app + " " + strings.Join(path, " ")
+	if hit.Mention {
+		return fmt.Sprintf("the command line mentions '%s', which weakens a guardrail; text that names it "+
+			"counts as an invocation, since the program it is given to may run it as code. "+
+			"If it is only text (a message, a search pattern), reword it; "+
+			"otherwise a human must run it at their own terminal", command)
+	}
+	return fmt.Sprintf("'%s' weakens a guardrail and requires a human at their own terminal", command)
 }
 
 // sp015 denies a change to a file that sets the environment the CLI runs in

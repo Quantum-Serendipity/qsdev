@@ -56,98 +56,200 @@ func (s CommandSpec) Matches(argv []string) bool {
 	return s.invokedIn(c) != noMatch
 }
 
-// matchKind is how a command invokes a spec's subcommand.
+// matchKind is how a command invokes a spec's subcommand, ordered from the
+// least to the most certain.
 type matchKind uint8
 
 const (
 	noMatch matchKind = iota
-	// literalMatch: the program and the words that decide the match are
-	// written out.
-	literalMatch
 	// computedMatch: the match rests on a word the shell computes or on
 	// input xargs appends, which may stand for what the spec names.
 	computedMatch
+	// mentionMatch: the subcommand is written out after the program named
+	// outside command position (see invocation.mention), as text a program
+	// may run or only hold.
+	mentionMatch
+	// literalMatch: the program, in command position, and the words that
+	// decide the match are written out.
+	literalMatch
 )
 
 // invokedIn returns how c invokes the spec's subcommand at any of its
-// invocations: a literal match over a computed one.
+// invocations: the most certain match.
 func (s CommandSpec) invokedIn(c *simpleCommand) matchKind {
-	var rest *restIndex
+	idx := &commandIndex{}
 	best := noMatch
 	for _, inv := range c.invs {
-		if k := s.invokedAt(c, inv, &rest); k != noMatch && (best == noMatch || k == literalMatch) {
-			best = k
-		}
+		best = max(best, s.invokedAt(c, inv, idx))
 	}
 	return best
+}
+
+// commandIndex holds what judging one command's words for one spec has
+// learned, shared by its invocations so that judging them all stays linear
+// in the command's length: the path scans (built on the first invocation)
+// and the rest index (built the first time an invocation's path matches).
+type commandIndex struct {
+	paths *pathScan
+	rest  *restIndex
 }
 
 // invokedAt reports how inv invokes the spec's subcommand (see Matches). A
 // dynamic word, or the end of an open invocation, ends the scan as a
 // computed match once something literal anchors it; a literal read-only
-// flag before any "--" (`--dry-run`, `--help`) makes it no match at all.
-// rest indexes c's words for the spec; it is built the first time an
-// invocation matches and shared by the others.
-func (s CommandSpec) invokedAt(c *simpleCommand, inv invocation, rest **restIndex) matchKind {
-	k, end := s.pathMatch(c.texts, inv)
+// flag before any "--" (`--dry-run`, `--help`) makes it no match at all,
+// except after a mention: where the text runs it is not known, so the flag
+// may be another command's word (`parallel ::: "qsdev teardown" --help`).
+func (s CommandSpec) invokedAt(c *simpleCommand, inv invocation, idx *commandIndex) matchKind {
+	if idx.paths == nil {
+		idx.paths = s.newPathScan(c.texts)
+	}
+	k, end := idx.paths.match(inv)
 	if k == noMatch {
 		return noMatch
 	}
-	if *rest == nil {
-		*rest = s.indexRest(c.texts)
+	if idx.rest == nil {
+		idx.rest = s.indexRest(c.texts)
 	}
-	if (*rest).readOnly[inv.at+1] {
+	if !inv.mention && idx.rest.readOnly[inv.at+1] {
 		return noMatch
 	}
 	if end >= 0 {
-		return (*rest).match(s, inv, end)
+		k = idx.rest.match(s, inv, end)
+	}
+	if k == literalMatch && inv.mention {
+		return mentionMatch
 	}
 	return k
 }
 
-// pathMatch matches the spec's path against the words after inv's program
-// word. When the path is written out it returns literalMatch and the index
-// just past it, for the words from there on to decide (see restIndex.match);
+// pathStop is why a scan of the spec's path stopped.
+type pathStop uint8
+
+const (
+	// pathFailed: a literal word that is neither a flag, a flag's value nor
+	// the next path word.
+	pathFailed pathStop = iota
+	// pathComplete: every path word is written out.
+	pathComplete
+	// pathDynamic: a word the shell computes, which word splitting may turn
+	// into the rest of the path.
+	pathDynamic
+	// pathExhausted: the words ran out before the path did.
+	pathExhausted
+)
+
+// pathOutcome is where a scan of the spec's path stopped: why, at which path
+// level, and, for a complete path, the index just past it.
+type pathOutcome struct {
+	stop  pathStop
+	level int
+	end   int
+}
+
+// pathScan scans a command's words for the spec's path. A scan's state is
+// the word index, the path level reached and whether the word may be a
+// flag's value; each state leads to exactly one next one, so every state on
+// a scan shares its outcome, which is recorded once and reused by every
+// later scan that reaches the state (`echo qsdev -v qsdev -v ...` scans each
+// word once, not once per mention).
+type pathScan struct {
+	spec  CommandSpec
+	words []string
+	// memo[(i*levels+level)*2+valueSlot] holds the outcome of the scan from
+	// that state, once known.
+	memo []*pathOutcome
+}
+
+// newPathScan returns an empty pathScan of words for the spec.
+func (s CommandSpec) newPathScan(words []string) *pathScan {
+	return &pathScan{spec: s, words: words, memo: make([]*pathOutcome, (len(words)+1)*(len(s.Path)+1)*2)}
+}
+
+// match matches the spec's path against the words after inv's program word.
+// When the path is written out it returns literalMatch and the index just
+// past it, for the words from there on to decide (see restIndex.match);
 // otherwise end is -1 and the match is the one a dynamic word or an open end
 // makes, or none.
-func (s CommandSpec) pathMatch(words []string, inv invocation) (k matchKind, end int) {
-	anchored := inv.literalProgram
-	level := 0
-	// valueSlot is set after a flag written without "=": cobra takes the
-	// next word as its value when the flag is not a known boolean, so a word
-	// there that is not the path may be skipped (`--version x self-update`).
-	valueSlot := false
-	i := inv.at + 1
-	for ; i < len(words) && level < len(s.Path); i++ {
-		w := words[i]
-		switch {
-		case IsDynamicWord(w):
-			// Word splitting may turn it into the rest of the path.
-			if anchored && !inv.mention {
-				return computedMatch, -1
-			}
-			return noMatch, -1
-		case strings.HasPrefix(w, "-"):
-			valueSlot = !strings.Contains(w, "=")
-			continue
-		case !slices.Contains(s.Path[level], w):
-			if valueSlot {
-				valueSlot = false
-				continue
-			}
-			return noMatch, -1
-		}
-		valueSlot = false
-		level++
-		anchored = true
-	}
+func (ps *pathScan) match(inv invocation) (k matchKind, end int) {
+	o := ps.scan(inv.at+1, 0, false)
+	// A literal program, a computed one the text may have assigned the
+	// program's name to, or a literal path word anchors a computed match.
+	anchored := inv.literalProgram || inv.anchored || o.level > 0
 	switch {
-	case level == len(s.Path):
-		return literalMatch, i
-	case inv.open && anchored && !inv.mention:
+	case o.stop == pathComplete:
+		return literalMatch, o.end
+	case inv.mention || !anchored:
+		return noMatch, -1
+	case o.stop == pathDynamic, o.stop == pathExhausted && inv.open:
 		return computedMatch, -1
 	}
 	return noMatch, -1
+}
+
+// scan returns the outcome of the scan from word i at path level level.
+// valueSlot is set after a flag written without "=": cobra takes the next
+// word as its value when the flag is not a known boolean, so a word there
+// that is not the path may be skipped (`--version x self-update`).
+func (ps *pathScan) scan(i, level int, valueSlot bool) pathOutcome {
+	var chain []int
+	var out pathOutcome
+	for {
+		key := ps.key(i, level, valueSlot)
+		if o := ps.memo[key]; o != nil {
+			out = *o
+			break
+		}
+		chain = append(chain, key)
+		next, done, o := ps.step(i, level, valueSlot)
+		if done {
+			out = o
+			break
+		}
+		i, level, valueSlot = next.i, next.level, next.valueSlot
+	}
+	for _, key := range chain {
+		ps.memo[key] = &out
+	}
+	return out
+}
+
+// scanState is one state of a path scan.
+type scanState struct {
+	i, level  int
+	valueSlot bool
+}
+
+// step advances a path scan by one word: the next state, or the outcome
+// when the scan stops at this one.
+func (ps *pathScan) step(i, level int, valueSlot bool) (next scanState, done bool, o pathOutcome) {
+	path := ps.spec.Path
+	switch {
+	case level == len(path):
+		return next, true, pathOutcome{stop: pathComplete, level: level, end: i}
+	case i == len(ps.words):
+		return next, true, pathOutcome{stop: pathExhausted, level: level}
+	}
+	switch w := ps.words[i]; {
+	case IsDynamicWord(w):
+		return next, true, pathOutcome{stop: pathDynamic, level: level}
+	case strings.HasPrefix(w, "-"):
+		return scanState{i + 1, level, !strings.Contains(w, "=")}, false, o
+	case slices.Contains(path[level], w):
+		return scanState{i + 1, level + 1, false}, false, o
+	case valueSlot:
+		return scanState{i + 1, level, false}, false, o
+	}
+	return next, true, pathOutcome{stop: pathFailed, level: level}
+}
+
+// key returns the memo index of a scan state.
+func (ps *pathScan) key(i, level int, valueSlot bool) int {
+	k := (i*(len(ps.spec.Path)+1) + level) * 2
+	if valueSlot {
+		k++
+	}
+	return k
 }
 
 // restIndex records, for each index of a command's words, what the words
@@ -222,6 +324,11 @@ type Invoked struct {
 	// variable, a substitution, a glob, an alias for a computed value) or on
 	// input xargs appends, rather than on the subcommand written out.
 	Computed bool
+	// Mention is set when the command is written out but the program is
+	// named outside command position (an argument, a quoted string, an
+	// assignment's value): the text mentions the command, which a program
+	// may run as code or may only hold as data.
+	Mention bool
 }
 
 // InvokedSpecs returns the specs that command invokes the program app with,
@@ -234,19 +341,21 @@ type Invoked struct {
 //
 // The program counts where it may run: as the program word of a simple
 // command or of such a command line, past reserved words, assignments and
-// wrappers. An unquoted argument of another program that names it counts as
-// well, for a program may run its arguments (`find -exec`, `devenv shell`),
-// but only when the subcommand is written out: `grep qsdev *.go` is no
-// invocation. A quoted string of several words is one argument, text
-// (`grep "qsdev teardown" docs/*`, `git commit -m "explain qsdev
-// teardown"`), unless the text may run it as code: a shell, an interpreter
-// or another program that runs code it is given appears in it (`echo
-// "qsdev teardown" | sh`, `bash <<< "..."`, `ssh host "..."`, see
-// RunsCode), a wrapper runs a string (`env -S`), or a program run by its
-// path is a file the text names elsewhere (`echo ... > x.sh && ./x.sh`). A
-// quoted script string is split into commands like the rest of the text, so
-// a separator inside data (`echo "a; qsdev teardown"`) errs towards the
-// human gate.
+// wrappers. A word anywhere else that names it is a mention (Invoked.Mention)
+// and counts only when the subcommand is written out after it: an argument
+// of another program, which may run its arguments (`find -exec`, `devenv
+// shell`); a word of a quoted string, whichever program takes it, for many
+// run text they are given as code (`echo "..." | sh`, `trap "..." EXIT`,
+// `git rebase -x "..."`, `vim -c '!...'`); and an assignment's value, which
+// a later word may expand (`x="..."; $x`, `GIT_EDITOR="..." git commit`). A
+// word ending in the program name after a character other than a letter,
+// digit or underscore names it too (`x=qsdev`, `!qsdev`). So text that only
+// mentions a command (`git commit -m "explain qsdev teardown"`, `grep -l
+// "qsdev teardown" docs/*`) matches, while `grep -rn qsdev internal/*.go`
+// does not: a glob or variable after a mention is data, not a computed
+// subcommand. A quoted script string is split into commands like the rest
+// of the text, so a separator inside data (`echo "a; qsdev teardown"`)
+// errs towards the human gate.
 //
 // Words the shell computes fail closed rather than being resolved: a program
 // word built from an expansion (`$Q defaults pin`, `$(printf qs)dev ...`,
@@ -254,8 +363,9 @@ type Invoked struct {
 // a subcommand word built from one (`qsdev defaults $P`, `qsdev defaults
 // $(echo pin)`) matches whatever it stands for, and an invocation under xargs
 // may take its remaining words from its input (`echo pin | xargs qsdev
-// defaults`, `xargs -I X X defaults pin`). Only a command whose program and
-// subcommand words are all computed (`$A $B`) is not matched. A literal
+// defaults`, `xargs -I X X defaults pin`). A command whose program and
+// subcommand words are all computed (`$A $B`) is matched only when the text
+// assigns the program's name to a variable (`Q=qsdev; $Q $S`). A literal
 // read-only flag (ReadOnly) before any "--" clears an invocation whatever
 // else it holds (`qsdev $CMD --help`).
 func InvokedSpecs(command, app string, specs []CommandSpec) []Invoked {
@@ -263,7 +373,7 @@ func InvokedSpecs(command, app string, specs []CommandSpec) []Invoked {
 	for _, c := range commandsInvoking(command, app) {
 		for _, s := range specs {
 			if k := s.invokedIn(c); k != noMatch {
-				hit = append(hit, Invoked{Spec: s, Computed: k == computedMatch})
+				hit = append(hit, Invoked{Spec: s, Computed: k == computedMatch, Mention: k == mentionMatch})
 			}
 		}
 	}
@@ -272,8 +382,8 @@ func InvokedSpecs(command, app string, specs []CommandSpec) []Invoked {
 
 // InvokesProgram reports whether command may run the program app, judged on
 // the raw text the way InvokedSpecs judges it, counting only a word that
-// names app literally: in command position, or as an unquoted argument of
-// another program.
+// names app literally: in command position, or as a mention (an argument, a
+// word of a quoted string, an assignment's value).
 func InvokesProgram(command, app string) bool {
 	return slices.ContainsFunc(commandsInvoking(command, app), func(c *simpleCommand) bool {
 		return slices.ContainsFunc(c.invs, func(inv invocation) bool { return inv.literalProgram })

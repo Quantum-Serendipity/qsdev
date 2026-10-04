@@ -190,14 +190,13 @@ func rootedReachesAncestor(fs *canon.Resolver, p string) bool {
 // symlink-resolved one. The comparison is on path keys with a trailing
 // separator, so ~/.conf is not taken for an ancestor of ~/.config/<app>/.
 func isProtectedAncestor(fs *canon.Resolver, p string) bool {
-	locs := canon.ProtectedLocations()
-	if locs == nil {
+	locKeys := canon.ProtectedLocationKeys()
+	if locKeys == nil {
 		return true // the table could not be built: fail closed
 	}
 	for _, s := range pathSpellings(fs, p) {
 		prefix := strings.TrimSuffix(canon.PathKey(s), "/") + "/"
-		for _, loc := range locs {
-			key := canon.PathKey(loc)
+		for _, key := range locKeys {
 			if strings.HasPrefix(key, prefix) || strings.TrimSuffix(key, "/")+"/" == prefix {
 				return true
 			}
@@ -214,8 +213,8 @@ func globReachesAncestor(pattern string) bool {
 		return false
 	}
 	segs := strings.Split(canon.PathKey(pattern), "/")
-	for _, loc := range canon.ProtectedLocations() {
-		locSegs := strings.Split(strings.TrimSuffix(canon.PathKey(loc), "/"), "/")
+	for _, key := range canon.ProtectedLocationKeys() {
+		locSegs := strings.Split(strings.TrimSuffix(key, "/"), "/")
 		if len(segs) > len(locSegs) {
 			continue
 		}
@@ -251,8 +250,8 @@ func expandedReachesAncestor(sc scannedCommand, word string) bool {
 // Directories at or above a home directory are not tails: `rm -rf "$tmp"`
 // stays allowed.
 func tailReachesAncestor(text string) bool {
-	locs, homes := canon.ProtectedLocations(), canon.ProtectedHomes()
-	if locs == nil || homes == nil {
+	locKeys, homes := canon.ProtectedLocationKeys(), canon.ProtectedHomes()
+	if locKeys == nil || homes == nil {
 		return true // the table could not be built: fail closed
 	}
 	segs := strings.Split(canon.PathKey(filepath.Clean(text)), "/")
@@ -261,8 +260,8 @@ func tailReachesAncestor(text string) bool {
 			continue
 		}
 		homeKey := strings.TrimSuffix(canon.PathKey(home), "/") + "/"
-		for _, loc := range locs {
-			rel, ok := strings.CutPrefix(canon.PathKey(loc), homeKey)
+		for _, key := range locKeys {
+			rel, ok := strings.CutPrefix(key, homeKey)
 			if !ok {
 				continue
 			}

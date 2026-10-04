@@ -21,8 +21,14 @@ var (
 	protectedPrefixes []protectedEntry
 	protectedSuffixes []protectedEntry
 	protectedHomes    []string
-	initOnce          sync.Once
-	initErr           error
+	// prefixKeys and suffixKeys are the path keys of protectedPrefixes and
+	// protectedSuffixes under every matchOptions, computed once by
+	// ensureInit: every path a rule checks is compared against every entry,
+	// and on Windows computing a key copies the path several times.
+	prefixKeys entryKeys
+	suffixKeys entryKeys
+	initOnce   sync.Once
+	initErr    error
 
 	// userHomeDir resolves the current user's home directory. It is a package
 	// variable (defaulting to os.UserHomeDir) so tests can simulate a
@@ -82,6 +88,8 @@ func ensureInit() error {
 		protectedSuffixes = []protectedEntry{
 			{string(filepath.Separator) + ".mcp.json", "mcp-config"},
 		}
+		prefixKeys = newEntryKeys(protectedPrefixes)
+		suffixKeys = newEntryKeys(protectedSuffixes)
 	})
 	return initErr
 }
@@ -440,15 +448,19 @@ func (r *Resolver) walk(p string) (canonical string, missing bool, err error) {
 
 	vol := filepath.VolumeName(start)
 	resolved := vol + string(filepath.Separator)
-	pending := splitPath(start[len(vol):])
+	// pending is the rest of the path, consumed one component at a time.
+	pending := start[len(vol):]
 	// tail holds the components from the first missing one on; resolved is
 	// the existing directory they hang below.
 	var tail []string
 	hops := 0
 
-	for len(pending) > 0 {
-		comp := pending[0]
-		pending = pending[1:]
+	for {
+		var comp string
+		comp, pending = nextComponent(pending)
+		if comp == "" {
+			break
+		}
 		switch {
 		case comp == ".":
 			continue
@@ -473,6 +485,12 @@ func (r *Resolver) walk(p string) (canonical string, missing bool, err error) {
 		switch {
 		case errors.Is(err, fs.ErrNotExist) || errors.Is(err, syscall.ENOTDIR):
 			resolved = normalizeExisting(r, resolved)
+			if !hasDotDot(pending) {
+				// Nothing can pop the tail, so it is the rest of the path
+				// as written, which one Join cleans of "." components and
+				// repeated separators.
+				return filepath.Join(resolved, comp, pending), true, nil
+			}
 			tail = append(tail, comp)
 			continue
 		case err != nil:
@@ -500,7 +518,7 @@ func (r *Resolver) walk(p string) (canonical string, missing bool, err error) {
 			}
 			resolved = targetVol + string(filepath.Separator)
 		}
-		pending = append(splitPath(target), pending...)
+		pending = target + string(filepath.Separator) + pending
 	}
 	return filepath.Join(append([]string{resolved}, tail...)...), len(tail) > 0, nil
 }
@@ -545,12 +563,32 @@ func isRooted(p string) bool {
 	return filepath.IsAbs(p) || (p != "" && os.IsPathSeparator(p[0]))
 }
 
-// splitPath splits p into its non-empty components, accepting every separator
-// the platform does.
-func splitPath(p string) []string {
-	return strings.FieldsFunc(p, func(r rune) bool {
-		return r < 0x80 && os.IsPathSeparator(uint8(r))
-	})
+// nextComponent splits the first non-empty component off p, accepting every
+// separator the platform does. comp is "" when p has none left.
+func nextComponent(p string) (comp, rest string) {
+	i := 0
+	for i < len(p) && os.IsPathSeparator(p[i]) {
+		i++
+	}
+	j := i
+	for j < len(p) && !os.IsPathSeparator(p[j]) {
+		j++
+	}
+	return p[i:j], p[j:]
+}
+
+// hasDotDot reports whether p has a ".." component.
+func hasDotDot(p string) bool {
+	for {
+		var comp string
+		comp, p = nextComponent(p)
+		switch comp {
+		case "":
+			return false
+		case "..":
+			return true
+		}
+	}
 }
 
 func isSymlinkLoop(err error) bool {
@@ -593,8 +631,8 @@ func isProtected(canonicalPath string, opts matchOptions) (bool, string) {
 	key := opts.key(canonicalPath)
 
 	// Check home- and system-anchored paths.
-	for _, entry := range protectedPrefixes {
-		entryKey := opts.key(entry.path)
+	for i, entryKey := range prefixKeys.under(opts) {
+		entry := protectedPrefixes[i]
 		if strings.HasSuffix(entryKey, "/") {
 			if strings.HasPrefix(key, entryKey) {
 				return true, entry.category
@@ -613,8 +651,8 @@ func isProtected(canonicalPath string, opts matchOptions) (bool, string) {
 	}
 
 	// Check suffix-based protected paths.
-	for _, entry := range protectedSuffixes {
-		entryKey := opts.key(entry.path)
+	for i, entryKey := range suffixKeys.under(opts) {
+		entry := protectedSuffixes[i]
 		if strings.HasSuffix(key, entryKey) {
 			return true, entry.category
 		}
@@ -626,6 +664,28 @@ func isProtected(canonicalPath string, opts matchOptions) (bool, string) {
 	}
 
 	return false, ""
+}
+
+// entryKeys holds the path keys of a list of protected entries, in the same
+// order, under each matchOptions (indexed by matchOptions.index).
+type entryKeys [4][]string
+
+// newEntryKeys computes the keys of entries under every matchOptions.
+func newEntryKeys(entries []protectedEntry) entryKeys {
+	var keys entryKeys
+	for i := range keys {
+		opts := matchOptions{foldCase: i&1 != 0, windowsAliases: i&2 != 0}
+		keys[i] = make([]string, len(entries))
+		for j, e := range entries {
+			keys[i][j] = opts.key(e.path)
+		}
+	}
+	return keys
+}
+
+// under returns the keys under opts.
+func (k *entryKeys) under(opts matchOptions) []string {
+	return k[opts.index()]
 }
 
 // segmentEntry is a protected location matched wherever it appears in a path.
@@ -705,6 +765,18 @@ var platformMatch = matchOptions{
 	windowsAliases: runtime.GOOS == "windows",
 }
 
+// index numbers the four matchOptions 0 to 3.
+func (o matchOptions) index() int {
+	i := 0
+	if o.foldCase {
+		i |= 1
+	}
+	if o.windowsAliases {
+		i |= 2
+	}
+	return i
+}
+
 // key returns p in the form protected-path comparisons use: slash-separated,
 // with the platform's filesystem name aliases normalized away.
 func (o matchOptions) key(p string) string {
@@ -722,19 +794,53 @@ func (o matchOptions) key(p string) string {
 // an alternate-data-stream suffix ("settings.json::$DATA" -> "settings.json")
 // and trailing dots and spaces (".claude." -> ".claude"), which Windows
 // discards when it opens the file. A drive component ("C:") and "."/".." are
-// left alone.
+// left alone. Every path a rule checks on Windows goes through it, so it
+// copies s only from the first component it changes, and not at all when
+// there is none (the usual case).
 func stripWindowsAliases(s string) string {
-	parts := strings.Split(s, "/")
-	for i, part := range parts {
-		if part == "." || part == ".." || (len(part) == 2 && part[1] == ':') {
-			continue
+	var b strings.Builder
+	copying := false
+	for start := 0; start <= len(s); {
+		end := strings.IndexByte(s[start:], '/')
+		if end < 0 {
+			end = len(s)
+		} else {
+			end += start
 		}
-		if j := strings.IndexByte(part, ':'); j >= 0 {
-			part = part[:j]
+		part := stripComponentAliases(s[start:end])
+		if !copying && len(part) != end-start {
+			copying = true
+			b.Grow(len(s))
+			b.WriteString(s[:start])
 		}
-		parts[i] = strings.TrimRight(part, ". ")
+		if copying {
+			b.WriteString(part)
+			if end < len(s) {
+				b.WriteByte('/')
+			}
+		}
+		start = end + 1
 	}
-	return strings.Join(parts, "/")
+	if !copying {
+		return s
+	}
+	return b.String()
+}
+
+// stripComponentAliases is stripWindowsAliases for one path component. The
+// result is always a prefix of part.
+func stripComponentAliases(part string) string {
+	if part == "." || part == ".." || (len(part) == 2 && part[1] == ':') {
+		return part
+	}
+	if j := strings.IndexByte(part, ':'); j >= 0 {
+		part = part[:j]
+	}
+	end := len(part)
+	for end > 0 && (part[end-1] == '.' || part[end-1] == ' ') {
+		end--
+	}
+	return part[:end]
 }
 
 // staticSubstringPatterns are path fragments used by ContainsProtectedPath
@@ -790,6 +896,47 @@ type pathTables struct {
 	// probeMembers are representative contents of a protected directory
 	// (see staticProbeMembers), relative to it.
 	probeMembers []string
+	// exact and folded are the entries the matchers compare against, as
+	// written and lower-cased (see match), built once with the tables
+	// rather than folded again for every path or command checked.
+	exact, folded matchSet
+}
+
+// matchSet holds the strings pathTables' matchers compare under one case
+// mode.
+type matchSet struct {
+	segments   []segmentEntry
+	substrings []string
+	// words are the tokens and envVars, matched as complete path segments.
+	words []string
+}
+
+// newMatchSet returns the comparison strings of t, lower-cased when
+// foldCase is set.
+func newMatchSet(t *pathTables, foldCase bool) matchSet {
+	fold := func(ss []string) []string {
+		out := make([]string, len(ss))
+		for i, s := range ss {
+			out[i] = foldIf(s, foldCase)
+		}
+		return out
+	}
+	m := matchSet{
+		substrings: fold(t.substrings),
+		words:      fold(slices.Concat(t.tokens, t.envVars)),
+	}
+	for _, seg := range t.segments {
+		m.segments = append(m.segments, segmentEntry{foldIf(seg.segment, foldCase), seg.category})
+	}
+	return m
+}
+
+// match returns the comparison strings for keys folded (foldCase) or not.
+func (t *pathTables) match(foldCase bool) *matchSet {
+	if foldCase {
+		return &t.folded
+	}
+	return &t.exact
 }
 
 // brandedTables returns the tables for the active branding. They are built on
@@ -835,6 +982,7 @@ func newPathTables(cfg branding.Config, getenv func(string) string) *pathTables 
 	t.substrings = append(t.substrings, commandSpellings(getenv(orgConfigEnv(cfg)))...)
 	t.probeMembers = append(slices.Clone(staticProbeMembers),
 		"."+cfg.AppName+"-init-answers.yaml", path.Join("bin", cfg.AppName))
+	t.exact, t.folded = newMatchSet(t, false), newMatchSet(t, true)
 	return t
 }
 
@@ -936,6 +1084,16 @@ func ProtectedLocations() []string {
 	return locs
 }
 
+// ProtectedLocationKeys returns the path keys (PathKey) of
+// ProtectedLocations, in the same order, computed once per process. It
+// returns nil when the table cannot be built; IsProtected then fails closed.
+func ProtectedLocationKeys() []string {
+	if ensureInit() != nil {
+		return nil
+	}
+	return slices.Clone(prefixKeys.under(platformMatch))
+}
+
 // FindProbes returns representative protected paths, slash-separated, for a
 // check that must decide whether a name or path pattern can select a
 // protected file without looking at the filesystem (a find expression).
@@ -979,8 +1137,8 @@ func appendProbes(probes []string, entry string, members []string) []string {
 // slash-separated path key (already case-folded when foldCase is set)
 // contains, or "" when none does.
 func (t *pathTables) segmentCategory(key string, foldCase bool) string {
-	for _, seg := range t.segments {
-		if hasPathSegment(key, foldIf(seg.segment, foldCase)) {
+	for _, seg := range t.match(foldCase).segments {
+		if hasPathSegment(key, seg.segment) {
 			return seg.category
 		}
 	}
@@ -1007,13 +1165,14 @@ func (t *pathTables) containsProtectedPath(s string, foldCase bool) bool {
 	if foldCase {
 		normalized = strings.ToLower(normalized)
 	}
-	for _, p := range t.substrings {
-		if strings.Contains(normalized, foldIf(p, foldCase)) {
+	m := t.match(foldCase)
+	for _, p := range m.substrings {
+		if strings.Contains(normalized, p) {
 			return true
 		}
 	}
-	for _, tok := range slices.Concat(t.tokens, t.envVars) {
-		if containsSegment(normalized, foldIf(tok, foldCase)) {
+	for _, tok := range m.words {
+		if containsSegment(normalized, tok) {
 			return true
 		}
 	}

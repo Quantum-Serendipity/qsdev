@@ -243,8 +243,8 @@ func globProtected(p string) bool {
 		return false
 	}
 	key := strings.Split(canon.PathKey(cleaned), "/")
-	for _, loc := range canon.ProtectedLocations() {
-		if globReaches(key, canon.PathKey(loc)) {
+	for _, loc := range canon.ProtectedLocationKeys() {
+		if globReaches(key, loc) {
 			return true
 		}
 	}

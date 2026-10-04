@@ -207,6 +207,12 @@ func TestStripWindowsAliases(t *testing.T) {
 		{"C:/Users/u/.claude./settings.json. ", "C:/Users/u/.claude/settings.json"},
 		{"C:/a/../b/./c", "C:/a/../b/./c"},
 		{"//server/share/.claude/hooks/x.sh:stream", "//server/share/.claude/hooks/x.sh"},
+		{"", ""},
+		{"/", "/"},
+		{"a/b/", "a/b/"},
+		{"a./b", "a/b"},
+		{"a/b.", "a/b"},
+		{".../x", "/x"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.in, func(t *testing.T) {
@@ -216,6 +222,64 @@ func TestStripWindowsAliases(t *testing.T) {
 			}
 		})
 	}
+}
+
+// TestStripWindowsAliases_MatchesReference checks every string of up to six
+// characters over the bytes the stripping treats specially against the
+// original split-and-join implementation.
+func TestStripWindowsAliases_MatchesReference(t *testing.T) {
+	t.Parallel()
+
+	const alphabet = "a.: /"
+	var walk func(s string)
+	walk = func(s string) {
+		if got, want := stripWindowsAliases(s), stripWindowsAliasesReference(s); got != want {
+			t.Errorf("stripWindowsAliases(%q) = %q, want %q", s, got, want)
+		}
+		if len(s) == 6 {
+			return
+		}
+		for _, c := range alphabet {
+			walk(s + string(c))
+		}
+	}
+	walk("")
+}
+
+// TestIsProtected_EntryKeysComputedOnce pins that a protected-path check
+// computes the key of the path it is given, not of every protected entry
+// again: on Windows a key copies the path several times, and the rules check
+// several paths for every word of a command, so recomputing the entries' keys
+// made a long command take seconds there. The Windows match options are used
+// on every platform, so the check holds on Linux too. It must not run in
+// parallel: AllocsPerRun counts every allocation in the process.
+func TestIsProtected_EntryKeysComputedOnce(t *testing.T) {
+	resetProtectedPaths(t)
+	win := matchOptions{foldCase: true, windowsAliases: true}
+	p := filepath.Join(t.TempDir(), "Project", "Src", "Main.go")
+	// Folding the upper-case path is the one allocation a check needs.
+	const maxAllocs = 2
+	for _, opts := range []matchOptions{{}, {foldCase: true}, win} {
+		if got := testing.AllocsPerRun(100, func() { isProtected(p, opts) }); got > maxAllocs {
+			t.Errorf("isProtected(%q, %+v) made %v allocations, want at most %d (one key, not one per entry)", p, opts, got, maxAllocs)
+		}
+	}
+}
+
+// stripWindowsAliasesReference is the original stripWindowsAliases, which
+// split every path into components and joined them again.
+func stripWindowsAliasesReference(s string) string {
+	parts := strings.Split(s, "/")
+	for i, part := range parts {
+		if part == "." || part == ".." || (len(part) == 2 && part[1] == ':') {
+			continue
+		}
+		if j := strings.IndexByte(part, ':'); j >= 0 {
+			part = part[:j]
+		}
+		parts[i] = strings.TrimRight(part, ". ")
+	}
+	return strings.Join(parts, "/")
 }
 
 // TestCanonicalize_SymlinkResolutionForMissingTargets covers paths whose final

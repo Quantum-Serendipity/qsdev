@@ -521,6 +521,14 @@ func resetProtectedPaths(t *testing.T) {
 	}
 }
 
+// splitPath splits p into its non-empty components, accepting every separator
+// the platform does.
+func splitPath(p string) []string {
+	return strings.FieldsFunc(p, func(r rune) bool {
+		return r < 0x80 && os.IsPathSeparator(uint8(r))
+	})
+}
+
 // resolveMissingReference is the original resolveMissing, which joined every
 // component after the first missing one onto the accumulated path (each Join
 // re-cleaning the whole string, O(depth^2)). It is the oracle for

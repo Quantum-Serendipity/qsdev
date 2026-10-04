@@ -475,3 +475,13 @@ func TestSepToSlashLower_OneCopy(t *testing.T) {
 		t.Errorf("sepToSlashLower(%q) made %v allocations, want at most 1", p, got)
 	}
 }
+
+// BenchmarkSepToSlashLower measures folding a long Windows path, the work a
+// long cd chain repeats for every command it scans.
+func BenchmarkSepToSlashLower(b *testing.B) {
+	p := `C:\Users\RUNNER~1\AppData\Local\Temp\` + strings.Repeat(`Missing\Dir\`, 200)
+	b.ReportAllocs()
+	for b.Loop() {
+		sepToSlashLower(p, '\\')
+	}
+}

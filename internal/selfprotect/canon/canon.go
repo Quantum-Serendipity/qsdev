@@ -13,6 +13,7 @@ import (
 	"sync"
 	"syscall"
 	"unicode"
+	"unicode/utf8"
 
 	"github.com/Quantum-Serendipity/qsdev/internal/userhome"
 	"github.com/Quantum-Serendipity/qsdev/pkg/branding"
@@ -808,12 +809,48 @@ func sepToSlashLower(p string, sep rune) string {
 	if sep == '/' {
 		return strings.ToLower(p)
 	}
+	// Paths are almost always ASCII: convert them byte by byte, as
+	// strings.ToLower's own fast path does, instead of decoding runes.
+	if sep < utf8.RuneSelf {
+		if s, ok := asciiSepToSlashLower(p, byte(sep)); ok {
+			return s
+		}
+	}
 	return strings.Map(func(r rune) rune {
 		if r == sep {
 			return '/'
 		}
 		return unicode.ToLower(r)
 	}, p)
+}
+
+// asciiSepToSlashLower is sepToSlashLower for an all-ASCII p; ok is false when
+// p holds a non-ASCII byte. It copies p only when a byte changes.
+func asciiSepToSlashLower(p string, sep byte) (string, bool) {
+	changed := false
+	for i := 0; i < len(p); i++ {
+		c := p[i]
+		if c >= utf8.RuneSelf {
+			return "", false
+		}
+		changed = changed || c == sep || ('A' <= c && c <= 'Z')
+	}
+	if !changed {
+		return p, true
+	}
+	var b strings.Builder
+	b.Grow(len(p))
+	for i := 0; i < len(p); i++ {
+		c := p[i]
+		switch {
+		case c == sep:
+			c = '/'
+		case 'A' <= c && c <= 'Z':
+			c += 'a' - 'A'
+		}
+		b.WriteByte(c)
+	}
+	return b.String(), true
 }
 
 // stripWindowsAliases removes, from each component of a slash-separated path,

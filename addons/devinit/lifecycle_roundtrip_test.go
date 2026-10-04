@@ -11,6 +11,7 @@ import (
 	"runtime"
 	"slices"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/spf13/cobra"
@@ -28,7 +29,36 @@ import (
 // directory with a go.mod and returns the directory.
 func initLifecycleProject(t *testing.T) string {
 	t.Helper()
+	lifecycleTemplate.once.Do(func() {
+		lifecycleTemplate.dir = makeLifecycleTemplate(t)
+	})
+	if lifecycleTemplate.dir == "" {
+		t.Fatal("initialising the lifecycle project template failed in an earlier test")
+	}
 	dir := t.TempDir()
+	if err := os.CopyFS(dir, os.DirFS(lifecycleTemplate.dir)); err != nil {
+		t.Fatalf("copying the lifecycle project template: %v", err)
+	}
+	return dir
+}
+
+// lifecycleTemplate is the project initLifecycleProject copies. Every caller
+// would otherwise run the same init; the project records no path of the
+// directory it was made in, so a copy is indistinguishable from a fresh init.
+// TestMain removes it.
+var lifecycleTemplate struct {
+	once sync.Once
+	dir  string // "" until initialised, and when initialising failed
+}
+
+// makeLifecycleTemplate initialises the template project in a directory that
+// outlives the test that triggers it.
+func makeLifecycleTemplate(t *testing.T) string {
+	t.Helper()
+	dir, err := os.MkdirTemp("", "qsdev-lifecycle-template-")
+	if err != nil {
+		t.Fatalf("creating the lifecycle template dir: %v", err)
+	}
 	if err := os.WriteFile(filepath.Join(dir, "go.mod"), []byte("module example.com/lc\n\ngo 1.24\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -36,6 +66,13 @@ func initLifecycleProject(t *testing.T) string {
 		t.Fatalf("init: %v\n%s", err, out)
 	}
 	return dir
+}
+
+// removeLifecycleTemplate deletes the template project, if one was made.
+func removeLifecycleTemplate() {
+	if lifecycleTemplate.dir != "" {
+		_ = os.RemoveAll(lifecycleTemplate.dir)
+	}
 }
 
 // runLifecycleCmd executes a lifecycle subcommand from dir.

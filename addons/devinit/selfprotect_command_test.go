@@ -79,7 +79,9 @@ func runSelfprotectHook(t *testing.T, dir, payload string) (int, string) {
 		t.Fatal(err)
 	}
 	cmd := exec.Command(self, "-test.run=^TestSelfprotectHelperProcess$") //nolint:gosec // re-executes this test binary
-	cmd.Env = append(os.Environ(), selfprotectHelperEnv+"=1")
+	// A -race build sleeps a second before exiting unless told not to.
+	cmd.Env = append(os.Environ(), selfprotectHelperEnv+"=1",
+		"GORACE="+strings.TrimSpace(os.Getenv("GORACE")+" atexit_sleep_ms=0"))
 	cmd.Dir = dir
 	cmd.Stdin = strings.NewReader(payload)
 	var stderr bytes.Buffer

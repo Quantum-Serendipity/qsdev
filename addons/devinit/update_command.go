@@ -16,6 +16,7 @@ import (
 	"github.com/Quantum-Serendipity/qsdev/internal/cmdutil"
 	qsdevconfig "github.com/Quantum-Serendipity/qsdev/internal/config"
 	"github.com/Quantum-Serendipity/qsdev/internal/extlog/capture"
+	"github.com/Quantum-Serendipity/qsdev/internal/procexec"
 	"github.com/Quantum-Serendipity/qsdev/internal/selfupdate"
 	"github.com/Quantum-Serendipity/qsdev/internal/version"
 	"github.com/Quantum-Serendipity/qsdev/pkg/branding"
@@ -132,7 +133,8 @@ Use stage-specific flags to run only one stage.`,
 	cmd.Flags().BoolVar(&opts.Changelog, "changelog", false, "Show release notes (use with --check)")
 	cmd.Flags().BoolVar(&opts.NoStrict, "no-strict", false, "Allow installing a release that has no signature bundle (escape hatch for dev/self-built releases)")
 	cmd.Flags().BoolVar(&opts.SkipContainer, "skip-container", false, "Skip generating Gateway container config for hookless frameworks")
-	return cmd
+	// --no-strict installs a binary whose signature was not verified.
+	return cmdutil.MarkSensitive(cmdutil.MarkReadOnly(cmd, "dry-run", "check"), cmdutil.Sensitivity{Flags: map[string]bool{"no-strict": true}})
 }
 
 func runCheckOnly(cmd *cobra.Command, opts FullUpdateOptions) error {
@@ -246,11 +248,23 @@ func runProjectStages(
 		return StageResult{Name: name, Status: StageSkipped, Message: fmt.Sprintf("not a %s project", branding.Get().AppName)}
 	}
 
+	// An un-joined clone must not regenerate configs or bump devenv.lock;
+	// both stages fail with the join hint instead.
+	var joinErr error
+	if !notProject {
+		joinErr = projectJoinError()
+	}
+	failNotJoined := func(name string) StageResult {
+		return StageResult{Name: name, Status: StageFailed, Message: joinErr.Error(), Err: joinErr}
+	}
+
 	if runConfigs {
 		progress.next("Regenerating project configs...")
 		switch {
 		case notProject:
 			results = append(results, skipNotProject(stageConfigRegen))
+		case joinErr != nil:
+			results = append(results, failNotJoined(stageConfigRegen))
 		case binaryReplaced:
 			// This process still carries the old binary's templates; let the
 			// freshly installed binary regenerate the configs.
@@ -262,9 +276,12 @@ func runProjectStages(
 
 	if runDeps {
 		progress.next("Updating devenv inputs...")
-		if notProject {
+		switch {
+		case notProject:
 			results = append(results, skipNotProject(stageDevenvInputs))
-		} else {
+		case joinErr != nil:
+			results = append(results, failNotJoined(stageDevenvInputs))
+		default:
 			results = append(results, runDevenvInputStage(cmd, opts))
 		}
 	}
@@ -272,19 +289,46 @@ func runProjectStages(
 	return results
 }
 
+// projectJoinError returns the join refusal when the working directory is an
+// un-joined clone. An unresolvable project root yields nil so the stages run
+// and report that error themselves.
+func projectJoinError() error {
+	projectRoot, err := cmdutil.ProjectRoot()
+	if err != nil {
+		return nil
+	}
+	return requireJoined(projectRoot)
+}
+
+// stagesFailedError reports failed update stages with the exit code of the
+// first failed stage whose error carries one (gdev's ExitCodeErr contract).
+type stagesFailedError struct{ code int }
+
+func (*stagesFailedError) Error() string { return errStagesFailed.Error() }
+
+// ExitCode satisfies gdev's ExitCodeErr interface.
+func (e *stagesFailedError) ExitCode() int { return e.code }
+
+func (*stagesFailedError) Unwrap() error { return errStagesFailed }
+
+var errStagesFailed = errors.New("one or more update stages failed")
+
 // printStageSummary prints the per-stage summary and returns an error if any
-// stage failed.
+// stage failed, carrying the exit code of the first coded stage failure.
 func printStageSummary(cmd *cobra.Command, results []StageResult) error {
 	w := cmd.OutOrStdout()
 	fmt.Fprintln(w)
 	fmt.Fprintln(w, "Update Summary:")
-	var hadFailure bool
+	failed, code := false, 0
 	for _, r := range results {
 		indicator := "  ✓"
 		switch r.Status {
 		case StageFailed:
 			indicator = "  ✗"
-			hadFailure = true
+			failed = true
+			if code == 0 {
+				code = stageExitCode(r.Err)
+			}
 		case StageSkipped:
 			indicator = "  -"
 		}
@@ -295,10 +339,23 @@ func printStageSummary(cmd *cobra.Command, results []StageResult) error {
 		fmt.Fprintf(w, "%s %s: %s\n", indicator, r.Name, msg)
 	}
 
-	if hadFailure {
-		return fmt.Errorf("one or more update stages failed")
+	switch {
+	case !failed:
+		return nil
+	case code != 0:
+		return &stagesFailedError{code: code}
+	default:
+		return errStagesFailed
 	}
-	return nil
+}
+
+// stageExitCode returns the exit code carried by a stage error, or 0.
+func stageExitCode(err error) int {
+	var ec interface{ ExitCode() int }
+	if errors.As(err, &ec) {
+		return ec.ExitCode()
+	}
+	return 0
 }
 
 // inQsdevProject reports whether the working directory is a qsdev project:
@@ -361,7 +418,7 @@ func runConfigStageInBinary(cmd *cobra.Command, exePath string, opts FullUpdateO
 	if ctx == nil {
 		ctx = context.Background()
 	}
-	child := exec.CommandContext(ctx, exePath, configStageArgs(opts)...)
+	child := procexec.CommandContext(ctx, exePath, configStageArgs(opts)...)
 	child.Stdin = cmd.InOrStdin()
 	child.Stdout = cmd.OutOrStdout()
 	child.Stderr = cmd.ErrOrStderr()
@@ -391,14 +448,33 @@ func selfUpdateConfig(opts FullUpdateOptions) selfupdate.Config {
 	return cfg
 }
 
+// The binary stage's release API. Tests replace them to run the stage as a
+// release build against a stub release.
+var (
+	binaryVersion  = func() string { return version.Info().Version }
+	checkForUpdate = selfupdate.CheckForUpdate
+	doSelfUpdate   = selfupdate.DoUpdate
+)
+
+// runSelfUpdateStage checks for and installs a newer binary. Under --dry-run
+// it is read-only, so it queries no release metadata (no network) and points
+// at `qsdev update --check`, the explicit query.
 func runSelfUpdateStage(cmd *cobra.Command, opts FullUpdateOptions) StageResult {
-	currentVersion := strings.TrimPrefix(version.Info().Version, "v")
+	currentVersion := strings.TrimPrefix(binaryVersion(), "v")
 
 	if currentVersion == "" || currentVersion == "dev" || currentVersion == "(devel)" {
 		return StageResult{
 			Name:    stageSelfUpdate,
 			Status:  StageSkipped,
 			Message: "dev build, skipping version check",
+		}
+	}
+
+	if opts.DryRun {
+		return StageResult{
+			Name:    stageSelfUpdate,
+			Status:  StageSkipped,
+			Message: fmt.Sprintf("would check for a release newer than v%s; run `qsdev update --check` to query it", currentVersion),
 		}
 	}
 
@@ -411,13 +487,13 @@ func runSelfUpdateStage(cmd *cobra.Command, opts FullUpdateOptions) StageResult 
 	if opts.Force {
 		release, err = selfupdate.ResolveForcedUpdate(ctx, cfg, currentVersion)
 	} else {
-		release, err = selfupdate.CheckForUpdate(ctx, cfg, currentVersion)
+		release, err = checkForUpdate(ctx, cfg, currentVersion)
 	}
 	if errors.Is(err, selfupdate.ErrDowngrade) {
 		// --force also forces config regeneration; refusing to downgrade the
 		// binary is not a failure of the update as a whole.
 		return StageResult{
-			Name:    "Self-update",
+			Name:    stageSelfUpdate,
 			Status:  StageSkipped,
 			Message: err.Error(),
 		}
@@ -439,16 +515,8 @@ func runSelfUpdateStage(cmd *cobra.Command, opts FullUpdateOptions) StageResult 
 		}
 	}
 
-	if opts.DryRun {
-		return StageResult{
-			Name:    stageSelfUpdate,
-			Status:  StageSuccess,
-			Message: fmt.Sprintf("would update v%s → v%s", currentVersion, release.Version),
-		}
-	}
-
 	fmt.Fprintf(cmd.OutOrStdout(), "  Updating v%s → v%s...\n", currentVersion, release.Version)
-	if err := selfupdate.DoUpdate(ctx, cfg, release); err != nil {
+	if err := doSelfUpdate(ctx, cfg, release); err != nil {
 		return StageResult{
 			Name:    stageSelfUpdate,
 			Status:  StageFailed,
@@ -540,7 +608,7 @@ func runDevenvInputStage(cmd *cobra.Command, opts FullUpdateOptions) StageResult
 		}
 	}
 
-	devenvCmd := exec.Command("devenv", "update")
+	devenvCmd := procexec.Command("devenv", "update")
 	devenvCmd.Dir = projectRoot
 	devenvCmd.Stdout = cmd.OutOrStdout()
 	devenvCmd.Stderr = cmd.ErrOrStderr()

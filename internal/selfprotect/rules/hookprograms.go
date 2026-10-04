@@ -1,9 +1,7 @@
 package rules
 
 import (
-	"bufio"
 	"encoding/json"
-	"io"
 	"os"
 	"path"
 	"path/filepath"
@@ -13,6 +11,7 @@ import (
 
 	"github.com/Quantum-Serendipity/qsdev/internal/selfprotect/canon"
 	"github.com/Quantum-Serendipity/qsdev/internal/selfprotect/cmdscan"
+	"github.com/Quantum-Serendipity/qsdev/internal/shebang"
 )
 
 // Claude Code runs every hook command through a shell with its own PATH, so a
@@ -78,6 +77,9 @@ type hookTargets struct {
 	home string
 	// dirKeys memoizes the keys of each directory's spellings.
 	dirKeys map[string][]string
+	// fs answers the filesystem questions about the paths checked against
+	// the targets (nil asks the filesystem afresh).
+	fs *canon.Resolver
 }
 
 // hookTargetsFor returns the hook command targets, computed on first use and
@@ -89,14 +91,14 @@ func (ctx *EvalContext) hookTargetsFor() *hookTargets {
 		if ctx.hookEnv != nil {
 			env = *ctx.hookEnv
 		}
-		ctx.hookTargets = env.targets()
+		ctx.hookTargets = env.targets(&ctx.fs)
 	}
 	return ctx.hookTargets
 }
 
 // targets resolves every hook command registered in the settings files.
-func (e hookEnv) targets() *hookTargets {
-	t := &hookTargets{files: make(map[string]bool), names: make(map[string][]string), dirKeys: make(map[string][]string)}
+func (e hookEnv) targets(fs *canon.Resolver) *hookTargets {
+	t := &hookTargets{files: make(map[string]bool), names: make(map[string][]string), dirKeys: make(map[string][]string), fs: fs}
 	if home, err := os.UserHomeDir(); err == nil {
 		t.home = home
 	}
@@ -174,9 +176,9 @@ func (e hookEnv) addPathLookup(t *hookTargets, name string, followShebang bool) 
 		for _, n := range names {
 			p := filepath.Join(dir, n)
 			t.addInDir(dir, n)
-			if info, err := os.Stat(p); err == nil && !info.IsDir() && found == "" {
+			if info, err := t.fs.Stat(p); err == nil && !info.IsDir() && found == "" {
 				found = p
-				if resolved, err := canon.Canonicalize(p); err == nil {
+				if resolved, err := t.fs.Canonicalize(p); err == nil {
 					t.files[canon.PathKey(resolved)] = true // the file a symlinked program runs
 				}
 			}
@@ -194,7 +196,7 @@ func (e hookEnv) addPathLookup(t *hookTargets, name string, followShebang bool) 
 
 // add records file p under its written and symlink-resolved spellings.
 func (t *hookTargets) add(p string) {
-	for _, s := range pathSpellings(p) {
+	for _, s := range pathSpellings(t.fs, p) {
 		t.files[canon.PathKey(s)] = true
 	}
 	t.addForms(p)
@@ -205,7 +207,7 @@ func (t *hookTargets) add(p string) {
 func (t *hookTargets) addInDir(dir, name string) {
 	keys, ok := t.dirKeys[dir]
 	if !ok {
-		for _, d := range pathSpellings(dir) {
+		for _, d := range pathSpellings(t.fs, dir) {
 			keys = append(keys, canon.PathKey(d))
 		}
 		t.dirKeys[dir] = keys
@@ -234,7 +236,7 @@ func (t *hookTargets) addForms(p string) {
 
 // has reports whether path p (absolute) is a hook target.
 func (t *hookTargets) has(p string) bool {
-	for _, s := range pathSpellings(p) {
+	for _, s := range pathSpellings(t.fs, p) {
 		if t.files[canon.PathKey(s)] {
 			return true
 		}
@@ -242,11 +244,12 @@ func (t *hookTargets) has(p string) bool {
 	return false
 }
 
-// pathSpellings returns p cleaned and, when it resolves, symlink-resolved.
-func pathSpellings(p string) []string {
+// pathSpellings returns p cleaned and, when it resolves through fs,
+// symlink-resolved.
+func pathSpellings(fs *canon.Resolver, p string) []string {
 	p = filepath.Clean(p)
 	out := []string{p}
-	if resolved, err := canon.Canonicalize(p); err == nil && resolved != p {
+	if resolved, err := fs.Canonicalize(p); err == nil && resolved != p {
 		out = append(out, resolved)
 	}
 	return out
@@ -284,39 +287,15 @@ func hookCommands(settingsFile string) []string {
 	return commands
 }
 
-// maxShebangLine bounds how much of a file shebangProgram reads.
-const maxShebangLine = 256
-
 // shebangProgram returns the interpreter a script's #! line runs: the program
 // name `/usr/bin/env` looks up (skipping its options and assignments), or the
 // interpreter path. It returns "" for a file without a #! line.
 func shebangProgram(file string) string {
-	f, err := os.Open(file)
+	line, err := shebang.Read(file)
 	if err != nil {
 		return ""
 	}
-	defer func() { _ = f.Close() }()
-	line, err := bufio.NewReader(io.LimitReader(f, maxShebangLine)).ReadString('\n')
-	if err != nil && line == "" {
-		return ""
-	}
-	rest, ok := strings.CutPrefix(line, "#!")
-	if !ok {
-		return ""
-	}
-	fields := strings.Fields(rest)
-	if len(fields) == 0 {
-		return ""
-	}
-	if path.Base(filepath.ToSlash(fields[0])) != "env" {
-		return fields[0]
-	}
-	for _, f := range fields[1:] {
-		if !isFlag(f) && !strings.Contains(f, "=") {
-			return f
-		}
-	}
-	return ""
+	return line.Program()
 }
 
 // writesHookTarget reports the hook target a shell command creates, rewrites,
@@ -350,7 +329,7 @@ func (t *hookTargets) writesIn(scs []scannedCommand, depth int) string {
 		if p := t.commandWrites(sc); p != "" {
 			return p
 		}
-		script, ok := shellScript(append([]string{sc.Name}, sc.Args...))
+		script, ok := cmdscan.ShellScript(append([]string{sc.Name}, sc.Args...))
 		if !ok {
 			continue
 		}
@@ -363,7 +342,8 @@ func (t *hookTargets) writesIn(scs []scannedCommand, depth int) string {
 		}
 		nested := make([]scannedCommand, len(sub))
 		for i, c := range sub {
-			nested[i] = scannedCommand{Command: c, cwd: sc.cwd, cwdUnknown: sc.cwdUnknown, inProtectedDir: sc.inProtectedDir}
+			nested[i] = sc // runs where sc does
+			nested[i].Command = c
 		}
 		if p := t.writesIn(nested, depth+1); p != "" {
 			return p
@@ -389,7 +369,7 @@ func (t *hookTargets) commandWrites(sc scannedCommand) string {
 	}
 	// An inline program (`python3 -c "open('/home/u/.local/bin/qsdev','w')"`)
 	// names the target inside the word; shell scripts are parsed by writesIn.
-	if name := path.Base(sc.Name); interpreterVerbs[name] && !scriptShells[name] {
+	if name := path.Base(sc.Name); interpreterVerbs[name] && !cmdscan.IsScriptShell(name) {
 		for _, a := range sc.Args {
 			if p := t.formIn(a); p != "" {
 				return p
@@ -463,7 +443,7 @@ func (t *hookTargets) copyIntoDir(sc scannedCommand) string {
 		dest = resolved
 	}
 	var names []string
-	for _, d := range pathSpellings(dest) {
+	for _, d := range pathSpellings(t.fs, dest) {
 		names = append(names, t.names[canon.PathKey(d)]...)
 	}
 	for _, src := range sources {

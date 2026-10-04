@@ -110,10 +110,14 @@ func exitCode(err error) int {
 // skill exits 0 as if it had succeeded. The walk runs after construction so it
 // also covers commands the framework builds itself (the root, `config`).
 //
+// It also installs the human gate (cmdutil.InstallHumanGate), which refuses
+// every command marked sensitive unless a human runs it.
+//
 // It must be called after customizations are locked down, as [Main] does.
 func NewRootCommand() *cobra.Command {
 	root := gdevcmd.Root()
 	cmdutil.RejectUnknownSubcommands(root)
+	cmdutil.InstallHumanGate(root)
 	return root
 }
 
@@ -161,8 +165,19 @@ func installDefaultRuntime() *Runtime {
 	// cmd.Main. Finish runs at most once, so Main's own call is harmless.
 	cobra.OnFinalize(rt.Finish)
 
-	rt.updateCh = selfupdate.BackgroundCheck(version.Info().Version)
+	rt.updateCh = startUpdateCheck(selfupdate.NoticeWanted(os.Stderr), version.Info().Version)
 	return rt
+}
+
+// startUpdateCheck starts the background update check for an interactive
+// process and returns its notice channel. A non-interactive process (hook,
+// MCP server, CI) gets nil, so it makes no request, writes no cache and Finish
+// prints nothing.
+func startUpdateCheck(interactive bool, currentVersion string) <-chan string {
+	if !interactive {
+		return nil
+	}
+	return selfupdate.BackgroundCheck(currentVersion)
 }
 
 // standardCommands returns the commands every tool on this framework ships:

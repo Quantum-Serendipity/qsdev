@@ -436,6 +436,7 @@ const defaultsTemplateHeader = `# qsdev user defaults
 #   qsdev defaults validate          Validate this file
 #   qsdev defaults edit              Open this file in $EDITOR
 #   qsdev defaults reset             Remove this file
+#   qsdev defaults pin               Approve this file when QSDEV_ORG_CONFIG names it
 #
 `
 

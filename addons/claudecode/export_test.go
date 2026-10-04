@@ -4,6 +4,7 @@ import (
 	"slices"
 
 	"github.com/Quantum-Serendipity/qsdev/internal/validation"
+	"github.com/Quantum-Serendipity/qsdev/pkg/types"
 )
 
 // ExportMCPServerConfig re-exports MCPServerConfig for convenience in tests.
@@ -24,14 +25,11 @@ var ExportLoadAnswers = loadAnswers
 
 // ExportBuildClaudeAnswersFromFlags exposes buildClaudeAnswersFromFlags for external tests.
 //
-// Parameters: projectRoot, preset string, skills, mcpServers []string, yes, noSafetyBlock bool
+// Parameters: projectRoot, preset string, skills, mcpServers []string, yes bool
 var ExportBuildClaudeAnswersFromFlags = buildClaudeAnswersFromFlags
 
 // ExportValidPermissionPresets exposes the permission presets init accepts for external tests.
 var ExportValidPermissionPresets = validation.PermissionPresets()
-
-// ExportValidHookPresets exposes the hook presets add-hook accepts for external tests.
-var ExportValidHookPresets = validation.HookPresets()
 
 // ExportClaudeCmd exposes claudeCmd for external tests.
 var ExportClaudeCmd = claudeCmd
@@ -100,8 +98,14 @@ var (
 	ExportHooksCmd            = hooksCmd
 	ExportTemplateFS          = templateFS
 	ExportGenerateHookFiles   = GenerateHookFiles
-	ExportWrapHooksForSandbox = wrapHooksForSandbox
+	ExportFailClosedCommand   = failClosedCommand
+	ExportBuildHooks          = buildHooks
 )
+
+// ExportEmittedCommand exposes HookDefinition.emittedCommand for external tests.
+func ExportEmittedCommand(h HookDefinition, answers types.WizardAnswers, app string) string {
+	return h.emittedCommand(answers, app)
+}
 
 var ExportIsTemplateTestFixture = isTemplateTestFixture
 

@@ -1,14 +1,21 @@
 package claudecode_test
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
+	"maps"
 	"os"
 	"os/exec"
+	"path"
 	"path/filepath"
+	"regexp"
+	"runtime"
 	"slices"
+	"strconv"
 	"strings"
 	"testing"
+	"time"
 
 	claudecode "github.com/Quantum-Serendipity/qsdev/addons/claudecode"
 	"github.com/Quantum-Serendipity/qsdev/pkg/types"
@@ -629,8 +636,9 @@ func TestScanSecretsHook_Formats(t *testing.T) {
 // oldest supported interpreter cannot load (W034). block-destructive.py used
 // PEP 604 annotations that Python 3.9 (macOS's /usr/bin/python3) evaluates at
 // import: it exited 1, a non-blocking hook error, so every command ran
-// unchecked. The static check runs everywhere; when a python3.9 binary is on
-// PATH, each hook is also executed with it.
+// unchecked. The static check runs everywhere against types.MinHookPython;
+// when a binary of exactly that version is on PATH, each hook is also executed
+// with it.
 func TestPythonHooks_LoadOnPython39(t *testing.T) {
 	t.Parallel()
 	python, err := exec.LookPath("python3")
@@ -642,11 +650,11 @@ func TestPythonHooks_LoadOnPython39(t *testing.T) {
 		t.Fatalf("no hook scripts found: %v", err)
 	}
 	checker := filepath.Join("testdata", "hooks", "py_compat_check.py")
-	python39, _ := exec.LookPath("python3.9")
+	python39, _ := exec.LookPath("python" + types.MinHookPython)
 	for _, script := range scripts {
 		t.Run(filepath.Base(script), func(t *testing.T) {
 			t.Parallel()
-			out, err := exec.Command(python, checker, script).CombinedOutput()
+			out, err := exec.Command(python, checker, script, types.MinHookPython).CombinedOutput()
 			if err != nil {
 				t.Fatalf("compatibility check failed: %v\n%s", err, out)
 			}
@@ -660,7 +668,7 @@ func TestPythonHooks_LoadOnPython39(t *testing.T) {
 			cmd.Stdin = strings.NewReader(`{"tool_name":"qsdev-none","tool_input":{}}`)
 			cmd.Env = append(os.Environ(), "PYTHONDONTWRITEBYTECODE=1", "CLAUDE_PROJECT_DIR="+t.TempDir(), "CLAUDE_AUDIT_DIR="+t.TempDir())
 			if out, err := cmd.CombinedOutput(); err != nil {
-				t.Errorf("python3.9 %s: %v\n%s", filepath.Base(script), err, out)
+				t.Errorf("python%s %s: %v\n%s", types.MinHookPython, filepath.Base(script), err, out)
 			}
 		})
 	}
@@ -762,6 +770,323 @@ func TestToolGatesHook_PolicyFromGeneratedSettings(t *testing.T) {
 			payload := map[string]any{"tool_name": tc.tool, "tool_input": map[string]any{}}
 			if got := runHookScript(t, "tool-gates.py", payload, env...); got != tc.want {
 				t.Errorf("decision = %q, want %q", got, tc.want)
+			}
+		})
+	}
+}
+
+// failClosedPythonHooks maps each fail-closed Python hook's template name to
+// its registered timeout in seconds, derived from the registry.
+func failClosedPythonHooks(t *testing.T) map[string]int {
+	t.Helper()
+	hooks := map[string]int{}
+	for _, d := range claudecode.ExportDefaultHookRegistry().Definitions() {
+		if d.FailClosed && strings.HasSuffix(d.Command, ".py") {
+			hooks[path.Base(d.Command)] = d.Timeout
+		}
+	}
+	if len(hooks) == 0 {
+		t.Fatal("registry has no fail-closed Python hooks")
+	}
+	return hooks
+}
+
+var hookDeadlineRe = regexp.MustCompile(`(?m)^_HOOK_DEADLINE_S = (\d+)$`)
+
+// hookDeadlineS returns the `_HOOK_DEADLINE_S` a hook template declares.
+func hookDeadlineS(t *testing.T, script string) int {
+	t.Helper()
+	src, err := os.ReadFile(filepath.Join("templates", "hooks", script))
+	if err != nil {
+		t.Fatal(err)
+	}
+	m := hookDeadlineRe.FindSubmatch(src)
+	if m == nil {
+		t.Fatalf("%s declares no `_HOOK_DEADLINE_S = <seconds>`", script)
+	}
+	n, err := strconv.Atoi(string(m[1]))
+	if err != nil {
+		t.Fatal(err)
+	}
+	return n
+}
+
+// TestHookDeadline_Denies guards U17-V01: a fail-closed hook that cannot
+// finish (here, stdin is never closed) must block before Claude Code's own
+// timeout, which would let the call through. QSDEV_HOOK_DEADLINE_MS may only
+// shorten the deadline.
+func TestHookDeadline_Denies(t *testing.T) {
+	t.Parallel()
+	python, err := exec.LookPath("python3")
+	if err != nil {
+		t.Skip("python3 not available; skipping hook deadline test")
+	}
+	for _, script := range slices.Sorted(maps.Keys(failClosedPythonHooks(t))) {
+		abs, err := filepath.Abs(filepath.Join("templates", "hooks", script))
+		if err != nil {
+			t.Fatal(err)
+		}
+		env := func(t *testing.T, deadlineMS string) []string {
+			t.Helper()
+			return append(os.Environ(), "PYTHONDONTWRITEBYTECODE=1", "QSDEV_HOOK_DEADLINE_MS="+deadlineMS,
+				"CLAUDE_PROJECT_DIR="+t.TempDir(), "CLAUDE_AUDIT_DIR="+t.TempDir(), "HOME="+t.TempDir())
+		}
+
+		t.Run(script+"/stalled stdin blocks", func(t *testing.T) {
+			t.Parallel()
+			cmd := exec.Command(python, abs)
+			cmd.Env = env(t, "50")
+			stdin, err := cmd.StdinPipe()
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer func() { _ = stdin.Close() }()
+			var stderr bytes.Buffer
+			cmd.Stderr = &stderr
+			if err := cmd.Start(); err != nil {
+				t.Fatal(err)
+			}
+			done := make(chan error, 1)
+			go func() { done <- cmd.Wait() }()
+			select {
+			case err := <-done:
+				exitErr, ok := errors.AsType[*exec.ExitError](err)
+				if !ok || exitErr.ExitCode() != 2 {
+					t.Errorf("exit = %v, want exit status 2 (stderr %q)", err, stderr.String())
+				}
+				if !strings.Contains(stderr.String(), "deadline") {
+					t.Errorf("stderr %q lacks %q", stderr.String(), "deadline")
+				}
+			case <-time.After(5 * time.Second):
+				_ = cmd.Process.Kill()
+				<-done
+				t.Fatal("hook still running after 5s; the internal deadline did not fire")
+			}
+		})
+
+		t.Run(script+"/env cannot extend", func(t *testing.T) {
+			t.Parallel()
+			driver := `import importlib.util, json, os
+spec = importlib.util.spec_from_file_location('h', os.environ['HOOK_PATH'])
+m = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(m)
+print(json.dumps([m._deadline_seconds(), m._HOOK_DEADLINE_S]))`
+			for _, tc := range []struct {
+				ms   string
+				want func(declared float64) float64
+			}{
+				{"999999", func(d float64) float64 { return d }},
+				{"50", func(float64) float64 { return 0.05 }},
+				{"not-a-number", func(d float64) float64 { return d }},
+			} {
+				cmd := exec.Command(python, "-c", driver)
+				cmd.Env = append(env(t, tc.ms), "HOOK_PATH="+abs)
+				out, err := cmd.Output()
+				if err != nil {
+					t.Fatalf("QSDEV_HOOK_DEADLINE_MS=%s: %v", tc.ms, err)
+				}
+				var got [2]float64
+				if err := json.Unmarshal(out, &got); err != nil {
+					t.Fatalf("driver output %q: %v", out, err)
+				}
+				if want := tc.want(got[1]); got[0] != want {
+					t.Errorf("QSDEV_HOOK_DEADLINE_MS=%s: effective deadline %vs, want %vs", tc.ms, got[0], want)
+				}
+			}
+			// With the variable set high, the hook still decides normally.
+			cmd := exec.Command(python, abs)
+			cmd.Env = env(t, "999999")
+			cmd.Stdin = strings.NewReader(`{"tool_name":"qsdev-none","tool_input":{}}`)
+			if out, err := cmd.CombinedOutput(); err != nil {
+				t.Errorf("canned payload: %v\n%s", err, out)
+			}
+		})
+	}
+}
+
+// TestBlockDestructive_UnknownBranchForcePushDenied guards U17-V01(b): when
+// the current branch cannot be named (git is slow or fails, or the directory
+// the push runs in is unknown), a history-rewriting push of HEAD must be
+// treated as a push to a protected branch. A detached HEAD is not unknown.
+func TestBlockDestructive_UnknownBranchForcePushDenied(t *testing.T) {
+	t.Parallel()
+	if runtime.GOOS == "windows" {
+		t.Skip("the fake git is a shell script")
+	}
+	gitBin, err := exec.LookPath("git")
+	if err != nil {
+		t.Skip("git not available")
+	}
+	git := func(t *testing.T, dir string, args ...string) {
+		t.Helper()
+		if out, err := exec.Command(gitBin, append([]string{"-C", dir}, args...)...).CombinedOutput(); err != nil {
+			t.Fatalf("git %v: %v\n%s", args, err, out)
+		}
+	}
+	realRepo := func(t *testing.T, branch string) string {
+		t.Helper()
+		dir := t.TempDir()
+		git(t, dir, "init", "-q")
+		git(t, dir, "symbolic-ref", "HEAD", "refs/heads/"+branch)
+		return dir
+	}
+	detachedRepo := func(t *testing.T) string {
+		t.Helper()
+		dir := realRepo(t, "main")
+		git(t, dir, "-c", "user.name=t", "-c", "user.email=t@example.invalid", "commit", "-q", "--allow-empty", "-m", "x")
+		git(t, dir, "checkout", "-q", "--detach")
+		return dir
+	}
+	slowGit := func(t *testing.T) string {
+		t.Helper()
+		bin := t.TempDir()
+		if err := os.WriteFile(filepath.Join(bin, "git"), []byte("#!/bin/sh\nexec sleep 3\n"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		return bin + string(os.PathListSeparator) + os.Getenv("PATH")
+	}
+	path := os.Getenv("PATH")
+	repo := func(branch string) func(t *testing.T) (string, string) {
+		return func(t *testing.T) (string, string) { return realRepo(t, branch), path }
+	}
+	notRepo := func(t *testing.T) (string, string) { return t.TempDir(), path }
+
+	// {cwd} in a command is replaced by the session cwd the setup returns.
+	cases := []struct {
+		name    string
+		command string
+		setup   func(t *testing.T) (cwd, pathEnv string)
+		denied  bool
+	}{
+		{"unknown branch, force push HEAD", "git push --force origin HEAD",
+			func(t *testing.T) (string, string) { return realRepo(t, "main"), slowGit(t) }, true},
+		{"unknown branch, +HEAD refspec", "git push origin +HEAD",
+			func(t *testing.T) (string, string) { return realRepo(t, "feature"), slowGit(t) }, true},
+		{"unknown branch, plain push", "git push origin HEAD",
+			func(t *testing.T) (string, string) { return realRepo(t, "main"), slowGit(t) }, false},
+		{"feature branch, force push HEAD", "git push --force origin HEAD", repo("feature"), false},
+		{"main branch, force push HEAD", "git push --force origin HEAD", repo("main"), true},
+		{"detached HEAD, force push HEAD", "git push --force origin HEAD",
+			func(t *testing.T) (string, string) { return detachedRepo(t), path }, false},
+		{"not a repo, force push HEAD", "git push --force origin HEAD", notRepo, true},
+		{"not a repo, plain push HEAD", "git push origin HEAD", notRepo, false},
+		{"not a repo, force push named feature branch", "git push --force origin feature", notRepo, false},
+		{"unresolvable cd from non-repo, force push HEAD", `cd "$REPO" && git push --force origin HEAD`, notRepo, true},
+		{"unresolvable -C from non-repo, force push HEAD", `git -C "$REPO" push --force origin HEAD`, notRepo, true},
+		{"unresolvable cd from feature branch, force push HEAD", `cd "$OTHER" && git push -f origin HEAD`, repo("feature"), true},
+		{"unresolvable -C from feature branch, force push HEAD", `git -C "$OTHER" push -f origin HEAD`, repo("feature"), true},
+		{"cd - from feature branch, force push HEAD", `cd - && git push -f origin HEAD`, repo("feature"), true},
+		{"relative cd after unresolvable cd, force push HEAD", `cd "$OTHER" && cd sub && git push -f origin HEAD`, repo("feature"), true},
+		{"absolute cd after unresolvable cd, force push HEAD", `cd "$OTHER" && cd {cwd} && git push -f origin HEAD`, repo("feature"), false},
+		{"unresolvable cd from feature branch, plain push HEAD", `cd "$OTHER" && git push origin HEAD`, repo("feature"), false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			cwd, pathEnv := tc.setup(t)
+			command := strings.ReplaceAll(tc.command, "{cwd}", cwd)
+			payload := map[string]any{"tool_name": "Bash", "cwd": cwd, "tool_input": map[string]any{"command": command}}
+			got := runHookScript(t, "block-destructive.py", payload,
+				"PATH="+pathEnv, "GIT_CEILING_DIRECTORIES="+filepath.Dir(cwd),
+				"CLAUDE_PROJECT_DIR=/qsdev-hook-test/project", "HOME=/qsdev-hook-test/home")
+			if denied := got == "deny" || got == "error"; denied != tc.denied {
+				t.Errorf("decision = %q, want denied=%v", got, tc.denied)
+			}
+		})
+	}
+}
+
+// TestPythonHooks_MinPythonMatchesGo pins each fail-closed Python hook's
+// in-script interpreter floor to types.MinHookPython (D20), the single floor
+// the Go side checks against. U17-WS7 moves the guard into qsdev_hooklib.
+func TestPythonHooks_MinPythonMatchesGo(t *testing.T) {
+	t.Parallel()
+	want := "_MIN_PYTHON = (" + strings.Join(strings.Split(types.MinHookPython, "."), ", ") + ")"
+	for _, script := range slices.Sorted(maps.Keys(failClosedPythonHooks(t))) {
+		t.Run(script, func(t *testing.T) {
+			t.Parallel()
+			src, err := os.ReadFile(filepath.Join("templates", "hooks", script))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !strings.Contains(string(src), "\n"+want+"\n") {
+				t.Errorf("%s does not declare %q", script, want)
+			}
+		})
+	}
+}
+
+// TestPythonHooks_ScrubSysPathFirst pins that every Python hook drops its own
+// directory from sys.path before it imports anything but sys. A `from
+// __future__ import ...` must be a module's first statement, so it would
+// import a planted __future__.py before the scrub could run.
+func TestPythonHooks_ScrubSysPathFirst(t *testing.T) {
+	t.Parallel()
+	importRe := regexp.MustCompile(`(?m)^[ \t]*(?:import|from)[ \t]+([A-Za-z_][A-Za-z0-9_.]*)`)
+	for rel, content := range claudecode.HookScriptContents() {
+		if path.Ext(rel) != ".py" {
+			continue
+		}
+		t.Run(path.Base(rel), func(t *testing.T) {
+			t.Parallel()
+			scrub := strings.Index(string(content), "del sys.path[0]")
+			if scrub < 0 {
+				t.Fatalf("%s never drops its own directory from sys.path", rel)
+			}
+			for _, m := range importRe.FindAllSubmatchIndex(content, -1) {
+				if name := string(content[m[2]:m[3]]); name != "sys" && m[0] < scrub {
+					t.Errorf("%s imports %s before dropping its own directory from sys.path", rel, name)
+				}
+			}
+		})
+	}
+}
+
+// TestPythonHooks_IgnorePlantedModules pins that no Python hook imports a
+// module planted beside it. Python puts a script's directory first on
+// sys.path, so a committed .claude/hooks/json.py would otherwise replace the
+// stdlib json and could make an unchanged guard exit 0 for every call. Each
+// hook runs from a copy of the hooks directory holding a module, named after
+// every module the hook imports, that exits 7 on import.
+func TestPythonHooks_IgnorePlantedModules(t *testing.T) {
+	t.Parallel()
+	python, err := exec.LookPath("python3")
+	if err != nil {
+		t.Skip("python3 not available; skipping hook behaviour test")
+	}
+	importRe := regexp.MustCompile(`(?m)^(?:import|from)\s+([A-Za-z_][A-Za-z0-9_]*)`)
+	for rel, content := range claudecode.HookScriptContents() {
+		if path.Ext(rel) != ".py" {
+			continue
+		}
+		t.Run(path.Base(rel), func(t *testing.T) {
+			t.Parallel()
+			dir := t.TempDir()
+			script := filepath.Join(dir, path.Base(rel))
+			if err := os.WriteFile(script, content, 0o755); err != nil {
+				t.Fatal(err)
+			}
+			var planted []string
+			for _, m := range importRe.FindAllSubmatch(content, -1) {
+				name := string(m[1])
+				if name == "sys" || slices.Contains(planted, name) {
+					continue
+				}
+				planted = append(planted, name)
+				if err := os.WriteFile(filepath.Join(dir, name+".py"), []byte("import os\nos._exit(7)\n"), 0o644); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if !slices.Contains(planted, "json") {
+				t.Fatalf("planted %v: want json among them (every hook reads its JSON input)", planted)
+			}
+			cmd := exec.Command(python, script)
+			cmd.Dir = dir
+			cmd.Stdin = strings.NewReader("not json")
+			cmd.Env = append(os.Environ(), "PYTHONDONTWRITEBYTECODE=1", "PYTHONSAFEPATH=", "HOME="+dir, "CLAUDE_AUDIT_DIR="+dir)
+			out, err := cmd.CombinedOutput()
+			if exitErr, ok := errors.AsType[*exec.ExitError](err); ok && exitErr.ExitCode() == 7 {
+				t.Errorf("%s imported a module planted beside it (exit 7)\n%s", rel, out)
 			}
 		})
 	}

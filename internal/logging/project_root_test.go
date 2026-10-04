@@ -1,8 +1,11 @@
 package logging
 
 import (
+	"errors"
+	"io/fs"
 	"os"
 	"path/filepath"
+	"runtime"
 	"testing"
 
 	"github.com/Quantum-Serendipity/qsdev/internal/testutil"
@@ -56,7 +59,9 @@ func setHome(t *testing.T, home string) {
 
 // TestFindProjectRoot pins the shared project marker set: config file, state
 // directory, or project data directory — the last one never in the user's
-// home, where the same name is the per-user global data directory.
+// home, where the same name is the per-user global data directory — and the
+// repository ceiling: the walk never climbs above the first directory holding
+// a .git entry.
 func TestFindProjectRoot(t *testing.T) {
 	// Not parallel: t.Setenv changes HOME for the process.
 	tests := []struct {
@@ -76,6 +81,11 @@ func TestFindProjectRoot(t *testing.T) {
 		{name: "config file in home is a marker", tree: []string{".qsdev.yaml", "code/"}, home: ".", start: "code", want: ".", wantOK: true},
 		{name: "project below home found before home", tree: []string{".qsdev/", "code/.qsdev/", "code/src/"}, home: ".", start: "code/src", want: "code", wantOK: true},
 		{name: "nearest project wins", tree: []string{".qsdev.yaml", "sub/.devinit/", "sub/x/"}, start: "sub/x", want: "sub", wantOK: true},
+		{name: "marker above .git dir not found", tree: []string{".qsdev.yaml", "repo/.git/", "repo/src/"}, start: "repo/src"},
+		{name: "marker above .git file (worktree) not found", tree: []string{".qsdev/", "wt/.git", "wt/src/"}, start: "wt/src"},
+		{name: "config file at git toplevel found from subdir", tree: []string{"repo/.git/", "repo/.qsdev.yaml", "repo/a/b/"}, start: "repo/a/b", want: "repo", wantOK: true},
+		{name: "state dir between start and git toplevel found", tree: []string{".qsdev.yaml", "repo/.git/", "repo/pkg/.devinit/", "repo/pkg/x/"}, start: "repo/pkg/x", want: "repo/pkg", wantOK: true},
+		{name: "nested repo is its own boundary", tree: []string{"repo/.git/", "repo/.qsdev.yaml", "repo/sub/.git", "repo/sub/src/"}, start: "repo/sub/src"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -96,6 +106,34 @@ func TestFindProjectRoot(t *testing.T) {
 				t.Errorf("FindProjectRoot() = (%q, %v), want (%q, %v)", got, ok, want, tt.wantOK)
 			}
 		})
+	}
+}
+
+// TestFindProjectRoot_UnreadableGitEntryStops covers the fail-closed ceiling:
+// a directory whose .git entry cannot be inspected (Lstat fails with an error
+// other than not-exist) stops the walk, so an ancestor marker is not adopted.
+func TestFindProjectRoot_UnreadableGitEntryStops(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("directory search permission is a Unix concept")
+	}
+	if os.Geteuid() == 0 {
+		t.Skip("root bypasses directory permissions")
+	}
+	root := walkRoot(t)
+	makeTree(t, root, ".qsdev.yaml", "locked/")
+	locked := filepath.Join(root, "locked")
+	// Read without search permission: Lstat(locked/.git) fails with EACCES.
+	if err := os.Chmod(locked, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(locked, 0o755) })
+	setHome(t, t.TempDir())
+
+	if _, err := os.Lstat(filepath.Join(locked, ".git")); err == nil || errors.Is(err, fs.ErrNotExist) {
+		t.Fatalf("precondition: Lstat(.git) error = %v, want a non-not-exist error", err)
+	}
+	if got, ok := FindProjectRoot(locked); ok {
+		t.Errorf("FindProjectRoot() = %q, want no project: an unreadable .git entry is a ceiling", got)
 	}
 }
 

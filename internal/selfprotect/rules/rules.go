@@ -1,12 +1,15 @@
 package rules
 
 import (
+	"fmt"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strings"
 
 	"github.com/Quantum-Serendipity/qsdev/internal/selfprotect/canon"
 	"github.com/Quantum-Serendipity/qsdev/internal/selfprotect/cmdscan"
+	"github.com/Quantum-Serendipity/qsdev/pkg/branding"
 )
 
 var (
@@ -16,7 +19,6 @@ var (
 	reProcessTarget = regexp.MustCompile(`\b(qsdev|claude|gdev)\b`)
 	reMcpInjection  = regexp.MustCompile(`(?i)(system\s*prompt|ignore\s*previous|you\s+are\s+now|<\s*system\s*>|<\s*/?\s*instructions?\s*>)`)
 	reBypassCmd     = regexp.MustCompile(`\bqsdev\s+hook\s+bypass`)
-	reCliControl    = regexp.MustCompile(`\bqsdev\s+(disable\s+hooks|enable\s+hooks\s+--force|session\s+allow\b|sandbox\s+approve\b)`)
 	reSystemctl     = regexp.MustCompile(`\bsystemctl\s+(stop|disable)\b.*\b(qsdev|gdev)\b`)
 	// reProcInfo matches the per-process /proc entries that expose a process's
 	// environment, command line, open files, or root: under any pid spelling
@@ -511,6 +513,9 @@ var sp013 = Rule{
 	},
 }
 
+// sp014 blocks the CLI's own commands that weaken or remove a guardrail: the
+// commands marked sensitive in the command tree (ctx.SensitiveCommands), so
+// the set follows the tree rather than a list kept here.
 var sp014 = Rule{
 	ID:       "SP-014",
 	Name:     "CLI security control block",
@@ -519,17 +524,75 @@ var sp014 = Rule{
 		if !cmdscan.IsShellTool(ctx.ToolName) {
 			return Allow, ""
 		}
-		if reCliControl.MatchString(ctx.Command) {
-			return Deny, "CLI command modifying security configuration"
+		app := branding.Get().AppName
+		hits := cmdscan.InvokedSpecs(ctx.Command, app, ctx.SensitiveCommands)
+		if len(hits) == 0 {
+			return Allow, ""
+		}
+		return Deny, sensitiveInvocationReason(app, mostCertain(hits))
+	},
+}
+
+// mostCertain returns the hit SP-014 reports: a command run as written over
+// one the text mentions, and either over a computed one.
+func mostCertain(hits []cmdscan.Invoked) cmdscan.Invoked {
+	rank := func(h cmdscan.Invoked) int {
+		switch {
+		case h.Computed:
+			return 0
+		case h.Mention:
+			return 1
+		}
+		return 2
+	}
+	return slices.MaxFunc(hits, func(a, b cmdscan.Invoked) int { return rank(a) - rank(b) })
+}
+
+// sensitiveInvocationReason describes what SP-014 found: the guardrail-
+// weakening command written out; a command the text mentions outside command
+// position, which another program may run as code (`trap "..." EXIT`) or
+// which may be data (a commit message, a search pattern); or, when the match
+// rests on words the shell computes, that the command line may run one,
+// without naming a command that may never run.
+func sensitiveInvocationReason(app string, hit cmdscan.Invoked) string {
+	if hit.Computed {
+		return fmt.Sprintf("a computed %s command (a program or subcommand word the shell expands, "+
+			"or arguments xargs appends) may weaken a guardrail; such commands require a human at their own terminal", app)
+	}
+	path := make([]string, len(hit.Spec.Path))
+	for i, names := range hit.Spec.Path {
+		path[i] = names[0]
+	}
+	command := app + " " + strings.Join(path, " ")
+	if hit.Mention {
+		return fmt.Sprintf("the command line mentions '%s', which weakens a guardrail; text that names it "+
+			"counts as an invocation, since the program it is given to may run it as code. "+
+			"If it is only text (a message, a search pattern), reword it; "+
+			"otherwise a human must run it at their own terminal", command)
+	}
+	return fmt.Sprintf("'%s' weakens a guardrail and requires a human at their own terminal", command)
+}
+
+// sp015 denies a change to a file that sets the environment the CLI runs in
+// (devenv.local.nix, a shell startup file) that sets or removes the org-config
+// variable, which relocates the org overlay for every later regeneration (see
+// envFileRelocation).
+var sp015 = Rule{
+	ID:       "SP-015",
+	Name:     "Environment file relocation block",
+	Category: "self-protection",
+	Evaluate: func(ctx *EvalContext) (Verdict, string) {
+		if reason := envFileRelocation(ctx); reason != "" {
+			return Deny, reason
 		}
 		return Allow, ""
 	},
 }
 
-// Tier1Rules contains all 18 enforce-always Tier 1 self-protection rules.
+// Tier1Rules contains all 19 enforce-always Tier 1 self-protection rules.
 var Tier1Rules = NewRuleSet(
 	sp001, sp002, sp003, sp004, sp005, sp006, sp007, sp008, sp009, sp010,
 	mcp001, mcp002, mcp005,
 	int001,
-	sp011, sp012, sp013, sp014,
+	sp011, sp012, sp013, sp014, sp015,
 )

@@ -53,13 +53,13 @@ qsdev init --profile go-web --infra-profile enterprise \
 
 ### Compliance Levels
 
-Each security tier maps to a compliance level that controls age-gating thresholds, required hooks, and SBOM policy:
+Each security tier maps to a compliance level that selects the generated pre-commit hooks. The compliance level does not select the age gate yet: at every level, the generated package-manager settings gate installs for at least 72 hours (3 days) where the package manager supports an age gate (npm and pnpm use 3 days; yarn, bun and uv use 7 days). The Renovate or Dependabot window comes from the infrastructure profile instead: 3 days for `consulting-default`, 7 days for `enterprise`, none for `startup-github`. Per-level windows are planned. Per-level SBOM policies and the strict-level license-compliance hook are planned and not generated yet.
 
-| Level | Age Gate | Required Hooks | SBOM Policy |
-|-------|---------|----------------|-------------|
-| `baseline` | 72 hours | ripsecrets, gitleaks | Off |
-| `enhanced` | 168 hours (1 week) | ripsecrets, gitleaks, semgrep | On release |
-| `strict` | 336 hours (2 weeks) | ripsecrets, gitleaks, semgrep, license-compliance | Every build |
+| Level | Age Gate | Generated Hooks | Planned |
+|-------|---------|-----------------|---------|
+| `baseline` | at least 72 hours (3 days) | ripsecrets, gitleaks | none |
+| `enhanced` | at least 72 hours (3 days) | ripsecrets, gitleaks, semgrep | SBOM policy: on release |
+| `strict` | at least 72 hours (3 days) | ripsecrets, gitleaks, semgrep | license-compliance hook; SBOM policy: every build |
 
 ### Container Runtime
 
@@ -167,18 +167,25 @@ Hook presets control Claude Code runtime behavior:
 | `safety-block` | Installs `package-guard.py` as a PreToolUse hook; intercepts package install commands sent through Bash, PowerShell or Monitor in real-time |
 | `credential-scan` | Scans Write/Edit operations for credentials before they reach disk |
 | `destructive-prevention` | Blocks destructive shell commands sent through Bash, PowerShell or Monitor (rm -rf, git push --force, etc.) |
-| `file-boundary` | Prevents Write/Edit/Read/Grep/Glob operations outside the project tree (reads of dependency caches such as the Go module cache and /nix/store, and of `.qsdev.yaml` `hooks.file_boundary.extra_read_paths`, are allowed). Shell commands are out of its scope; use the sandbox to confine them |
+| `file-boundary` | Prevents Write/Edit/Read/Grep/Glob operations outside the project tree (reads of dependency caches such as the Go module cache and /nix/store, and of `.qsdev.yaml` `hooks.file_boundary.extra_read_paths`, are allowed). Shell commands are out of its scope |
 | `tool-gates` | Blocks the tools listed in `.qsdev.yaml` `hooks.tool_gates.denied`, and every tool outside `hooks.tool_gates.allowed` when that list is set, on all tool invocations. With neither list set it has no policy and allows every tool; `qsdev claude hooks list` and `qsdev check` report it as "no policy" |
 | `soc2-audit` | Logs session start/end (with the end reason), tool invocations, failed and denied tool calls, and checkpoints for SOC 2 compliance (metadata-only audit trail with monthly rotation) |
-| `auto-format` | Runs formatters after file writes |
-| `pre-commit` | Runs pre-commit checks before git operations |
 | `audit-log` | Logs all tool invocations for compliance auditing (simpler alternative to soc2-audit) |
 
-All hooks run inside the sandbox when available (see `qsdev sandbox status`).
+The hook sandbox is experimental and not yet enableable from the CLI (planned opt-in `--claude-hooks sandbox`, Linux/Nix builds); no generated hook is wrapped in it today. `qsdev sandbox status` shows what isolation this machine could provide.
+`safety-block` is always on whatever other presets you pick; `--claude-hooks`
+adds presets to it. The only opt-out is `qsdev disable attach-guard --force`,
+which lists `attach-guard` under `tools.disabled` in `.qsdev.yaml`; the saved
+answers' `safety_block_opt_out` is derived from that entry, and `init`,
+`init --update`, `claude init` and `claude update` warn while it stands
+(`qsdev enable attach-guard` turns the guard back on). Commit-time checks such
+as pre-commit are devenv git hooks set by the compliance level's
+`required_pre_commit_hooks`, not Claude Code hooks, so `--claude-hooks`
+rejects `pre-commit` and `auto-format`.
 
 ```bash
 # At init time
-qsdev init --claude-hooks safety-block,pre-commit --yes
+qsdev init --claude-hooks audit-log,credential-scan --yes
 
 # Add to an existing project
 qsdev claude add-hook audit-log
@@ -202,7 +209,7 @@ MCP servers are configured by default or activated based on project detection:
 
 These are included automatically during `qsdev init`. No additional flags are needed.
 
-Use `qsdev mcp grade` to check compliance levels and `qsdev mcp health` to verify connectivity:
+Use `qsdev mcp grade` to check compliance levels and `qsdev mcp health` to check the configuration (add `--probe` to start the trusted servers and verify connectivity):
 
 ```bash
 qsdev mcp grade                # Grade the servers configured in .mcp.json
@@ -210,14 +217,15 @@ qsdev mcp grade --all          # Also grade registry servers not configured
 qsdev mcp grade context7       # Grade a specific server
 qsdev mcp install <name>       # Install a server's pinned release; .mcp.json then runs the binary
 qsdev mcp update --all         # After cloning: install the pinned releases the project state records
-qsdev mcp health               # Health check all configured servers
+qsdev mcp health               # Check the configured servers statically; starts nothing
+qsdev mcp health --probe       # Also start or dial the trusted servers to check liveness
 ```
 
 `qsdev devenv doctor` also lists the configured servers under **MCP Servers**. It checks each `.mcp.json` entry without starting the server: the command is on `PATH`, a remote URL uses `https://`, and the environment variables the server needs are set. See [Layer 13](security-architecture.md#layer-13-package-and-mcp-risk-scoring).
 
 ## Managing Security Policies
 
-qsdev generates YAML security policies in `.qsdev/policy/`. These define fine-grained rules for what the AI agent can and cannot do, beyond the static deny/ask rules in `.claude/settings.json`.
+The policy engine reads YAML security policies from `.qsdev/policy.yaml` in the project and from `~/.qsdev/policy.yaml`. These define fine-grained rules for what the AI agent can and cannot do, beyond the static deny/ask rules in `.claude/settings.json`. The policy engine (`qsdev enforce`) exists but no tier or preset enables it yet; it is planned for the full tier. qsdev does not generate a policy file yet, so you write it yourself.
 
 ### Inspecting Policies
 
@@ -239,7 +247,7 @@ qsdev session list                       # Show active bypasses
 qsdev session clear                      # Remove all bypasses
 ```
 
-Rules with `bypass_tier: enforce_always` (all 18 self-protection rules) cannot be bypassed. Rules with `bypass_tier: session` are lifted for the named session until the grant expires (default 8h). Rules with `bypass_tier: command` get a one-shot token that the next matching tool call spends.
+Rules with `bypass_tier: enforce_always` cannot be lifted with `qsdev session allow`, and neither can the 18 self-protection rules. Rules with `bypass_tier: session` are lifted for the named session until the grant expires (default 8h). Rules with `bypass_tier: command` get a one-shot token that the next matching tool call spends.
 
 ## Cloud Ecosystem Coverage
 
@@ -391,8 +399,7 @@ claude:
     - review-pr
   hooks:
     - safety-block
-    - pre-commit
-    - auto-format
+    - audit-log
 ```
 
 Each repository then runs:
@@ -420,7 +427,7 @@ This ensures consistent security policies, tooling versions, and Claude Code per
 | `qsdev claude add-skill <name>` | Add a Claude Code skill |
 | `qsdev claude add-hook <name>` | Enable a hook preset |
 | `qsdev claude list-skills` | List available skills |
-| `qsdev mcp status` | MCP server health and connectivity |
+| `qsdev mcp status` | MCP server configuration; `--probe` adds health and connectivity |
 | `qsdev mcp grade` | MCP server compliance grading |
 | `qsdev mcp install <name>` | Install an MCP server |
 | `qsdev docs download` | Download local documentation sets |

@@ -90,100 +90,195 @@ func driftPairs() []lockfilePair {
 	return pairs
 }
 
-func DetectDrift(root string) (*DriftReport, error) {
+// DetectDrift checks every catalog manifest in root against its lockfile. It
+// examines root only; manifests found in subdirectories are listed in
+// NotVerified rather than checked, and any manifest that was not version-diffed
+// makes the report's Coverage partial. knownManifests names further manifest
+// files or globs (typically every ecosystem module's manifests): one present in
+// root that no drift checker covers is listed in NotVerified as unchecked, so a
+// project whose only manifest is outside the catalog is never reported clean.
+// Coverage is CoverageNone when root holds no manifest at all.
+func DetectDrift(root string, knownManifests ...string) (*DriftReport, error) {
 	report := &DriftReport{}
+	pairs := driftPairs()
 
-	for _, pair := range driftPairs() {
-		manifestPath, ok := manifestPresent(root, pair.manifest)
-		if !ok {
-			// No manifest for this pair: nothing to check.
-			continue
-		}
-
-		// Any catalog-valid lockfile for this ecosystem pins the dependencies.
-		// Only when NONE is present is the manifest potentially unpinned — this
-		// is what stops a correctly-locked pnpm/yarn/bun project (whose lockfile
-		// is not package-lock.json) from being reported as "missing lockfile".
-		presentLock := firstPresentLockfile(root, pair)
-
-		if presentLock == "" {
-			// No lockfile at all. For a PARSED ecosystem, a manifest that declares
-			// zero dependencies legitimately has none (e.g. a stdlib-only go.mod has
-			// no go.sum), so report drift only when it actually declares deps.
-			// GENERIC ecosystems (declaredCount == nil) cannot parse deps and so
-			// cannot distinguish a zero-dep manifest — they deliberately fail closed:
-			// a present manifest with no lockfile is treated as unpinned.
-			if pair.declaredCount != nil {
-				count, err := pair.declaredCount(manifestPath)
-				if err != nil {
-					return nil, fmt.Errorf("parsing %s: %w", pair.manifest, err)
-				}
-				if count == 0 {
-					report.Manifests = append(report.Manifests, DriftManifestStatus{
-						Path: manifestPath, Ecosystem: pair.eco, DriftCount: 0,
-					})
-					continue
-				}
+	for _, pair := range pairs {
+		for _, manifestPath := range manifestMatches(root, pair.manifest) {
+			status, err := checkManifest(root, pair, manifestPath)
+			if err != nil {
+				return nil, err
 			}
-			// Manifest present but nothing pins it — the most dangerous state.
-			// Fail closed by reporting it as drift.
-			report.Manifests = append(report.Manifests, DriftManifestStatus{
-				Path:       manifestPath,
-				Ecosystem:  pair.eco,
-				DriftCount: 1,
-				Drifted: []DriftEntry{{
-					Name:            pair.manifest,
-					DeclaredVersion: "requires a lockfile",
-					LockedVersion:   "(missing lockfile — dependencies unpinned)",
-				}},
-			})
-			continue
+			report.Manifests = append(report.Manifests, status)
 		}
-
-		// A lockfile is present. Generic ecosystems have no parser, so the best we
-		// can verify is that a valid lockfile exists; likewise a non-primary but
-		// valid lockfile (pnpm/yarn/bun) pins the deps but cannot be version-diffed
-		// by this ecosystem's checker. Either way, report present-and-pinned
-		// (0 drift) rather than misreading it.
-		if pair.checker == nil || presentLock != filepath.Join(root, pair.primaryLock) {
-			report.Manifests = append(report.Manifests, DriftManifestStatus{
-				Path: manifestPath, Ecosystem: pair.eco, DriftCount: 0,
-			})
-			continue
-		}
-
-		drifted, err := pair.checker(manifestPath, presentLock)
-		if err != nil {
-			return nil, fmt.Errorf("checking drift for %s: %w", pair.manifest, err)
-		}
-
-		report.Manifests = append(report.Manifests, DriftManifestStatus{
-			Path:       manifestPath,
-			Ecosystem:  pair.eco,
-			DriftCount: len(drifted),
-			Drifted:    drifted,
-		})
 	}
 
+	patterns := make([]string, 0, len(pairs)+len(knownManifests))
+	for _, pair := range pairs {
+		patterns = append(patterns, pair.manifest)
+	}
+	patterns = append(patterns, knownManifests...)
+
+	report.NotVerified = notVerified(root, report.Manifests)
+	report.NotVerified = append(report.NotVerified, uncoveredManifests(root, knownManifests)...)
+	report.NotVerified = append(report.NotVerified, nestedManifests(root, patterns)...)
+	switch {
+	case len(report.NotVerified) > 0:
+		report.Coverage = CoveragePartial
+	case len(report.Manifests) == 0:
+		report.Coverage = CoverageNone
+	default:
+		report.Coverage = CoverageComplete
+	}
 	return report, nil
 }
 
-// manifestPresent reports whether the manifest for a pair exists under root and
-// returns its concrete path. The manifest name may be a glob (e.g. "*.csproj"
-// for .NET); the first match wins.
-func manifestPresent(root, manifest string) (string, bool) {
-	if strings.ContainsAny(manifest, "*?[") {
-		matches, err := filepath.Glob(filepath.Join(root, manifest))
-		if err != nil || len(matches) == 0 {
-			return "", false
+// checkManifest checks one manifest of pair against the lockfiles in root.
+func checkManifest(root string, pair lockfilePair, manifestPath string) (DriftManifestStatus, error) {
+	status := DriftManifestStatus{
+		Path:         manifestPath,
+		Ecosystem:    pair.eco,
+		Verification: VerificationPresenceOnly,
+	}
+
+	// Any catalog-valid lockfile for this ecosystem pins the dependencies.
+	// Only when NONE is present is the manifest potentially unpinned — this
+	// is what stops a correctly-locked pnpm/yarn/bun project (whose lockfile
+	// is not package-lock.json) from being reported as "missing lockfile".
+	presentLock := firstPresentLockfile(root, pair)
+
+	if presentLock == "" {
+		// No lockfile at all. For a PARSED ecosystem, a manifest that declares
+		// zero dependencies legitimately has none (e.g. a stdlib-only go.mod has
+		// no go.sum), so report drift only when it actually declares deps.
+		// GENERIC ecosystems (declaredCount == nil) cannot parse deps and so
+		// cannot distinguish a zero-dep manifest — they deliberately fail closed:
+		// a present manifest with no lockfile is treated as unpinned.
+		if pair.declaredCount != nil {
+			count, err := pair.declaredCount(manifestPath)
+			if err != nil {
+				return status, fmt.Errorf("parsing %s: %w", pair.manifest, err)
+			}
+			if count == 0 {
+				status.Verification = VerificationDiffed
+				return status, nil
+			}
 		}
-		return matches[0], true
+		// Manifest present but nothing pins it — the most dangerous state.
+		// Fail closed by reporting it as drift.
+		status.DriftCount = 1
+		status.Drifted = []DriftEntry{{
+			Name:            pair.manifest,
+			DeclaredVersion: "requires a lockfile",
+			LockedVersion:   "(missing lockfile — dependencies unpinned)",
+		}}
+		return status, nil
 	}
-	p := filepath.Join(root, manifest)
+
+	// A lockfile is present. Generic ecosystems have no parser, so the best we
+	// can verify is that a valid lockfile exists; likewise a non-primary but
+	// valid lockfile (pnpm/yarn/bun) pins the deps but cannot be version-diffed
+	// by this ecosystem's checker. Either way, report 0 drift marked
+	// presence-only rather than misreading it.
+	if pair.checker == nil || presentLock != filepath.Join(root, pair.primaryLock) {
+		return status, nil
+	}
+
+	drifted, err := pair.checker(manifestPath, presentLock)
+	if err != nil {
+		return status, fmt.Errorf("checking drift for %s: %w", pair.manifest, err)
+	}
+	status.Verification = VerificationDiffed
+	status.DriftCount = len(drifted)
+	status.Drifted = drifted
+	return status, nil
+}
+
+// notVerified names each checked manifest whose versions were not diffed.
+func notVerified(root string, statuses []DriftManifestStatus) []string {
+	var out []string
+	for _, s := range statuses {
+		if s.Verification == VerificationDiffed {
+			continue
+		}
+		reason := "lockfile present, not version-checked"
+		if s.DriftCount > 0 {
+			reason = "no lockfile, dependencies not version-checked"
+		}
+		out = append(out, fmt.Sprintf("%s (%s)", relSlash(root, s.Path), reason))
+	}
+	return out
+}
+
+// uncoveredManifests names each file in root matching one of patterns that
+// no drift checker covers (Coverage is VerificationUncovered).
+func uncoveredManifests(root string, patterns []string) []string {
+	var found []string
+	for _, pattern := range patterns {
+		for _, p := range manifestMatches(root, pattern) {
+			if Coverage(p, "") == VerificationUncovered {
+				found = append(found, relSlash(root, p))
+			}
+		}
+	}
+	slices.Sort(found)
+	out := slices.Compact(found)
+	for i, p := range out {
+		out[i] = p + " (no drift checker for this ecosystem; neither versions nor lockfile presence verified)"
+	}
+	return out
+}
+
+// nestedManifests names the manifests matching patterns below root, which
+// DetectDrift does not check. The walk skips hidden and dependency directories
+// and is depth-bounded (ecosystem.ProjectDirsWith).
+func nestedManifests(root string, patterns []string) []string {
+	isManifest := func(name string) bool {
+		return slices.ContainsFunc(patterns, func(p string) bool { return matchesManifest(p, name) })
+	}
+	var out []string
+	for _, dir := range ecosystem.ProjectDirsWith(root, isManifest) {
+		if dir == "." {
+			continue
+		}
+		abs := filepath.Join(root, filepath.FromSlash(dir))
+		var found []string
+		for _, p := range patterns {
+			found = append(found, manifestMatches(abs, p)...)
+		}
+		slices.Sort(found)
+		for _, p := range slices.Compact(found) {
+			out = append(out, relSlash(root, p)+" (subdirectory not checked; pass project_root)")
+		}
+	}
+	return out
+}
+
+// relSlash returns path relative to root in slash form, or path unchanged when
+// it is not under root.
+func relSlash(root, path string) string {
+	rel, err := filepath.Rel(root, path)
+	if err != nil {
+		return path
+	}
+	return filepath.ToSlash(rel)
+}
+
+// manifestMatches returns the concrete paths of the manifest under dir. The
+// manifest name may be a glob (e.g. "*.csproj" for .NET); every match is
+// returned so none goes unchecked.
+func manifestMatches(dir, manifest string) []string {
+	if strings.ContainsAny(manifest, "*?[") {
+		matches, err := filepath.Glob(filepath.Join(dir, manifest))
+		if err != nil {
+			return nil
+		}
+		return matches
+	}
+	p := filepath.Join(dir, manifest)
 	if _, err := os.Stat(p); err != nil {
-		return "", false
+		return nil
 	}
-	return p, true
+	return []string{p}
 }
 
 // firstPresentLockfile returns the path of the first catalog-valid lockfile for

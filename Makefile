@@ -1,4 +1,4 @@
-.PHONY: build build-all test lint vet clean completions
+.PHONY: build build-all test lint vet archtest clean completions
 
 MODULE  := github.com/Quantum-Serendipity/qsdev
 VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
@@ -27,7 +27,12 @@ test:
 vet:
 	go vet ./...
 
-lint: vet
+# Architecture rules with a shrink-only baseline (internal/archtest/baseline.txt).
+# Set ARCHTEST_BASE to an older baseline.txt to also check that it only shrank.
+archtest:
+	go test -count=1 -run '^(TestArchitecture|TestBaselineMonotone)$$' ./internal/archtest/
+
+lint: vet archtest
 	golangci-lint run
 
 completions: build

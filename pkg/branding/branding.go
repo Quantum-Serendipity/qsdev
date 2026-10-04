@@ -1,6 +1,7 @@
 package branding
 
 import (
+	"path/filepath"
 	"sync/atomic"
 
 	gdevinstance "fastcat.org/go/gdev/instance"
@@ -45,6 +46,13 @@ func Default() Config {
 		GitHubOwner:   "Quantum-Serendipity",
 		GitHubRepo:    "qsdev",
 	}
+}
+
+// OrgConfigDir returns the directory below home that holds the user-level org
+// overlay, <home>/.config/<app>. The catalog reads the overlay from it and
+// self-protection protects it, so both derive it here.
+func (c Config) OrgConfigDir(home string) string {
+	return filepath.Join(home, ".config", c.AppName)
 }
 
 // active holds the current branding. It is initialized with the defaults at

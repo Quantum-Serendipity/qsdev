@@ -3,11 +3,22 @@ package claudecode_test
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
+	"os"
+	"os/exec"
+	"path/filepath"
 	"reflect"
+	"regexp"
+	"runtime"
+	"slices"
 	"strings"
 	"testing"
+	"time"
+
+	"mvdan.cc/sh/v3/syntax"
 
 	claudecode "github.com/Quantum-Serendipity/qsdev/addons/claudecode"
+	"github.com/Quantum-Serendipity/qsdev/internal/selfprotect/hookio"
 	"github.com/Quantum-Serendipity/qsdev/pkg/types"
 )
 
@@ -164,21 +175,23 @@ func TestDefaultHookRegistry_PackageGuardRegistered(t *testing.T) {
 	t.Parallel()
 	r := claudecode.ExportDefaultHookRegistry()
 	// Disable LSP enforcement so this test isolates the package-guard matcher;
-	// otherwise the always-on lsp-guard adds a second PreToolUse matcher.
+	// otherwise the always-on lsp-guard adds another PreToolUse matcher. The
+	// forced self-protection hook always comes first.
 	answers := types.WizardAnswers{
 		Hooks: types.HookChoices{SafetyBlock: true},
 		LSP:   types.LSPSettings{Enforcement: "off"},
 	}
 
 	matchers := r.HooksForEvent("PreToolUse", answers)
-	if len(matchers) != 1 {
-		t.Fatalf("expected 1 PreToolUse matcher, got %d", len(matchers))
+	if len(matchers) != 2 {
+		t.Fatalf("expected 2 PreToolUse matchers (self-protection, package-guard), got %d", len(matchers))
 	}
-	if matchers[0].Matcher != "Bash|PowerShell|Monitor" {
-		t.Errorf("matcher = %q, want Bash|PowerShell|Monitor", matchers[0].Matcher)
+	guard := matchers[1]
+	if guard.Matcher != "Bash|PowerShell|Monitor" {
+		t.Errorf("matcher = %q, want Bash|PowerShell|Monitor", guard.Matcher)
 	}
-	if matchers[0].Hooks[0].Timeout != 30 {
-		t.Errorf("timeout = %d, want 30", matchers[0].Hooks[0].Timeout)
+	if guard.Hooks[0].Timeout != 30 {
+		t.Errorf("timeout = %d, want 30", guard.Hooks[0].Timeout)
 	}
 }
 
@@ -215,19 +228,26 @@ func TestDefaultHookRegistry_BothEnabled(t *testing.T) {
 	}
 }
 
+// TestDefaultHookRegistry_BothDisabled verifies that with every optional hook
+// off and the safety block opted out only the forced self-protection hook
+// remains.
 func TestDefaultHookRegistry_BothDisabled(t *testing.T) {
 	t.Parallel()
 	r := claudecode.ExportDefaultHookRegistry()
 	// Also disable LSP enforcement: the always-on lsp-guard would otherwise
 	// register a PreToolUse matcher even with package-guard and audit-log off.
 	answers := types.WizardAnswers{
-		Hooks: types.HookChoices{SafetyBlock: false, AuditLog: false},
+		Hooks: types.HookChoices{SafetyBlock: false, SafetyBlockOptOut: true, AuditLog: false},
 		LSP:   types.LSPSettings{Enforcement: "off"},
 	}
 
 	m := r.BuildHooksMap(answers)
-	if m != nil {
-		t.Errorf("expected nil when both disabled, got %v", m)
+	if len(m) != 1 || len(m["PreToolUse"]) != 1 {
+		t.Fatalf("expected only the self-protection PreToolUse hook, got %v", m)
+	}
+	want := claudecode.ExportFailClosedCommand("self-protection", selfprotectCommand())
+	if got := m["PreToolUse"][0].Hooks[0].Command; got != want {
+		t.Errorf("remaining hook = %q, want %q", got, want)
 	}
 }
 
@@ -243,8 +263,10 @@ func TestBuildHookStatuses(t *testing.T) {
 		t.Fatalf("expected 17 statuses, got %d", len(statuses))
 	}
 
-	if statuses[0].Name != "self-protection" || statuses[0].Configured {
-		t.Errorf("statuses[0]: want self-protection/disabled (no ClaudeCode), got %s/%v", statuses[0].Name, statuses[0].Configured)
+	// self-protection is forced on by the generator whatever the answers say,
+	// so it is configured even without ClaudeCode or HookChoices.SelfProtection.
+	if statuses[0].Name != "self-protection" || !statuses[0].Configured {
+		t.Errorf("statuses[0]: want self-protection/enabled (forced), got %s/%v", statuses[0].Name, statuses[0].Configured)
 	}
 	if statuses[1].Name != "package-guard" || !statuses[1].Configured {
 		t.Errorf("statuses[1]: want package-guard/enabled, got %s/%v", statuses[1].Name, statuses[1].Configured)
@@ -408,28 +430,20 @@ func TestSecretPatterns_MatchPythonHook(t *testing.T) {
 	}
 }
 
-// TestWrapHooksForSandbox_UsesAppName verifies the sandbox wrapper invokes the
-// branded binary: a downstream build whose binary is not "qsdev" must not emit
-// hook commands that fail with command-not-found (a non-blocking hook error,
-// so every guard would fail open).
-func TestWrapHooksForSandbox_UsesAppName(t *testing.T) {
+// TestEmittedCommand_SandboxUsesAppName verifies the sandbox prefix invokes
+// the branded binary: a downstream build whose binary is not "qsdev" must not
+// emit hook commands that fail with command-not-found.
+func TestEmittedCommand_SandboxUsesAppName(t *testing.T) {
 	t.Parallel()
+	answers := types.WizardAnswers{Hooks: types.HookChoices{SafetyBlock: true, AuditLog: true, SandboxEnabled: true}}
 	for _, app := range []string{"qsdev", "acme"} {
 		t.Run(app, func(t *testing.T) {
 			t.Parallel()
-			r := claudecode.ExportDefaultHookRegistry()
-			hooks := r.BuildHooksMap(types.WizardAnswers{Hooks: types.HookChoices{SafetyBlock: true, AuditLog: true}})
-			wrapped := claudecode.ExportWrapHooksForSandbox(hooks, r, types.WizardAnswers{}, app)
-			if len(wrapped) == 0 {
-				t.Fatal("expected hooks to wrap")
-			}
-			for event, matchers := range wrapped {
-				for _, m := range matchers {
-					for _, h := range m.Hooks {
-						if !strings.HasPrefix(h.Command, app+" sandbox exec --category ") {
-							t.Errorf("%s hook command %q does not start with %q", event, h.Command, app+" sandbox exec")
-						}
-					}
+			for _, d := range claudecode.ExportDefaultHookRegistry().Definitions() {
+				d.FailClosed = false
+				cmd := claudecode.ExportEmittedCommand(d, answers, app)
+				if !strings.HasPrefix(cmd, app+" sandbox exec --category ") {
+					t.Errorf("%s/%s command %q does not start with %q", d.Owner, d.Event, cmd, app+" sandbox exec")
 				}
 			}
 		})
@@ -572,4 +586,343 @@ func TestHooksWithoutPolicy(t *testing.T) {
 			}
 		})
 	}
+}
+
+// allHooksAnswers enables every hook the registry knows, so each definition
+// is emitted.
+func allHooksAnswers(sandbox bool) types.WizardAnswers {
+	return types.WizardAnswers{
+		ClaudeCode: true,
+		Tier:       "full",
+		Languages:  []types.LanguageChoice{{Name: "go"}},
+		Hooks: types.HookChoices{
+			AutoFormat: true, SafetyBlock: true, PreCommit: true, AuditLog: true,
+			CredentialScan: true, DestructivePrevention: true, SOC2Audit: true,
+			FileBoundary: true, ToolGates: true, SecurityEnforcement: true,
+			SelfProtection: true, SandboxEnabled: sandbox,
+		},
+		AgentTools: types.AgentToolsAnswers{SembleEnabled: true},
+	}
+}
+
+// runSh runs command under the system `sh` with env, returning its exit code,
+// stdout and stderr. It skips the test when no `sh` is available.
+func runSh(t *testing.T, command string, env []string) (int, string, string) {
+	t.Helper()
+	return runShInput(t, command, env, "")
+}
+
+// runShInput is runSh with stdin. `sh` is resolved from the test's own PATH
+// before env replaces it, so env may name an empty or bogus PATH.
+func runShInput(t *testing.T, command string, env []string, stdin string) (int, string, string) {
+	t.Helper()
+	sh, err := exec.LookPath("sh")
+	if err != nil {
+		t.Skip("sh not found")
+	}
+	cmd := exec.Command(sh, "-c", command)
+	cmd.Env = env
+	cmd.Stdin = strings.NewReader(stdin)
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+	err = cmd.Run()
+	var exitErr *exec.ExitError
+	switch {
+	case err == nil:
+		return 0, stdout.String(), stderr.String()
+	case errors.As(err, &exitErr):
+		return exitErr.ExitCode(), stdout.String(), stderr.String()
+	default:
+		t.Fatalf("running sh: %v", err)
+		return 0, "", ""
+	}
+}
+
+// TestFailClosedCommand_Exit127Blocks guards U17-01: a hook whose interpreter
+// or script cannot be found exits 127, which Claude Code treats as a
+// non-blocking error; the wrapper must turn it into a block.
+func TestFailClosedCommand_Exit127Blocks(t *testing.T) {
+	t.Parallel()
+	cmd := claudecode.ExportFailClosedCommand("package-guard", `"$D"/missing.py`)
+	rc, _, stderr := runSh(t, cmd, []string{"PATH=/nonexistent", "D=" + t.TempDir()})
+	if rc != 2 {
+		t.Errorf("rc = %d, want 2 (stderr %q)", rc, stderr)
+	}
+	if !strings.Contains(stderr, "could not run") {
+		t.Errorf("stderr %q lacks %q", stderr, "could not run")
+	}
+}
+
+// writeStub writes content to the non-executable file dir/name and returns
+// its path.
+func writeStub(t *testing.T, dir, name, content string) string {
+	t.Helper()
+	p := filepath.Join(dir, name)
+	if err := os.WriteFile(p, []byte(content), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	return p
+}
+
+// shStub writes a shell script stub and returns a command running it through
+// sh, so the test never execs a file it just wrote (ETXTBSY under parallel
+// forks).
+func shStub(t *testing.T, dir, name, content string) string {
+	t.Helper()
+	return `sh "` + writeStub(t, dir, name, content) + `"`
+}
+
+// TestFailClosedCommand_ExitCodes pins the wrapper's exit-code mapping: 0
+// passes through with stdout (so a JSON permissionDecision still works), 2
+// keeps the hook's own reason, and anything else becomes a reasoned block.
+// Its "uncaught python exception blocks" case is XS-WS1 A5 against a real
+// interpreter.
+func TestFailClosedCommand_ExitCodes(t *testing.T) {
+	t.Parallel()
+	if runtime.GOOS == "windows" {
+		t.Skip("stub hooks are POSIX shell scripts")
+	}
+	dir := t.TempDir()
+	const decision = `{"hookSpecificOutput":{"permissionDecision":"allow"}}`
+	tests := []struct {
+		name        string
+		command     func(t *testing.T) string
+		wantRC      int
+		wantStdout  string
+		wantStderr  string
+		couldNotRun bool
+	}{
+		{
+			name: "exit 0 passes stdout through",
+			command: func(t *testing.T) string {
+				return shStub(t, dir, "ok.sh", "#!/bin/sh\nprintf '%s' '"+decision+"'\nexit 0\n")
+			},
+			wantRC: 0, wantStdout: decision,
+		},
+		{
+			name: "exit 1 blocks",
+			command: func(t *testing.T) string {
+				return shStub(t, dir, "one.sh", "#!/bin/sh\nexit 1\n")
+			},
+			wantRC: 2, couldNotRun: true,
+		},
+		{
+			name: "exit 2 keeps hook reason",
+			command: func(t *testing.T) string {
+				return shStub(t, dir, "two.sh", "#!/bin/sh\necho 'blocked by policy' >&2\nexit 2\n")
+			},
+			wantRC: 2, wantStderr: "blocked by policy",
+		},
+		{
+			name: "exit 126 not executable blocks",
+			command: func(t *testing.T) string {
+				return writeStub(t, dir, "noexec.sh", "#!/bin/sh\nexit 0\n")
+			},
+			wantRC: 2, couldNotRun: true,
+		},
+		{
+			name:    "exit 127 missing blocks",
+			command: func(*testing.T) string { return filepath.Join(dir, "missing.py") },
+			wantRC:  2, couldNotRun: true,
+		},
+		{
+			name: "uncaught python exception blocks",
+			command: func(t *testing.T) string {
+				py, err := exec.LookPath("python3")
+				if err != nil {
+					t.Skip("python3 not found")
+				}
+				script := writeStub(t, dir, "raise.py", "raise RuntimeError('boom')\n")
+				return `"` + py + `" "` + script + `"`
+			},
+			wantRC: 2, couldNotRun: true,
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			cmd := claudecode.ExportFailClosedCommand("test-hook", tc.command(t))
+			rc, stdout, stderr := runSh(t, cmd, []string{"PATH=" + os.Getenv("PATH")})
+			if rc != tc.wantRC {
+				t.Errorf("rc = %d, want %d (stderr %q)", rc, tc.wantRC, stderr)
+			}
+			if stdout != tc.wantStdout {
+				t.Errorf("stdout = %q, want %q", stdout, tc.wantStdout)
+			}
+			if tc.wantStderr != "" && !strings.Contains(stderr, tc.wantStderr) {
+				t.Errorf("stderr %q lacks hook reason %q", stderr, tc.wantStderr)
+			}
+			if got := strings.Contains(stderr, "could not run"); got != tc.couldNotRun {
+				t.Errorf("stderr %q: contains 'could not run' = %v, want %v", stderr, got, tc.couldNotRun)
+			}
+		})
+	}
+}
+
+// TestFailClosedCommand_POSIXOnly holds the wrapper to the POSIX sh subset:
+// settings.json is shared across the team's OSes and Claude Code may run it
+// under dash or Git Bash.
+func TestFailClosedCommand_POSIXOnly(t *testing.T) {
+	t.Parallel()
+	tmpl := claudecode.ExportFailClosedCommand("owner", "CMD")
+	bashisms := map[string]*regexp.Regexp{
+		"[[":        regexp.MustCompile(`\[\[`),
+		"$((":       regexp.MustCompile(`\$\(\(`),
+		"function":  regexp.MustCompile(`\bfunction\b`),
+		"source":    regexp.MustCompile(`\bsource\b`),
+		"local":     regexp.MustCompile(`\blocal\b`),
+		"array":     regexp.MustCompile(`\w+=\(`),
+		"&>":        regexp.MustCompile(`&>`),
+		"pipefail":  regexp.MustCompile(`pipefail`),
+		"$'string'": regexp.MustCompile(`\$'`),
+	}
+	for name, re := range bashisms {
+		if re.MatchString(tmpl) {
+			t.Errorf("fail-closed template uses bash-only %s: %q", name, tmpl)
+		}
+	}
+	for _, tc := range []struct {
+		inner  string
+		wantRC int
+	}{{"true", 0}, {"false", 2}, {"exit 2", 2}} {
+		rc, _, _ := runSh(t, claudecode.ExportFailClosedCommand("owner", tc.inner), []string{"PATH=" + os.Getenv("PATH")})
+		if rc != tc.wantRC {
+			t.Errorf("sh: %q wrapped rc = %d, want %d", tc.inner, rc, tc.wantRC)
+		}
+	}
+}
+
+// TestBuildHooks_SecurityHooksFailClosed verifies exactly the security
+// PreToolUse hooks are wrapped, and that the wrapper is outermost (around the
+// sandbox prefix), in the settings Generate writes.
+func TestBuildHooks_SecurityHooksFailClosed(t *testing.T) {
+	t.Parallel()
+	wantWrapped := []string{
+		"credential-scan/PreToolUse",
+		"destructive-prevention/PreToolUse",
+		"file-boundary/PreToolUse",
+		"package-guard/PreToolUse",
+		"security-enforcement/PreToolUse",
+		"self-protection/PreToolUse",
+		"tool-gates/PreToolUse",
+	}
+	for _, sandbox := range []bool{false, true} {
+		answers := allHooksAnswers(sandbox)
+		built := claudecode.ExportBuildHooks(answers)
+		var wrapped []string
+		for _, d := range claudecode.ExportDefaultHookRegistry().Definitions() {
+			if d.EnabledFunc != nil && !d.EnabledFunc(answers) {
+				continue
+			}
+			emitted := claudecode.ExportEmittedCommand(d, answers, "qsdev")
+			plain := d
+			plain.FailClosed = false
+			inner := claudecode.ExportEmittedCommand(plain, answers, "qsdev")
+			if sandbox && !strings.HasPrefix(inner, "qsdev sandbox exec --category ") {
+				t.Errorf("sandbox: %s/%s inner command %q lacks the sandbox prefix", d.Owner, d.Event, inner)
+			}
+			if d.FailClosed {
+				wrapped = append(wrapped, d.Owner+"/"+d.Event)
+				if !strings.HasPrefix(emitted, inner+" || ") || emitted != claudecode.ExportFailClosedCommand(d.Owner, inner) {
+					t.Errorf("sandbox=%v: %s/%s emitted %q, want %q wrapped outermost", sandbox, d.Owner, d.Event, emitted, inner)
+				}
+			} else if emitted != inner {
+				t.Errorf("sandbox=%v: %s/%s must not be fail-closed wrapped, got %q", sandbox, d.Owner, d.Event, emitted)
+			}
+			if !builtHas(built[d.Event], d.Matcher, emitted) {
+				t.Errorf("sandbox=%v: %s/%s command %q not in built hooks", sandbox, d.Owner, d.Event, emitted)
+			}
+		}
+		slices.Sort(wrapped)
+		if !slices.Equal(wrapped, wantWrapped) {
+			t.Errorf("sandbox=%v: fail-closed hooks = %v, want %v", sandbox, wrapped, wantWrapped)
+		}
+	}
+}
+
+// TestFailClosedHooks_SimpleCommands holds every fail-closed hook's inner
+// command (with and without the sandbox prefix) to a single simple command.
+// A list or pipeline (`a; b`, `a && b`, `a | b`, `a &`) exits with its last
+// part's status, so the wrapper could not catch an earlier part's failure.
+func TestFailClosedHooks_SimpleCommands(t *testing.T) {
+	t.Parallel()
+	for _, sandbox := range []bool{false, true} {
+		answers := allHooksAnswers(sandbox)
+		for _, d := range claudecode.ExportDefaultHookRegistry().Definitions() {
+			if !d.FailClosed {
+				continue
+			}
+			plain := d
+			plain.FailClosed = false
+			inner := claudecode.ExportEmittedCommand(plain, answers, "qsdev")
+			file, err := syntax.NewParser(syntax.Variant(syntax.LangPOSIX)).Parse(strings.NewReader(inner), "")
+			if err != nil {
+				t.Errorf("sandbox=%v: %s/%s command %q does not parse as POSIX sh: %v", sandbox, d.Owner, d.Event, inner, err)
+				continue
+			}
+			if len(file.Stmts) != 1 {
+				t.Errorf("sandbox=%v: %s/%s command %q is a list of %d statements", sandbox, d.Owner, d.Event, inner, len(file.Stmts))
+				continue
+			}
+			st := file.Stmts[0]
+			if _, ok := st.Cmd.(*syntax.CallExpr); !ok || st.Background || st.Negated {
+				t.Errorf("sandbox=%v: %s/%s command %q is not a single simple command", sandbox, d.Owner, d.Event, inner)
+			}
+		}
+	}
+}
+
+func builtHas(matchers []claudecode.HookMatcher, matcher, command string) bool {
+	for _, m := range matchers {
+		if m.Matcher != matcher {
+			continue
+		}
+		for _, h := range m.Hooks {
+			if h.Command == command {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// TestHookRegistry_FailClosedTimeouts: a fail-closed hook needs time to reach
+// its own verdict; Claude Code treats a timed-out hook as non-blocking. Each
+// fail-closed Python hook's internal deadline must fire at least 2s before
+// its registered timeout, so the hook blocks before Claude Code gives up.
+func TestHookRegistry_FailClosedTimeouts(t *testing.T) {
+	t.Parallel()
+	for _, d := range claudecode.ExportDefaultHookRegistry().Definitions() {
+		if d.FailClosed && d.Timeout < 10 {
+			t.Errorf("%s/%s: fail-closed hook timeout %ds, want >= 10", d.Owner, d.Event, d.Timeout)
+		}
+	}
+	for script, timeout := range failClosedPythonHooks(t) {
+		if deadline := hookDeadlineS(t, script); deadline <= 0 || deadline+2 > timeout {
+			t.Errorf("%s: _HOOK_DEADLINE_S = %d, want 0 < deadline <= timeout-2 (%d)", script, deadline, timeout-2)
+		}
+	}
+}
+
+// TestSelfprotectHookTimeoutCoversDeadline verifies Claude Code's timeout for
+// the self-protection hook leaves room for the hook's own evaluation deadline
+// plus process start-up: if Claude Code's timeout fired first it would allow
+// the call instead of receiving the hook's fail-closed deny.
+func TestSelfprotectHookTimeoutCoversDeadline(t *testing.T) {
+	t.Parallel()
+
+	for _, def := range claudecode.ExportDefaultHookRegistry().Definitions() {
+		if def.Owner != "self-protection" {
+			continue
+		}
+		if def.Timeout < 10 {
+			t.Errorf("self-protection Timeout = %ds, want at least 10s", def.Timeout)
+		}
+		if got, need := time.Duration(def.Timeout)*time.Second, hookio.EvalDeadline+2*time.Second; got < need {
+			t.Errorf("self-protection Timeout = %v, want at least EvalDeadline+2s = %v", got, need)
+		}
+		return
+	}
+	t.Fatal("no self-protection hook registered")
 }

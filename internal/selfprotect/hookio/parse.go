@@ -23,6 +23,21 @@ const MaxInputBytes = 16 << 20
 // as a confusing JSON syntax error.
 var ErrInputTooLarge = fmt.Errorf("hook input exceeds %d bytes", MaxInputBytes)
 
+// MaxCommandBytes caps a shell tool's command. The rules scan the command
+// several times over (brace expansion, cd tracking, path canonicalization), so
+// one far larger than any hand-written command could outlast EvalDeadline.
+// Bulk content belongs in a file written with the Write tool, not inline in a
+// command line.
+const MaxCommandBytes = 64 << 10
+
+// MaxSimpleCommands caps the simple commands one shell command may contain
+// before it is denied outright rather than evaluated, for the same reason as
+// MaxCommandBytes.
+const MaxSimpleCommands = 2000
+
+// ErrCommandTooLarge reports a shell command longer than MaxCommandBytes.
+var ErrCommandTooLarge = fmt.Errorf("shell command exceeds %d bytes; write bulk content to a file with the Write tool instead", MaxCommandBytes)
+
 // ToolCall represents the JSON envelope received from Claude Code's hook system.
 //
 // CWD is the session's working directory when the tool call was made. Claude
@@ -198,7 +213,7 @@ func ParseToolCall(ctx context.Context, r io.Reader) (*ToolCall, error) {
 // hook must treat as a deny — when tool_input is not a JSON object, or when a
 // field that is evaluated for toolName has the wrong type: a path field for
 // any tool, `command` for Bash, and the content fields for Write, Edit and
-// MultiEdit. Other fields of other tools (an MCP tool's array-valued
+// MultiEdit. A shell tool's command over MaxCommandBytes is ErrCommandTooLarge. Other fields of other tools (an MCP tool's array-valued
 // `content`, say) are not inspected, so their types do not matter.
 func ParseInput(toolName string, raw json.RawMessage) (ToolInput, error) {
 	var input ToolInput
@@ -237,6 +252,9 @@ func ParseInput(toolName string, raw json.RawMessage) (ToolInput, error) {
 	}
 	if input.FilePath == "" {
 		input.FilePath = notebookPath
+	}
+	if cmdscan.IsShellTool(toolName) && len(input.Command) > MaxCommandBytes {
+		return ToolInput{}, ErrCommandTooLarge
 	}
 	return input, nil
 }

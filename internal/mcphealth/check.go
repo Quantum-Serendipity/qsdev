@@ -10,7 +10,6 @@ import (
 	"io"
 	"net/http"
 	"os"
-	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -28,7 +27,8 @@ const maxHealthResponseBytes = 1 << 20 // 1 MiB
 
 // CheckServer probes a single MCP server and returns its health status.
 // The provided context controls cancellation and timeout; callers should use
-// context.WithTimeout to enforce a deadline.
+// context.WithTimeout to enforce a deadline. References in the URL and header
+// values are expanded only when cfg.ExpandEnv is set (see ServerConfig).
 func CheckServer(ctx context.Context, cfg ServerConfig) *ServerHealth {
 	h := &ServerHealth{Name: cfg.Name}
 
@@ -50,7 +50,7 @@ func CheckServer(ctx context.Context, cfg ServerConfig) *ServerHealth {
 	}
 
 	start := time.Now()
-	cfg = expandConfig(cfg, os.LookupEnv)
+	cfg = ProbeTarget(cfg)
 
 	if cfg.URL != "" {
 		return checkHTTPServer(ctx, cfg, h, start)
@@ -105,47 +105,47 @@ func abandonProcess(proc *MCPProcess) {
 	go func() { _ = proc.Close() }()
 }
 
-// CheckAll probes all servers in parallel and returns an aggregated report.
-// The provided context controls cancellation and timeout for each individual
-// server check.
-func CheckAll(ctx context.Context, servers map[string]ServerConfig) *HealthReport {
+// maxConcurrentProbes bounds how many probes CheckAll runs at once, so a long
+// server list does not start dozens of processes or connections together.
+const maxConcurrentProbes = 4
+
+// CheckAll probes servers concurrently, at most maxConcurrentProbes at a time,
+// and returns an aggregated report listing them in input order. Each probe
+// gets its own timeout, counted from when it starts; ctx cancels them all.
+// CheckAll probes every server it is given: callers decide which servers are
+// safe to probe (see mcpregistry.ProbeAll).
+func CheckAll(ctx context.Context, servers []ServerConfig, timeout time.Duration) *HealthReport {
 	report := &HealthReport{
+		Servers:    make([]ServerHealth, len(servers)),
 		TotalCount: len(servers),
 		CheckedAt:  time.Now(),
 	}
 
-	if len(servers) == 0 {
-		report.Servers = []ServerHealth{}
-		return report
-	}
-
-	names := make([]string, 0, len(servers))
-	for name := range servers {
-		names = append(names, name)
-	}
-	sort.Strings(names)
-
-	results := make([]ServerHealth, len(names))
+	sem := make(chan struct{}, maxConcurrentProbes)
 	var wg sync.WaitGroup
-
-	for i, name := range names {
+	for i, cfg := range servers {
 		wg.Add(1)
-		go func(idx int, cfg ServerConfig) {
+		go func() {
 			defer wg.Done()
-			h := CheckServer(ctx, cfg)
-			results[idx] = *h
-		}(i, servers[name])
+			select {
+			case sem <- struct{}{}:
+				defer func() { <-sem }()
+			case <-ctx.Done():
+				report.Servers[i] = ServerHealth{Name: cfg.Name, Status: StatusUnreachable, Error: "health check cancelled"}
+				return
+			}
+			pctx, cancel := context.WithTimeout(ctx, timeout)
+			defer cancel()
+			report.Servers[i] = *CheckServer(pctx, cfg)
+		}()
 	}
-
 	wg.Wait()
 
-	report.Servers = results
-	for _, s := range results {
+	for _, s := range report.Servers {
 		if s.Status == StatusHealthy {
 			report.HealthyCount++
 		}
 	}
-
 	return report
 }
 
@@ -278,6 +278,20 @@ type httpTransport struct {
 	protocolVersion string
 }
 
+// errRedirectRefused is returned when a probed endpoint answers with a redirect.
+var errRedirectRefused = errors.New("refusing to follow redirect")
+
+// probeClient sends the HTTP probe's requests. It never follows a redirect: the
+// probe gate vets only the configured URL, so following one would let the
+// endpoint send the probe, with its headers, to a host the gate never checked
+// (plain http to a non-local host, or an internal address). A Streamable-HTTP
+// MCP handshake does not need redirects, so one is reported as a failure.
+var probeClient = &http.Client{
+	CheckRedirect: func(req *http.Request, _ []*http.Request) error {
+		return fmt.Errorf("%w to %s", errRedirectRefused, req.URL.Redacted())
+	},
+}
+
 // initializeResult is the part of an initialize result the transport needs.
 type initializeResult struct {
 	ProtocolVersion string `json:"protocolVersion"`
@@ -320,7 +334,7 @@ func (t *httpTransport) Notify(method string, params json.RawMessage) error {
 	if err != nil {
 		return err
 	}
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := probeClient.Do(req)
 	if err != nil {
 		return fmt.Errorf("connecting: %w", err)
 	}
@@ -342,7 +356,7 @@ func (t *httpTransport) closeSession() {
 	if err != nil {
 		return
 	}
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := probeClient.Do(req)
 	if err != nil {
 		return
 	}
@@ -366,7 +380,7 @@ func (t *httpTransport) SendRequest(id int, method string, params json.RawMessag
 		return nil, err
 	}
 
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := probeClient.Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("connecting: %w", err)
 	}

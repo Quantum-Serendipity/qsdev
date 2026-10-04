@@ -1,6 +1,10 @@
 package check
 
 import (
+	"os"
+	"path/filepath"
+	"slices"
+	"strings"
 	"testing"
 
 	"github.com/Quantum-Serendipity/qsdev/pkg/types"
@@ -8,7 +12,9 @@ import (
 
 func TestCheckRequiredTools_NoneDisabled(t *testing.T) {
 	ctx := CheckContext{
-		QsdevConfig:       &types.QsdevConfig{},
+		QsdevConfig: &types.QsdevConfig{
+			Tools: types.ToolsConfig{Enabled: []string{"safety-block", "pre-commit"}},
+		},
 		ToolNames:         []string{"safety-block", "pre-commit"},
 		AlwaysOnToolNames: []string{"safety-block", "pre-commit"},
 	}
@@ -37,6 +43,7 @@ func TestCheckRequiredTools_ToolDisabled(t *testing.T) {
 	ctx := CheckContext{
 		QsdevConfig: &types.QsdevConfig{
 			Tools: types.ToolsConfig{
+				Enabled:  []string{"pre-commit"},
 				Disabled: []string{"safety-block"},
 			},
 		},
@@ -66,10 +73,11 @@ func TestCheckRequiredTools_OnlyAlwaysOnToolsAreRequired(t *testing.T) {
 
 	tests := []struct {
 		name     string
+		enabled  []string
 		disabled []string
 		wantFail []string
 	}{
-		{name: "opt-in tool disabled", disabled: []string{"semgrep"}},
+		{name: "opt-in tool disabled", enabled: []string{"safety-block"}, disabled: []string{"semgrep"}},
 		{name: "always-on tool disabled", disabled: []string{"safety-block"}, wantFail: []string{"tool_not_disabled_safety-block"}},
 		{name: "mixed", disabled: []string{"semgrep", "safety-block"}, wantFail: []string{"tool_not_disabled_safety-block"}},
 	}
@@ -78,7 +86,7 @@ func TestCheckRequiredTools_OnlyAlwaysOnToolsAreRequired(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 			ctx := CheckContext{
-				QsdevConfig:       &types.QsdevConfig{Tools: types.ToolsConfig{Disabled: tt.disabled}},
+				QsdevConfig:       &types.QsdevConfig{Tools: types.ToolsConfig{Enabled: tt.enabled, Disabled: tt.disabled}},
 				ToolNames:         []string{"safety-block", "semgrep"},
 				AlwaysOnToolNames: []string{"safety-block"},
 			}
@@ -129,5 +137,100 @@ func TestCheckRequiredTools_NoTools(t *testing.T) {
 	}
 	if results[0].Status != StatusSkip {
 		t.Errorf("Status = %s, want %s", results[0].Status, StatusSkip)
+	}
+}
+
+// TestCheckRequiredTools_FailsWhenAlwaysOnAbsent is the U28-01 regression: an
+// always-on tool recorded in neither tools.enabled nor tools.disabled was
+// dropped without the explicit `disable --force` opt-out, so the check fails.
+func TestCheckRequiredTools_FailsWhenAlwaysOnAbsent(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name     string
+		tools    types.ToolsConfig
+		wantFail []string
+	}{
+		{name: "recorded as enabled", tools: types.ToolsConfig{Enabled: []string{"attach-guard", "branch-naming"}}},
+		{name: "one absent", tools: types.ToolsConfig{Enabled: []string{"branch-naming"}}, wantFail: []string{"tool_missing_attach-guard"}},
+		{name: "no tools block", wantFail: []string{"tool_missing_attach-guard", "tool_missing_branch-naming"}},
+		{
+			name:     "explicitly disabled is not missing",
+			tools:    types.ToolsConfig{Enabled: []string{"branch-naming"}, Disabled: []string{"attach-guard"}},
+			wantFail: []string{"tool_not_disabled_attach-guard"},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			ctx := CheckContext{
+				QsdevConfig:       &types.QsdevConfig{Tools: tt.tools},
+				AlwaysOnToolNames: []string{"attach-guard", "branch-naming"},
+			}
+
+			var failed []string
+			for _, r := range CheckRequiredTools(ctx) {
+				if r.Status != StatusFail {
+					continue
+				}
+				failed = append(failed, r.Name)
+				if r.Severity != SeverityHigh {
+					t.Errorf("%s severity = %s, want %s", r.Name, r.Severity, SeverityHigh)
+				}
+				if strings.HasPrefix(r.Name, "tool_missing_") {
+					for _, want := range []string{"qsdev update", "disable " + strings.TrimPrefix(r.Name, "tool_missing_") + " --force"} {
+						if !strings.Contains(r.Remediation, want) {
+							t.Errorf("%s remediation %q lacks %q", r.Name, r.Remediation, want)
+						}
+					}
+				}
+			}
+			if !slices.Equal(failed, tt.wantFail) {
+				t.Fatalf("failed = %v, want %v", failed, tt.wantFail)
+			}
+		})
+	}
+}
+
+// TestCheckRequiredTools_MCPServers verifies the always-on MCP tools'
+// servers must be configured in the on-disk .mcp.json (U28-WS1).
+func TestCheckRequiredTools_MCPServers(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name    string
+		mcpJSON string // "" means no .mcp.json
+		want    []string
+	}{
+		{name: "all configured", mcpJSON: `{"mcpServers":{"context7":{},"socket":{}}}`},
+		{name: "one missing", mcpJSON: `{"mcpServers":{"context7":{}}}`, want: []string{"tool_mcp_server_missing_socket-dev-mcp"}},
+		{name: "no file", want: []string{"tool_mcp_server_missing_context7", "tool_mcp_server_missing_socket-dev-mcp"}},
+		{name: "unparseable", mcpJSON: `{`, want: []string{"tool_mcp_server_missing_context7", "tool_mcp_server_missing_socket-dev-mcp"}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			dir := t.TempDir()
+			if tt.mcpJSON != "" {
+				if err := os.WriteFile(filepath.Join(dir, MCPConfigRelPath), []byte(tt.mcpJSON), 0o644); err != nil {
+					t.Fatal(err)
+				}
+			}
+			ctx := CheckContext{
+				ProjectRoot:        dir,
+				QsdevConfig:        &types.QsdevConfig{Tools: types.ToolsConfig{Enabled: []string{"context7", "socket-dev-mcp"}}},
+				AlwaysOnToolNames:  []string{"context7", "socket-dev-mcp"},
+				RequiredMCPServers: map[string]string{"context7": "context7", "socket-dev-mcp": "socket"},
+			}
+			var failed []string
+			for _, r := range CheckRequiredTools(ctx) {
+				if r.Status == StatusFail {
+					failed = append(failed, r.Name)
+				}
+			}
+			if !slices.Equal(failed, tt.want) {
+				t.Errorf("failed = %v, want %v", failed, tt.want)
+			}
+		})
 	}
 }

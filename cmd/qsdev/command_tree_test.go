@@ -20,6 +20,14 @@ import (
 // does. The startup helper process must observe package initialization alone,
 // so it skips this.
 func TestMain(m *testing.M) {
+	// The guardrail invariant tests run the test binary as qsdev itself.
+	if os.Getenv(cliHelperEnv) == "1" {
+		if os.Getenv(humanHelperEnv) == "1" {
+			mainAsHuman()
+		}
+		main()
+		return
+	}
 	if os.Getenv(startupHelperEnv) == "1" {
 		os.Exit(m.Run()) //nolint:forbidigo // test entrypoint
 	}
@@ -30,7 +38,7 @@ func TestMain(m *testing.M) {
 	_ = os.Setenv(branding.Get().EnvNoUpdate, "1")
 	instance.DefaultRuntime()
 	gdevaddons.Initialize()
-	gdevinstance.TestMain(m)
+	gdevinstance.TestMain(templateCleanupRunner{m})
 }
 
 const bogusSubcommand = "qsdev-no-such-subcommand"

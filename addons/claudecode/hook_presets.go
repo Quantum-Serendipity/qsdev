@@ -1,0 +1,105 @@
+package claudecode
+
+import (
+	"errors"
+	"fmt"
+	"slices"
+	"strings"
+
+	"github.com/Quantum-Serendipity/qsdev/internal/validation"
+	"github.com/Quantum-Serendipity/qsdev/pkg/types"
+)
+
+// ErrUnselectableHookPreset reports a hook preset name that is not in the
+// catalog or that no Claude Code hook implements.
+var ErrUnselectableHookPreset = errors.New("unknown or unimplemented hook preset")
+
+// SelectableHookPresets returns, in catalog order, the catalog hook presets a
+// user may select: those that register at least one hook in settings.json.
+// It is derived from the hook registry, so a preset the catalog names but no
+// generator implements (e.g. one managed by devenv git hooks) is excluded.
+func SelectableHookPresets() []string {
+	defs := defaultHookRegistry().Definitions()
+	base, _ := presetProbe() // no names, so no error
+	var out []string
+	for _, name := range validation.HookPresets() {
+		withPreset, err := presetProbe(name)
+		if err != nil {
+			continue
+		}
+		if enablesNewHook(defs, base, withPreset) {
+			out = append(out, name)
+		}
+	}
+	return out
+}
+
+// presetProbe returns Claude Code answers that select exactly the named hook
+// presets. The safety block's off state is its opt-out, which package-guard
+// follows (see packageGuardEnabled), so the probe records the opt-out unless
+// the safety-block preset is selected.
+func presetProbe(names ...string) (types.WizardAnswers, error) {
+	a := types.WizardAnswers{ClaudeCode: true}
+	for _, name := range names {
+		if err := a.Hooks.EnableHook(name); err != nil {
+			return a, fmt.Errorf("probing hook preset: %w", err)
+		}
+	}
+	a.Hooks.SetSafetyBlock(a.Hooks.SafetyBlock)
+	return a, nil
+}
+
+// enablesNewHook reports whether any definition is enabled for after but not
+// for before.
+func enablesNewHook(defs []HookDefinition, before, after types.WizardAnswers) bool {
+	for _, d := range defs {
+		if d.EnabledFunc != nil && !d.EnabledFunc(before) && d.EnabledFunc(after) {
+			return true
+		}
+	}
+	return false
+}
+
+// gitPreCommitStage is git's pre-commit hook stage, the stage at which the
+// compliance level's required_pre_commit_hooks run as devenv git hooks. The
+// catalog hook preset of the same name registers no Claude Code hook.
+const gitPreCommitStage = "pre-commit"
+
+// ValidateHookPreset returns an error wrapping ErrUnselectableHookPreset,
+// listing the valid presets, when name is not selectable. A preset the
+// catalog names but no Claude Code hook implements is reported as not
+// implemented, to be removed from hooks; for the git pre-commit stage it also
+// says that commit-time checks are devenv git hooks set by the compliance
+// level, which is where a user selecting it should look.
+func ValidateHookPreset(name string) error {
+	valid := SelectableHookPresets()
+	if slices.Contains(valid, name) {
+		return nil
+	}
+	err := fmt.Errorf("%w %q; valid presets: %s", ErrUnselectableHookPreset, name, strings.Join(valid, ", "))
+	if !validation.IsValidHookPreset(name) {
+		return err
+	}
+	if name == gitPreCommitStage {
+		return fmt.Errorf("%w (it is not implemented yet; remove it from hooks: commit-time checks are devenv git hooks set by the compliance level's required_pre_commit_hooks)", err)
+	}
+	return fmt.Errorf("%w (it is not implemented yet; remove it from hooks)", err)
+}
+
+// ValidateHookChoices rejects every catalog hook preset h turns on that is
+// not selectable (see ValidateHookPreset), so an input that sets hook flags
+// directly, such as an answers file, cannot record a preset nothing
+// implements. Hook flags outside the catalog preset vocabulary (e.g.
+// self-protection) are internal and not checked.
+func ValidateHookChoices(h types.HookChoices) error {
+	var errs []error
+	for _, name := range h.EnabledNames() {
+		if !validation.IsValidHookPreset(name) {
+			continue
+		}
+		if err := ValidateHookPreset(name); err != nil {
+			errs = append(errs, err)
+		}
+	}
+	return errors.Join(errs...)
+}

@@ -6,10 +6,12 @@ import (
 	"maps"
 	"os"
 	"path/filepath"
+	"reflect"
 	"runtime"
 	"strings"
 	"testing"
 
+	"github.com/Quantum-Serendipity/qsdev/pkg/branding"
 	"github.com/Quantum-Serendipity/qsdev/pkg/types"
 )
 
@@ -24,6 +26,8 @@ func TestBuildManifest_MachineOwnedOnly(t *testing.T) {
 		{Path: "devenv.nix", Content: []byte("{}"), Strategy: types.ManualMerge},
 		{Path: ".claude/settings.json", Content: []byte("{}"), Strategy: types.ThreeWayMerge},
 		{Path: "merged.yaml", Content: []byte("a: 1"), Strategy: types.Merge},
+		// Gitignored and per-checkout: never in the committed manifest.
+		{Path: branding.Get().LocalConfig, Content: []byte("# local"), Strategy: types.Overwrite},
 	})
 
 	got := BuildManifest(st)
@@ -190,5 +194,100 @@ func TestSaveInitState_WritesStateAndManifest(t *testing.T) {
 	// as 0666, so the permission check is meaningful only elsewhere.
 	if runtime.GOOS != "windows" && info.Mode().Perm()&0o022 != 0 {
 		t.Errorf("manifest mode = %v, want no group/other write", info.Mode().Perm())
+	}
+}
+
+func TestExpectedState(t *testing.T) {
+	t.Parallel()
+	local := types.GeneratedState{Files: map[string]types.FileState{
+		"a": {Hash: "sha256:old", Strategy: types.Overwrite, Mode: 0o755},
+		"b": {Hash: "sha256:b", Strategy: types.Overwrite},
+	}}
+	tests := []struct {
+		name     string
+		manifest Manifest
+		want     map[string]types.FileState
+	}{
+		{"no manifest", nil, local.Files},
+		{"manifest overrides hash, keeps mode", Manifest{"a": "sha256:new", "c": "sha256:c"}, map[string]types.FileState{
+			"a": {Hash: "sha256:new", Strategy: types.Overwrite, Mode: 0o755},
+			"b": {Hash: "sha256:b", Strategy: types.Overwrite},
+			"c": {Hash: "sha256:c"},
+		}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			got := ExpectedState(local, tt.manifest)
+			if !reflect.DeepEqual(got.Files, tt.want) {
+				t.Errorf("ExpectedState = %+v, want %+v", got.Files, tt.want)
+			}
+			if local.Files["a"].Hash != "sha256:old" {
+				t.Error("ExpectedState modified the local state")
+			}
+		})
+	}
+}
+
+// TestLoadManifest_DropsLocalOnlyEntry pins that a committed manifest listing
+// the developer's gitignored local config (as earlier joins wrote) does not
+// make every other checkout report it deleted.
+func TestLoadManifest_DropsLocalOnlyEntry(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	m := Manifest{
+		".envrc":                   ComputeHash([]byte("use devenv")),
+		branding.Get().LocalConfig: ComputeHash([]byte("# local")),
+	}
+	data, err := m.Marshal()
+	if err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(dir, ManifestFile())
+	if err := os.WriteFile(path, data, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	got, err := LoadManifest(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := (Manifest{".envrc": ComputeHash([]byte("use devenv"))}); !maps.Equal(got, want) {
+		t.Errorf("LoadManifest() = %v, want %v", got, want)
+	}
+}
+
+// TestWriteManifest_KeepsCRLFCheckout pins that rewriting the manifest a CRLF
+// checkout (Git's core.autocrlf) already holds leaves the file untouched, so
+// Git does not report the committed manifest modified, while a manifest with
+// other entries is rewritten.
+func TestWriteManifest_KeepsCRLFCheckout(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	m := BuildManifest(RecordFiles([]types.GeneratedFile{
+		{Path: "a.md", Content: []byte("a"), Strategy: types.Overwrite},
+		{Path: "b.md", Content: []byte("b"), Strategy: types.Overwrite},
+	}))
+	data, err := m.Marshal()
+	if err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(dir, ManifestFile())
+	crlf := []byte(strings.ReplaceAll(string(data), "\n", "\r\n"))
+	if err := os.WriteFile(path, crlf, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := WriteManifest(dir, m); err != nil {
+		t.Fatalf("WriteManifest() error: %v", err)
+	}
+	if got, _ := os.ReadFile(path); string(got) != string(crlf) {
+		t.Errorf("WriteManifest rewrote the CRLF checkout of the same manifest:\n%q", got)
+	}
+
+	delete(m, "b.md")
+	if err := WriteManifest(dir, m); err != nil {
+		t.Fatalf("WriteManifest() error: %v", err)
+	}
+	if got, _ := os.ReadFile(path); strings.Contains(string(got), "b.md") {
+		t.Errorf("WriteManifest kept a stale manifest:\n%q", got)
 	}
 }

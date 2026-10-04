@@ -11,8 +11,10 @@ import (
 // directory, located with the shared project marker set (see
 // logging.FindProjectRoot), so commands run from a subdirectory act on the
 // real project instead of creating a second, nested one, and agree with logs
-// and bug reports about where that project is. Outside any project it returns
-// the working directory, which keeps commands that may run before
+// and bug reports about where that project is. The search stops at the git
+// repository toplevel, so a submodule or nested repository is its own boundary
+// and a project marked above it is never adopted. Outside any project it
+// returns the working directory, which keeps commands that may run before
 // initialization (e.g. enable) working.
 func ProjectRoot() (string, error) {
 	wd, err := WorkingDir()

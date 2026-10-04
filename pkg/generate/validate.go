@@ -14,6 +14,7 @@ import (
 
 	"gopkg.in/yaml.v3"
 
+	"github.com/Quantum-Serendipity/qsdev/internal/procexec"
 	"github.com/Quantum-Serendipity/qsdev/pkg/fileutil"
 	"github.com/Quantum-Serendipity/qsdev/pkg/types"
 )
@@ -84,7 +85,9 @@ func ValidateContent(path string, content []byte) error {
 // claude subcommands), so content WriteFiles rejects is never written by
 // another command. Like WriteFiles it never writes outside projectRoot: a
 // path, symlinked parent directory or symlinked file that resolves outside
-// the root is refused with an error wrapping fileutil.ErrOutsideRoot.
+// the root is refused with an error wrapping fileutil.ErrOutsideRoot. A
+// script is pinned to LF line endings in .gitattributes, as WriteFiles pins
+// it.
 func WriteGeneratedFile(projectRoot string, f types.GeneratedFile) error {
 	if !f.SkipValidation {
 		if err := ValidateContent(f.Path, f.Content); err != nil {
@@ -95,6 +98,7 @@ func WriteGeneratedFile(projectRoot string, f types.GeneratedFile) error {
 	if mode == 0 {
 		mode = fileutil.ModeReadWrite
 	}
+	pinScriptLineEndings(projectRoot, []types.GeneratedFile{f})
 	if err := fileutil.WriteFileAtomicInRoot(projectRoot, filepath.FromSlash(f.Path), f.Content, mode); err != nil {
 		return fmt.Errorf("writing %s: %w", f.Path, err)
 	}
@@ -136,7 +140,7 @@ func (v *NixValidator) Validate(content []byte) ValidationResult {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
-	cmd := exec.CommandContext(ctx, v.nixPath, "--parse", "-")
+	cmd := procexec.CommandContext(ctx, v.nixPath, "--parse", "-")
 	cmd.Stdin = bytes.NewReader(content)
 
 	output, err := cmd.CombinedOutput()
@@ -212,7 +216,7 @@ func (v *ShellValidator) Validate(content []byte) ValidationResult {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
-	cmd := exec.CommandContext(ctx, v.bashPath, "-n")
+	cmd := procexec.CommandContext(ctx, v.bashPath, "-n")
 	cmd.Stdin = bytes.NewReader(content)
 
 	output, err := cmd.CombinedOutput()

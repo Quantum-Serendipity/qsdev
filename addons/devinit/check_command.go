@@ -19,6 +19,7 @@ import (
 	"github.com/Quantum-Serendipity/qsdev/internal/posture"
 	"github.com/Quantum-Serendipity/qsdev/internal/posture/conformance"
 	"github.com/Quantum-Serendipity/qsdev/internal/state"
+	"github.com/Quantum-Serendipity/qsdev/internal/surgery"
 	"github.com/Quantum-Serendipity/qsdev/internal/toolcheck"
 	"github.com/Quantum-Serendipity/qsdev/internal/toolreg"
 	"github.com/Quantum-Serendipity/qsdev/internal/version"
@@ -64,7 +65,7 @@ dependencies.totals can pass (without one they fail as inconclusive).`,
 	cmd.Flags().BoolVar(&scan, "scan", false,
 		"Run a fresh dependency vulnerability scan for custom conformance requirements")
 
-	return cmd
+	return cmdutil.MarkReadOnly(cmd, "", "auto-fix", "scan")
 }
 
 func runCheck(cmd *cobra.Command, format check.OutputFormat, auditLevel check.AuditLevel, autoFix, scan bool) error {
@@ -82,6 +83,7 @@ func runCheck(cmd *cobra.Command, format check.OutputFormat, auditLevel check.Au
 		ProbeTool: func(binary, versionArg string) toolcheck.Info {
 			return toolcheck.Detect(cmd.Context(), binary, versionArg)
 		},
+		ClaudeUserDir: claudeUserDir(),
 	}
 
 	// Parse config if present. The error travels in the context so the report
@@ -90,15 +92,9 @@ func runCheck(cmd *cobra.Command, format check.OutputFormat, auditLevel check.Au
 	cfgFile := branding.Get().ConfigFile
 	ctx.QsdevConfig, ctx.ConfigErr = qsdevconfig.ParseQsdevConfig(filepath.Join(projectRoot, cfgFile))
 
-	// Tool names from registry: all names for config validation, and the
-	// always-on subset for the required-tools check.
+	// Tool names from registry for config validation.
 	toolRegistry := toolreg.DefaultRegistry()
 	ctx.ToolNames = toolRegistry.Names()
-	for _, tool := range toolRegistry.All() {
-		if tool.Default == toolreg.AlwaysOn {
-			ctx.AlwaysOnToolNames = append(ctx.AlwaysOnToolNames, tool.Name)
-		}
-	}
 
 	// mcp.disabled_tools names MCP tools, a namespace separate from the
 	// catalog: validate it against every tool the MCP server can mount.
@@ -116,9 +112,10 @@ func runCheck(cmd *cobra.Command, format check.OutputFormat, auditLevel check.Au
 	// The answers file is local (gitignored), so a CI checkout has none;
 	// rebuild them from the committed config the way join does, so CI still
 	// knows what the project must enforce.
+	var answersErr error
 	if answers.ProjectName == "" && ctx.QsdevConfig != nil {
-		if answers, err = buildJoinAnswers(cmd, InitOptions{}, projectRoot); err != nil {
-			_, _ = fmt.Fprintf(cmd.ErrOrStderr(), "Warning: could not derive answers from %s: %v\n", cfgFile, err)
+		if answers, answersErr = buildJoinAnswers(cmd, InitOptions{}, projectRoot); answersErr != nil {
+			answersErr = fmt.Errorf("deriving answers from %s: %w", cfgFile, answersErr)
 		}
 	}
 	// The committed hooks block is authoritative for the hook policy (init,
@@ -127,6 +124,21 @@ func runCheck(cmd *cobra.Command, format check.OutputFormat, auditLevel check.Au
 	// a checkout that has not run 'qsdev init --update' since fails.
 	if ctx.QsdevConfig != nil {
 		answers.HookPolicy = ctx.QsdevConfig.Hooks.Clone()
+	}
+
+	// Settle the answers against the committed config, as every generation
+	// path does, before deciding what is required: the always-on scope and
+	// the opt-outs and the permission floor come from .qsdev.yaml, never from
+	// the local answers file alone, so a local edit cannot narrow the
+	// always-on tools or deny rules check enforces.
+	settleCommittedScope(&answers, toolRegistry, ctx.QsdevConfig)
+
+	// The required-tools check covers the always-on tools that apply to the
+	// project: those that configure Claude Code only when it is enabled.
+	for _, tool := range toolRegistry.All() {
+		if tool.EnforcedFor(&answers) {
+			ctx.AlwaysOnToolNames = append(ctx.AlwaysOnToolNames, tool.Name)
+		}
 	}
 
 	// Required deny rules: every base rule the project's permission preset
@@ -148,19 +160,27 @@ func runCheck(cmd *cobra.Command, format check.OutputFormat, auditLevel check.Au
 	}
 	ctx.ExpectedConflictKeys = claudecode.ExpectedConflicts()
 
-	// The generator's output for the saved answers is what the on-disk
-	// settings.json must still enforce (hook registrations, bypass mode).
+	// The generator's output for the settled answers is what the on-disk
+	// settings.json must still enforce (hook registrations, bypass mode), so
+	// an opt-out the answers file records but .qsdev.yaml does not (e.g.
+	// attach-guard: false) still expects the guard's hook registrations.
 	var freshFiles map[string]types.GeneratedFile
 	var genErr error
 	if answers.ProjectName != "" {
 		freshFiles, _, genErr = regenerateFreshFiles(answers)
-		if genErr != nil {
-			_, _ = fmt.Fprintf(cmd.ErrOrStderr(), "Warning: could not regenerate expected files: %v\n", genErr)
-		}
 	}
 	if settings, ok := freshFiles[check.ClaudeSettingsRelPath]; ok {
 		ctx.ExpectedClaudeSettings = settings.Content
 	}
+	// Every hook script is judged against the content qsdev writes for it,
+	// seeded from the embedded templates so the judgement holds when the
+	// generator cannot run or the config turns Claude Code off.
+	ctx.GeneratedContent = claudecode.HookScriptContents()
+	for rel, f := range freshFiles {
+		ctx.GeneratedContent[rel] = f.Content
+	}
+	ctx.ExpectedGenerationErr = expectedGenerationErr(answersErr, genErr)
+	ctx.RequiredMCPServers = requiredMCPServers(answers, toolRegistry, freshFiles)
 	if answers.ClaudeCode {
 		for _, h := range claudecode.HooksWithoutPolicy(answers) {
 			ctx.HooksWithoutPolicy = append(ctx.HooksWithoutPolicy, check.HookWithoutPolicy{Name: h.Name, PolicyKey: h.PolicyKey})
@@ -168,6 +188,8 @@ func runCheck(cmd *cobra.Command, format check.OutputFormat, auditLevel check.Au
 	}
 
 	ctx.CustomConformance = evaluateCustomConformance(projectRoot, scan)
+	ctx.OrgConfigDrift = catalog.ProjectOrgConfigDrift(projectRoot)
+	ctx.OrgConfigSource = catalog.ProjectOrgConfigSource(projectRoot)
 
 	// Environment separation for cloud providers is judged from what the
 	// devenv modules declare; no cloud CLI runs.
@@ -236,7 +258,7 @@ func evaluateCustomConformance(projectRoot string, scan bool) *check.CustomConfo
 	case policy == nil:
 		return nil
 	default:
-		report, assessErr := posture.Assess(projectRoot, posture.AssessOptions{FreshScan: scan})
+		report, assessErr := posture.Assess(projectRoot, postureOptions(posture.AssessOptions{FreshScan: scan}))
 		if assessErr != nil {
 			level = conformance.PolicyError(fmt.Errorf(
 				"cannot evaluate %s: assessing project posture: %w", policyFile, assessErr))
@@ -289,12 +311,75 @@ func requiredDenyRules(answers types.WizardAnswers, cfg *types.QsdevConfig) ([]s
 
 // effectivePermissionPreset resolves the permission preset the same way
 // settings generation does: an explicit permission level wins, then the
-// tier's default preset, then standard. Saved answers are preferred; the
-// project config is used when no answers were saved.
+// tier's default preset, then standard. The project config is used when no
+// answers were saved; otherwise the saved answers, which are local, may only
+// tighten the preset cfg commits (see qsdevconfig.TightenPermissionLevel), as
+// a local layer may.
 func effectivePermissionPreset(answers types.WizardAnswers, cfg *types.QsdevConfig) string {
-	level, tierName, mcp := answers.PermissionLevel, answers.Tier, answers.MCPServers
-	if level == "" && tierName == "" && cfg != nil {
-		level, tierName = cfg.ClaudeCode.PermissionLevel, cfg.Tier
+	if cfg == nil {
+		return qsdevconfig.EffectivePermissionLevel(answers.PermissionLevel, answers.Tier, answers.MCPServers)
 	}
-	return qsdevconfig.EffectivePermissionLevel(level, tierName, mcp)
+	floor := qsdevconfig.PermissionFloor(cfg)
+	if answers.PermissionLevel == "" && answers.Tier == "" {
+		return floor
+	}
+	level := qsdevconfig.EffectivePermissionLevel(answers.PermissionLevel, answers.Tier, answers.MCPServers)
+	return qsdevconfig.TightenPermissionLevel(level, floor)
+}
+
+// settleCommittedScope settles answers against cfg, the committed
+// .qsdev.yaml (nil when it did not load): Claude Code and the tier, which
+// decide which always-on tools apply (see toolreg.Tool.EnforcedFor), are
+// taken from cfg, as is the client MCP policy (see
+// qsdevconfig.AdoptClientMCPPolicy), the permission level is raised to at
+// least the one cfg commits (see effectivePermissionPreset), and the tools
+// are reconciled against its tools block (see toolreg.Reconcile).
+func settleCommittedScope(answers *types.WizardAnswers, reg *toolreg.Registry, cfg *types.QsdevConfig) {
+	if answers.ProjectName == "" {
+		return
+	}
+	var committed *types.ToolsConfig
+	if cfg != nil {
+		answers.ClaudeCode = qsdevconfig.ClaudeCodeEnabled(cfg)
+		answers.Tier = qsdevconfig.ConfigTier(cfg)
+		qsdevconfig.AdoptClientMCPPolicy(answers, cfg)
+		answers.PermissionLevel = effectivePermissionPreset(*answers, cfg)
+		committed = &cfg.Tools
+	}
+	toolreg.Reconcile(answers, reg, committed)
+}
+
+// requiredMCPServers maps each always-on tool that applies to answers and
+// that they enable to its MCP server, for each server the expected
+// .mcp.json in freshFiles configures (a server the client MCP policy blocks
+// is never configured, so never required). The on-disk .mcp.json must
+// configure every one of them.
+func requiredMCPServers(answers types.WizardAnswers, reg *toolreg.Registry, freshFiles map[string]types.GeneratedFile) map[string]string {
+	expected, ok := freshFiles[check.MCPConfigRelPath]
+	if !ok {
+		return nil
+	}
+	required := make(map[string]string)
+	for _, tool := range reg.All() {
+		if tool.MCPServer == "" || !tool.EnforcedFor(&answers) || !answers.EnabledTools[tool.Name] {
+			continue
+		}
+		if surgery.JSONHasMCPServer(expected.Content, tool.MCPServer) {
+			required[tool.Name] = tool.MCPServer
+		}
+	}
+	return required
+}
+
+// expectedGenerationErr reports why the generator's output for the project
+// is unknown, or nil when it is known or there was nothing to generate from.
+// Without that output every hook-registration check has nothing to compare
+// against, so check reports the failure (see check.CheckExpectedGeneration)
+// rather than passing on what is left. An unreadable config is reported by
+// its own check.
+func expectedGenerationErr(answersErr, genErr error) error {
+	if genErr != nil {
+		return fmt.Errorf("regenerating expected files: %w", genErr)
+	}
+	return answersErr
 }

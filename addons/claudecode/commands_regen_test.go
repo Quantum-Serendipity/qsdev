@@ -321,6 +321,7 @@ func TestRegen_AddSkillRecordedInProjectConfig(t *testing.T) {
 	initFullTier(t, dir)
 	cfgPath := filepath.Join(dir, ".qsdev.yaml")
 	writeFile(t, cfgPath, "version: 1\nclaude_code:\n  enabled: true\n  permission_level: standard\n")
+	markJoined(t, dir)
 
 	mustRunClaude(t, "add-skill", "deploy")
 

@@ -1,10 +1,10 @@
 package posture
 
 import (
-	"os"
 	"path/filepath"
 	"testing"
 
+	"github.com/Quantum-Serendipity/qsdev/internal/state"
 	"github.com/Quantum-Serendipity/qsdev/pkg/types"
 )
 
@@ -62,25 +62,24 @@ func TestAssess_StateListedFilesMustExistOnDisk(t *testing.T) {
 				Files:        map[string]types.FileState{},
 				EnabledTools: map[string]bool{"attach-guard": true, "gitleaks": true, "socket-dev-mcp": true},
 			}
+			// The state records each file's real generated hash: a guard whose
+			// recorded hash does not match is never credited.
 			for _, rel := range tracked {
-				st.Files[rel] = types.FileState{Hash: "stale"}
+				content := "x\n"
+				switch rel {
+				case ".claude/settings.json":
+					content = settingsWithPackageGuard
+				case packageGuardPath:
+					content = pristineGuard
+				}
+				st.Files[rel] = types.FileState{Hash: state.ComputeHash([]byte(content))}
 				if tt.writeFiles {
-					abs := filepath.Join(root, filepath.FromSlash(rel))
-					if err := os.MkdirAll(filepath.Dir(abs), 0o755); err != nil {
-						t.Fatal(err)
-					}
-					content := "x\n"
-					if rel == ".claude/settings.json" {
-						content = settingsWithPackageGuard
-					}
-					if err := os.WriteFile(abs, []byte(content), 0o644); err != nil {
-						t.Fatal(err)
-					}
+					writeFile(t, root, rel, content)
 				}
 			}
 			writeState(t, root, filepath.Join(".devinit", ".qsdev-init-state.yaml"), st)
 
-			report, err := Assess(root, AssessOptions{})
+			report, err := Assess(root, testAssessOpts)
 			if err != nil {
 				t.Fatalf("Assess: %v", err)
 			}

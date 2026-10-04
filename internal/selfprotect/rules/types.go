@@ -3,6 +3,7 @@ package rules
 import (
 	"encoding/json"
 
+	"github.com/Quantum-Serendipity/qsdev/internal/selfprotect/canon"
 	"github.com/Quantum-Serendipity/qsdev/internal/selfprotect/cmdscan"
 )
 
@@ -45,6 +46,10 @@ type EvalContext struct {
 	// beyond file_path (the path/paths/source/destination arguments of MCP
 	// filesystem tools).
 	ToolInput json.RawMessage
+	// SensitiveCommands are the CLI's subcommands that only a human may run
+	// (cmdutil.SensitiveCommands of the running command tree); SP-014 blocks
+	// a shell command invoking one.
+	SensitiveCommands []cmdscan.CommandSpec
 
 	// Parsed Bash command, memoized by ParsedCommands. Do not read directly.
 	commands       []cmdscan.Command
@@ -60,6 +65,12 @@ type EvalContext struct {
 	// bashMutatesProtected since several rules consult them.
 	mentions, mutates         bool
 	mentionsDone, mutatesDone bool
+
+	// fs answers every filesystem question the rules ask about the paths of
+	// this one decision, so each distinct path or directory is looked up once
+	// however many words name it. scannedCommands and hookTargetsFor hand it
+	// out; the context must not be copied once they have.
+	fs canon.Resolver
 
 	// hookEnv overrides the session description SP-011 resolves hook
 	// commands from (tests only; nil describes the running session), and
@@ -77,7 +88,7 @@ type EvalContext struct {
 func (ctx *EvalContext) ParsedCommands() ([]cmdscan.Command, error) {
 	if !ctx.commandsParsed {
 		if ctx.Command != "" {
-			ctx.commands, ctx.parseErr = cmdscan.Parse(ctx.Command)
+			ctx.commands, ctx.parseErr = cmdscan.ParseWithVars(ctx.Command, canon.ShellPathVars())
 		}
 		ctx.commandsParsed = true
 	}
@@ -112,7 +123,46 @@ func NewRuleSet(rules ...Rule) *RuleSet {
 // EvaluateAll evaluates all rules against the context.
 // Returns (Deny, matches) if any rule denies, (Allow, nil) if all allow.
 // All rules are evaluated and all denials are collected (deny-overrides combining).
+//
+// A shell command that does not parse is also judged by the lines bash still
+// runs before the syntax error (cmdscan.ExecutedPrefix), so a mutation
+// followed by a stray `fi` cannot hide behind the rules' substring fallback.
 func (rs *RuleSet) EvaluateAll(ctx *EvalContext) (Verdict, []RuleMatch) {
+	if verdict, matches := rs.evaluate(ctx); verdict == Deny {
+		return verdict, matches
+	}
+	if !cmdscan.IsShellTool(ctx.ToolName) {
+		return Allow, nil
+	}
+	if _, err := ctx.ParsedCommands(); err == nil {
+		return Allow, nil
+	}
+	prefix := cmdscan.ExecutedPrefix(ctx.Command)
+	if prefix == "" {
+		return Allow, nil
+	}
+	return rs.evaluate(ctx.withCommand(prefix))
+}
+
+// withCommand returns a fresh context for the same tool call with command in
+// place of ctx.Command; nothing memoized on ctx carries over.
+func (ctx *EvalContext) withCommand(command string) *EvalContext {
+	return &EvalContext{
+		ToolName:          ctx.ToolName,
+		FilePath:          ctx.FilePath,
+		CanonicalPath:     ctx.CanonicalPath,
+		Command:           command,
+		Content:           ctx.Content,
+		CWD:               ctx.CWD,
+		Edits:             ctx.Edits,
+		ToolInput:         ctx.ToolInput,
+		SensitiveCommands: ctx.SensitiveCommands,
+		hookEnv:           ctx.hookEnv,
+	}
+}
+
+// evaluate runs every rule against ctx with deny-overrides combining.
+func (rs *RuleSet) evaluate(ctx *EvalContext) (Verdict, []RuleMatch) {
 	var matches []RuleMatch
 	for _, r := range rs.rules {
 		verdict, reason := r.Evaluate(ctx)

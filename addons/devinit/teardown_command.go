@@ -10,6 +10,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/Quantum-Serendipity/qsdev/internal/cmdutil"
+	"github.com/Quantum-Serendipity/qsdev/internal/posture"
 	"github.com/Quantum-Serendipity/qsdev/internal/teardown"
 	"github.com/Quantum-Serendipity/qsdev/internal/toolreg"
 )
@@ -54,12 +55,16 @@ Use --archive to create a backup before removal.`,
 	cmd.Flags().BoolVar(&archive, "archive", false, "Create archive of managed files before removal")
 	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "Preview the teardown plan without executing")
 
-	return cmd
+	// Teardown removes every guardrail; its --dry-run preview stays open.
+	return cmdutil.MarkSensitive(cmdutil.MarkReadOnly(cmd, "dry-run"), cmdutil.Sensitivity{})
 }
 
 func runTeardown(cmd *cobra.Command, quick, compliance, force, archive, dryRun bool) error {
 	projectRoot, err := cmdutil.ProjectRoot()
 	if err != nil {
+		return err
+	}
+	if err := requireJoined(projectRoot); err != nil {
 		return err
 	}
 
@@ -76,6 +81,7 @@ func runTeardown(cmd *cobra.Command, quick, compliance, force, archive, dryRun b
 		Archive:     archive || compliance,
 		DryRun:      dryRun,
 		ProjectRoot: projectRoot,
+		Posture:     postureOptions(posture.AssessOptions{}),
 	}
 
 	registry := toolreg.DefaultRegistry()

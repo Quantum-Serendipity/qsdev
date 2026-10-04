@@ -4,9 +4,12 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/Quantum-Serendipity/qsdev/internal/catalog"
+	"github.com/Quantum-Serendipity/qsdev/internal/selfprotect/cmdscan"
+	"github.com/Quantum-Serendipity/qsdev/internal/state"
 	"github.com/Quantum-Serendipity/qsdev/pkg/types"
 )
 
@@ -45,13 +48,18 @@ const preCommitWithLockAudit = `repos:
         name: Lock file change audit
 `
 
+// guardMatcher is the matcher key of the package guard's registration, as
+// the generator writes it: every tool that runs a shell command.
+var guardMatcher = `"matcher": "` + strings.Join(cmdscan.ShellTools, "|") + `"`
+
 // settingsWithPackageGuard is a .claude/settings.json registering the package
 // guard as a PreToolUse hook, as the generator writes it.
-const settingsWithPackageGuard = `{"hooks": {"PreToolUse": [{"matcher": "Bash", "hooks": [
+var settingsWithPackageGuard = `{"hooks": {"PreToolUse": [{` + guardMatcher + `, "hooks": [
   {"type": "command", "command": "\"${CLAUDE_PROJECT_DIR}\"/.claude/hooks/package-guard.py"}]}]}}`
 
 // writeProjectFiles writes files (relative path -> content) under a fresh
-// project directory and returns it with a generated state listing them.
+// project directory and returns it with a generated state listing them with
+// their real content hashes, as generation records them.
 func writeProjectFiles(t *testing.T, files map[string]string) (string, types.GeneratedState) {
 	t.Helper()
 	dir := t.TempDir()
@@ -64,7 +72,7 @@ func writeProjectFiles(t *testing.T, files map[string]string) (string, types.Gen
 		if err := os.WriteFile(abs, []byte(content), 0o644); err != nil {
 			t.Fatal(err)
 		}
-		st.Files[rel] = types.FileState{}
+		st.Files[rel] = types.FileState{Hash: state.ComputeHash([]byte(content))}
 	}
 	return dir, st
 }
@@ -95,7 +103,7 @@ func TestAssessDefenseLayers_ArtifactContent(t *testing.T) {
 			tools: map[string]bool{"attach-guard": true},
 			files: map[string]string{".claude/hooks/block-destructive.py": "", "yarn.lock": ""},
 			layer: "lock-file-enforcement",
-			want:  LayerPartial,
+			want:  LayerDisabled,
 		},
 		{
 			name:  "pre-commit config without lock audit hook is not lock file enforcement",
@@ -107,14 +115,14 @@ func TestAssessDefenseLayers_ArtifactContent(t *testing.T) {
 		{
 			name:  "lock audit hook in pre-commit config with attach-guard",
 			tools: map[string]bool{"attach-guard": true},
-			files: map[string]string{".pre-commit-config.yaml": preCommitWithLockAudit},
+			files: guardedFiles(map[string]string{".pre-commit-config.yaml": preCommitWithLockAudit}),
 			layer: "lock-file-enforcement",
 			want:  LayerEnabled,
 		},
 		{
 			name:  "lock audit hook in devenv.nix with attach-guard",
 			tools: map[string]bool{"attach-guard": true},
-			files: map[string]string{"devenv.nix": hardenedDevenvNix},
+			files: guardedFiles(map[string]string{"devenv.nix": hardenedDevenvNix}),
 			layer: "lock-file-enforcement",
 			want:  LayerEnabled,
 		},
@@ -142,9 +150,16 @@ func TestAssessDefenseLayers_ArtifactContent(t *testing.T) {
 		{
 			name:  "package guard OSV checks",
 			tools: map[string]bool{"attach-guard": true},
-			files: map[string]string{".claude/hooks/package-guard.py": ""},
+			files: guardedFiles(nil),
 			layer: "vulnerability-scanning",
 			want:  LayerEnabled,
+		},
+		{
+			name:  "lock audit hook without the guard in force",
+			tools: map[string]bool{"attach-guard": true},
+			files: guardedFiles(map[string]string{".claude/settings.json": "{}", ".pre-commit-config.yaml": preCommitWithLockAudit}),
+			layer: "lock-file-enforcement",
+			want:  LayerPartial,
 		},
 		{
 			name:  "unhardened devenv.nix",
@@ -165,7 +180,7 @@ func TestAssessDefenseLayers_ArtifactContent(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 			dir, genState := writeProjectFiles(t, tt.files)
-			cov := AssessDefenseLayers(dir, tt.tools, types.DetectedProject{}, genState, 3)
+			cov := AssessDefenseLayers(dir, testAssessOpts, tt.tools, types.DetectedProject{}, genState, 3)
 			if got := layerByName(t, cov, tt.layer); got.Status != tt.want {
 				t.Errorf("%s: status = %q (%s), want %q", tt.layer, got.Status, got.Reason, tt.want)
 			}
@@ -194,11 +209,9 @@ func TestLockFileAuditHookIDMatchesCatalog(t *testing.T) {
 // only the layers in scope at the current tier, like Score (F345).
 func TestAssessDefenseLayers_CountsAreTierRelative(t *testing.T) {
 	t.Parallel()
-	dir, genState := writeProjectFiles(t, map[string]string{
-		".claude/hooks/package-guard.py": "",
-		".claude/settings.json":          settingsWithPackageGuard,
-		".pre-commit-config.yaml":        preCommitWithLockAudit,
-	})
+	dir, genState := writeProjectFiles(t, guardedFiles(map[string]string{
+		".pre-commit-config.yaml": preCommitWithLockAudit,
+	}))
 	tools := map[string]bool{"attach-guard": true}
 
 	tests := []struct {
@@ -214,7 +227,7 @@ func TestAssessDefenseLayers_CountsAreTierRelative(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(fmt.Sprintf("tier %d", tt.tier), func(t *testing.T) {
 			t.Parallel()
-			cov := AssessDefenseLayers(dir, tools, types.DetectedProject{}, genState, tt.tier)
+			cov := AssessDefenseLayers(dir, testAssessOpts, tools, types.DetectedProject{}, genState, tt.tier)
 			if cov.Enabled != tt.wantEnabled || cov.Total != tt.total {
 				t.Errorf("tier %d: %d/%d layers, want %d/%d", tt.tier, cov.Enabled, cov.Total, tt.wantEnabled, tt.total)
 			}

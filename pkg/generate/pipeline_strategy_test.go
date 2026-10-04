@@ -46,24 +46,24 @@ func TestWriteFiles_EnforcesStrategyOnExistingFile(t *testing.T) {
 		{
 			name: "skip keeps user file", path: "Directory.Build.props", strategy: types.Skip,
 			existing: "<Project>user</Project>\n", generated: "<Project>qsdev</Project>\n",
-			wantAction: generate.ActionSkipped, wantContent: "<Project>user</Project>\n",
+			wantAction: generate.ActionKept, wantContent: "<Project>user</Project>\n",
 		},
 		{
 			name: "skip is not overridden by force", path: ".envrc", strategy: types.Skip, force: true,
 			existing: "use flake\n", generated: "use devenv\n",
-			wantAction: generate.ActionSkipped, wantContent: "use flake\n",
+			wantAction: generate.ActionKept, wantContent: "use flake\n",
 		},
 		{
 			// Identical content is qsdev output: it is not rewritten (F392 keeps
 			// the mtime) but is still recorded in state.
 			name: "skip records identical content", path: "same.txt", strategy: types.Skip,
 			existing: "gen\n", generated: "gen\n",
-			wantAction: generate.ActionSkipped, wantContent: "gen\n", wantRecorded: true,
+			wantAction: generate.ActionUnchanged, wantContent: "gen\n", wantRecorded: true,
 		},
 		{
 			name: "manual merge writes sidecar for unrecorded changes", path: "devenv.nix", strategy: types.ManualMerge,
 			existing: "{ user }\n", generated: "{ gen }\n",
-			wantAction: generate.ActionSkipped, wantContent: "{ user }\n", wantSidecar: true,
+			wantAction: generate.ActionSidecar, wantContent: "{ user }\n", wantSidecar: true,
 		},
 		{
 			name: "manual merge overwrites with force", path: "devenv.nix", strategy: types.ManualMerge, force: true,
@@ -169,10 +169,10 @@ func TestWriteFiles_RegeneratesRecordedOutput(t *testing.T) {
 		wantAction  generate.FileAction
 	}{
 		{name: "manual-merge unmodified recorded output", path: "devenv.nix", strategy: types.ManualMerge, onDisk: "{ v1 }\n", wantContent: "{ v2 }\n", wantAction: generate.ActionUpdated},
-		{name: "manual-merge hand-edited", path: "devenv.nix", strategy: types.ManualMerge, onDisk: "{ v1 + edits }\n", wantContent: "{ v1 + edits }\n", wantAction: generate.ActionSkipped},
+		{name: "manual-merge hand-edited", path: "devenv.nix", strategy: types.ManualMerge, onDisk: "{ v1 + edits }\n", wantContent: "{ v1 + edits }\n", wantAction: generate.ActionSidecar},
 		{name: "skip unmodified recorded output", path: ".github/pull_request_template.md", strategy: types.Skip, onDisk: "{ v1 }\n", wantContent: "{ v2 }\n", wantAction: generate.ActionUpdated},
-		{name: "skip user-owned file", path: ".github/pull_request_template.md", strategy: types.Skip, onDisk: "MY TEMPLATE\n", wantContent: "MY TEMPLATE\n", wantAction: generate.ActionSkipped},
-		{name: "skip user-owned file with force", path: ".github/pull_request_template.md", strategy: types.Skip, force: true, onDisk: "MY TEMPLATE\n", wantContent: "MY TEMPLATE\n", wantAction: generate.ActionSkipped},
+		{name: "skip user-owned file", path: ".github/pull_request_template.md", strategy: types.Skip, onDisk: "MY TEMPLATE\n", wantContent: "MY TEMPLATE\n", wantAction: generate.ActionKept},
+		{name: "skip user-owned file with force", path: ".github/pull_request_template.md", strategy: types.Skip, force: true, onDisk: "MY TEMPLATE\n", wantContent: "MY TEMPLATE\n", wantAction: generate.ActionKept},
 	}
 
 	for _, tt := range tests {
@@ -204,7 +204,7 @@ func TestWriteFiles_RegeneratesRecordedOutput(t *testing.T) {
 			if string(got) != tt.wantContent {
 				t.Errorf("%s = %q, want %q", tt.path, got, tt.wantContent)
 			}
-			if kept := tt.wantAction == generate.ActionSkipped; kept && len(result.SuccessfulFiles(files)) != 0 {
+			if kept := tt.wantAction == generate.ActionKept || tt.wantAction == generate.ActionSidecar; kept && len(result.SuccessfulFiles(files)) != 0 {
 				t.Error("a kept user file must not be recorded as generated output")
 			}
 		})
@@ -380,5 +380,245 @@ func TestWriteFiles_SidecarSymlinkEscape(t *testing.T) {
 	}
 	if data, err := os.ReadFile(outside); err != nil || string(data) != "user profile\n" {
 		t.Errorf("outside file = %q (err %v), want it untouched", data, err)
+	}
+}
+
+// TestWriteFilesSkipStrategyReportsKept verifies a user file under the Skip
+// strategy is reported as kept, counted, and named in the summary.
+func TestWriteFilesSkipStrategyReportsKept(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	writeTestFile(t, filepath.Join(dir, ".envrc"), "export FOO=mine\n", 0o644)
+	files := []types.GeneratedFile{{
+		Path: ".envrc", Content: []byte("use devenv\n"), Strategy: types.Skip, SkipValidation: true,
+	}}
+	result, err := generate.WriteFiles(files, generate.PipelineOptions{ProjectRoot: dir})
+	if err != nil {
+		t.Fatalf("WriteFiles: %v", err)
+	}
+	if result.Kept != 1 || result.Files[0].Action != generate.ActionKept {
+		t.Errorf("Kept = %d, action = %v; want 1, kept", result.Kept, result.Files[0].Action)
+	}
+	if err := result.Err(); err != nil {
+		t.Errorf("Err() = %v, want nil for a kept file", err)
+	}
+	if !strings.Contains(result.Summary(), "kept existing .envrc") {
+		t.Errorf("Summary() does not name the kept file:\n%s", result.Summary())
+	}
+	if got, _ := os.ReadFile(filepath.Join(dir, ".envrc")); string(got) != "export FOO=mine\n" {
+		t.Errorf(".envrc = %q, want it unchanged", got)
+	}
+}
+
+// unparseableMergeFiles is a ThreeWayMerge settings.json and a SectionMarker
+// CLAUDE.md whose on-disk content cannot be merged.
+var unparseableMergeFiles = []struct {
+	path     string
+	strategy types.MergeStrategy
+	existing string
+	gen      string
+}{
+	{
+		path: ".claude/settings.json", strategy: types.ThreeWayMerge,
+		existing: `{ "permissions": { broken`,
+		gen:      `{"permissions":{"allow":[],"deny":["Read(./.env)"]}}`,
+	},
+	{
+		path: "CLAUDE.md", strategy: types.SectionMarker,
+		existing: "<!-- BEGIN GENERATED SECTION -->\nno end marker\n",
+		gen:      "<!-- BEGIN GENERATED SECTION -->\nnew\n<!-- END GENERATED SECTION -->\n",
+	},
+}
+
+func TestWriteFilesForceOverwritesUnparseableMerge(t *testing.T) {
+	t.Parallel()
+
+	for _, tt := range unparseableMergeFiles {
+		t.Run(tt.path, func(t *testing.T) {
+			t.Parallel()
+			dir := t.TempDir()
+			full := filepath.Join(dir, tt.path)
+			writeTestFile(t, full, tt.existing, 0o644)
+
+			result, err := generate.WriteFiles([]types.GeneratedFile{{
+				Path: tt.path, Content: []byte(tt.gen), Strategy: tt.strategy,
+			}}, generate.PipelineOptions{ProjectRoot: dir, Force: true})
+			if err != nil {
+				t.Fatalf("WriteFiles: %v", err)
+			}
+			fr := result.Files[0]
+			if fr.Action != generate.ActionUpdated {
+				t.Fatalf("action = %v, want updated (err: %v)", fr.Action, fr.Error)
+			}
+			if !strings.Contains(fr.Note, "overwritten (--force)") {
+				t.Errorf("Note = %q, want the --force overwrite note", fr.Note)
+			}
+			if !strings.Contains(result.Summary(), tt.path+": existing file could not be merged") {
+				t.Errorf("Summary() does not carry the note:\n%s", result.Summary())
+			}
+			if got, _ := os.ReadFile(full); string(got) != tt.gen {
+				t.Errorf("%s = %q, want the generated content", tt.path, got)
+			}
+		})
+	}
+}
+
+func TestWriteFilesNoForceUnparseableMergeFails(t *testing.T) {
+	t.Parallel()
+
+	for _, tt := range unparseableMergeFiles {
+		t.Run(tt.path, func(t *testing.T) {
+			t.Parallel()
+			dir := t.TempDir()
+			full := filepath.Join(dir, tt.path)
+			writeTestFile(t, full, tt.existing, 0o644)
+
+			result, err := generate.WriteFiles([]types.GeneratedFile{{
+				Path: tt.path, Content: []byte(tt.gen), Strategy: tt.strategy,
+			}}, generate.PipelineOptions{ProjectRoot: dir})
+			if err != nil {
+				t.Fatalf("WriteFiles: %v", err)
+			}
+			if got := result.Files[0].Action; got != generate.ActionFailed {
+				t.Errorf("action = %v, want failed", got)
+			}
+			// The path is named exactly once: Err adds it, so the pipeline's
+			// cause must not repeat it.
+			if err := result.Err(); err == nil || strings.Count(err.Error(), tt.path) != 1 {
+				t.Errorf("Err() = %v, want an error naming %s exactly once", err, tt.path)
+			}
+			if got, _ := os.ReadFile(full); string(got) != tt.existing {
+				t.Errorf("%s = %q, want it byte-unchanged", tt.path, got)
+			}
+		})
+	}
+}
+
+// TestWriteFilesSkipKeepsNonRegularLeaf verifies an existing Skip target
+// that is a symlink (out of root or dangling), a directory or an unreadable
+// file is kept without being written, instead of failing the whole write.
+func TestWriteFilesSkipKeepsNonRegularLeaf(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name    string
+		symlink bool
+		chmod   bool // needs enforced file permissions (not Windows, not root)
+		setup   func(t *testing.T, full string)
+	}{
+		{
+			name: "unreadable file", chmod: true,
+			setup: func(t *testing.T, full string) {
+				t.Helper()
+				writeTestFile(t, full, "export FOO=mine\n", 0o000)
+			},
+		},
+		{
+			name: "out-of-root symlink", symlink: true,
+			setup: func(t *testing.T, full string) {
+				t.Helper()
+				outside := filepath.Join(t.TempDir(), "envrc")
+				writeTestFile(t, outside, "export FOO=outside\n", 0o644)
+				if err := os.Symlink(outside, full); err != nil {
+					t.Fatal(err)
+				}
+			},
+		},
+		{
+			name: "dangling symlink", symlink: true,
+			setup: func(t *testing.T, full string) {
+				t.Helper()
+				if err := os.Symlink("nowhere", full); err != nil {
+					t.Fatal(err)
+				}
+			},
+		},
+		{
+			name: "directory",
+			setup: func(t *testing.T, full string) {
+				t.Helper()
+				if err := os.Mkdir(full, 0o755); err != nil {
+					t.Fatal(err)
+				}
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			if tt.symlink && runtime.GOOS == "windows" {
+				t.Skip("symlink creation requires privileges on Windows")
+			}
+			if tt.chmod && (runtime.GOOS == "windows" || os.Geteuid() == 0) {
+				t.Skip("file read permissions are not enforced here")
+			}
+			dir := t.TempDir()
+			full := filepath.Join(dir, ".envrc")
+			tt.setup(t, full)
+			before, err := os.Lstat(full)
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			result, err := generate.WriteFiles([]types.GeneratedFile{{
+				Path: ".envrc", Content: []byte("use devenv\n"), Strategy: types.Skip, SkipValidation: true,
+			}}, generate.PipelineOptions{ProjectRoot: dir, Force: true})
+			if err != nil {
+				t.Fatalf("WriteFiles: %v", err)
+			}
+			if result.Kept != 1 || result.Files[0].Action != generate.ActionKept {
+				t.Errorf("Kept = %d, action = %v; want 1, kept (err: %v)", result.Kept, result.Files[0].Action, result.Files[0].Error)
+			}
+			if err := result.Err(); err != nil {
+				t.Errorf("Err() = %v, want nil", err)
+			}
+			after, err := os.Lstat(full)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if after.Mode() != before.Mode() || !after.ModTime().Equal(before.ModTime()) {
+				t.Errorf(".envrc changed: mode %v -> %v", before.Mode(), after.Mode())
+			}
+		})
+	}
+}
+
+// TestWriteFilesForceWriteFailureDropsNote verifies a file that --force chose
+// to overwrite but could not write is reported as failed without the
+// "overwritten (--force)" note, which would contradict the failure.
+func TestWriteFilesForceWriteFailureDropsNote(t *testing.T) {
+	t.Parallel()
+	if runtime.GOOS == "windows" {
+		t.Skip("directory write permissions are not enforced on Windows")
+	}
+	if os.Geteuid() == 0 {
+		t.Skip("root bypasses directory write permissions")
+	}
+
+	dir := t.TempDir()
+	sub := filepath.Join(dir, "sub")
+	writeTestFile(t, filepath.Join(sub, "s.json"), `{ "permissions": { broken`, 0o644)
+	if err := os.Chmod(sub, 0o555); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(sub, 0o755) })
+
+	result, err := generate.WriteFiles([]types.GeneratedFile{{
+		Path: "sub/s.json", Content: []byte(`{"permissions":{"allow":[],"deny":[]}}`), Strategy: types.ThreeWayMerge,
+	}}, generate.PipelineOptions{ProjectRoot: dir, Force: true})
+	if err != nil {
+		t.Fatalf("WriteFiles: %v", err)
+	}
+	fr := result.Files[0]
+	if fr.Action != generate.ActionFailed {
+		t.Fatalf("action = %v, want failed", fr.Action)
+	}
+	if fr.Note != "" {
+		t.Errorf("Note = %q, want empty for a failed write", fr.Note)
+	}
+	if strings.Contains(result.Summary(), "overwritten (--force)") {
+		t.Errorf("Summary() claims an overwrite that failed:\n%s", result.Summary())
 	}
 }

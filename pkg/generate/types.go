@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"fmt"
 	"os"
+	"strings"
 
 	"github.com/Quantum-Serendipity/qsdev/pkg/types"
 )
@@ -14,15 +15,24 @@ type FileAction int
 const (
 	ActionCreated FileAction = iota
 	ActionUpdated
-	ActionSkipped
+	// ActionUnchanged: the file on disk was already byte- and mode-identical
+	// to what would be written, so it was not rewritten.
+	ActionUnchanged
+	// ActionKept: the Skip strategy left an existing file alone.
+	ActionKept
+	// ActionSidecar: a ManualMerge file with local changes was left alone and
+	// the generated content was written beside it (SidecarPath).
+	ActionSidecar
 	ActionFailed
 )
 
 var fileActionNames = [...]string{
-	ActionCreated: "created",
-	ActionUpdated: "updated",
-	ActionSkipped: "skipped",
-	ActionFailed:  "failed",
+	ActionCreated:   "created",
+	ActionUpdated:   "updated",
+	ActionUnchanged: "unchanged",
+	ActionKept:      "kept",
+	ActionSidecar:   "sidecar",
+	ActionFailed:    "failed",
 }
 
 func (a FileAction) String() string {
@@ -42,9 +52,8 @@ type FileResult struct {
 	PrevHash  string
 	BytesSize int
 	// DiskContent is the exact content on disk after a created, updated or
-	// skipped (already identical) file was processed. It differs from the
-	// generated content when a merge preserved user content. Nil for dry
-	// runs and failures.
+	// unchanged file was processed. It differs from the generated content
+	// when a merge preserved user content. Nil for dry runs and failures.
 	DiskContent []byte
 	// Mode is the permission mode written (or, for a dry run, that would be
 	// written). It can be narrower than the generated mode when the existing
@@ -54,28 +63,71 @@ type FileResult struct {
 	// file with local changes was left untouched and the generated content
 	// was written beside it for manual merging.
 	SidecarPath string
+	// Note is a user-facing remark about how the file was handled, e.g. that
+	// an unmergeable file was overwritten because of --force.
+	Note string
 }
 
 // WriteResult aggregates the outcomes of writing a batch of files.
 type WriteResult struct {
-	Files   []FileResult
-	Created int
-	Updated int
-	Skipped int
-	Failed  int
+	Files     []FileResult
+	Created   int
+	Updated   int
+	Unchanged int
+	Kept      int
+	Sidecar   int
+	Failed    int
 }
 
-// Summary returns a human-readable summary of the write operation.
+// Summary returns a human-readable summary of the write operation: the
+// counts, then one line per failed, kept or sidecar file and per note.
 func (r WriteResult) Summary() string {
-	s := fmt.Sprintf("Created %d, updated %d, skipped %d, failed %d",
-		r.Created, r.Updated, r.Skipped, r.Failed)
+	var b strings.Builder
+	fmt.Fprintf(&b, "Created %d, updated %d, unchanged %d, kept %d, sidecar %d, failed %d",
+		r.Created, r.Updated, r.Unchanged, r.Kept, r.Sidecar, r.Failed)
 	for _, fr := range r.Files {
-		if fr.SidecarPath != "" {
-			s += fmt.Sprintf("\n  %s has local changes; merge %s into it manually", fr.Path, fr.SidecarPath)
+		switch {
+		case fr.Action == ActionFailed:
+			fmt.Fprintf(&b, "\n  FAILED %s: %v", fr.Path, fr.Error)
+		case fr.Action == ActionKept:
+			fmt.Fprintf(&b, "\n  kept existing %s (never overwritten); delete it to use the generated version", fr.Path)
+		case fr.SidecarPath != "":
+			fmt.Fprintf(&b, "\n  %s has local changes; merge %s into it manually", fr.Path, fr.SidecarPath)
+		}
+		if fr.Note != "" {
+			fmt.Fprintf(&b, "\n  %s: %s", fr.Path, fr.Note)
 		}
 	}
-	return s
+	return b.String()
 }
+
+// Err returns nil when every file was handled, and otherwise the failures,
+// each prefixed with its path. The error renders as one "  - <path>: <cause>"
+// line per file and unwraps to every cause, so callers can errors.Is/As on
+// them.
+func (r WriteResult) Err() error {
+	var errs writeFailures
+	for _, fr := range r.FailedFiles() {
+		errs = append(errs, fmt.Errorf("%s: %w", fr.Path, fr.Error))
+	}
+	if len(errs) == 0 {
+		return nil
+	}
+	return errs
+}
+
+// writeFailures is the per-file failure list returned by WriteResult.Err.
+type writeFailures []error
+
+func (e writeFailures) Error() string {
+	lines := make([]string, len(e))
+	for i, err := range e {
+		lines[i] = "  - " + err.Error()
+	}
+	return strings.Join(lines, "\n")
+}
+
+func (e writeFailures) Unwrap() []error { return e }
 
 // HasFailures returns true if any files failed to write.
 func (r WriteResult) HasFailures() bool {
@@ -95,9 +147,9 @@ func (r WriteResult) FailedFiles() []FileResult {
 
 // SuccessfulFiles filters the generated files list down to those now present
 // on disk with their intended content, ready for state.RecordFiles: files
-// created or updated, and files skipped because they were already identical.
-// A file kept as the user's (Skip strategy) or left for a manual merge (a
-// sidecar was written) is not included: its disk content is not qsdev output.
+// created, updated or unchanged. A file kept as the user's (ActionKept) or
+// left for a manual merge (ActionSidecar) is not included: its disk content
+// is not qsdev output.
 //
 // When a merge wrote bytes that differ from the generated content, the
 // returned entry's Content is the bytes actually on disk (so the recorded
@@ -105,12 +157,10 @@ func (r WriteResult) FailedFiles() []FileResult {
 // three-way merge base for the next update. Each returned file carries the
 // mode actually written, so recorded state agrees with the disk.
 func (r WriteResult) SuccessfulFiles(allFiles []types.GeneratedFile) []types.GeneratedFile {
-	done := make(map[string]FileResult, r.Created+r.Updated+r.Skipped)
+	done := make(map[string]FileResult, r.Created+r.Updated+r.Unchanged)
 	for _, fr := range r.Files {
-		switch {
-		case fr.Action == ActionCreated, fr.Action == ActionUpdated:
-			done[fr.Path] = fr
-		case fr.Action == ActionSkipped && fr.DiskContent != nil:
+		switch fr.Action {
+		case ActionCreated, ActionUpdated, ActionUnchanged:
 			done[fr.Path] = fr
 		}
 	}

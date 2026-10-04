@@ -1,7 +1,10 @@
 package claudecode
 
 import (
+	"errors"
 	"fmt"
+	"io"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"slices"
@@ -13,6 +16,7 @@ import (
 	"github.com/Quantum-Serendipity/qsdev/internal/detect"
 	"github.com/Quantum-Serendipity/qsdev/internal/merge"
 	"github.com/Quantum-Serendipity/qsdev/internal/state"
+	"github.com/Quantum-Serendipity/qsdev/internal/toolreg"
 	"github.com/Quantum-Serendipity/qsdev/internal/validation"
 	"github.com/Quantum-Serendipity/qsdev/pkg/branding"
 	"github.com/Quantum-Serendipity/qsdev/pkg/ecosystem"
@@ -65,12 +69,15 @@ func initCmd() *cobra.Command {
 		Short: "Initialize Claude Code configuration for the project",
 		Long:  "Generate .claude/settings.json, CLAUDE.md, hooks, skills, and rules for the current project.",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			// Validate permission preset before any work.
+			// Validate the flags before any work.
+			if noSafetyBlock {
+				return errNoSafetyBlock
+			}
 			if !validation.IsValidPermissionPreset(preset) {
 				return fmt.Errorf("unknown permission preset %q; valid presets: %v", preset, validation.PermissionPresets())
 			}
 
-			projectRoot, err := cmdutil.ProjectRoot()
+			projectRoot, err := cmdutil.JoinedProjectRoot()
 			if err != nil {
 				return err
 			}
@@ -87,13 +94,27 @@ func initCmd() *cobra.Command {
 			detected := detect.Detect(cmd.Context(), projectRoot)
 
 			// Build answers from flags, overlaid onto any saved answers so the
-			// rest of the project's configuration survives a re-init.
+			// rest of the project's configuration survives a re-init, then
+			// reconcile the tools so no always-on tool is dropped. Without
+			// saved answers the always-on defaults are seeded first, so only
+			// saved answers that switched one off draw a warning.
+			treg, err := toolreg.Default()
+			if err != nil {
+				return fmt.Errorf("loading tool registry: %w", err)
+			}
+			_, statErr := os.Stat(answersPath(projectRoot))
 			answers, err := overlayInitAnswers(projectRoot,
-				buildClaudeAnswersFromFlags(projectRoot, preset, skills, mcpServers, yes, noSafetyBlock))
+				buildClaudeAnswersFromFlags(projectRoot, preset, skills, mcpServers, yes))
 			if err != nil {
 				return err
 			}
+			if errors.Is(statErr, fs.ErrNotExist) {
+				toolreg.SeedAlwaysOn(&answers, treg)
+			}
 			answers.Detected = detected
+			if err := toolreg.ReconcileProject(cmd.ErrOrStderr(), projectRoot, &answers, treg); err != nil {
+				return err
+			}
 
 			// Generate files.
 			registry := ecosystem.DefaultRegistry()
@@ -112,9 +133,10 @@ func initCmd() *cobra.Command {
 
 			// Write files to disk. ThreeWayMergeFunc preserves user-owned
 			// top-level keys (e.g. settings.json "env") when --force overwrites
-			// an existing file.
+			// an existing file; Force overwrites one that cannot be merged.
 			result, err := generate.WriteFiles(files, generate.PipelineOptions{
 				ProjectRoot:       projectRoot,
+				Force:             force,
 				SectionMergeFunc:  merge.SectionMarkersOrAppend,
 				ThreeWayMergeFunc: merge.MergeOnCreate,
 			})
@@ -133,7 +155,8 @@ func initCmd() *cobra.Command {
 				_, _ = fmt.Fprintf(cmd.ErrOrStderr(), "Warning: %v; starting a fresh state file\n", err)
 				existingState = types.GeneratedState{}
 			}
-			if err := persistRegenState(projectRoot, answers, result.SuccessfulFiles(files), nil, existingState, true); err != nil {
+			successful := result.SuccessfulFiles(files)
+			if err := persistRegenState(projectRoot, answers, successful, nil, existingState, true); err != nil {
 				return err
 			}
 
@@ -142,8 +165,11 @@ func initCmd() *cobra.Command {
 				_, _ = fmt.Fprintln(cmd.ErrOrStderr(), "Warning: "+w)
 			}
 
-			// Print summary.
+			// Print summary; announce success only when every file was written.
 			_, _ = fmt.Fprintln(cmd.OutOrStdout(), result.Summary())
+			if err := generate.PartialWriteError(result, len(successful), "'"+branding.Get().AppName+" claude init --force'"); err != nil {
+				return err
+			}
 			_, _ = fmt.Fprintln(cmd.OutOrStdout(), "Claude Code configuration generated. Review .claude/settings.json and CLAUDE.md.")
 
 			return nil
@@ -156,9 +182,29 @@ func initCmd() *cobra.Command {
 	cmd.Flags().BoolVar(&yes, "yes", false, "Skip confirmation prompts")
 	cmd.Flags().BoolVar(&force, "force", false, "Overwrite existing configuration")
 	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "Preview changes without writing files")
-	cmd.Flags().BoolVar(&noSafetyBlock, "no-safety-block", false, "Disable the safety block hook")
+	cmd.Flags().BoolVar(&noSafetyBlock, "no-safety-block", false, "Not supported: the safety block is always on; opt out with 'qsdev disable attach-guard --force'")
 
-	return cmd
+	// --force overwrites the generated settings and hooks, edits included.
+	return cmdutil.MarkSensitive(cmd, cmdutil.Sensitivity{Flags: map[string]bool{"force": true}})
+}
+
+// loadReconciledAnswers loads the saved answers and reconciles their tools
+// (see toolreg.ReconcileProject), writing its warnings to w, so a command that
+// regenerates from them honours only the opt-outs the committed .qsdev.yaml
+// records, exactly as init and update do.
+func loadReconciledAnswers(w io.Writer, projectRoot string) (types.WizardAnswers, error) {
+	answers, err := loadAnswers(projectRoot)
+	if err != nil {
+		return types.WizardAnswers{}, err
+	}
+	treg, err := toolreg.Default()
+	if err != nil {
+		return types.WizardAnswers{}, fmt.Errorf("loading tool registry: %w", err)
+	}
+	if err := toolreg.ReconcileProject(w, projectRoot, &answers, treg); err != nil {
+		return types.WizardAnswers{}, err
+	}
+	return answers, nil
 }
 
 func updateCmd() *cobra.Command {
@@ -172,7 +218,7 @@ func updateCmd() *cobra.Command {
 		Short: "Regenerate Claude Code files from saved answers",
 		Long:  "Re-run generation using previously saved wizard answers, incorporating any detection changes.",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			projectRoot, err := cmdutil.ProjectRoot()
+			projectRoot, err := cmdutil.JoinedProjectRoot()
 			if err != nil {
 				return err
 			}
@@ -183,8 +229,17 @@ func updateCmd() *cobra.Command {
 				return err
 			}
 
-			// Refresh detection.
+			// Refresh detection, then reconcile the tools as init does, so a
+			// hand-edited opt-out the committed .qsdev.yaml does not record is
+			// undone.
 			answers.Detected = detect.Detect(cmd.Context(), projectRoot)
+			treg, err := toolreg.Default()
+			if err != nil {
+				return fmt.Errorf("loading tool registry: %w", err)
+			}
+			if err := toolreg.ReconcileProject(cmd.ErrOrStderr(), projectRoot, &answers, treg); err != nil {
+				return err
+			}
 
 			// Load stored state.
 			stateFile := filepath.Join(projectRoot, statePath())
@@ -241,7 +296,8 @@ func updateCmd() *cobra.Command {
 	cmd.Flags().BoolVar(&force, "force", false, "Overwrite even if files have been modified")
 	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "Preview changes without writing files")
 
-	return cmd
+	// --force overwrites the generated settings and hooks, edits included.
+	return cmdutil.MarkSensitive(cmd, cmdutil.Sensitivity{Flags: map[string]bool{"force": true}})
 }
 
 // addItemSpec parameterizes the differences between add-skill and add-hook
@@ -282,12 +338,12 @@ func makeAddItemCmd(spec addItemSpec) *cobra.Command {
 				}
 			}
 
-			projectRoot, err := cmdutil.ProjectRoot()
+			projectRoot, err := cmdutil.JoinedProjectRoot()
 			if err != nil {
 				return err
 			}
 
-			answers, err := loadAnswers(projectRoot)
+			answers, err := loadReconciledAnswers(cmd.ErrOrStderr(), projectRoot)
 			if err != nil {
 				return err
 			}
@@ -456,20 +512,9 @@ func addHookCmd() *cobra.Command {
 	return makeAddItemCmd(addItemSpec{
 		use:       "add-hook <name>",
 		short:     "Enable a hook preset in the Claude Code configuration",
-		long:      "Enable a hook preset (auto-format, safety-block, pre-commit, audit-log) in the existing configuration.",
-		validArgs: validation.HookPresets,
-		validate: func(name string) error {
-			if !validation.IsValidHookPreset(name) {
-				return fmt.Errorf("unknown hook preset %q; valid presets: %v", name, validation.HookPresets())
-			}
-			switch name {
-			case "auto-format":
-				return fmt.Errorf("hook preset %q is not yet implemented; it will be available in a future release", name)
-			case "pre-commit":
-				return fmt.Errorf("hook preset %q is managed by devenv, not Claude Code; use '%s devenv init' with git hooks enabled", name, branding.Get().AppName)
-			}
-			return nil
-		},
+		long:      "Enable a hook preset (e.g. audit-log, credential-scan) in the existing configuration.",
+		validArgs: SelectableHookPresets,
+		validate:  ValidateHookPreset,
 		mutate: func(a *types.WizardAnswers, name string) error {
 			if err := a.Hooks.EnableHook(name); err != nil {
 				return fmt.Errorf("enabling hook preset: %w", err)
@@ -525,8 +570,12 @@ func listSkillsCmd() *cobra.Command {
 	return cmd
 }
 
+// errNoSafetyBlock rejects `claude init --no-safety-block`: the safety block
+// backs the always-on attach-guard tool, whose only opt-out is disable --force.
+var errNoSafetyBlock = toolreg.OptOutFlagError("--no-safety-block", toolreg.ToolAttachGuard)
+
 // buildClaudeAnswersFromFlags constructs a WizardAnswers from CLI flag values.
-func buildClaudeAnswersFromFlags(projectRoot, preset string, skills, mcpServers []string, yes, noSafetyBlock bool) types.WizardAnswers {
+func buildClaudeAnswersFromFlags(projectRoot, preset string, skills, mcpServers []string, yes bool) types.WizardAnswers {
 	answers := types.WizardAnswers{
 		ProjectRoot:     projectRoot,
 		ProjectName:     filepath.Base(projectRoot),
@@ -536,7 +585,7 @@ func buildClaudeAnswersFromFlags(projectRoot, preset string, skills, mcpServers 
 		MCPServers:      mcpServers,
 		Confirmed:       yes,
 		Hooks: types.HookChoices{
-			SafetyBlock: !noSafetyBlock,
+			SafetyBlock: true,
 		},
 	}
 

@@ -216,19 +216,15 @@ func mcpHealthCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "health",
 		Short: "Check health of configured MCP servers",
-		Long: `Probe all configured MCP servers via their transport and report health
-status, tool counts, and response times. Exits non-zero when any server is not
-healthy, so it can gate CI.
+		Long: `Check the MCP servers configured in .mcp.json and exit non-zero on a failure,
+so it can gate CI. By default the check is static and fails when any server
+is misconfigured; with --probe it reports health status, tool counts and
+response times and fails when any server is not healthy.
 
-Only servers whose command matches a trusted definition are started; pass
---probe-untrusted to also run repository-supplied commands.`,
+` + mcpProbeHelp,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return runMCPProbe(cmd, opts)
+			return runMCPDiagnostic(cmd, opts)
 		},
 	}
-
-	cmd.Flags().BoolVar(&opts.jsonOutput, "json", false, "Output in JSON format")
-	cmd.Flags().BoolVar(&opts.probeUntrusted, "probe-untrusted", false, "Also start servers whose command matches no trusted definition")
-
-	return cmd
+	return withMCPProbeFlags(cmd, &opts)
 }

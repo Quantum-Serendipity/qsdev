@@ -14,12 +14,12 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/Quantum-Serendipity/qsdev/addons/claudecode"
+	qsdevanswers "github.com/Quantum-Serendipity/qsdev/internal/answers"
+	"github.com/Quantum-Serendipity/qsdev/internal/claudesettings"
 	"github.com/Quantum-Serendipity/qsdev/internal/cmdutil"
 	qsdevconfig "github.com/Quantum-Serendipity/qsdev/internal/config"
-	"github.com/Quantum-Serendipity/qsdev/internal/detect"
 	"github.com/Quantum-Serendipity/qsdev/internal/merge"
 	"github.com/Quantum-Serendipity/qsdev/internal/state"
-	"github.com/Quantum-Serendipity/qsdev/internal/tier"
 	"github.com/Quantum-Serendipity/qsdev/internal/toolreg"
 	"github.com/Quantum-Serendipity/qsdev/internal/update"
 	"github.com/Quantum-Serendipity/qsdev/internal/version"
@@ -111,6 +111,9 @@ type updateOutcome struct {
 func runUpdate(cmd *cobra.Command, opts UpdateOptions) error {
 	projectRoot, err := cmdutil.ProjectRoot()
 	if err != nil {
+		return err
+	}
+	if err := requireJoined(projectRoot); err != nil {
 		return err
 	}
 
@@ -266,40 +269,25 @@ func loadAndRefreshForUpdate(ctx context.Context, w io.Writer, projectRoot strin
 	if err != nil {
 		return types.WizardAnswers{}, err
 	}
+	// The committed choices come first: the policy and tool reconciliation
+	// below depend on whether Claude Code is configured.
+	qsdevconfig.AdoptCommitted(projectRoot, &answers)
 
 	// Refresh detection.
-	answers.Detected = detect.Detect(ctx, projectRoot)
+	answers.Detected = host.detectProject(ctx, projectRoot)
 	answers.ProjectRoot = projectRoot
 
 	if err := applyCommittedPolicy(w, projectRoot, &answers); err != nil {
 		return types.WizardAnswers{}, err
 	}
 
-	// Augment EnabledTools with inferred tools (AlwaysOn, hooks-implied).
-	toolreg.MergeInferredTools(&answers, toolreg.DefaultRegistry())
-	adoptCommittedTier(projectRoot, &answers)
-	enforceAnswerInvariants(&answers)
+	// Augment EnabledTools with inferred tools and keep always-on tools.
+	if err := toolreg.ReconcileProject(w, projectRoot, &answers, toolreg.DefaultRegistry()); err != nil {
+		return types.WizardAnswers{}, err
+	}
+	qsdevanswers.EnforceInvariants(&answers)
 
 	return answers, nil
-}
-
-// adoptCommittedTier gives answers saved before the tier was always recorded
-// the tier committed in .qsdev.yaml, so update never replaces the team's
-// recorded tier with an inferred one. Only when neither file records a valid
-// tier does enforceAnswerInvariants infer it. An unreadable config is left to
-// SyncProjectConfig, which reports it.
-func adoptCommittedTier(projectRoot string, a *types.WizardAnswers) {
-	if a.Tier != "" {
-		return
-	}
-	cfg, err := qsdevconfig.ParseQsdevConfig(filepath.Join(projectRoot, branding.Get().ConfigFile))
-	if err != nil || cfg.Tier == "" {
-		return
-	}
-	if _, err := tier.ParseTier(cfg.Tier); err != nil {
-		return
-	}
-	a.Tier = cfg.Tier
 }
 
 // saveUpdateResults persists the new state (merging written and skipped files)
@@ -500,7 +488,10 @@ func fileHasContent(path string, content []byte) bool {
 // planOrphans plans cleanup for tracked files the generators no longer
 // produce (language removed, ecosystem no longer detected, tier lowered,
 // template retired). Unmodified orphans are removed; ones the user modified
-// or already deleted are left alone and simply no longer tracked.
+// or already deleted are left alone and simply no longer tracked. The Claude
+// Code settings file is never removed: it registers the self-protection hook,
+// so a regeneration that stops producing it (Claude Code switched off) leaves
+// it in place and untracked, as init does, and only teardown deletes it.
 func planOrphans(
 	storedState types.GeneratedState,
 	newFiles []types.GeneratedFile,
@@ -528,6 +519,10 @@ func planOrphans(
 			fp.Status = types.Unknown
 			fp.Action = UpdateActionSkip
 			fp.Reason = "no longer generated, status unknown"
+		case claudesettings.HoldsProjectSettings(path):
+			fp.Status = st.Status
+			fp.Action = UpdateActionUntrack
+			fp.Reason = "no longer generated, but it registers the self-protection hook; left in place and untracked (teardown removes it)"
 		case !filepath.IsLocal(filepath.FromSlash(path)):
 			// Never delete outside the project, whatever the state file says.
 			fp.Status = st.Status

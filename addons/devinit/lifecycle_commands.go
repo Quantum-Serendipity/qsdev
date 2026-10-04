@@ -5,6 +5,8 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/Quantum-Serendipity/qsdev/internal/cmdutil"
+	"github.com/Quantum-Serendipity/qsdev/internal/toolreg"
 	"github.com/Quantum-Serendipity/qsdev/pkg/branding"
 )
 
@@ -57,7 +59,17 @@ owned file has been modified by the user, the command warns and exits unless
 
 	cmd.Flags().BoolVar(&opts.Force, "force", false, "Remove files even if they have been modified by the user")
 
-	return cmd
+	// Disabling a security tool removes a guardrail, so only a human may.
+	return cmdutil.MarkSensitive(cmd, cmdutil.Sensitivity{Args: securityToolNames})
+}
+
+// securityToolNames returns the catalog's security-category tools.
+func securityToolNames() []string {
+	var names []string
+	for _, t := range toolreg.DefaultRegistry().ByCategory(toolreg.CategorySecurity) {
+		names = append(names, t.Name)
+	}
+	return names
 }
 
 // listCmd creates the `qsdev list` command.
@@ -79,7 +91,7 @@ devex, infrastructure).`,
 
 	cmd.Flags().StringVar(&opts.Category, "category", "", "Filter by category (security, ai-agent, devex, infrastructure)")
 
-	return cmd
+	return cmdutil.MarkReadOnly(cmd, "")
 }
 
 type enableOptions struct {

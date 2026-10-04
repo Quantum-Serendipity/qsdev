@@ -72,17 +72,23 @@ func toolFromDef(name string, def catalog.ToolDef) (Tool, error) {
 		Prerequisites: def.Prerequisites,
 		Conflicts:     def.Conflicts,
 		OwnedFiles:    owned,
+		MCPServer:     def.MCPServerName,
 	}
 
 	// A tool may declare several behavior sources (agent-postmortem is both
 	// a toggle and an MCP server); every one of them applies.
 	var enables, disables []func(*types.WizardAnswers)
+	var forceOns []ForceOnFunc
+	t.ClaudeCodeBacked = def.MCPServerName != "" || def.SkillName != "" || def.ToggleField != ""
+	t.SkillBacked = def.SkillName != ""
 	if def.MCPServerName != "" {
 		enables = append(enables, mcpEnableFunc(def.MCPServerName))
+		forceOns = append(forceOns, mcpForceOnFunc(def.MCPServerName))
 		disables = append(disables, mcpDisableFunc(def.MCPServerName))
 	}
 	if def.SkillName != "" {
 		enables = append(enables, skillEnableFunc(def.SkillName))
+		forceOns = append(forceOns, skillForceOnFunc(def.SkillName))
 		disables = append(disables, skillDisableFunc(def.SkillName))
 	}
 	if def.ToggleField != "" {
@@ -90,10 +96,12 @@ func toolFromDef(name string, def catalog.ToolDef) (Tool, error) {
 			return Tool{}, fmt.Errorf("tool %q: unknown toggle_field %q", name, def.ToggleField)
 		}
 		enables = append(enables, toggleEnableFunc(def.ToggleField))
+		forceOns = append(forceOns, toggleForceOnFunc(def.ToggleField))
 		disables = append(disables, toggleDisableFunc(def.ToggleField))
 	}
 	t.EnableFunc = chainAnswerFuncs(enables)
 	t.DisableFunc = chainAnswerFuncs(disables)
+	t.ForceOnFunc = chainForceOnFuncs(forceOns)
 
 	// Auto-populate SharedContent from catalog section_content values.
 	// Tools with dynamic templates override these via AttachBehavior.
@@ -125,6 +133,25 @@ func chainAnswerFuncs(fns []func(*types.WizardAnswers)) func(*types.WizardAnswer
 		for _, fn := range fns {
 			fn(a)
 		}
+	}
+}
+
+// chainForceOnFuncs combines ForceOnFuncs into one that applies each in order
+// and reports whether any overrode an explicit off. It returns nil when there
+// are none.
+func chainForceOnFuncs(fns []ForceOnFunc) ForceOnFunc {
+	switch len(fns) {
+	case 0:
+		return nil
+	case 1:
+		return fns[0]
+	}
+	return func(a *types.WizardAnswers) bool {
+		overrode := false
+		for _, fn := range fns {
+			overrode = fn(a) || overrode
+		}
+		return overrode
 	}
 }
 

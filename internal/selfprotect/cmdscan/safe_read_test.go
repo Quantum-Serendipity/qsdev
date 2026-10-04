@@ -20,6 +20,15 @@ func TestIsSafeReadCommand(t *testing.T) {
 		{"cat .claude/settings.json", true},
 		{"grep -r deny .claude/", true},
 		{"jq . .claude/settings.json", true},
+		{"printenv QSDEV_ORG_CONFIG", true},
+
+		// direnv: trust and status subcommands leave the .envrc untouched.
+		{"direnv allow .envrc", true},
+		{"direnv deny .envrc", true},
+		{"direnv status", true},
+		{"direnv edit .envrc", false},
+		{"direnv exec . sh -c true", false},
+		{"direnv", false},
 
 		// git: only inspection subcommands, and only without output/pager options.
 		{"git status", true},
@@ -151,7 +160,8 @@ func TestParse_WriteRedirectOperators(t *testing.T) {
 
 // TestParse_Assignments pins that variable assignments are reported: a prefix
 // assignment on its command, a bare assignment statement as a nameless
-// command, and a declaration builtin as a command named by the builtin, so no
+// command, and a declaration builtin as a command named by the builtin that
+// sets the names it is given (see TestParse_OtherAssignForms), so no
 // consumer mistakes them for inert text.
 func TestParse_Assignments(t *testing.T) {
 	t.Parallel()
@@ -167,9 +177,9 @@ func TestParse_Assignments(t *testing.T) {
 		{"PATH=/tmp/x", "", nil, []string{"PATH"}, false},
 		{"X=$(id)", "", nil, []string{"X"}, true},
 		{"arr=(a b)", "", nil, []string{"arr"}, true},
-		{"export GIT_EXTERNAL_DIFF=/tmp/x", "export", []string{"GIT_EXTERNAL_DIFF=/tmp/x"}, nil, false},
-		{"declare -x X", "declare", []string{"-x", "X"}, nil, false},
-		{"local v=\"$1\"", "local", []string{"v="}, nil, true},
+		{"export GIT_EXTERNAL_DIFF=/tmp/x", "export", []string{"GIT_EXTERNAL_DIFF=/tmp/x"}, []string{"GIT_EXTERNAL_DIFF"}, false},
+		{"declare -x X", "declare", []string{"-x", "X"}, []string{"X"}, false},
+		{"local v=\"$1\"", "local", []string{"v="}, []string{"v"}, true},
 	}
 
 	for _, tt := range tests {

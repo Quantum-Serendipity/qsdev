@@ -60,8 +60,8 @@ aggregates advisories from multiple sources (GitHub, NVD, language-specific data
 It is free, open-source, and produces zero vendor lock-in.
 
 ### Harden-Runner
-StepSecurity Harden-Runner provides egress traffic monitoring and policy enforcement
-for GitHub Actions workflows. It detects compromised actions, credential exfiltration,
+StepSecurity Harden-Runner provides egress monitoring for GitHub Actions workflows
+(qsdev configures audit mode). It detects compromised actions, credential exfiltration,
 and unauthorized network access during CI builds.
 
 ### OpenGrep (opt-in)

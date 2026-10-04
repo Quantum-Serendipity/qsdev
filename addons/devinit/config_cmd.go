@@ -16,14 +16,14 @@ import (
 )
 
 func configShowCmd() *cobra.Command {
-	return &cobra.Command{
+	return cmdutil.MarkReadOnly(&cobra.Command{
 		Use:   "show",
 		Short: "Display current project configuration",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			return runConfigShow(cmd)
 		},
-	}
+	}, "")
 }
 
 func runConfigShow(cmd *cobra.Command) error {

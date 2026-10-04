@@ -12,9 +12,9 @@ import (
 	"github.com/spf13/pflag"
 
 	"github.com/Quantum-Serendipity/qsdev/addons/devenv"
+	qsdevanswers "github.com/Quantum-Serendipity/qsdev/internal/answers"
 	"github.com/Quantum-Serendipity/qsdev/internal/catalog"
 	qsdevconfig "github.com/Quantum-Serendipity/qsdev/internal/config"
-	"github.com/Quantum-Serendipity/qsdev/internal/detect"
 	"github.com/Quantum-Serendipity/qsdev/internal/merge"
 	"github.com/Quantum-Serendipity/qsdev/internal/state"
 	"github.com/Quantum-Serendipity/qsdev/internal/toolreg"
@@ -100,7 +100,7 @@ func joinPrerequisites(cmd *cobra.Command, opts InitOptions) bool {
 	if opts.DryRun || opts.ClaudeOnly {
 		return false
 	}
-	prereqs := CheckPrerequisites(cmd.Context())
+	prereqs := host.prerequisites(cmd.Context())
 	if !prereqs.HasMissing() {
 		return false
 	}
@@ -134,9 +134,10 @@ func buildJoinAnswers(cmd *cobra.Command, opts InitOptions, projectRoot string) 
 	}
 	warnPolicyViolations(cmd.ErrOrStderr(), policy)
 
-	detected := detect.Detect(cmdContext(cmd), projectRoot)
+	detected := host.detectProject(cmdContext(cmd), projectRoot)
 	answers := qsdevconfig.ConfigToAnswers(policy.Committed, detected, projectRoot)
 
+	committedAnswers := answers
 	if opts.AnswersFile != "" {
 		answers, err = OverlayAnswersFile(answers, opts.AnswersFile)
 		if err != nil {
@@ -149,6 +150,11 @@ func buildJoinAnswers(cmd *cobra.Command, opts InitOptions, projectRoot string) 
 		return types.WizardAnswers{}, err
 	}
 	answers = MergeFileWithFlags(answers, flagAnswers, flagSetToChangedMap(NewFlagSet(cmd), cmd))
+	// applyJoinDefaults replays the committed tool decisions, which switches
+	// an always-on tool's backing back on before reconciliation can see the
+	// overlay's off, so name those offs now.
+	registry := toolreg.DefaultRegistry()
+	switchedOff := toolreg.SwitchedOff(committedAnswers, answers, registry)
 	if opts.ProfileName != "" {
 		fmt.Fprintln(cmd.ErrOrStderr(), "Note: --profile applies only when creating a project; ignoring it in join mode (re-run with --mode create to apply it).")
 	}
@@ -159,7 +165,7 @@ func buildJoinAnswers(cmd *cobra.Command, opts InitOptions, projectRoot string) 
 		}
 	}
 	answers.ProjectRoot = projectRoot
-	answers.ProjectName = filepath.Base(projectRoot)
+	answers.ProjectName = qsdevconfig.ProjectNameFor(policy.Committed, projectRoot)
 	answers.Detected = detected
 	answers.Confirmed = true
 	// .qsdev.yaml records no module extras (a JavaScript UI in frontend/,
@@ -174,7 +180,6 @@ func buildJoinAnswers(cmd *cobra.Command, opts InitOptions, projectRoot string) 
 	if err != nil {
 		return types.WizardAnswers{}, fmt.Errorf("loading catalog for defaults: %w", err)
 	}
-	registry := toolreg.DefaultRegistry()
 	applyJoinDefaults(&answers, cat, registry)
 	policy.Apply(&answers)
 
@@ -183,9 +188,11 @@ func buildJoinAnswers(cmd *cobra.Command, opts InitOptions, projectRoot string) 
 		return types.WizardAnswers{}, err
 	}
 
-	// Augment EnabledTools with inferred tools (AlwaysOn, hooks-implied).
-	toolreg.MergeInferredTools(&answers, registry)
-	enforceAnswerInvariants(&answers)
+	// Augment EnabledTools with inferred tools (AlwaysOn, hooks-implied);
+	// only the committed tools.disabled opts out of an always-on tool, not
+	// an --answers-file overlay, which is warned about like every other path.
+	toolreg.ReconcileAndWarn(cmd.ErrOrStderr(), &answers, registry, &policy.Committed.Tools, switchedOff...)
+	qsdevanswers.EnforceInvariants(&answers)
 
 	return answers, nil
 }
@@ -309,13 +316,17 @@ func writeJoinResults(
 	if err := saveAddonAnswers(cmd, projectRoot, answers, accResult); err != nil {
 		return err
 	}
+	// The summary is printed on partial failure too, so kept, sidecar and
+	// --force notes for the files that did succeed are not lost.
+	if !opts.Quiet {
+		_, _ = fmt.Fprintln(cmd.OutOrStdout(), result.Summary())
+	}
 	if result.HasFailures() {
-		return partialWriteError(result, len(successfulFiles), "'"+branding.Get().AppName+" init --mode join'")
+		return generate.PartialWriteError(result, len(successfulFiles), "'"+branding.Get().AppName+" init --mode join'")
 	}
 
 	// Print join-specific summary.
 	if !opts.Quiet {
-		_, _ = fmt.Fprintln(cmd.OutOrStdout(), result.Summary())
 		_, _ = fmt.Fprintln(cmd.OutOrStdout(), joinOutcome(result))
 		_, _ = fmt.Fprint(cmd.OutOrStdout(), postGenerationMessage(answers, accResult))
 	}
@@ -328,12 +339,7 @@ func writeJoinResults(
 // changes the config does not describe (e.g. a hand edit to devenv.nix) is
 // kept and gets a sidecar, which the teammate must reconcile.
 func joinOutcome(result generate.WriteResult) string {
-	var sidecars int
-	for _, fr := range result.Files {
-		if fr.SidecarPath != "" {
-			sidecars++
-		}
-	}
+	sidecars := result.Sidecar
 	cfgFile := branding.Get().ConfigFile
 	if sidecars == 0 {
 		return fmt.Sprintf("Joined project successfully from %s configuration.", cfgFile)

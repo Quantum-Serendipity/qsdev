@@ -167,11 +167,20 @@ func Resolve(tierStr string, permissionLevel string, mcpServers []string) Tier {
 	return Infer(permissionLevel, mcpServers)
 }
 
+// GeneratesAgentConfig reports whether answers resolve to a tier that
+// generates the Claude Code agent configuration beyond settings.json and its
+// hooks: CLAUDE.md, rules, skills, MCP servers and agent-tool files. That is
+// the standard tier and up.
+func GeneratesAgentConfig(answers types.WizardAnswers) bool {
+	return Resolve(answers.Tier, answers.PermissionLevel, answers.MCPServers) >= Standard
+}
+
 // Infer determines the most likely tier of a legacy .qsdev.yaml that predates
 // the always-persisted tier field. A supply-chain-only permission level means
-// that tier. The catalog's default MCP servers (and semble, provisioned by its
-// agent tool) are written by every default init, so they never imply Full;
-// only a server outside that set does. Anything else is the catalog's default
+// that tier. The catalog's default MCP servers, the servers of its always-on
+// tools (which enforcement adds) and semble (provisioned by its agent tool)
+// are written by every default configuration, so they never imply Full; only
+// a server outside that set does. Anything else is the catalog's default
 // tier.
 func Infer(permissionLevel string, mcpServers []string) Tier {
 	if permissionLevel == "supply-chain-only" {
@@ -181,7 +190,7 @@ func Infer(permissionLevel string, mcpServers []string) Tier {
 	if err != nil {
 		return Standard
 	}
-	defaults := cat.DefaultMCPServers()
+	defaults := append(cat.DefaultMCPServers(), cat.AlwaysOnMCPServers()...)
 	for _, s := range mcpServers {
 		if s != types.SembleMCPServer && !slices.Contains(defaults, s) {
 			return Full

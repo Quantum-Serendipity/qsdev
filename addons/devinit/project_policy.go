@@ -7,6 +7,7 @@ import (
 	"io/fs"
 	"strings"
 
+	qsdevanswers "github.com/Quantum-Serendipity/qsdev/internal/answers"
 	qsdevconfig "github.com/Quantum-Serendipity/qsdev/internal/config"
 	"github.com/Quantum-Serendipity/qsdev/internal/toolreg"
 	"github.com/Quantum-Serendipity/qsdev/pkg/branding"
@@ -72,6 +73,6 @@ func localGenerationAnswers(projectRoot string, answers types.WizardAnswers) (ty
 		return types.WizardAnswers{}, fmt.Errorf("applying %s: %w", branding.Get().LocalConfig, err)
 	}
 	toolreg.MergeInferredTools(&gen, toolreg.DefaultRegistry())
-	enforceAnswerInvariants(&gen)
+	qsdevanswers.EnforceInvariants(&gen)
 	return gen, nil
 }

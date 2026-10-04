@@ -19,6 +19,7 @@ import (
 	"github.com/Quantum-Serendipity/qsdev/internal/vulnscan"
 	"github.com/Quantum-Serendipity/qsdev/internal/vulnscan/vulnscantest"
 	"github.com/Quantum-Serendipity/qsdev/pkg/branding"
+	"github.com/Quantum-Serendipity/qsdev/pkg/ecosystem"
 	"github.com/Quantum-Serendipity/qsdev/pkg/types"
 )
 
@@ -905,5 +906,217 @@ func TestToolsRegistersCredentialVendOnlyWhenEnabled(t *testing.T) {
 				t.Errorf("tools = %v, want the other security tools regardless", names)
 			}
 		})
+	}
+}
+
+// pinnedGoSum is a go.sum with one built module version.
+const pinnedGoSum = "example.com/mod v1.0.0 h1:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa=\n"
+
+// writeProject writes files (slash-separated relative path -> body) into a
+// fresh project dir and returns it.
+func writeProject(t *testing.T, files map[string]string) string {
+	t.Helper()
+	dir := t.TempDir()
+	for rel, body := range files {
+		p := filepath.Join(dir, filepath.FromSlash(rel))
+		if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
+			t.Fatalf("mkdir for %s: %v", rel, err)
+		}
+		if err := os.WriteFile(p, []byte(body), 0o644); err != nil {
+			t.Fatalf("write %s: %v", rel, err)
+		}
+	}
+	return dir
+}
+
+// stubScanner returns a securityScanner for dir wired to a fake OSV that
+// reports vulnID (HIGH) for query index 0 of every batch, or nothing when
+// vulnID is empty.
+func stubScanner(t *testing.T, dir, vulnID string) *securityScanner {
+	t.Helper()
+	var byIndex map[int][]string
+	if vulnID != "" {
+		byIndex = map[int][]string{0: {vulnID}}
+	}
+	srv := vulnscantest.NewServer(t, byIndex, map[string]string{vulnID: "HIGH"})
+	return &securityScanner{
+		projectRoot: dir,
+		scanner:     &vulnscan.Scanner{BaseURL: srv.URL, HTTPClient: srv.Client()},
+	}
+}
+
+// statusByPath indexes a result's lock_files_status by path.
+func statusByPath(t *testing.T, m map[string]any) map[string]lockFileStatus {
+	t.Helper()
+	statuses, ok := m["lock_files_status"].([]lockFileStatus)
+	if !ok {
+		t.Fatalf("lock_files_status is %T, want []lockFileStatus", m["lock_files_status"])
+	}
+	out := make(map[string]lockFileStatus, len(statuses))
+	for _, st := range statuses {
+		out[st.Path] = st
+	}
+	return out
+}
+
+// TestSecurityScan_PartialWhenUnsupportedLockPresent is the U22-05 regression:
+// a pnpm-lock.yaml the scanner cannot parse must make coverage partial and be
+// named in the text, not silently dropped behind a "complete" go.sum scan.
+func TestSecurityScan_PartialWhenUnsupportedLockPresent(t *testing.T) {
+	t.Parallel()
+	dir := writeProject(t, map[string]string{"go.sum": pinnedGoSum, "pnpm-lock.yaml": "lockfileVersion: '9.0'\n"})
+	res := call(t, stubScanner(t, dir, "").handle, map[string]any{})
+	if res.IsError {
+		t.Fatalf("scan returned error: %+v", res.Structured)
+	}
+	m := structuredMap(t, res)
+	if m["coverage"] != "partial" {
+		t.Errorf("coverage = %v, want partial", m["coverage"])
+	}
+	byPath := statusByPath(t, m)
+	if st := byPath["pnpm-lock.yaml"]; st.State != stateUnsupported {
+		t.Errorf("pnpm-lock.yaml status = %+v, want state %s", st, stateUnsupported)
+	}
+	if st := byPath["go.sum"]; st.State != stateScanned {
+		t.Errorf("go.sum status = %+v, want state %s", st, stateScanned)
+	}
+	if !strings.Contains(res.Text, "not scanned: pnpm-lock.yaml (unsupported format)") {
+		t.Errorf("text = %q, want it to name the unscanned pnpm-lock.yaml", res.Text)
+	}
+}
+
+// TestSecurityScan_SubprojectDirScanned proves a lock file in a subproject
+// directory is queried against OSV, not only the root's.
+func TestSecurityScan_SubprojectDirScanned(t *testing.T) {
+	t.Parallel()
+	dir := writeProject(t, map[string]string{
+		"frontend/package-lock.json": `{"lockfileVersion":3,"packages":{"":{"name":"app"},"node_modules/left-pad":{"version":"1.3.0"}}}`,
+	})
+	res := call(t, stubScanner(t, dir, "GHSA-NPM-1").handle, map[string]any{})
+	if res.IsError {
+		t.Fatalf("scan returned error: %+v", res.Structured)
+	}
+	m := structuredMap(t, res)
+	if st := statusByPath(t, m)["frontend/package-lock.json"]; st.State != stateScanned || st.Ecosystem != ecosystem.NameJavaScript {
+		t.Errorf("frontend/package-lock.json status = %+v, want scanned javascript", st)
+	}
+	vulns, _ := m["vulnerabilities"].([]vulnReport)
+	if len(vulns) != 1 || vulns[0].ID != "GHSA-NPM-1" || vulns[0].Package != "left-pad" {
+		t.Errorf("vulnerabilities = %+v, want GHSA-NPM-1 on left-pad", vulns)
+	}
+	if m["coverage"] != "complete" {
+		t.Errorf("coverage = %v, want complete", m["coverage"])
+	}
+}
+
+// TestSecurityScan_SymlinkedRootLockScanned is the regression for a root
+// lock file that is a symlink: with a regular subproject lock file present the
+// scan reported complete without ever reading the root go.sum.
+func TestSecurityScan_SymlinkedRootLockScanned(t *testing.T) {
+	t.Parallel()
+	target := filepath.Join(writeProject(t, map[string]string{"go.sum": pinnedGoSum}), "go.sum")
+	dir := writeProject(t, map[string]string{
+		"frontend/package-lock.json": `{"lockfileVersion":3,"packages":{"":{"name":"app"},"node_modules/left-pad":{"version":"1.3.0"}}}`,
+	})
+	if err := os.Symlink(target, filepath.Join(dir, "go.sum")); err != nil {
+		t.Skipf("symlinks unavailable: %v", err)
+	}
+	res := call(t, stubScanner(t, dir, "").handle, map[string]any{})
+	if res.IsError {
+		t.Fatalf("scan returned error: %+v", res.Structured)
+	}
+	if st := statusByPath(t, structuredMap(t, res))["go.sum"]; st.State != stateScanned {
+		t.Errorf("go.sum status = %+v, want scanned", st)
+	}
+}
+
+// TestSecurityScan_NoPinnedDepsListed proves a lock file with nothing pinned is
+// listed (not silently dropped) and does not make coverage partial: there was
+// nothing in it to scan.
+func TestSecurityScan_NoPinnedDepsListed(t *testing.T) {
+	t.Parallel()
+	dir := writeProject(t, map[string]string{"go.sum": pinnedGoSum, "requirements.txt": "requests>=2\n"})
+	res := call(t, stubScanner(t, dir, "").handle, map[string]any{})
+	if res.IsError {
+		t.Fatalf("scan returned error: %+v", res.Structured)
+	}
+	m := structuredMap(t, res)
+	if st := statusByPath(t, m)["requirements.txt"]; st.State != stateNoPinnedDeps {
+		t.Errorf("requirements.txt status = %+v, want state %s", st, stateNoPinnedDeps)
+	}
+	if m["coverage"] != "complete" {
+		t.Errorf("coverage = %v, want complete", m["coverage"])
+	}
+}
+
+// TestSecurityScan_AllLockfilesInEcosystemScanned proves every lock file of one
+// ecosystem is scanned (the base read only poetry.lock) and that the same
+// advisory found through both is reported once.
+func TestSecurityScan_AllLockfilesInEcosystemScanned(t *testing.T) {
+	t.Parallel()
+	dir := writeProject(t, map[string]string{
+		"poetry.lock":      "[[package]]\nname = \"requests\"\nversion = \"2.31.0\"\n",
+		"requirements.txt": "requests==2.31.0\n",
+	})
+	res := call(t, stubScanner(t, dir, "GHSA-PY-1").handle, map[string]any{})
+	if res.IsError {
+		t.Fatalf("scan returned error: %+v", res.Structured)
+	}
+	m := structuredMap(t, res)
+	byPath := statusByPath(t, m)
+	for _, name := range []string{"poetry.lock", "requirements.txt"} {
+		if byPath[name].State != stateScanned {
+			t.Errorf("%s status = %+v, want scanned", name, byPath[name])
+		}
+	}
+	if vulns, _ := m["vulnerabilities"].([]vulnReport); len(vulns) != 1 {
+		t.Errorf("vulnerabilities = %+v, want the duplicate advisory reported once", vulns)
+	}
+	if m["coverage"] != "complete" {
+		t.Errorf("coverage = %v, want complete", m["coverage"])
+	}
+}
+
+// TestSecurityScan_OnlyUnsupportedLockIsNotConfigured proves a project whose
+// only lock file cannot be scanned is told so, rather than told to generate a
+// lock file it already has.
+func TestSecurityScan_OnlyUnsupportedLockIsNotConfigured(t *testing.T) {
+	t.Parallel()
+	dir := writeProject(t, map[string]string{"pnpm-lock.yaml": "lockfileVersion: '9.0'\n"})
+	res := call(t, stubScanner(t, dir, "").handle, map[string]any{})
+	if !res.IsError {
+		t.Fatal("expected IsError when no lock file is scannable")
+	}
+	m := structuredMap(t, res)
+	if m["status"] != "not_configured" {
+		t.Errorf("status = %v, want not_configured", m["status"])
+	}
+	if reason, _ := m["reason"].(string); reason != "lock file present but not scannable; scan did not run" {
+		t.Errorf("reason = %q, want the present-but-unscannable reason", reason)
+	}
+	if m["path"] != "pnpm-lock.yaml" {
+		t.Errorf("path = %v, want pnpm-lock.yaml", m["path"])
+	}
+	if st := statusByPath(t, m)["pnpm-lock.yaml"]; st.State != stateUnsupported {
+		t.Errorf("pnpm-lock.yaml status = %+v, want %s", st, stateUnsupported)
+	}
+	if strings.Contains(res.Text, "generate a lock file") || m["remediation"] != nil {
+		t.Errorf("result tells the user to generate a lock file they already have: %q %+v", res.Text, m)
+	}
+}
+
+// TestSecurityScanRemediationDerivedFromParsers proves the no-lock-file
+// remediation names exactly the formats the scanner parses, so it cannot drift
+// (the old hardcoded list omitted Pipfile.lock and pdm.lock).
+func TestSecurityScanRemediationDerivedFromParsers(t *testing.T) {
+	t.Parallel()
+	res := call(t, stubScanner(t, t.TempDir(), "").handle, map[string]any{})
+	m := structuredMap(t, res)
+	want := "generate a lock file (" + strings.Join(vulnscan.SupportedLockFileNames(), ", ") + ") then re-run the scan"
+	if m["remediation"] != want {
+		t.Errorf("remediation = %v, want %q", m["remediation"], want)
+	}
+	if !strings.Contains(want, "Pipfile.lock") {
+		t.Errorf("supported names %q should include Pipfile.lock", want)
 	}
 }

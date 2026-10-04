@@ -170,7 +170,7 @@ func NewDetectedProject() DetectedProject {
 // HookChoices represents the user's selections for Claude Code automation hooks.
 type HookChoices struct {
 	AutoFormat            bool `yaml:"auto_format"             json:"auto_format"`
-	SafetyBlock           bool `yaml:"safety_block"            json:"safety_block"`
+	SafetyBlock           bool `yaml:"safety_block"            json:"safety_block"` // mirror of !SafetyBlockOptOut
 	PreCommit             bool `yaml:"pre_commit"              json:"pre_commit"`
 	AuditLog              bool `yaml:"audit_log"               json:"audit_log"`
 	CredentialScan        bool `yaml:"credential_scan"         json:"credential_scan"`
@@ -180,7 +180,19 @@ type HookChoices struct {
 	ToolGates             bool `yaml:"tool_gates"              json:"tool_gates"`
 	SandboxEnabled        bool `yaml:"sandbox_enabled"         json:"sandbox_enabled"`
 	SecurityEnforcement   bool `yaml:"security_enforcement"    json:"security_enforcement"`
-	SelfProtection        bool `yaml:"self_protection"         json:"self_protection"`
+	// SelfProtection is kept for schema compatibility only. The Claude Code
+	// generator ignores it and always registers the self-protection hook, and
+	// answers.EnforceInvariants forces it true whenever ClaudeCode is set, so
+	// the recorded value matches the generated settings.
+	SelfProtection bool `yaml:"self_protection"         json:"self_protection"`
+
+	// SafetyBlockOptOut records that the safety block was switched off on
+	// purpose (`disable attach-guard --force`). It is the source of truth:
+	// the Claude Code generator registers package-guard unless it is set,
+	// whatever SafetyBlock says, and ApplyClaudeHookDefaults keeps the
+	// SafetyBlock mirror in step with it. It is not a selectable hook. Set it
+	// via SetSafetyBlock.
+	SafetyBlockOptOut bool `yaml:"safety_block_opt_out,omitempty" json:"safety_block_opt_out,omitempty"`
 }
 
 // GeneratedFile represents a single file to be written by the generation pipeline.
@@ -227,7 +239,7 @@ type FileState struct {
 	Hash        string        `yaml:"hash"         json:"hash"`
 	Strategy    MergeStrategy `yaml:"strategy"      json:"strategy"`
 	Mode        os.FileMode   `yaml:"mode"          json:"mode"`
-	BaseContent []byte        `yaml:"base_content,omitempty" json:"base_content,omitempty"`
+	BaseContent Blob          `yaml:"base_content,omitempty" json:"base_content,omitempty"`
 	Owner       string        `yaml:"owner,omitempty"        json:"owner,omitempty"`
 }
 
@@ -373,17 +385,15 @@ func (a *WizardAnswers) ConfiguredMCPServers() []string {
 
 // ApplyClaudeHookDefaults enforces the hook invariants every Claude Code
 // configuration must carry, whichever path produced the answers: the
-// self-protection hook is always on, and the package-guard safety block is
-// enabled when no other primary hook was chosen. It is a no-op when Claude
-// Code is disabled.
+// self-protection hook is always on, and the package-guard safety block is on
+// unless the answers record an opt-out (Hooks.SafetyBlockOptOut), whichever
+// other hooks were chosen. It is a no-op when Claude Code is disabled.
 func (a *WizardAnswers) ApplyClaudeHookDefaults() {
 	if !a.ClaudeCode {
 		return
 	}
 	a.Hooks.SelfProtection = true
-	if !a.Hooks.SafetyBlock && !a.Hooks.AutoFormat && !a.Hooks.PreCommit && !a.Hooks.AuditLog {
-		a.Hooks.SafetyBlock = true
-	}
+	a.Hooks.SafetyBlock = !a.Hooks.SafetyBlockOptOut
 }
 
 // supplyChainOnly names both the lowest tier and its permission preset.

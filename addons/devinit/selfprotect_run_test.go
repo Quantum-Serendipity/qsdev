@@ -2,13 +2,18 @@ package devinit
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
+	"io"
 	"os"
 	"path/filepath"
 	"runtime"
 	"strings"
 	"testing"
+	"time"
+
+	"github.com/spf13/cobra"
 
 	"github.com/Quantum-Serendipity/qsdev/internal/selfprotect/hookio"
 	"github.com/Quantum-Serendipity/qsdev/internal/selfprotect/rules"
@@ -172,6 +177,123 @@ func TestRunSelfprotect_HookSurfaces(t *testing.T) {
 			var exitErr *ExitError
 			if !errors.As(err, &exitErr) || exitErr.Code != 2 || !strings.Contains(stderr, tt.wantRule) {
 				t.Fatalf("expected %s deny with exit code 2, got %v (stderr %q)", tt.wantRule, err, stderr)
+			}
+		})
+	}
+}
+
+// newSelfprotectTestCmd returns a selfprotect command wired to in-memory
+// stdin and stderr.
+func newSelfprotectTestCmd(stdin string) (*cobra.Command, *bytes.Buffer) {
+	cmd := selfprotectCmd()
+	var stderr bytes.Buffer
+	cmd.SetIn(strings.NewReader(stdin))
+	cmd.SetErr(&stderr)
+	cmd.SetContext(context.Background())
+	return cmd, &stderr
+}
+
+func requireSelfprotectDeny(t *testing.T, err error, stderr, want string) {
+	t.Helper()
+	var exitErr *ExitError
+	if !errors.As(err, &exitErr) || exitErr.Code != 2 {
+		t.Fatalf("expected exit code 2, got %v (stderr %q)", err, stderr)
+	}
+	if !strings.Contains(stderr, want) {
+		t.Errorf("stderr %q does not contain %q", stderr, want)
+	}
+}
+
+// TestRunSelfprotect_DeadlineDenies verifies an evaluation that overruns the
+// deadline is denied (fail closed) instead of running until Claude Code's own
+// hook timeout, which would let the call through.
+func TestRunSelfprotect_DeadlineDenies(t *testing.T) {
+	t.Parallel()
+
+	release := make(chan struct{})
+	t.Cleanup(func() { close(release) })
+	blocking := func(_ context.Context, _ io.Reader, w io.Writer) error {
+		<-release
+		_, _ = io.WriteString(w, "late")
+		return nil
+	}
+
+	cmd, stderr := newSelfprotectTestCmd(`{"tool_name":"Bash","tool_input":{"command":"true"}}`)
+	start := time.Now()
+	err := runSelfprotectWith(cmd, 50*time.Millisecond, blocking)
+	if elapsed := time.Since(start); elapsed > time.Second {
+		t.Errorf("runSelfprotectWith returned after %v, want the 50ms deadline", elapsed)
+	}
+	requireSelfprotectDeny(t, err, stderr.String(), "SP-TIMEOUT")
+}
+
+// TestRunSelfprotect_PanicInEvaluatorDenies verifies a panic anywhere in the
+// evaluation is a deny, not a crash whose exit code Claude Code would ignore.
+func TestRunSelfprotect_PanicInEvaluatorDenies(t *testing.T) {
+	t.Parallel()
+
+	panicking := func(context.Context, io.Reader, io.Writer) error { panic("rule bug") }
+	cmd, stderr := newSelfprotectTestCmd(`{"tool_name":"Bash","tool_input":{"command":"true"}}`)
+	err := runSelfprotectWith(cmd, time.Second, panicking)
+	requireSelfprotectDeny(t, err, stderr.String(), "rule bug")
+}
+
+// TestSelfprotect_TooManySimpleCommandsDenies verifies a command with more
+// than MaxSimpleCommands simple commands is denied outright, while a long but
+// realistic chain is still evaluated and allowed.
+func TestSelfprotect_TooManySimpleCommandsDenies(t *testing.T) {
+	t.Parallel()
+
+	bash := func(command string) string {
+		return toolCallJSON(t, "Bash", map[string]any{"command": command})
+	}
+
+	stderr, err := executeSelfprotect(t, bash(strings.Repeat("true; ", hookio.MaxSimpleCommands+1)))
+	requireSelfprotectDeny(t, err, stderr, "SP-LIMIT")
+
+	stderr, err = executeSelfprotect(t, bash(strings.Repeat("echo hi && ", 800)+"true"))
+	if err != nil {
+		t.Errorf("800-segment echo chain: expected allow, got %v (stderr %q)", err, stderr)
+	}
+}
+
+// TestSelfprotect_AdversarialInputsUnderBudget runs the production hook as a
+// process against inputs that used to take tens of seconds (or never finish),
+// long past Claude Code's hook timeout, which then allows the call. Each must
+// now be denied with exit 2, using under budget of CPU and answering inside
+// the hook's own deadline. This is XS-WS1 A3. The budget is CPU time because
+// the subtests run in parallel with the rest of the package, so wall time
+// measures the machine's load as much as the hook; wall time is held to the
+// deadline, which is the property Claude Code relies on.
+func TestSelfprotect_AdversarialInputsUnderBudget(t *testing.T) {
+	t.Parallel()
+
+	budget := 2 * time.Second * raceScale
+	deadline := hookio.EvalDeadline * raceScale
+	tests := []struct {
+		name    string
+		command string
+	}{
+		{"unclosed braces hiding a delete", "echo " + strings.Repeat("{", 200000) + "; rm -rf .claude/settings.json"},
+		{"repeated unclosed brace words", strings.Repeat("echo {x", 200000)},
+		{"unclosed braces", "echo " + strings.Repeat("{", 160000)},
+		{"long cd chain", strings.Repeat("cd a && ", 5000) + "true"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			payload := toolCallJSON(t, "Bash", map[string]any{"command": tt.command})
+			start := time.Now()
+			code, stderr, cpu := runSelfprotectHookCPU(t, t.TempDir(), payload)
+			elapsed := time.Since(start)
+			if code != 2 {
+				t.Fatalf("exit code = %d, want 2 (stderr %.200q)", code, stderr)
+			}
+			if cpu > budget {
+				t.Errorf("hook used %v of CPU, want under %v", cpu, budget)
+			}
+			if elapsed > deadline {
+				t.Errorf("hook took %v, want under the %v hook deadline", elapsed, deadline)
 			}
 		})
 	}

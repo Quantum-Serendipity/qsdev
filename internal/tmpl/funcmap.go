@@ -40,6 +40,7 @@ func nixSpecificFuncMap() template.FuncMap {
 		"nixMultiline":  nixMultiline,
 		"nixAttrSet":    nixAttrSet,
 		"nixAttrName":   NixAttrName,
+		"nixHookID":     nixHookID,
 	}
 }
 
@@ -79,6 +80,22 @@ var (
 // used as attribute names.
 var nixKeywords = []string{"assert", "else", "if", "in", "inherit", "let", "or", "rec", "then", "with"}
 
+// ValidateNixIdent returns an error unless s is a single plain, unquoted Nix
+// identifier that is not a keyword (e.g. "ripsecrets",
+// "check-added-large-files"). It is the grammar for names rendered bare into
+// generated Nix, such as git-hooks.hooks.<id>: anything else (a dot,
+// whitespace, ';', '=', braces, a leading digit, a keyword) would change or
+// break the surrounding Nix code.
+func ValidateNixIdent(s string) error {
+	if !nixIdentRe.MatchString(s) {
+		return fmt.Errorf("%q is not a plain Nix identifier (must match %s)", s, nixIdentPattern)
+	}
+	if slices.Contains(nixKeywords, s) {
+		return fmt.Errorf("%q is a Nix keyword", s)
+	}
+	return nil
+}
+
 // ValidateNixAttrPath returns an error unless s is a dotted Nix attribute
 // path made only of plain identifiers (e.g. "jq", "nodePackages.pnpm").
 // Anything else (whitespace, brackets, quotes, ';', interpolation) could
@@ -88,11 +105,21 @@ func ValidateNixAttrPath(s string) error {
 		return fmt.Errorf("invalid Nix attribute path %q: must be dot-separated identifiers matching %s", s, nixIdentPattern)
 	}
 	for _, part := range strings.Split(s, ".") {
-		if slices.Contains(nixKeywords, part) {
-			return fmt.Errorf("invalid Nix attribute path %q: %q is a Nix keyword", s, part)
+		if err := ValidateNixIdent(part); err != nil {
+			return fmt.Errorf("invalid Nix attribute path %q: %w", s, err)
 		}
 	}
 	return nil
+}
+
+// nixHookID returns id unchanged for rendering as git-hooks.hooks.<id>, or
+// an error when ValidateNixIdent rejects it, so a hostile id fails the render
+// instead of splicing Nix into the generated file.
+func nixHookID(id string) (string, error) {
+	if err := ValidateNixIdent(id); err != nil {
+		return "", fmt.Errorf("invalid hook id %q: %w", id, err)
+	}
+	return id, nil
 }
 
 // NixAttrName renders key as a Nix attribute name: bare when it is a plain
@@ -100,7 +127,7 @@ func ValidateNixAttrPath(s string) error {
 // (`"my.key" = ...;`), so a key can never break out of the attribute set it
 // is written into.
 func NixAttrName(key string) string {
-	if nixIdentRe.MatchString(key) && !slices.Contains(nixKeywords, key) {
+	if ValidateNixIdent(key) == nil {
 		return key
 	}
 	return nixString(key)

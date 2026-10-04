@@ -396,11 +396,23 @@ func TestWizardAnswers_FillDefaults(t *testing.T) {
 		}
 		a.FillDefaults(types.DetectedProject{}, catalog.MustDefault())
 
-		if a.Hooks.SafetyBlock {
-			t.Error("expected SafetyBlock to remain false when other hooks are set")
+		if !a.Hooks.SafetyBlock {
+			t.Error("expected SafetyBlock to be on alongside other hooks")
 		}
 		if !a.Hooks.AutoFormat {
 			t.Error("expected AutoFormat to remain true")
+		}
+	})
+
+	t.Run("preserves a safety block opt-out", func(t *testing.T) {
+		a := types.WizardAnswers{
+			ClaudeCode: true,
+			Hooks:      types.HookChoices{SafetyBlockOptOut: true},
+		}
+		a.FillDefaults(types.DetectedProject{}, catalog.MustDefault())
+
+		if a.Hooks.SafetyBlock {
+			t.Error("expected SafetyBlock to stay off under a recorded opt-out")
 		}
 	})
 

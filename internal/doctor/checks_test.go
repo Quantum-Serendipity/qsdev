@@ -3,7 +3,22 @@ package doctor
 import (
 	"strings"
 	"testing"
+
+	"github.com/Quantum-Serendipity/qsdev/internal/procexec"
+	"github.com/Quantum-Serendipity/qsdev/pkg/types"
 )
+
+// TestDefaultChecks_VersionFlagsProbeable keeps the catalog inside the
+// version-probe contract: a flag procexec.VersionProbe rejects would make the
+// tool look installed with no version.
+func TestDefaultChecks_VersionFlagsProbeable(t *testing.T) {
+	t.Parallel()
+	for _, tc := range DefaultChecks() {
+		if !procexec.IsVersionFlag(tc.VersionFlag) {
+			t.Errorf("check %s: VersionFlag %q is not accepted by procexec.VersionProbe", tc.Name, tc.VersionFlag)
+		}
+	}
+}
 
 // TestRequiredChecks verifies the required set is the devenv environment's
 // prerequisites, and that language toolchains (provided per project by
@@ -204,6 +219,15 @@ func TestParsePythonVersion(t *testing.T) {
 		if got != tt.want {
 			t.Errorf("python3 ParseVersion(%q) = %q, want %q", tt.raw, got, tt.want)
 		}
+	}
+}
+
+// TestPythonMinVersionMatchesHooks pins doctor's python3 floor to the one the
+// Python security hooks enforce (D20), so a supported interpreter never warns.
+func TestPythonMinVersionMatchesHooks(t *testing.T) {
+	t.Parallel()
+	if got := findCheck(t, "python3").MinVersion; got != types.MinHookPython {
+		t.Errorf("python3 MinVersion = %q, want types.MinHookPython %q", got, types.MinHookPython)
 	}
 }
 

@@ -8,6 +8,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/Quantum-Serendipity/qsdev/internal/selfprotect/cmdscan"
 )
 
 func mustParseInput(t *testing.T, toolName string, raw json.RawMessage) ToolInput {
@@ -180,4 +182,46 @@ func TestResultingContent(t *testing.T) {
 			}
 		})
 	}
+}
+
+// TestParseInput_CommandTooLarge verifies every shell tool's command is capped
+// at MaxCommandBytes, so an oversized command is denied before the rules scan
+// it rather than evaluated past the hook's deadline.
+func TestParseInput_CommandTooLarge(t *testing.T) {
+	t.Parallel()
+
+	for _, tool := range cmdscan.ShellTools {
+		tests := []struct {
+			name    string
+			size    int
+			wantErr error
+		}{
+			{"just under the cap", MaxCommandBytes - 1, nil},
+			{"at the cap", MaxCommandBytes, nil},
+			{"one byte over the cap", MaxCommandBytes + 1, ErrCommandTooLarge},
+		}
+		for _, tt := range tests {
+			t.Run(tool+"/"+tt.name, func(t *testing.T) {
+				t.Parallel()
+				raw, err := json.Marshal(map[string]string{"command": strings.Repeat("{", tt.size)})
+				if err != nil {
+					t.Fatal(err)
+				}
+				input, err := ParseInput(tool, raw)
+				if !errors.Is(err, tt.wantErr) {
+					t.Fatalf("ParseInput error = %v, want %v", err, tt.wantErr)
+				}
+				if tt.wantErr == nil && len(input.Command) != tt.size {
+					t.Errorf("len(Command) = %d, want %d", len(input.Command), tt.size)
+				}
+			})
+		}
+	}
+
+	t.Run("error points at the Write tool", func(t *testing.T) {
+		t.Parallel()
+		if !strings.Contains(ErrCommandTooLarge.Error(), "Write tool") {
+			t.Errorf("ErrCommandTooLarge = %q, want it to suggest the Write tool", ErrCommandTooLarge)
+		}
+	})
 }

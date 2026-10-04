@@ -4,12 +4,14 @@ import (
 	"bytes"
 	"os"
 	"path/filepath"
+	"runtime"
 	"slices"
 	"strings"
 	"testing"
 
 	"github.com/Quantum-Serendipity/qsdev/addons/devenv"
 	"github.com/Quantum-Serendipity/qsdev/internal/answers"
+	"github.com/Quantum-Serendipity/qsdev/internal/catalog"
 	qsdevconfig "github.com/Quantum-Serendipity/qsdev/internal/config"
 	"github.com/Quantum-Serendipity/qsdev/internal/state"
 	"github.com/Quantum-Serendipity/qsdev/pkg/types"
@@ -215,6 +217,80 @@ func TestAddPackageCmd_RefusesToOverwriteModifiedFiles(t *testing.T) {
 	}
 }
 
+func TestUpdateCmd_ReportsKeptOnlyForUserEnvrc(t *testing.T) {
+	root := initProject(t)
+	envrcPath := filepath.Join(root, ".envrc")
+
+	// qsdev's own unmodified .envrc is not a kept user file.
+	out, err := runDevenv(t, "update")
+	if err != nil {
+		t.Fatalf("update failed: %v\n%s", err, out)
+	}
+	if strings.Contains(out, "kept existing .envrc") || !strings.Contains(out, "kept 0") {
+		t.Errorf("update reported qsdev's own .envrc as kept:\n%s", out)
+	}
+
+	userEnvrc := "export FOO=mine\n"
+	writeFile(t, envrcPath, userEnvrc)
+	out, err = runDevenv(t, "update")
+	if err != nil {
+		t.Fatalf("update failed: %v\n%s", err, out)
+	}
+	if !strings.Contains(out, "kept 1") || !strings.Contains(out, "kept existing .envrc") {
+		t.Errorf("update did not report the user's .envrc as kept:\n%s", out)
+	}
+	if got := readFile(t, envrcPath); got != userEnvrc {
+		t.Errorf(".envrc = %q, want user content preserved", got)
+	}
+}
+
+// TestDevenvCmds_KeepSymlinkedEnvrc is the regression test for devenv
+// mutations failing with "configuration change not saved" when .envrc is a
+// symlink pointing outside the project or nowhere. qsdev never writes through
+// a kept Skip file, so the symlink is kept and the command succeeds.
+func TestDevenvCmds_KeepSymlinkedEnvrc(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("symlink creation requires privileges on Windows")
+	}
+	outside := filepath.Join(t.TempDir(), "envrc")
+	writeFile(t, outside, "export FOO=outside\n")
+
+	tests := []struct {
+		name   string
+		target string
+		args   []string
+	}{
+		{name: "out-of-root symlink", target: outside, args: []string{"update"}},
+		{name: "dangling symlink", target: "nowhere", args: []string{"add-package", "jq"}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			root := initProject(t)
+			envrcPath := filepath.Join(root, ".envrc")
+			if err := os.Remove(envrcPath); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.Symlink(tt.target, envrcPath); err != nil {
+				t.Fatal(err)
+			}
+
+			out, err := runDevenv(t, tt.args...)
+			if err != nil {
+				t.Fatalf("%v: %v\n%s", tt.args, err, out)
+			}
+			if !strings.Contains(out, "kept 1") || !strings.Contains(out, "kept existing .envrc") {
+				t.Errorf("symlinked .envrc not reported as kept:\n%s", out)
+			}
+			if got, err := os.Readlink(envrcPath); err != nil || got != tt.target {
+				t.Errorf(".envrc link = %q (err %v), want %q", got, err, tt.target)
+			}
+		})
+	}
+	if got := readFile(t, outside); got != "export FOO=outside\n" {
+		t.Errorf("outside file = %q, want it untouched", got)
+	}
+}
+
 func TestRemovePackageCmd_RefusesToOverwriteModifiedFiles(t *testing.T) {
 	root := initProject(t)
 	if out, err := runDevenv(t, "add-package", "jq"); err != nil {
@@ -355,6 +431,7 @@ func TestDayTwoCommands_RecordChangesInProjectConfig(t *testing.T) {
 	dir := initProject(t)
 	cfgPath := filepath.Join(dir, ".qsdev.yaml")
 	writeFile(t, cfgPath, "version: 1\nlanguages:\n  - name: go\nclient:\n  name: acme\n")
+	markJoined(t, dir)
 
 	steps := [][]string{
 		{"add-package", "jq", "ripgrep"},
@@ -399,5 +476,102 @@ func TestDayTwoCommands_NoProjectConfigIsNotCreated(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(dir, ".qsdev.yaml")); !os.IsNotExist(err) {
 		t.Errorf(".qsdev.yaml created by add-package (err=%v)", err)
+	}
+}
+
+// TestDayTwoCommands_UncommittedOptOutsNotPromoted is the regression test
+// for devenv add/remove-* copying the local, gitignored answers into the
+// committed .qsdev.yaml unreconciled: a hand-edited `attach-guard: false` (or
+// `claude_code: false`) in the answers file became a committed opt-out, which
+// the next init --update then honoured by deleting the package guard. Only
+// `disable --force` may write an always-on opt-out.
+func TestDayTwoCommands_UncommittedOptOutsNotPromoted(t *testing.T) {
+	tests := []struct {
+		name string
+		args []string
+	}{
+		{"add-package", []string{"add-package", "jq"}},
+		{"add-service", []string{"add-service", "redis"}},
+		{"add-language", []string{"add-language", "python"}},
+		{"remove-language", []string{"remove-language", "go"}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			dir := initProject(t)
+			cfgPath := filepath.Join(dir, ".qsdev.yaml")
+			writeFile(t, cfgPath, "version: 2\nlanguages:\n  - name: go\nclaude_code:\n  enabled: true\n"+
+				"tools:\n  enabled:\n    - attach-guard\n")
+			markJoined(t, dir)
+
+			local, err := answers.LoadPrimary(dir)
+			if err != nil {
+				t.Fatal(err)
+			}
+			local.ClaudeCode = false
+			local.EnabledTools = map[string]bool{"attach-guard": false}
+			if err := answers.SavePrimary(dir, local); err != nil {
+				t.Fatal(err)
+			}
+
+			out, err := runDevenv(t, tt.args...)
+			if err != nil {
+				t.Fatalf("%v: %v\n%s", tt.args, err, out)
+			}
+
+			cfg, err := qsdevconfig.ParseQsdevConfig(cfgPath)
+			if err != nil {
+				t.Fatalf("parsing synced config: %v", err)
+			}
+			if len(cfg.Tools.Disabled) != 0 {
+				t.Errorf("tools.disabled = %v, want none: an answers-file off was committed", cfg.Tools.Disabled)
+			}
+			if !slices.Contains(cfg.Tools.Enabled, "attach-guard") {
+				t.Errorf("tools.enabled = %v, want attach-guard kept", cfg.Tools.Enabled)
+			}
+			if !qsdevconfig.ClaudeCodeEnabled(cfg) {
+				t.Error("claude_code.enabled turned off by a local answers edit")
+			}
+			if want := `always-on tool "attach-guard" kept enabled`; !strings.Contains(out, want) {
+				t.Errorf("output lacks warning %q:\n%s", want, out)
+			}
+		})
+	}
+}
+
+// TestDayTwoCommands_CommittedClientMCPBlockHolds is the U28-WS1 regression
+// for devenv add/remove-* settling answers whose local file lacks the client
+// MCP policy: the committed client block still decides it, so an always-on
+// MCP tool's force-on never writes a server the client blocks into the
+// committed claude_code.mcp_servers.
+func TestDayTwoCommands_CommittedClientMCPBlockHolds(t *testing.T) {
+	blocked := catalog.MustDefault().AlwaysOnMCPServers()[0]
+	dir := initProject(t)
+	cfgPath := filepath.Join(dir, ".qsdev.yaml")
+	writeFile(t, cfgPath, "version: 2\nlanguages:\n  - name: go\nclaude_code:\n  enabled: true\n"+
+		"client:\n  name: acme\n  blocked_mcp_servers:\n    - "+blocked+"\n")
+	markJoined(t, dir)
+
+	local, err := answers.LoadPrimary(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	local.MCPPolicy = types.MCPPolicy{}
+	if err := answers.SavePrimary(dir, local); err != nil {
+		t.Fatal(err)
+	}
+
+	if out, err := runDevenv(t, "add-package", "jq"); err != nil {
+		t.Fatalf("add-package: %v\n%s", err, out)
+	}
+
+	cfg, err := qsdevconfig.ParseQsdevConfig(cfgPath)
+	if err != nil {
+		t.Fatalf("parsing synced config: %v", err)
+	}
+	if slices.Contains(cfg.ClaudeCode.MCPServers, blocked) {
+		t.Errorf("committed mcp_servers = %v, want the client-blocked %q left out", cfg.ClaudeCode.MCPServers, blocked)
+	}
+	if !slices.Contains(cfg.Packages, "jq") {
+		t.Errorf("packages = %v, want jq added", cfg.Packages)
 	}
 }

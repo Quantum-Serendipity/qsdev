@@ -10,10 +10,12 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/Quantum-Serendipity/qsdev/addons/claudecode"
 	"github.com/Quantum-Serendipity/qsdev/internal/cmdutil"
 	"github.com/Quantum-Serendipity/qsdev/internal/posture"
 	"github.com/Quantum-Serendipity/qsdev/internal/posture/conformance"
 	"github.com/Quantum-Serendipity/qsdev/internal/posture/render"
+	"github.com/Quantum-Serendipity/qsdev/internal/selfprotect/canon"
 	"github.com/Quantum-Serendipity/qsdev/pkg/branding"
 )
 
@@ -102,7 +104,7 @@ Exit codes:
 	cmd.Flags().StringVar(&auditLevel, "audit-level", "high",
 		"Exit threshold: none|info|low|moderate|high|critical (any = info, medium = moderate); each level includes every check of the levels above it")
 
-	return cmd
+	return cmdutil.MarkReadOnly(cmd, "", "all-badges", "scan")
 }
 
 // statusFormats are the accepted --format values.
@@ -159,7 +161,7 @@ func runPostureStatus(cmd *cobra.Command, args []string, opts postureStatusOptio
 	}
 
 	// Perform assessment.
-	report, err := posture.Assess(projectDir, posture.AssessOptions{FreshScan: opts.scan})
+	report, err := posture.Assess(projectDir, postureOptions(posture.AssessOptions{FreshScan: opts.scan, ClaudeUserDir: claudeUserDir()}))
 	if err != nil {
 		if errors.Is(err, posture.ErrNotInitialized) {
 			fmt.Fprintf(cmd.ErrOrStderr(), "Project not initialized. Run '%s init' first.\n", branding.Get().AppName)
@@ -280,4 +282,26 @@ func exitForAudit(report *posture.PostureReport, auditLevel string) error {
 		}
 	}
 	return nil
+}
+
+// postureOptions returns opts with the generator's package guard as the
+// content the guard on disk is judged against, so every posture assessment
+// credits the guard only when it is what this qsdev writes, and with the
+// host prober's detection probes.
+func postureOptions(opts posture.AssessOptions) posture.AssessOptions {
+	opts.PackageGuard = claudecode.PackageGuardContent()
+	opts.DetectOptions = host.detectOptions
+	return opts
+}
+
+// claudeUserDir returns the user Claude settings directory, whose
+// disableAllHooks Claude Code honours for every project, or "" when it cannot
+// be located (the judgement then covers the project files alone).
+func claudeUserDir() string {
+	dir, err := canon.ClaudeConfigDir()
+	if err != nil {
+		slog.Debug("user Claude settings not judged", "error", err)
+		return ""
+	}
+	return dir
 }

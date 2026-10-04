@@ -1,76 +1,98 @@
 package claudecode
 
 import (
-	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
-	"maps"
-	"os"
-	"path/filepath"
-	"slices"
-	"strings"
 	"time"
 
 	"github.com/spf13/cobra"
 
-	"github.com/Quantum-Serendipity/qsdev/internal/catalog"
 	"github.com/Quantum-Serendipity/qsdev/internal/cmdutil"
+	"github.com/Quantum-Serendipity/qsdev/internal/doctor"
 	"github.com/Quantum-Serendipity/qsdev/internal/mcphealth"
+	"github.com/Quantum-Serendipity/qsdev/internal/mcpregistry"
 )
 
-// statusNotProbed marks a server whose command was not run because it does not
-// match a trusted definition.
-const statusNotProbed = "not-probed"
+// probeTimeout bounds each live probe of a configured server.
+const probeTimeout = 10 * time.Second
 
-// errMCPUnhealthy is returned by `mcp health` when any configured server is not
-// healthy, so CI health gates fail.
+// probeUntrustedHint is appended to a not-probed reason that --probe-untrusted
+// would lift.
+const probeUntrustedHint = "; rerun with --probe-untrusted to probe it anyway"
+
+// The flags that make status and health start or dial servers, and so take
+// them out of the read-only contract.
+const (
+	probeFlag          = "probe"
+	probeUntrustedFlag = "probe-untrusted"
+)
+
+// probeEligibleNote marks a server --probe would start or dial.
+const probeEligibleNote = "would probe with --probe"
+
+// errMCPUnhealthy is returned by `mcp health` when a configured server is not
+// healthy (with --probe) or is misconfigured (without), so CI health gates fail.
 var errMCPUnhealthy = errors.New("one or more MCP servers are not healthy")
 
-// mcpProbeOptions parameterizes the shared status/health probe.
+// mcpProbeOptions parameterizes the shared status/health diagnostic.
 type mcpProbeOptions struct {
 	title          string // report heading, e.g. "MCP Server Status"
 	showPrereqs    bool   // print unmet prerequisites per server
-	failUnhealthy  bool   // return errMCPUnhealthy when not every server is healthy
+	failUnhealthy  bool   // return errMCPUnhealthy when a server fails the check
 	jsonOutput     bool
-	probeUntrusted bool // run commands that match no trusted definition
+	probe          bool // start or dial the trusted servers
+	probeUntrusted bool // also run commands that match no trusted definition; implies probe
 }
+
+// mcpProbeHelp is the shared help paragraph of `mcp status` and `mcp health`.
+const mcpProbeHelp = `By default nothing is started or dialed: each entry in .mcp.json is checked
+statically (its command is on PATH, its URL is https, the environment it needs
+is set) and reported with whether --probe would probe it, or why not.
+
+With --probe, servers matching a trusted definition (the built-in or
+organization catalog, or the binary's configuration) are started or dialed.
+Any other entry comes from the repository and is probed only under
+--probe-untrusted, which implies --probe; a remote endpoint then receives its
+${VAR} references unexpanded. A package launcher (npx, uvx and the like) is
+never started, since running it downloads the package.`
 
 func mcpStatusCmd() *cobra.Command {
 	opts := mcpProbeOptions{title: "MCP Server Status", showPrereqs: true}
 
 	cmd := &cobra.Command{
 		Use:   "status",
-		Short: "Show health status of configured MCP servers",
-		Long: `Probe the MCP servers configured in .mcp.json and show their health,
-tool counts and unmet prerequisites.
+		Short: "Show the status of configured MCP servers",
+		Long: `Show the MCP servers configured in .mcp.json; with --probe, also their
+health, tool counts and unmet prerequisites.
 
-Only servers whose command matches a trusted definition (the built-in or
-organization catalog, or the binary's configuration) are started. Any other
-command comes from the repository and is not run unless --probe-untrusted is
-given; use 'mcp list' to inspect the configuration without running anything.`,
+` + mcpProbeHelp,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return runMCPProbe(cmd, opts)
+			return runMCPDiagnostic(cmd, opts)
 		},
 	}
-
-	cmd.Flags().BoolVar(&opts.jsonOutput, "json", false, "Output in JSON format")
-	cmd.Flags().BoolVar(&opts.probeUntrusted, "probe-untrusted", false, "Also start servers whose command matches no trusted definition")
-
-	return cmd
+	return withMCPProbeFlags(cmd, &opts)
 }
 
-// runMCPProbe loads .mcp.json, probes the trusted servers and reports the
-// result. Untrusted servers are reported as not probed unless
-// opts.probeUntrusted is set.
-func runMCPProbe(cmd *cobra.Command, opts mcpProbeOptions) error {
+// withMCPProbeFlags registers the flags status and health share and marks cmd
+// read-only unless one of the probe flags is set. It returns cmd.
+func withMCPProbeFlags(cmd *cobra.Command, opts *mcpProbeOptions) *cobra.Command {
+	cmd.Flags().BoolVar(&opts.jsonOutput, "json", false, "Output in JSON format")
+	cmd.Flags().BoolVar(&opts.probe, probeFlag, false, "Start or dial the servers that match a trusted definition")
+	cmd.Flags().BoolVar(&opts.probeUntrusted, probeUntrustedFlag, false, "Also start servers whose command matches no trusted definition (implies --probe)")
+	return cmdutil.MarkReadOnly(cmd, "", probeFlag, probeUntrustedFlag)
+}
+
+// runMCPDiagnostic loads .mcp.json and reports on it: statically by default,
+// or by probing the servers PlanProbes allows under --probe.
+func runMCPDiagnostic(cmd *cobra.Command, opts mcpProbeOptions) error {
 	projectRoot, err := cmdutil.ProjectRoot()
 	if err != nil {
 		return err
 	}
 
-	servers, err := loadMCPServers(projectRoot)
+	servers, err := mcpregistry.ConfiguredServers(projectRoot, mcpregistry.DefaultRegistry())
 	if err != nil {
 		return err
 	}
@@ -80,23 +102,35 @@ func runMCPProbe(cmd *cobra.Command, opts mcpProbeOptions) error {
 		return nil
 	}
 
-	probe, skipped := servers, map[string]string(nil)
-	if !opts.probeUntrusted {
-		probe, skipped = partitionTrusted(servers, trustedMCPDefinitions())
+	trusted := mcpregistry.TrustedDefinitions(configuredServerSpecs())
+	if opts.probe || opts.probeUntrusted {
+		return runMCPProbe(cmd, servers, trusted, opts)
 	}
+	return runMCPStatic(cmd, servers, trusted, opts)
+}
 
-	ctx, cancel := context.WithTimeout(cmd.Context(), 10*time.Second)
-	defer cancel()
+// probedReport is the --probe JSON report: the probe results, marked probed.
+type probedReport struct {
+	Probed bool `json:"probed"`
+	*mcphealth.HealthReport
+}
 
-	report := mcphealth.CheckAll(ctx, probe)
-	addNotProbed(report, skipped)
+// runMCPProbe probes the servers PlanProbes allows and reports the result.
+// Untrusted servers are reported as not probed unless opts.probeUntrusted is
+// set.
+func runMCPProbe(cmd *cobra.Command, servers []mcphealth.ServerConfig, trusted map[string][]mcpregistry.LaunchSpec, opts mcpProbeOptions) error {
+	// Untrusted entries probed under --probe-untrusted keep ExpandEnv unset, so
+	// a remote endpoint receives its ${VAR} references literally.
+	report := mcpregistry.ProbeAll(cmd.Context(), servers, trusted, mcpregistry.ProbeOptions{
+		AllowUntrusted: opts.probeUntrusted,
+		Timeout:        probeTimeout,
+		OverrideHint:   probeUntrustedHint,
+	})
 
 	if opts.jsonOutput {
-		data, err := json.MarshalIndent(report, "", "  ")
-		if err != nil {
-			return fmt.Errorf("marshaling report: %w", err)
+		if err := writeJSON(cmd.OutOrStdout(), probedReport{Probed: true, HealthReport: report}); err != nil {
+			return err
 		}
-		_, _ = fmt.Fprintln(cmd.OutOrStdout(), string(data))
 	} else {
 		writeProbeReport(cmd.OutOrStdout(), report, opts)
 	}
@@ -104,6 +138,16 @@ func runMCPProbe(cmd *cobra.Command, opts mcpProbeOptions) error {
 	if opts.failUnhealthy && report.HealthyCount < report.TotalCount {
 		return fmt.Errorf("%w: %d/%d healthy", errMCPUnhealthy, report.HealthyCount, report.TotalCount)
 	}
+	return nil
+}
+
+// writeJSON writes v as indented JSON.
+func writeJSON(w io.Writer, v any) error {
+	data, err := json.MarshalIndent(v, "", "  ")
+	if err != nil {
+		return fmt.Errorf("marshaling report: %w", err)
+	}
+	_, _ = fmt.Fprintln(w, string(data))
 	return nil
 }
 
@@ -129,82 +173,116 @@ func writeProbeReport(w io.Writer, report *mcphealth.HealthReport, opts mcpProbe
 	_, _ = fmt.Fprintf(w, "\n%d/%d healthy\n", report.HealthyCount, report.TotalCount)
 }
 
-// addNotProbed appends a not-probed entry for each skipped server, keeping the
-// report sorted by name.
-func addNotProbed(report *mcphealth.HealthReport, skipped map[string]string) {
-	for name, cmdLine := range skipped {
-		report.Servers = append(report.Servers, mcphealth.ServerHealth{
-			Name:   name,
-			Status: statusNotProbed,
-			Error:  fmt.Sprintf("command %q matches no trusted definition and was not run; rerun with --probe-untrusted to execute it", cmdLine),
-		})
-	}
-	report.TotalCount = len(report.Servers)
-	slices.SortFunc(report.Servers, func(a, b mcphealth.ServerHealth) int {
-		return strings.Compare(a.Name, b.Name)
-	})
+// staticServer is one server of the static report: its doctor finding and
+// whether --probe would start or dial it.
+type staticServer struct {
+	doctor.MCPServerInfo
+	ProbeEligible   bool   `json:"probe_eligible"`
+	ProbeSkipReason string `json:"probe_skip_reason,omitempty"`
 }
 
-// mcpLaunchSpec is the part of a server definition that determines what a
-// stdio probe executes.
-type mcpLaunchSpec struct {
-	Command string
-	Args    []string
-	Env     map[string]string
+// staticReport is the default report of status and health: configuration
+// only, nothing started or dialed.
+type staticReport struct {
+	Probed             bool           `json:"probed"`
+	Servers            []staticServer `json:"servers"`
+	MisconfiguredCount int            `json:"misconfigured_count"`
+	TotalCount         int            `json:"total_count"`
+	Warnings           []string       `json:"warnings,omitempty"`
 }
 
-// trustedMCPDefinitions returns the launch specs qsdev itself vouches for,
-// keyed by server name: the embedded catalog plus the user's organization
-// overlay (including the variants generation derives from it), and servers
-// configured into the binary. The project catalog overlay
-// is deliberately excluded — like .mcp.json, it is repository content.
-func trustedMCPDefinitions() map[string][]mcpLaunchSpec {
-	trusted := make(map[string][]mcpLaunchSpec)
-	var opts []catalog.LoadOption
-	if org := catalog.OrgConfigFile(); org != "" {
-		opts = append(opts, catalog.WithOrgConfigFile(org))
+// runMCPStatic reports the configuration of servers without starting or
+// dialing any of them.
+func runMCPStatic(cmd *cobra.Command, servers []mcphealth.ServerConfig, trusted map[string][]mcpregistry.LaunchSpec, opts mcpProbeOptions) error {
+	report := buildStaticReport(servers, mcpregistry.DefaultRegistry(), trusted)
+
+	if opts.jsonOutput {
+		if err := writeJSON(cmd.OutOrStdout(), report); err != nil {
+			return err
+		}
+	} else {
+		writeStaticReport(cmd.OutOrStdout(), report, opts.title)
 	}
-	if cat, err := catalog.Load(opts...); err == nil {
-		for name, def := range cat.MCPServers() {
-			for _, e := range catalogServerVariants(def) {
-				trusted[name] = append(trusted[name], mcpLaunchSpec{Command: e.Command, Args: e.Args, Env: e.Env})
-				if name == sembleServerName {
-					// Generation writes this variant when text-file indexing is on.
-					v := sembleTextFilesServer(e)
-					trusted[name] = append(trusted[name], mcpLaunchSpec{Command: v.Command, Args: v.Args, Env: v.Env})
-				}
+
+	if opts.failUnhealthy && report.MisconfiguredCount > 0 {
+		return fmt.Errorf("%w: %d/%d misconfigured", errMCPUnhealthy, report.MisconfiguredCount, report.TotalCount)
+	}
+	return nil
+}
+
+// buildStaticReport composes the doctor's static findings
+// (doctor.MCPServerFindings) with the probe policy (mcpregistry.PlanProbes)
+// for servers, the configured servers in .mcp.json order. Both evaluate the
+// same slice, read once, so row i of the findings is servers[i].
+func buildStaticReport(servers []mcphealth.ServerConfig, reg *mcpregistry.McpServerRegistry, trusted map[string][]mcpregistry.LaunchSpec) *staticReport {
+	report := &staticReport{Servers: []staticServer{}}
+	section := doctor.MCPServerFindings(servers, reg)
+	if section == nil {
+		return report
+	}
+
+	_, skipped := mcpregistry.PlanProbes(servers, trusted, false)
+	skips := make(map[string]mcpregistry.Skip, len(skipped))
+	for _, s := range skipped {
+		skips[s.Name] = s
+	}
+
+	report.Warnings = section.Warnings
+	for i, srv := range servers {
+		info := section.Servers[i]
+		row := staticServer{MCPServerInfo: info, ProbeEligible: true}
+		if s, ok := skips[srv.Name]; ok {
+			row.ProbeEligible = false
+			row.ProbeSkipReason = s.Reason
+			if s.Overridable {
+				row.ProbeSkipReason += probeUntrustedHint
 			}
 		}
+		if info.Status == doctor.MCPStatusMisconfigured {
+			report.MisconfiguredCount++
+		}
+		report.Servers = append(report.Servers, row)
 	}
+	report.TotalCount = len(report.Servers)
+	return report
+}
+
+// writeStaticReport prints the human-readable static report.
+func writeStaticReport(w io.Writer, report *staticReport, title string) {
+	_, _ = fmt.Fprintf(w, "%s (%d servers, configuration only)\n", title, report.TotalCount)
+	_, _ = fmt.Fprintln(w, "----------------------------------------")
+	for _, s := range report.Servers {
+		probe := probeEligibleNote
+		if !s.ProbeEligible {
+			probe = mcphealth.StatusNotProbed
+		}
+		_, _ = fmt.Fprintf(w, "  %-20s  %-14s  %-5s  %s\n", s.DisplayName(), s.Status, s.Transport, probe)
+		for _, issue := range s.Issues {
+			_, _ = fmt.Fprintf(w, "    %s: %s\n", issue.Severity, issue.Message)
+			if issue.Remediation != "" {
+				_, _ = fmt.Fprintf(w, "      fix: %s\n", issue.Remediation)
+			}
+		}
+		if s.ProbeSkipReason != "" {
+			_, _ = fmt.Fprintf(w, "    %s: %s\n", mcphealth.StatusNotProbed, s.ProbeSkipReason)
+		}
+	}
+	for _, warning := range report.Warnings {
+		_, _ = fmt.Fprintf(w, "  warning: %s\n", warning)
+	}
+	_, _ = fmt.Fprintf(w, "\n%d/%d misconfigured; nothing was started or dialed (rerun with --probe to check liveness)\n",
+		report.MisconfiguredCount, report.TotalCount)
+}
+
+// configuredServerSpecs returns the launch definitions of the servers
+// configured into this binary, the extra trusted set passed to
+// mcpregistry.TrustedDefinitions.
+func configuredServerSpecs() map[string][]mcpregistry.LaunchSpec {
+	specs := make(map[string][]mcpregistry.LaunchSpec, len(addon.Config.MCPServers))
 	for _, srv := range addon.Config.MCPServers {
-		trusted[srv.Name] = append(trusted[srv.Name], mcpLaunchSpec{Command: srv.Command, Args: srv.Args, Env: srv.Env})
+		specs[srv.Name] = append(specs[srv.Name], mcpregistry.LaunchSpec{Command: srv.Command, Args: srv.Args, Env: srv.Env})
 	}
-	return trusted
-}
-
-// partitionTrusted splits servers into those safe to probe and those whose
-// stdio command matches no trusted definition of the same name (returned with
-// their command lines). HTTP servers run nothing locally and are always probed.
-func partitionTrusted(servers map[string]mcphealth.ServerConfig, trusted map[string][]mcpLaunchSpec) (map[string]mcphealth.ServerConfig, map[string]string) {
-	probe := make(map[string]mcphealth.ServerConfig, len(servers))
-	skipped := make(map[string]string)
-	for name, cfg := range servers {
-		if cfg.URL != "" || matchesTrusted(cfg, trusted[name]) {
-			probe[name] = cfg
-			continue
-		}
-		skipped[name] = strings.Join(append([]string{cfg.Command}, cfg.Args...), " ")
-	}
-	return probe, skipped
-}
-
-func matchesTrusted(cfg mcphealth.ServerConfig, specs []mcpLaunchSpec) bool {
-	for _, s := range specs {
-		if s.Command != "" && s.Command == cfg.Command && slices.Equal(s.Args, cfg.Args) && maps.Equal(s.Env, cfg.Env) {
-			return true
-		}
-	}
-	return false
+	return specs
 }
 
 func mcpListCmd() *cobra.Command {
@@ -219,16 +297,18 @@ func mcpListCmd() *cobra.Command {
 				return err
 			}
 
-			servers, err := loadMCPServers(projectRoot)
+			servers, err := mcpregistry.ConfiguredServers(projectRoot, mcpregistry.DefaultRegistry())
 			if err != nil {
 				return err
 			}
 
 			if jsonOutput {
-				if servers == nil {
-					servers = map[string]mcphealth.ServerConfig{}
+				// Keyed by name, as this output has always been.
+				byName := make(map[string]mcphealth.ServerConfig, len(servers))
+				for _, cfg := range servers {
+					byName[cfg.Name] = cfg
 				}
-				data, err := json.MarshalIndent(servers, "", "  ")
+				data, err := json.MarshalIndent(byName, "", "  ")
 				if err != nil {
 					return fmt.Errorf("marshaling servers: %w", err)
 				}
@@ -243,12 +323,11 @@ func mcpListCmd() *cobra.Command {
 
 			_, _ = fmt.Fprintf(cmd.OutOrStdout(), "Configured MCP Servers (%d)\n", len(servers))
 			_, _ = fmt.Fprintln(cmd.OutOrStdout(), "----------------------------------------")
-			for _, name := range slices.Sorted(maps.Keys(servers)) {
-				cfg := servers[name]
+			for _, cfg := range servers {
 				if cfg.URL != "" {
-					_, _ = fmt.Fprintf(cmd.OutOrStdout(), "  %-20s  http %s\n", name, cfg.URL)
+					_, _ = fmt.Fprintf(cmd.OutOrStdout(), "  %-20s  http %s\n", cfg.Name, cfg.URL)
 				} else {
-					_, _ = fmt.Fprintf(cmd.OutOrStdout(), "  %-20s  %s %v\n", name, cfg.Command, cfg.Args)
+					_, _ = fmt.Fprintf(cmd.OutOrStdout(), "  %-20s  %s %v\n", cfg.Name, cfg.Command, cfg.Args)
 				}
 				if len(cfg.RequiredEnv) > 0 {
 					_, _ = fmt.Fprintf(cmd.OutOrStdout(), "    required env: %v\n", cfg.RequiredEnv)
@@ -261,43 +340,5 @@ func mcpListCmd() *cobra.Command {
 
 	cmd.Flags().BoolVar(&jsonOutput, "json", false, "Output in JSON format")
 
-	return cmd
-}
-
-func loadMCPServers(projectRoot string) (map[string]mcphealth.ServerConfig, error) {
-	mcpPath := filepath.Join(projectRoot, ".mcp.json")
-	data, err := os.ReadFile(mcpPath)
-	if os.IsNotExist(err) {
-		return nil, nil
-	}
-	if err != nil {
-		return nil, fmt.Errorf("reading .mcp.json: %w", err)
-	}
-
-	var mcp McpJSON
-	if err := json.Unmarshal(data, &mcp); err != nil {
-		return nil, fmt.Errorf("parsing .mcp.json: %w", err)
-	}
-
-	cat, catErr := catalog.Default()
-
-	servers := make(map[string]mcphealth.ServerConfig, len(mcp.MCPServers))
-	for name, entry := range mcp.MCPServers {
-		cfg := mcphealth.ServerConfig{
-			Name:    name,
-			Command: entry.Command,
-			Args:    entry.Args,
-			URL:     entry.URL,
-			Env:     entry.Env,
-			Headers: entry.Headers,
-		}
-		if catErr == nil {
-			if def, ok := cat.MCPServer(name); ok {
-				cfg.RequiredEnv = def.RequiredEnv
-			}
-		}
-		servers[name] = cfg
-	}
-
-	return servers, nil
+	return cmdutil.MarkReadOnly(cmd, "")
 }

@@ -2,6 +2,7 @@ package mcphealth
 
 import (
 	"maps"
+	"os"
 	"regexp"
 	"slices"
 	"strings"
@@ -35,19 +36,31 @@ func expandVars(s string, lookup envLookup) string {
 	})
 }
 
+// ProbeTarget returns cfg as CheckServer will start or dial it: with the
+// references expanded from the current environment exactly as the probe
+// expands them (see expandConfig). A probe gate inspects this, not the
+// templates, so an environment value cannot smuggle in what the gate refuses.
+func ProbeTarget(cfg ServerConfig) ServerConfig {
+	return expandConfig(cfg, os.LookupEnv)
+}
+
 // expandConfig returns a copy of cfg with variable references expanded in
-// every field Claude Code expands: command, args, url and header values. Env
-// values are expanded by buildProcessEnv when the process environment is
-// assembled.
+// the fields Claude Code expands: command and args always, url and header
+// values only when cfg.ExpandEnv is set, since expanding those discloses the
+// host environment to the remote endpoint. Env values are expanded by
+// buildProcessEnv when the process environment is assembled.
 func expandConfig(cfg ServerConfig, lookup envLookup) ServerConfig {
 	cfg.Command = expandVars(cfg.Command, lookup)
-	cfg.URL = expandVars(cfg.URL, lookup)
 
 	cfg.Args = slices.Clone(cfg.Args)
 	for i, a := range cfg.Args {
 		cfg.Args[i] = expandVars(a, lookup)
 	}
 
+	if !cfg.ExpandEnv {
+		return cfg
+	}
+	cfg.URL = expandVars(cfg.URL, lookup)
 	cfg.Headers = maps.Clone(cfg.Headers)
 	for k, v := range cfg.Headers {
 		cfg.Headers[k] = expandVars(v, lookup)

@@ -28,7 +28,10 @@ const SidecarSuffix = ".new"
 //
 // Each file's MergeStrategy is enforced when the file already exists (see
 // existingContent), so no caller can accidentally overwrite user content by
-// omitting a merge option.
+// omitting a merge option. An existing file holding the generated content as
+// a CRLF checkout (Git's core.autocrlf) is that content and is left alone,
+// and every generated script is pinned to LF line endings in .gitattributes
+// (see scriptAttributeLines).
 func WriteFiles(files []types.GeneratedFile, opts PipelineOptions) (WriteResult, error) {
 	if !filepath.IsAbs(opts.ProjectRoot) {
 		return WriteResult{}, fmt.Errorf("project root must be absolute: %q", opts.ProjectRoot)
@@ -47,6 +50,12 @@ func WriteFiles(files []types.GeneratedFile, opts PipelineOptions) (WriteResult,
 	resolvedRoot, err := filepath.EvalSymlinks(opts.ProjectRoot)
 	if err != nil {
 		return WriteResult{}, fmt.Errorf("resolving project root symlinks: %w", err)
+	}
+
+	if !opts.DryRun {
+		// Before the scripts are written, so a partial write never leaves
+		// one to be committed without its line-ending pin.
+		pinScriptLineEndings(opts.ProjectRoot, files)
 	}
 
 	w := &fileWriter{
@@ -71,8 +80,12 @@ type fileWriter struct {
 	priorStatesLoaded bool
 }
 
+// fail records fr as failed with err. err need not name the file: Summary
+// and WriteResult.Err prefix every failure with its path. Any note is dropped:
+// notes describe a completed write, which a failed file did not get.
 func (w *fileWriter) fail(fr FileResult, err error) {
 	fr.Action = ActionFailed
+	fr.Note = ""
 	fr.Error = err
 	w.result.Files = append(w.result.Files, fr)
 	w.result.Failed++
@@ -85,8 +98,12 @@ func (w *fileWriter) record(fr FileResult) {
 		w.result.Created++
 	case ActionUpdated:
 		w.result.Updated++
-	case ActionSkipped:
-		w.result.Skipped++
+	case ActionUnchanged:
+		w.result.Unchanged++
+	case ActionKept:
+		w.result.Kept++
+	case ActionSidecar:
+		w.result.Sidecar++
 	}
 }
 
@@ -103,9 +120,19 @@ func (w *fileWriter) write(file types.GeneratedFile) {
 
 	fullPath := filepath.Join(w.opts.ProjectRoot, file.Path)
 
+	// A Skip file whose leaf is a symlink (even dangling or out of root) or a
+	// directory is kept as-is: nothing is read or written through it, so
+	// there is nothing to resolve and no reason to fail.
+	if file.Strategy == types.Skip && isNonRegularLeaf(fullPath) {
+		slog.Info("existing non-regular file kept (skip strategy)", "path", file.Path)
+		fr.Action = ActionKept
+		w.record(fr)
+		return
+	}
+
 	// Verify the resolved path doesn't escape the project root via symlinks.
 	if err := checkWithinRoot(fullPath, w.resolvedRoot); err != nil {
-		w.fail(fr, fmt.Errorf("%s: %w", file.Path, err))
+		w.fail(fr, err)
 		return
 	}
 
@@ -136,16 +163,17 @@ func (w *fileWriter) write(file types.GeneratedFile) {
 				w.fail(fr, err)
 				return
 			}
-			fr.Action = ActionSkipped
+			fr.Action = ActionSidecar
 			w.record(fr)
 			return
 		case decision.skip:
 			slog.Info("existing file kept (skip strategy)", "path", file.Path)
-			fr.Action = ActionSkipped
+			fr.Action = ActionKept
 			w.record(fr)
 			return
 		}
 		contentToWrite = decision.content
+		fr.Note = decision.note
 		fr.BytesSize = len(contentToWrite)
 	}
 	fr.Mode = mode
@@ -162,7 +190,7 @@ func (w *fileWriter) write(file types.GeneratedFile) {
 		var identical bool
 		fr.PrevHash, identical = compareOnDisk(fullPath, contentToWrite, mode)
 		if identical {
-			fr.Action = ActionSkipped
+			fr.Action = ActionUnchanged
 			fr.DiskContent = contentToWrite
 			w.record(fr)
 			return
@@ -174,7 +202,7 @@ func (w *fileWriter) write(file types.GeneratedFile) {
 	// redirect it outside the project.
 	if err := fileutil.WriteFileAtomicInRoot(w.opts.ProjectRoot, filepath.FromSlash(file.Path), contentToWrite, mode); err != nil {
 		slog.Warn("file write failed", "path", file.Path, "error", err)
-		w.fail(fr, fmt.Errorf("write %s: %w", file.Path, err))
+		w.fail(fr, fmt.Errorf("writing: %w", err))
 		return
 	}
 	slog.Debug("file written", "path", file.Path, "action", fr.Action, "bytes", fr.BytesSize)
@@ -202,20 +230,24 @@ type existingDecision struct {
 	content []byte // content to write in place
 	skip    bool   // keep the existing file untouched
 	sidecar bool   // keep the existing file; write generated content beside it
+	note    string // user-facing remark copied into FileResult.Note
 }
 
 // existingContent applies file.Strategy to an existing target:
 //
 //   - Overwrite, LibraryManaged: replace with the generated content.
-//   - Skip: keep the existing file (it belongs to the user) unless it is
-//     unmodified qsdev output — the generated content itself, or content
-//     matching a recorded state hash — which is regenerated in place
-//     (skip-if-exists; Force does not override this).
+//   - Skip: keep the existing file (it belongs to the user, or cannot be
+//     read) unless it is unmodified qsdev output — the generated content
+//     itself, or content matching a recorded state hash, either perhaps as
+//     a CRLF checkout (state.EqualText, state.MatchesHash) — which is
+//     regenerated in place (skip-if-exists; Force does not override this).
 //   - ManualMerge: replace only when the existing file is known qsdev output
 //     (identical content, or content matching a recorded state hash) or the
 //     caller set Force; otherwise leave it and write a sidecar.
 //   - SectionMarker, ThreeWayMerge: merge generated content into the existing
-//     file (an empty existing file is simply replaced).
+//     file (an empty existing file is simply replaced). When the merge fails
+//     the file is left alone, unless the caller set Force, in which case it
+//     is overwritten with the generated content and a note records why.
 //   - Any other strategy has no merge implementation and fails rather than
 //     overwrite content it cannot preserve.
 func (w *fileWriter) existingContent(file types.GeneratedFile, fullPath string) (existingDecision, error) {
@@ -226,39 +258,52 @@ func (w *fileWriter) existingContent(file types.GeneratedFile, fullPath string) 
 
 	existing, err := os.ReadFile(fullPath)
 	if err != nil {
+		if file.Strategy == types.Skip {
+			// Skip never writes over content it cannot inspect, so an
+			// unreadable file is simply kept.
+			return existingDecision{skip: true}, nil
+		}
 		// Cannot read the existing file — fail rather than blindly overwrite
 		// content we could not inspect.
-		return existingDecision{}, fmt.Errorf("reading existing %s for merge: %w", file.Path, err)
+		return existingDecision{}, fmt.Errorf("reading existing file for merge: %w", err)
 	}
 
 	switch file.Strategy {
 	case types.Skip:
-		if bytes.Equal(existing, file.Content) || w.isRecordedOutput(file.Path, existing) {
+		if state.EqualText(existing, file.Content) || w.isRecordedOutput(file.Path, existing) {
 			return existingDecision{content: file.Content}, nil
 		}
 		return existingDecision{skip: true}, nil
 
 	case types.ManualMerge:
-		if w.opts.Force || bytes.Equal(existing, file.Content) || w.isRecordedOutput(file.Path, existing) {
+		if w.opts.Force || state.EqualText(existing, file.Content) || w.isRecordedOutput(file.Path, existing) {
 			return existingDecision{content: file.Content}, nil
 		}
 		return existingDecision{sidecar: true}, nil
 
 	case types.SectionMarker, types.ThreeWayMerge:
-		if len(bytes.TrimSpace(existing)) == 0 {
-			// Empty on-disk file: nothing to preserve, write generated content.
+		if len(bytes.TrimSpace(existing)) == 0 || state.EqualText(existing, file.Content) {
+			// Empty on-disk file, or the generated content itself (perhaps
+			// as a CRLF checkout): nothing to preserve, write generated
+			// content.
 			return existingDecision{content: file.Content}, nil
 		}
 		merged, err := w.mergeExisting(file, existing)
+		if err != nil && w.opts.Force {
+			return existingDecision{
+				content: file.Content,
+				note:    fmt.Sprintf("existing file could not be merged (%v); overwritten (--force)", err),
+			}, nil
+		}
 		if err != nil {
-			// A merge error must NOT silently overwrite user content; surface
-			// it so the file is left intact for repair.
-			return existingDecision{}, fmt.Errorf("merging %s: %w", file.Path, err)
+			// Without --force a merge error must NOT silently overwrite user
+			// content; surface it so the file is left intact for repair.
+			return existingDecision{}, fmt.Errorf("merging: %w", err)
 		}
 		return existingDecision{content: merged}, nil
 
 	default:
-		return existingDecision{}, fmt.Errorf("merge strategy %s is not supported for existing file %s", file.Strategy, file.Path)
+		return existingDecision{}, fmt.Errorf("merge strategy %s is not supported for an existing file", file.Strategy)
 	}
 }
 
@@ -349,6 +394,13 @@ func checkWithinRoot(fullPath, resolvedRoot string) error {
 		}
 		dir = parent
 	}
+}
+
+// isNonRegularLeaf reports whether fullPath itself (not following a symlink)
+// exists and is not a regular file.
+func isNonRegularLeaf(fullPath string) bool {
+	info, err := os.Lstat(fullPath)
+	return err == nil && !info.Mode().IsRegular()
 }
 
 // errEscapesRoot reports a write target that resolves outside the project.

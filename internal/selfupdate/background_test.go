@@ -175,3 +175,47 @@ func TestBackgroundCheck_DevVersion(t *testing.T) {
 		t.Fatal("timed out")
 	}
 }
+
+// TestNoticeWanted pins XS-WS1 A6: processes whose stderr is not a terminal
+// (hooks, the MCP server, CI) and opted-out processes never want the notice.
+func TestNoticeWanted(t *testing.T) {
+	tests := []struct {
+		name   string
+		isTTY  bool
+		optOut string
+		want   bool
+	}{
+		{name: "terminal", isTTY: true, want: true},
+		{name: "terminal with env opt-out", isTTY: true, optOut: "1", want: false},
+		{name: "terminal with other env value", isTTY: true, optOut: "0", want: true},
+		{name: "not a terminal", isTTY: false, want: false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Setenv("QSDEV_NO_UPDATE_CHECK", tt.optOut)
+			if got := noticeWanted(tt.isTTY); got != tt.want {
+				t.Errorf("noticeWanted(%v) with opt-out %q = %v, want %v", tt.isTTY, tt.optOut, got, tt.want)
+			}
+		})
+	}
+	t.Run("pipe", func(t *testing.T) {
+		t.Setenv("QSDEV_NO_UPDATE_CHECK", "")
+		r, w, err := os.Pipe()
+		if err != nil {
+			t.Fatalf("creating pipe: %v", err)
+		}
+		t.Cleanup(func() {
+			_ = r.Close()
+			_ = w.Close()
+		})
+		if NoticeWanted(w) {
+			t.Error("NoticeWanted(pipe) = true, want false")
+		}
+	})
+	t.Run("nil file", func(t *testing.T) {
+		t.Setenv("QSDEV_NO_UPDATE_CHECK", "")
+		if NoticeWanted(nil) {
+			t.Error("NoticeWanted(nil) = true, want false")
+		}
+	})
+}

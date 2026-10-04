@@ -85,6 +85,25 @@ jobs:
       - name: Vet
         run: go vet ./...
 
+      # internal/archtest holds every architecture rule that still has
+      # violations. Its baseline may only shrink: TestArchitecture pins it to
+      # the tree, and TestBaselineMonotone rejects entries or counts that the
+      # base branch does not already have, so `-update` cannot grow it.
+      - name: Architecture baseline
+        env:
+          BASE_REF: ${{ github.base_ref || 'main' }}
+        run: |
+          baseline=internal/archtest/baseline.txt
+          echo "archtest baseline entries: $(grep -cvE '^[[:space:]]*(#|$)' "$baseline")"
+          git fetch --no-tags --depth=1 origin "+refs/heads/${BASE_REF}:refs/remotes/origin/${BASE_REF}"
+          if git cat-file -e "origin/${BASE_REF}:${baseline}" 2>/dev/null; then
+            git show "origin/${BASE_REF}:${baseline}" > "${RUNNER_TEMP}/archtest-base.txt"
+            export ARCHTEST_BASE="${RUNNER_TEMP}/archtest-base.txt"
+          else
+            echo "::notice::origin/${BASE_REF} has no ${baseline}; this change introduces it, so there is no base to compare"
+          fi
+          go test -count=1 -v -run '^(TestArchitecture|TestBaselineMonotone)$' ./internal/archtest/
+
       - name: golangci-lint
         uses: golangci/golangci-lint-action@1e7e51e771db61008b38414a730f564565cf7c20 # v9.2.0
         with:

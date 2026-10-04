@@ -227,6 +227,11 @@ func deepMerge(base, overlay *types.QsdevConfig) *types.QsdevConfig {
 		result.QsdevVersion = overlay.QsdevVersion
 	}
 
+	// ProjectName: NOT merged, only from project.
+	if overlay.ProjectName != "" {
+		result.ProjectName = overlay.ProjectName
+	}
+
 	return result
 }
 
@@ -346,6 +351,7 @@ func cloneQsdevConfig(cfg *types.QsdevConfig) *types.QsdevConfig {
 	result := &types.QsdevConfig{
 		Version:      cfg.Version,
 		QsdevVersion: cfg.QsdevVersion,
+		ProjectName:  cfg.ProjectName,
 		Tier:         cfg.Tier,
 		Profile:      cfg.Profile,
 		InfraProfile: cfg.InfraProfile,

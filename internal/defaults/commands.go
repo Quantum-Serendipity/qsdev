@@ -13,6 +13,7 @@ import (
 	"gopkg.in/yaml.v3"
 
 	"github.com/Quantum-Serendipity/qsdev/internal/catalog"
+	"github.com/Quantum-Serendipity/qsdev/internal/cmdutil"
 	"github.com/Quantum-Serendipity/qsdev/pkg/fileutil"
 )
 
@@ -33,6 +34,7 @@ func Command() *cobra.Command {
 		editCmd(),
 		pathCmd(),
 		resetCmd(),
+		pinCmd(),
 	)
 
 	return cmd
@@ -257,7 +259,8 @@ func resetCmd() *cobra.Command {
 
 	cmd.Flags().BoolVar(&yes, "yes", false, "Skip confirmation prompt")
 
-	return cmd
+	// The defaults file can carry the organisation's guardrail overlay.
+	return cmdutil.MarkSensitive(cmd, cmdutil.Sensitivity{})
 }
 
 func runReset(cmd *cobra.Command, yes bool) error {
@@ -299,7 +302,8 @@ func loadFresh() (*catalog.Catalog, error) {
 		opts = append(opts, catalog.WithProjectConfigFile(projFile))
 	}
 
-	if orgFile := catalog.OrgConfigFile(); orgFile != "" {
+	// The overlay the catalog applies: the pinned one (catalog.OrgConfigPin).
+	if orgFile := catalog.PolicyOrgConfigFile(); orgFile != "" {
 		opts = append(opts, catalog.WithOrgConfigFile(orgFile))
 	}
 

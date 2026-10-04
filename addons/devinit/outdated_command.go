@@ -11,6 +11,10 @@ import (
 	"github.com/Quantum-Serendipity/qsdev/internal/outdated"
 )
 
+// onlineFlag opts outdated into running the ecosystem commands, which takes it
+// out of the read-only contract.
+const onlineFlag = "online"
+
 func outdatedCmd() *cobra.Command {
 	var opts outdated.OutdatedOptions
 
@@ -18,7 +22,12 @@ func outdatedCmd() *cobra.Command {
 		Use:   "outdated",
 		Short: "Check for outdated dependencies across all ecosystems",
 		Long: `Runs each ecosystem's native outdated command and reports results.
-Output is the native tool format — qsdev does not parse or normalize it.`,
+Output is the native tool format — qsdev does not parse or normalize it.
+
+These commands query package registries over the network, and some (mvn,
+gradle, bundle, mix) download plugins or evaluate the project's build files.
+Without --online nothing is run: the command each ecosystem would use is
+printed and the command fails, so a CI step cannot pass without checking.`,
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			return runOutdated(cmd, opts)
@@ -26,8 +35,9 @@ Output is the native tool format — qsdev does not parse or normalize it.`,
 	}
 
 	cmd.Flags().StringVar(&opts.Ecosystem, "ecosystem", "", "Check only a specific ecosystem (e.g., javascript, python, go)")
+	cmd.Flags().BoolVar(&opts.Online, onlineFlag, false, "Run the ecosystem commands, which contact package registries")
 
-	return cmd
+	return cmdutil.MarkReadOnly(cmd, "", onlineFlag)
 }
 
 func runOutdated(cmd *cobra.Command, opts outdated.OutdatedOptions) error {
@@ -77,6 +87,10 @@ func runOutdated(cmd *cobra.Command, opts outdated.OutdatedOptions) error {
 			}
 		}
 		return fmt.Errorf("outdated check failed for: %s", strings.Join(failed, ", "))
+	}
+
+	if planned := result.PlannedEcosystems(); len(planned) > 0 {
+		return fmt.Errorf("%w (would check: %s)", outdated.ErrOnlineRequired, strings.Join(planned, ", "))
 	}
 
 	if result.HasAnyOutdated() {

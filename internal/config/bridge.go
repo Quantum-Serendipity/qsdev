@@ -9,6 +9,15 @@ import (
 	"github.com/Quantum-Serendipity/qsdev/pkg/types"
 )
 
+// ProjectNameFor returns the project name cfg records, or, for a config
+// written before it recorded one, the name of the directory at projectRoot.
+func ProjectNameFor(cfg *types.QsdevConfig, projectRoot string) string {
+	if cfg != nil && cfg.ProjectName != "" {
+		return cfg.ProjectName
+	}
+	return filepath.Base(projectRoot)
+}
+
 // ConfigToAnswers maps a QsdevConfig to WizardAnswers for downstream generators.
 // It is the single config-to-answers converter: `qsdev init` join mode uses it
 // to rebuild a teammate's answers from the committed .qsdev.yaml, so every
@@ -19,7 +28,7 @@ import (
 func ConfigToAnswers(cfg *types.QsdevConfig, detected types.DetectedProject, projectRoot string) types.WizardAnswers {
 	answers := types.WizardAnswers{
 		ProjectRoot: projectRoot,
-		ProjectName: filepath.Base(projectRoot),
+		ProjectName: ProjectNameFor(cfg, projectRoot),
 		Detected:    detected,
 		Direnv:      true, // Default: direnv is always on.
 		Confirmed:   true,
@@ -64,12 +73,7 @@ func ConfigToAnswers(cfg *types.QsdevConfig, detected types.DetectedProject, pro
 	answers.ComplianceLevel = level
 	answers.HookTier = level
 
-	// Set tier (infer from legacy fields if not explicit).
-	if cfg.Tier != "" {
-		answers.Tier = cfg.Tier
-	} else {
-		answers.Tier = tier.Infer(cfg.ClaudeCode.PermissionLevel, cfg.ClaudeCode.MCPServers).String()
-	}
+	answers.Tier = ConfigTier(cfg)
 
 	// `profile` is the project-type profile and `infra_profile` the
 	// infrastructure profile. A version 1 file that held the infra profile
@@ -86,6 +90,15 @@ func ConfigToAnswers(cfg *types.QsdevConfig, detected types.DetectedProject, pro
 	return answers
 }
 
+// ConfigTier returns cfg's tier, inferred from its legacy fields when the
+// file predates the always-persisted tier field.
+func ConfigTier(cfg *types.QsdevConfig) string {
+	if cfg.Tier != "" {
+		return cfg.Tier
+	}
+	return tier.Infer(cfg.ClaudeCode.PermissionLevel, cfg.ClaudeCode.MCPServers).String()
+}
+
 // cloneJava returns a deep copy of a JavaConfig.
 func cloneJava(in types.JavaConfig) types.JavaConfig {
 	return types.JavaConfig{RepositoryAllowlist: slices.Clone(in.RepositoryAllowlist)}
@@ -95,7 +108,7 @@ func cloneJava(in types.JavaConfig) types.JavaConfig {
 func mapClaudeCode(cfg *types.QsdevConfig, answers *types.WizardAnswers) {
 	// An absent claude_code.enabled predates the key always being written,
 	// when Claude Code was on by default; an explicit false is honoured.
-	answers.ClaudeCode = cfg.ClaudeCode.Enabled == nil || *cfg.ClaudeCode.Enabled
+	answers.ClaudeCode = ClaudeCodeEnabled(cfg)
 	answers.PermissionLevel = cfg.ClaudeCode.PermissionLevel
 	// Like FillDefaults on the create path, default the permission level only
 	// when no tier is set: an explicit tier supplies its own preset.
@@ -131,19 +144,15 @@ func securityToHookChoices(cfg *types.QsdevConfig) types.HookChoices {
 	return hc
 }
 
-// levelHookChoices returns the hooks a compliance level requires:
-//   - baseline: none beyond the safety block
-//   - enhanced: pre-commit
-//   - strict: pre-commit + audit-log + auto-format
+// levelHookChoices returns the Claude Code hooks a compliance level requires:
+// audit-log for strict, none beyond the safety block otherwise. No level
+// implies auto-format or pre-commit: neither registers a Claude Code hook,
+// and the commit-time checks a level requires are devenv git hooks (the
+// compliance level's required_pre_commit_hooks).
 func levelHookChoices(level string) types.HookChoices {
 	var hc types.HookChoices
-	switch level {
-	case "enhanced":
-		hc.PreCommit = true
-	case "strict":
-		hc.PreCommit = true
+	if level == "strict" {
 		hc.AuditLog = true
-		hc.AutoFormat = true
 	}
 	return hc
 }

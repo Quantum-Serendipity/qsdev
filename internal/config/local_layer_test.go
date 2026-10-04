@@ -35,6 +35,27 @@ func TestComparePermissionLevels(t *testing.T) {
 	}
 }
 
+func TestTightenPermissionLevel(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		level, floor, want string
+	}{
+		{level: "minimal", floor: "standard", want: "minimal"},
+		{level: "permissive", floor: "standard", want: "standard"},
+		{level: "standard", floor: "standard", want: "standard"},
+		{level: "supply-chain-only", floor: "standard", want: "standard"},
+		{level: "nonexistent", floor: "standard", want: "standard"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.level+"_over_"+tt.floor, func(t *testing.T) {
+			t.Parallel()
+			if got := TightenPermissionLevel(tt.level, tt.floor); got != tt.want {
+				t.Errorf("TightenPermissionLevel(%q, %q) = %q, want %q", tt.level, tt.floor, got, tt.want)
+			}
+		})
+	}
+}
+
 // TestResolveConfig_LocalPermissionLevel checks a local permission level
 // only ever tightens the committed (or tier-implied) one.
 func TestResolveConfig_LocalPermissionLevel(t *testing.T) {

@@ -7,6 +7,8 @@ import (
 	"os/exec"
 	"runtime"
 	"strings"
+
+	"github.com/Quantum-Serendipity/qsdev/internal/procexec"
 )
 
 // detectPlatform populates macOS-specific fields in info using sw_vers,
@@ -47,7 +49,7 @@ func detectRosetta(info *OSInfo) {
 
 // detectXcodeCLT checks whether the Xcode Command Line Tools are installed.
 func detectXcodeCLT(info *OSInfo) {
-	cmd := exec.Command("xcode-select", "-p")
+	cmd := procexec.Command("xcode-select", "-p")
 	if err := cmd.Run(); err == nil {
 		info.XcodeCLT = true
 	}
@@ -74,7 +76,7 @@ func detectHomebrew(info *OSInfo) {
 // runTrimmed executes a command and returns its stdout with leading/trailing
 // whitespace removed. On any error it returns an empty string.
 func runTrimmed(name string, args ...string) string {
-	out, err := exec.Command(name, args...).Output()
+	out, err := procexec.Command(name, args...).Output()
 	if err != nil {
 		return ""
 	}

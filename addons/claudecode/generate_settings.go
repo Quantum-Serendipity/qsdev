@@ -10,7 +10,6 @@ import (
 	"github.com/Quantum-Serendipity/qsdev/internal/policyengine/trust"
 	"github.com/Quantum-Serendipity/qsdev/internal/sliceutil"
 	"github.com/Quantum-Serendipity/qsdev/internal/validation"
-	"github.com/Quantum-Serendipity/qsdev/pkg/branding"
 	"github.com/Quantum-Serendipity/qsdev/pkg/ecosystem"
 	"github.com/Quantum-Serendipity/qsdev/pkg/fileutil"
 	"github.com/Quantum-Serendipity/qsdev/pkg/types"
@@ -336,40 +335,10 @@ func setListEnv(env map[string]string, key string, values []string) {
 	}
 }
 
-// buildHooks returns the hooks map based on enabled hook presets.
-// It delegates to the default HookRegistry which evaluates each registered
-// hook's EnabledFunc against the provided answers. When sandbox is enabled,
-// hook commands are wrapped with "<app> sandbox exec".
+// buildHooks returns the hooks map based on enabled hook presets, as the
+// default HookRegistry emits it (see HookDefinition.emittedCommand).
 func buildHooks(answers types.WizardAnswers) map[string][]HookMatcher {
-	registry := defaultHookRegistry()
-	hooks := registry.BuildHooksMap(answers)
-	if hooks != nil && answers.Hooks.SandboxEnabled {
-		hooks = wrapHooksForSandbox(hooks, registry, answers, branding.Get().AppName)
-	}
-	return hooks
-}
-
-// wrapHooksForSandbox prefixes each hook command with "<appName> sandbox exec
-// --category <cat> --" so hooks run inside the sandbox. appName is the branded
-// binary name (as for the self-invoked hooks in defaultHookRegistry): a binary
-// that is not installed makes every hook fail with a non-blocking error. The
-// category is looked up from the registry's SandboxCategory field.
-func wrapHooksForSandbox(hooks map[string][]HookMatcher, registry *HookRegistry, answers types.WizardAnswers, appName string) map[string][]HookMatcher {
-	catMap := make(map[string]string)
-	for _, def := range registry.Definitions() {
-		if def.SandboxCategory != "" {
-			catMap[def.commandFor(answers)] = def.SandboxCategory
-		}
-	}
-
-	for event, matchers := range hooks {
-		for i, m := range matchers {
-			for j, h := range m.Hooks {
-				hooks[event][i].Hooks[j].Command = sandboxHookCommand(appName, catMap[h.Command], h.Command)
-			}
-		}
-	}
-	return hooks
+	return defaultHookRegistry().BuildHooksMap(answers)
 }
 
 // sandboxHookCommand wraps a hook command to run inside the sandbox under the

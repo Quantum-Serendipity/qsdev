@@ -28,6 +28,7 @@ type Report struct {
 	CloudProviders     *CloudSection       `json:"cloud_providers,omitempty"`
 	ModuleChecks       *ModuleCheckSection `json:"module_checks,omitempty"`
 	ProjectToolchains  []string            `json:"project_toolchains,omitempty"` // see ecosystem.ToolchainChecker
+	OrgOverlayDrift    string              `json:"org_overlay_drift,omitempty"`  // see catalog.OrgConfigDrift
 	RequiredTools      []ToolEntry         `json:"required_tools"`
 	OptionalTools      []ToolEntry         `json:"optional_tools"`
 	Recommendations    []string            `json:"recommendations,omitempty"`
@@ -111,6 +112,12 @@ func (r *Report) SetCloudSection(cs *CloudSection) {
 // to the report.
 func (r *Report) SetProjectToolchains(warnings []string) {
 	r.ProjectToolchains = warnings
+}
+
+// SetOrgOverlayDrift attaches why the org overlay this run resolves is not
+// the one the CLI reads for the project ("" when it is).
+func (r *Report) SetOrgOverlayDrift(drift string) {
+	r.OrgOverlayDrift = drift
 }
 
 // SystemInfo captures OS-level details for the report.
@@ -352,6 +359,13 @@ func FormatReport(w io.Writer, r *Report, useColor bool) {
 		for _, warn := range r.ProjectToolchains {
 			fmt.Fprintf(w, "  %s %s\n", warnSym, warn)
 		}
+		fmt.Fprintln(w)
+	}
+
+	// Org overlay
+	if r.OrgOverlayDrift != "" {
+		fmt.Fprintln(w, "Org Overlay")
+		fmt.Fprintf(w, "  %s %s; it is ignored (approve it with '%s defaults pin' at your own terminal)\n", warnSym, r.OrgOverlayDrift, branding.Get().AppName)
 		fmt.Fprintln(w)
 	}
 

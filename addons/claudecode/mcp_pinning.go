@@ -44,39 +44,21 @@ func installedMCPServers(projectRoot string) map[string]types.McpServerState {
 	return s.McpServers
 }
 
-// installedBin returns the executable def's install method provides when the
-// project state records exactly the pinned release as installed by that
-// method. A record of another version (the catalog pin moved since) or
-// another method does not count: the binary on PATH is then not the release
-// qsdev vouches for.
-func installedBin(name string, def catalog.MCPServerDef, installed map[string]types.McpServerState) (string, bool) {
-	if def.Bin == "" || def.Version == "" {
-		return "", false
-	}
+// pinnedReleaseInstalled reports whether the project state records exactly def's
+// pinned release as installed by def's install method. A record of another
+// version (the catalog pin moved since) or another method does not count: the
+// binary on PATH is then not the release qsdev vouches for.
+func pinnedReleaseInstalled(name string, def catalog.MCPServerDef, installed map[string]types.McpServerState) bool {
 	rec, ok := installed[name]
-	if !ok || rec.InstallMethod != def.InstallMethod || rec.InstalledVersion != def.Version {
-		return "", false
-	}
-	return def.Bin, true
+	return ok && rec.InstallMethod == def.InstallMethod && rec.InstalledVersion == def.Version
 }
 
 // catalogServerEntry returns the .mcp.json entry for a catalog server: the
 // binary `qsdev mcp install` installed when the project records it, otherwise
 // the catalog's pinned launcher.
 func catalogServerEntry(name string, def catalog.MCPServerDef, installed map[string]types.McpServerState) MCPServerEntry {
-	if bin, ok := installedBin(name, def, installed); ok {
-		return MCPServerEntry{Command: bin, Args: def.BinArgs, Env: def.Env}
+	if spec, ok := mcpregistry.InstalledSpec(def); ok && pinnedReleaseInstalled(name, def, installed) {
+		return launchSpecEntry(spec)
 	}
 	return catalogDefToEntry(def)
-}
-
-// catalogServerVariants returns every entry generation may write for a
-// catalog server: the pinned launcher and, when the install method provides
-// one, the installed binary.
-func catalogServerVariants(def catalog.MCPServerDef) []MCPServerEntry {
-	variants := []MCPServerEntry{catalogDefToEntry(def)}
-	if def.Bin != "" && def.Version != "" {
-		variants = append(variants, MCPServerEntry{Command: def.Bin, Args: def.BinArgs, Env: def.Env})
-	}
-	return variants
 }

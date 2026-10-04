@@ -9,11 +9,10 @@ import (
 	"strings"
 	"time"
 
-	"github.com/charmbracelet/x/term"
 	"github.com/spf13/cobra"
 
+	"github.com/Quantum-Serendipity/qsdev/internal/cmdutil"
 	"github.com/Quantum-Serendipity/qsdev/internal/policyengine/policy"
-	"github.com/Quantum-Serendipity/qsdev/pkg/branding"
 )
 
 func sessionCmd() *cobra.Command {
@@ -70,7 +69,8 @@ Rule IDs can be passed as positional arguments or via the --rules flag.`,
 	cmd.Flags().StringVar(&opts.project, "project", "", "Project directory the bypass applies to (default: the project containing the current directory)")
 	cmd.Flags().DurationVar(&opts.ttl, "ttl", 0, "Grant lifetime (default 8h for session-tier rules, 1h for command-tier tokens; max 24h)")
 	_ = cmd.MarkFlagRequired("session")
-	return cmd
+	// A bypass disables a security control, so it must come from a human.
+	return cmdutil.MarkSensitive(cmd, cmdutil.Sensitivity{})
 }
 
 func sessionClearCmd() *cobra.Command {
@@ -134,46 +134,6 @@ func writeSessionGrants(w io.Writer, store *policy.FileSessionStateStore, now ti
 	return nil
 }
 
-// humanAtTerminal reports whether the command's input is an interactive
-// terminal. A variable so tests can simulate a human at a TTY.
-var humanAtTerminal = func(in io.Reader) bool {
-	f, ok := in.(*os.File)
-	return ok && term.IsTerminal(f.Fd())
-}
-
-// agentEnvMarkers are environment variables AI coding agents export to the
-// shells they run commands in (Claude Code sets CLAUDECODE=1).
-var agentEnvMarkers = []string{"CLAUDECODE"}
-
-// agentSessionMarker returns the first agent marker set in the environment,
-// or "" when the command is not running inside an agent session.
-func agentSessionMarker() string {
-	for _, name := range agentEnvMarkers {
-		if os.Getenv(name) != "" {
-			return name
-		}
-	}
-	return ""
-}
-
-// requireHuman refuses a security-sensitive command (named by subcommand, e.g.
-// "session allow") unless a human runs it: an agent's tool calls run inside
-// its session (and usually without a terminal) and cannot answer a
-// confirmation prompt. A pseudo-terminal wrapper such as script(1) defeats the
-// TTY check alone, hence the agent-environment check too. reason completes
-// "requires an interactive terminal: ...".
-func requireHuman(cmd *cobra.Command, subcommand, reason string) error {
-	app := branding.Get().AppName
-	if marker := agentSessionMarker(); marker != "" {
-		return fmt.Errorf("'%s %s' refused inside an AI agent session (%s is set): run it from your own terminal",
-			app, subcommand, marker)
-	}
-	if !humanAtTerminal(cmd.InOrStdin()) {
-		return fmt.Errorf("'%s %s' requires an interactive terminal: %s", app, subcommand, reason)
-	}
-	return nil
-}
-
 // confirmYes prints prompt and reads one line of the answer. Only an explicit
 // "y"/"yes" confirms.
 func confirmYes(cmd *cobra.Command, prompt string) (bool, error) {
@@ -187,10 +147,6 @@ func confirmYes(cmd *cobra.Command, prompt string) (bool, error) {
 }
 
 func runSessionAllow(cmd *cobra.Command, opts sessionAllowOptions) error {
-	// A bypass disables a security control, so it must come from a human.
-	if err := requireHuman(cmd, "session allow", "a policy bypass must be confirmed by a human"); err != nil {
-		return err
-	}
 	if err := validateClaudeSessionID(opts.sessionID); err != nil {
 		return err
 	}

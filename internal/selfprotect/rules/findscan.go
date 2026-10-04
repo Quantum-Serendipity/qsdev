@@ -5,6 +5,8 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
+
+	"github.com/Quantum-Serendipity/qsdev/internal/selfprotect/canon"
 )
 
 // This file models find expressions: whether a find with a mutating action can
@@ -25,34 +27,26 @@ var (
 	findRegexPredicates = map[string]bool{"-regex": true, "-iregex": true}
 )
 
-// findProbePaths are representative protected entries, relative to a
-// directory that holds them, used to decide whether a find's name/path
-// patterns can select a protected file.
-var findProbePaths = []string{
-	".claude", ".claude/settings.json", ".claude/settings.local.json",
-	".claude/hooks", ".claude/hooks/package-guard.py", ".claude/hooks/audit-log.sh",
-	".claude/agents", ".claude/agents/agent.md",
-	".qsdev", ".qsdev/config.yaml", ".qsdev/bin", ".qsdev/bin/qsdev",
-	".qsdev/audit", ".qsdev/audit/audit.jsonl", ".qsdev/audit/events.log",
-	".gdev", ".gdev/config.yaml",
-}
-
-// findPattern is one name/path predicate of a find expression.
-type findPattern struct{ pred, glob string }
+// findPattern is one name/path predicate of a find expression, compiled once
+// so it can be tried against every probe.
+type findPattern struct{ match func(probe string) bool }
 
 // findMutatesProtected reports whether a find command can delete or rewrite a
 // protected file even though no protected path is spelled out, e.g.
 // `find ~ -name settings.json -path '*claude*' -delete`. Only a find with a
 // mutating action is considered. Its name/path patterns are evaluated against
-// representative protected entries under each start point; negation, regex
-// predicates, or no pattern at all (every file matches) count as selecting a
-// protected file when a start point can contain one.
+// representative protected entries (canon.FindProbes) under each start point:
+// the location-independent ones anywhere below it, the home- and
+// system-anchored ones (the org overlay, say) where they lie below it.
+// Negation, regex predicates, or no pattern at all (every file matches) count
+// as selecting a protected file when a start point can contain one.
 func findMutatesProtected(sc scannedCommand) bool {
 	starts, exprs := splitFindArgs(sc.Args)
 	if !findHasMutatingAction(exprs) {
 		return false
 	}
 	patterns, opaque, anyOf := parseFindPatterns(exprs)
+	relative, absolute := canon.FindProbes()
 	for _, start := range starts {
 		if !findStartCanReachProtected(sc, start) {
 			continue
@@ -60,14 +54,40 @@ func findMutatesProtected(sc scannedCommand) bool {
 		if opaque || len(patterns) == 0 {
 			return true
 		}
-		prefix := strings.TrimSuffix(filepath.ToSlash(expandTilde(start)), "/")
-		for _, rel := range findProbePaths {
-			if findPatternsSelect(patterns, anyOf, prefix+"/"+rel) {
+		for _, probe := range findProbesUnder(sc, start, relative, absolute) {
+			if findPatternsSelect(patterns, anyOf, probe) {
 				return true
 			}
 		}
 	}
 	return false
+}
+
+// findProbesUnder returns the probes as find would print them below start:
+// every relative probe, and every absolute probe within the directory start
+// resolves to.
+func findProbesUnder(sc scannedCommand, start string, relative, absolute []string) []string {
+	prefix := strings.TrimSuffix(filepath.ToSlash(expandTilde(start)), "/")
+	probes := make([]string, 0, len(relative))
+	for _, rel := range relative {
+		probes = append(probes, prefix+"/"+rel)
+	}
+	dir, known := resolveWord(sc, start)
+	if !known {
+		return probes
+	}
+	for _, abs := range absolute {
+		rel, err := filepath.Rel(dir, filepath.FromSlash(abs))
+		if err != nil || !withinDir(filepath.FromSlash(abs), dir) {
+			continue
+		}
+		if rel = filepath.ToSlash(rel); rel == "." {
+			probes = append(probes, prefix)
+		} else {
+			probes = append(probes, prefix+"/"+rel)
+		}
+	}
+	return probes
 }
 
 func findHasMutatingAction(exprs []string) bool {
@@ -93,7 +113,7 @@ func parseFindPatterns(exprs []string) (patterns []findPattern, opaque, anyOf bo
 		case findRegexPredicates[e]:
 			opaque = true
 		case (findNamePredicates[e] || findPathPredicates[e]) && i+1 < len(exprs):
-			patterns = append(patterns, findPattern{e, exprs[i+1]})
+			patterns = append(patterns, findPattern{compileFindPattern(e, exprs[i+1])})
 			i++
 		}
 	}
@@ -105,7 +125,7 @@ func parseFindPatterns(exprs []string) (patterns []findPattern, opaque, anyOf bo
 func findPatternsSelect(patterns []findPattern, anyOf bool, probe string) bool {
 	matchedAll, matchedAny := true, false
 	for _, p := range patterns {
-		if findPatternMatches(p.pred, p.glob, probe) {
+		if p.match(probe) {
 			matchedAny = true
 		} else {
 			matchedAll = false
@@ -130,9 +150,11 @@ func splitFindArgs(args []string) (starts, exprs []string) {
 
 // findStartCanReachProtected reports whether a find start point can contain a
 // protected entry: it names one, it is the working directory or an ancestor of
-// it, or it is an ancestor of the home directory or /etc.
+// it, it is an ancestor of the home directory or /etc, or it is at or above a
+// home- or system-anchored protected location (~/.config, say), also when an
+// expansion spells the home directory (see expandedReachesAncestor).
 func findStartCanReachProtected(sc scannedCommand, start string) bool {
-	if refersProtected(sc, start) {
+	if refersProtected(sc, start) || expandedReachesAncestor(sc, start) {
 		return true
 	}
 	p, known := resolveWord(sc, start)
@@ -147,21 +169,34 @@ func findStartCanReachProtected(sc scannedCommand, start string) bool {
 			return true
 		}
 	}
-	return false
+	return isProtectedAncestor(sc.fs, p)
 }
 
-// findPatternMatches applies one find name/path predicate to probe, a full path
-// as find would print it. A malformed pattern matches (fail closed).
-func findPatternMatches(pred, glob, probe string) bool {
-	if strings.HasPrefix(pred, "-i") {
-		glob, probe = strings.ToLower(glob), strings.ToLower(probe)
+// compileFindPattern returns the matcher of one find name/path predicate for
+// probe, a full path as find would print it. A malformed pattern matches
+// (fail closed).
+func compileFindPattern(pred, glob string) func(probe string) bool {
+	fold := strings.HasPrefix(pred, "-i")
+	if fold {
+		glob = strings.ToLower(glob)
+	}
+	norm := func(probe string) string {
+		if fold {
+			return strings.ToLower(probe)
+		}
+		return probe
 	}
 	if findNamePredicates[pred] {
-		ok, err := path.Match(glob, path.Base(probe))
-		return ok || err != nil
+		return func(probe string) bool {
+			ok, err := path.Match(glob, path.Base(norm(probe)))
+			return ok || err != nil
+		}
 	}
 	re, err := regexp.Compile("^" + globToRegexp(glob) + "$")
-	return err != nil || re.MatchString(probe)
+	if err != nil {
+		return func(string) bool { return true }
+	}
+	return func(probe string) bool { return re.MatchString(norm(probe)) }
 }
 
 // globToRegexp converts a find -path glob to a regular expression in which *

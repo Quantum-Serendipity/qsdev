@@ -44,7 +44,7 @@ func TestGenerateDevenvNix_SecurityScanCreditsSAST(t *testing.T) {
 			}
 			state := types.GeneratedState{Files: map[string]types.FileState{got.Path: {}}}
 
-			cov := posture.AssessDefenseLayers(dir, tt.tools, types.DetectedProject{}, state, 3)
+			cov := posture.AssessDefenseLayers(dir, posture.AssessOptions{}, tt.tools, types.DetectedProject{}, state, 3)
 			l := posture.FindLayerByName(cov.Layers, "sast")
 			if l == nil {
 				t.Fatal("sast layer not found")
@@ -93,7 +93,7 @@ func TestGenerateDevenvNix_SecurityScanCreditsLicenseCompliance(t *testing.T) {
 			}
 			state := types.GeneratedState{Files: map[string]types.FileState{got.Path: {}}}
 
-			cov := posture.AssessDefenseLayers(dir, tt.tools, types.DetectedProject{}, state, 3)
+			cov := posture.AssessDefenseLayers(dir, posture.AssessOptions{}, tt.tools, types.DetectedProject{}, state, 3)
 			l := posture.FindLayerByName(cov.Layers, "license-compliance")
 			if l == nil {
 				t.Fatal("license-compliance layer not found")

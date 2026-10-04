@@ -69,7 +69,8 @@ type FileChange func() (before, after string, err error)
 // DetectChange checks whether a Write/Edit/MultiEdit weakens a security
 // configuration file by comparing the file before and after the change:
 // .qsdev.yaml (GD-001: a lower security level, a disabled security control,
-// a widened credential_vend opt-in, or a disabled security tool) and
+// a widened credential_vend opt-in, a disabled security tool, or Claude Code
+// switched off) and
 // devenv.nix (GD-002: a module or git hook switched off, or a hardening switch
 // turned back on). change is called only for these files; when it fails the
 // change cannot be verified and is blocked (fail closed). Returns (blocked,
@@ -103,9 +104,11 @@ func DetectChange(filePath string, change FileChange) (bool, string, string) {
 // qsdevConfigDowngrade describes how an updated .qsdev.yaml weakens the
 // project's security posture ("" when it does not): security.level drops,
 // a security.* control that is on (explicitly, or by default when unset)
-// turns off, security.credential_vend is widened, or a security-category
-// tool is newly disabled. A missing or unparseable current file is compared
-// as the organization defaults.
+// turns off, security.credential_vend is widened, a security-category tool is
+// newly disabled, or claude_code.enabled turns off (the next regeneration
+// would drop the Claude Code settings and the self-protection hook they
+// register). A missing or unparseable current file is compared as the
+// organization defaults.
 func qsdevConfigDowngrade(before, after string) (string, error) {
 	var next types.QsdevConfig
 	if err := yaml.Unmarshal([]byte(after), &next); err != nil {
@@ -144,6 +147,10 @@ func qsdevConfigDowngrade(before, after string) (string, error) {
 
 	if reason := credentialVendWidened(current.Security.CredentialVend, next.Security.CredentialVend); reason != "" {
 		return reason, nil
+	}
+
+	if config.ClaudeCodeEnabled(&current) && !config.ClaudeCodeEnabled(&next) {
+		return "claude_code.enabled turned off: regeneration would drop the Claude Code guardrails, including the self-protection hook", nil
 	}
 
 	return disabledSecurityTool(current.Tools.Disabled, next.Tools.Disabled)

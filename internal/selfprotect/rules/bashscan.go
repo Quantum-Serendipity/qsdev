@@ -35,6 +35,14 @@ type scannedCommand struct {
 	// used an expansion, a glob, `-`, the directory stack, or CDPATH), so
 	// relative paths may land anywhere.
 	cwdUnknown bool
+	// cwdHint is what is known of the working directory when cwdUnknown is
+	// set: the unresolvable cd target as rendered (`$X/.config` is
+	// "/.config", a glob stays a glob), joined with any relative cd after it,
+	// or "" when nothing is known (popd, `cd -`).
+	cwdHint string
+	// fs answers the filesystem questions about the evaluation's paths (see
+	// EvalContext.fs); nil asks the filesystem afresh each time.
+	fs *canon.Resolver
 }
 
 // scannedCommands returns the parsed commands annotated with their effective
@@ -54,7 +62,7 @@ func (ctx *EvalContext) scannedCommands() ([]scannedCommand, error) {
 	}
 	out := make([]scannedCommand, 0, len(cmds))
 	for _, c := range cmds {
-		sc := scannedCommand{Command: c, cwd: st.cwd, inProtectedDir: st.inProtected, cwdUnknown: st.unknown}
+		sc := scannedCommand{Command: c, cwd: st.cwd, inProtectedDir: st.inProtected, cwdUnknown: st.unknown, cwdHint: st.hint, fs: &ctx.fs}
 		out = append(out, sc)
 		st.apply(sc)
 	}
@@ -67,6 +75,7 @@ type dirState struct {
 	cwd         string
 	inProtected bool
 	unknown     bool
+	hint        string // see scannedCommand.cwdHint
 	// cdpath reports that the line sets CDPATH, which makes cd search other
 	// directories for a bare relative target (`CDPATH=.claude cd hooks`).
 	cdpath bool
@@ -81,7 +90,7 @@ func (st *dirState) apply(sc scannedCommand) {
 	case "popd":
 		// The destination is the directory stack, which is not modelled.
 		// Leaving a protected directory cannot be proven, so keep that flag.
-		st.cwd, st.unknown = "", true
+		st.cwd, st.unknown, st.hint = "", true, ""
 		return
 	default:
 		return
@@ -91,13 +100,19 @@ func (st *dirState) apply(sc scannedCommand) {
 	if len(operands) > 0 {
 		target = operands[0]
 	}
-	if sc.HasExpansion || target == "-" || hasGlobMeta(target) ||
+	if sc.HasExpansion || target == "-" || hasGlobMeta(target) || unresolvedTilde(target) ||
 		(sc.Name == "pushd" && (len(operands) == 0 || strings.HasPrefix(target, "+"))) ||
 		(st.cdpath && usesCDPATH(target)) {
 		// The destination is not statically known. Keep any protected
-		// directory the literal part names (`cd "$HOME/.claude"`, `cd .c*e`).
-		st.cwd, st.unknown = "", true
-		st.inProtected = st.inProtected || lexicalProtected(target) || globProtected(target)
+		// directory the literal part names (`cd "$HOME/.claude"`, `cd .c*e`),
+		// or that a rooted target names once $HOME is rendered
+		// (`cd $HOME/.config/<app>`).
+		st.cwd, st.unknown, st.hint = "", true, ""
+		if target != "-" && (sc.Name == "cd" || len(operands) > 0 && !strings.HasPrefix(target, "+")) {
+			st.hint = target // not the directory stack
+		}
+		st.inProtected = st.inProtected || lexicalProtected(target) || globProtected(target) ||
+			(isRooted(expandTilde(target)) && isProtectedDir(filepath.Clean(expandTilde(target))))
 		return
 	}
 	expanded := expandTilde(target)
@@ -108,6 +123,7 @@ func (st *dirState) apply(sc scannedCommand) {
 		// A relative move from an unknown directory stays unknown; leaving a
 		// protected directory cannot be proven, so only ever add the flag.
 		st.inProtected = st.inProtected || isProtectedDir(expanded)
+		st.hint = path.Join(st.hint, filepath.ToSlash(expanded))
 		return
 	default:
 		st.cwd = filepath.Join(st.cwd, expanded)
@@ -123,24 +139,15 @@ func usesCDPATH(target string) bool {
 		!strings.HasPrefix(target, "./") && !strings.HasPrefix(target, "../")
 }
 
-// expandTilde expands a leading ~ (or ~/) to the home directory, leaving the
-// path unchanged when it has none or home cannot be resolved.
+// expandTilde expands a leading ~ (or ~/) to the home directory, and ~name to
+// that account's (see canon.ExpandTilde), leaving the path unchanged when it
+// has none or the home directory cannot be resolved.
 func expandTilde(p string) string {
 	if expanded, err := canon.ExpandTilde(p); err == nil {
 		return expanded
 	}
 	return p
 }
-
-// protectedDirNames are the protected directory names that can appear in any
-// location (home config or project checkout). They mirror the dot-directory
-// entries of canon's protected substring table and are used to decide whether
-// a glob segment such as `.c*e` can expand to one of them.
-var protectedDirNames = []string{".claude", ".qsdev", ".gdev"}
-
-// protectedSystemDirs are the absolute protected directories that are not
-// reached through a protected dot-directory, split into path segments.
-var protectedSystemDirs = [][]string{{"etc", "gdev"}, {"etc", "claude-code"}}
 
 // isProtectedDir reports whether dir is a protected directory or lies inside
 // one, i.e. whether a file directly inside it is protected. It is precise
@@ -160,8 +167,8 @@ func isProtectedDir(dir string) bool {
 // protected directory (so `settings.json` under a .claude directory counts).
 // An absolute path is also checked after canonicalization, so a symlink that
 // leads into a protected directory (`/tmp/c/settings.json` with /tmp/c ->
-// ~/.claude) is recognised.
-func resolvedProtected(p string) bool {
+// ~/.claude) is recognised. Filesystem lookups go through fs.
+func resolvedProtected(fs *canon.Resolver, p string) bool {
 	p = filepath.Clean(p)
 	if pathProtected(p) {
 		return true
@@ -169,7 +176,7 @@ func resolvedProtected(p string) bool {
 	if !isRooted(p) {
 		return false
 	}
-	canonical, err := canon.Canonicalize(p)
+	canonical, err := fs.Canonicalize(p)
 	return err == nil && canonical != p && pathProtected(canonical)
 }
 
@@ -210,45 +217,55 @@ func shellSegMatch(pattern, name string) bool {
 }
 
 // globProtected reports whether a glob word can expand to a protected path: a
-// glob segment that matches a protected directory name (`.c*e`, `.clau?e`), or
-// an absolute pattern whose leading segments match a protected system
-// directory (`/etc/g?ev/...`).
+// glob segment that matches a name protected in any location (`.c*e`,
+// `.env?c`), or an absolute pattern whose leading segments match a home- or
+// system-anchored protected location (`/etc/g?ev/...`, `~/.config/q*/x`).
+// Both tables come from canon, so a newly protected location is covered here
+// without a second list.
 func globProtected(p string) bool {
 	if !hasGlobMeta(p) {
 		return false
 	}
-	cleaned := filepath.ToSlash(filepath.Clean(expandTilde(p)))
-	segs := strings.Split(cleaned, "/")
+	cleaned := filepath.Clean(expandTilde(p))
+	segs := strings.Split(filepath.ToSlash(cleaned), "/")
+	names := canon.ProtectedNames()
 	for _, seg := range segs {
 		if !hasGlobMeta(seg) {
 			continue
 		}
-		for _, name := range protectedDirNames {
+		for _, name := range names {
 			if shellSegMatch(seg, name) {
 				return true
 			}
 		}
 	}
-	if !strings.HasPrefix(cleaned, "/") {
+	if !isRooted(cleaned) {
 		return false
 	}
-	segs = segs[1:]
-	for _, dir := range protectedSystemDirs {
-		if len(segs) < len(dir) {
-			continue
-		}
-		matched := true
-		for i, want := range dir {
-			if !shellSegMatch(segs[i], want) {
-				matched = false
-				break
-			}
-		}
-		if matched {
+	key := strings.Split(canon.PathKey(cleaned), "/")
+	for _, loc := range canon.ProtectedLocationKeys() {
+		if globReaches(key, loc) {
 			return true
 		}
 	}
 	return false
+}
+
+// globReaches reports whether the glob pattern, split into slash-separated
+// segments, can name the protected location loc (a path key; a directory ends
+// in "/"): every segment of loc is matched by the pattern segment in the same
+// position, and a file location must be the whole pattern.
+func globReaches(pattern []string, loc string) bool {
+	locSegs := strings.Split(strings.TrimSuffix(loc, "/"), "/")
+	if len(pattern) < len(locSegs) || (!strings.HasSuffix(loc, "/") && len(pattern) != len(locSegs)) {
+		return false
+	}
+	for i, want := range locSegs {
+		if !shellSegMatch(pattern[i], want) {
+			return false
+		}
+	}
+	return true
 }
 
 // maxBraceVariants caps brace expansion so a hostile word cannot blow up the
@@ -259,17 +276,28 @@ const maxBraceVariants = 64
 // alternative; a sequence (`{a..z}`) is replaced with `*` so the glob check
 // covers every value it can produce. ok is false when the expansion exceeds
 // maxBraceVariants.
+//
+// Each call scans s in linear time. Every outermost sequence is replaced at once
+// (replacing a sequence commutes with expanding any other group), and a word
+// with more than maxBraceVariants comma groups fails closed up front: each
+// group adds at least one variant, so the recursion depth stays bounded by the
+// cap however many groups a hostile word holds.
 func expandBraces(s string) ([]string, bool) {
-	open, closing, alts, seq := findBraceGroup(s)
-	if open < 0 {
+	groups := braceGroups(s)
+	if slices.ContainsFunc(groups, func(g braceGroup) bool { return g.seq }) {
+		s = replaceSequences(s, groups)
+		groups = braceGroups(s)
+	}
+	if len(groups) == 0 {
 		return []string{s}, true
 	}
-	prefix, suffix := s[:open], s[closing+1:]
-	if seq {
-		return expandBraces(prefix + "*" + suffix)
+	if len(groups) > maxBraceVariants {
+		return nil, false
 	}
+	g := groups[0]
+	prefix, suffix := s[:g.open], s[g.closing+1:]
 	var out []string
-	for _, alt := range alts {
+	for _, alt := range g.alternatives(s) {
 		vs, ok := expandBraces(prefix + alt + suffix)
 		if !ok {
 			return nil, false
@@ -282,41 +310,86 @@ func expandBraces(s string) ([]string, bool) {
 	return out, true
 }
 
-// findBraceGroup finds the first expandable brace group in s: a `{...}` with a
-// top-level comma (returned as alts) or a `..` sequence (seq). It returns
-// open == -1 when s has none.
-func findBraceGroup(s string) (open, closing int, alts []string, seq bool) {
+// braceGroup is one expandable `{...}` of a word.
+type braceGroup struct {
+	open, closing int
+	// commas are the offsets of the group's top-level commas; empty for a
+	// sequence.
+	commas []int
+	seq    bool
+}
+
+// alternatives returns the comma-separated alternatives of g within s.
+func (g braceGroup) alternatives(s string) []string {
+	alts := make([]string, 0, len(g.commas)+1)
+	start := g.open + 1
+	for _, c := range g.commas {
+		alts = append(alts, s[start:c])
+		start = c + 1
+	}
+	return append(alts, s[start:g.closing])
+}
+
+// braceGroups returns every expandable brace group of s ordered by its opening
+// brace, in one pass: a stack pairs each `{` with its `}` and collects the
+// commas at its top level. A group with such a comma is a comma list;
+// otherwise a `..` anywhere inside makes it a sequence. Unmatched `{` never
+// enclose a matched group, so they are simply left on the stack.
+func braceGroups(s string) []braceGroup {
+	type frame struct {
+		open   int
+		commas []int
+	}
+	var (
+		stack   []frame
+		groups  []braceGroup
+		lastDot = -1 // start of the latest ".." seen
+	)
 	for i := 0; i < len(s); i++ {
-		if s[i] != '{' {
-			continue
-		}
-		depth, start := 0, i+1
-		var parts []string
-		for j := i; j < len(s); j++ {
-			switch s[j] {
-			case '{':
-				depth++
-			case ',':
-				if depth == 1 {
-					parts = append(parts, s[start:j])
-					start = j + 1
-				}
-			case '}':
-				depth--
-				if depth != 0 {
-					continue
-				}
-				if len(parts) > 0 {
-					return i, j, append(parts, s[start:j]), false
-				}
-				if strings.Contains(s[i+1:j], "..") {
-					return i, j, nil, true
-				}
-				j = len(s) // not expandable; look for a later group
+		switch s[i] {
+		case '.':
+			if i+1 < len(s) && s[i+1] == '.' {
+				lastDot = i
+			}
+		case '{':
+			stack = append(stack, frame{open: i})
+		case ',':
+			if n := len(stack); n > 0 {
+				stack[n-1].commas = append(stack[n-1].commas, i)
+			}
+		case '}':
+			n := len(stack)
+			if n == 0 {
+				continue
+			}
+			f := stack[n-1]
+			stack = stack[:n-1]
+			if len(f.commas) > 0 || lastDot > f.open {
+				groups = append(groups, braceGroup{open: f.open, closing: i, commas: f.commas, seq: len(f.commas) == 0})
 			}
 		}
 	}
-	return -1, -1, nil, false
+	// Groups were collected in closing order.
+	slices.SortFunc(groups, func(a, b braceGroup) int { return a.open - b.open })
+	return groups
+}
+
+// replaceSequences replaces each outermost sequence among groups (the brace
+// groups of s) with `*`.
+func replaceSequences(s string, groups []braceGroup) string {
+	var b strings.Builder
+	b.Grow(len(s))
+	pos := 0
+	for _, g := range groups {
+		if !g.seq || g.open < pos {
+			continue // a comma list, or inside a sequence already replaced
+		}
+		b.WriteString(s[pos:g.open])
+		b.WriteByte('*')
+		pos = g.closing + 1
+	}
+	b.WriteString(s[pos:])
+	return b.String()
 }
 
 // isRelativePath reports whether p is a relative path that the shell resolves
@@ -360,7 +433,7 @@ func refersProtected(sc scannedCommand, p string) bool {
 			}
 			continue
 		}
-		if resolvedProtected(resolved) {
+		if resolvedProtected(sc.fs, resolved) {
 			return true
 		}
 	}
@@ -452,17 +525,22 @@ func scanMentionsProtected(ctx *EvalContext) bool {
 // bashMutatesProtected is the shared protected-mutation predicate behind the
 // Bash self-protection rules: the line references a protected path and either
 // cannot be parsed (fail closed) or one of its commands mutates one (see
-// protectedMutation). The result is memoized on ctx.
+// protectedMutation), a command deletes or replaces a directory holding a
+// home-anchored protected location (see replacesProtectedAncestor), or a
+// command relocates a protected location (see relocatesProtected). The result
+// is memoized on ctx.
 func bashMutatesProtected(ctx *EvalContext) bool {
 	if ctx.mutatesDone {
 		return ctx.mutates
 	}
 	ctx.mutatesDone = true
-	if !lineMentionsProtected(ctx) {
-		return false
-	}
 	scs, err := ctx.scannedCommands()
-	ctx.mutates = err != nil || protectedMutation(scs)
+	if err != nil {
+		ctx.mutates = lineMentionsProtected(ctx) || unparsedRelocatesHome(ctx.Command)
+		return ctx.mutates
+	}
+	ctx.mutates = (lineMentionsProtected(ctx) && protectedMutation(scs)) ||
+		replacesProtectedAncestor(scs) || relocatesProtected(ctx.Command, scs)
 	return ctx.mutates
 }
 
@@ -535,9 +613,9 @@ func operandArgs(sc scannedCommand) []string {
 }
 
 // copySourcesAndDest returns the source operands and the destination of a
-// cp/rsync command. The destination is cp's -t/--target-directory directory
-// when given, else the last positional operand (a lone operand is treated as
-// the destination).
+// cp/mv/ln/rsync command. The destination is the -t/--target-directory
+// directory (targetDirVerbs) when given, else the last positional operand (a lone operand is
+// treated as the destination).
 func copySourcesAndDest(sc scannedCommand) (sources []string, dest string) {
 	var positionals []string
 	targetDir := ""
@@ -550,7 +628,7 @@ func copySourcesAndDest(sc scannedCommand) (sources []string, dest string) {
 			positionals = append(positionals, a)
 		case a == "--":
 			endOfOpts = true
-		case sc.Name != "cp":
+		case !targetDirVerbs[sc.Name]:
 			// rsync has no target-directory option (its -t preserves times).
 		case a == "-t" || a == "--target-directory":
 			if i+1 < len(args) {

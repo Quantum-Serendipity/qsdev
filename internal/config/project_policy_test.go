@@ -202,8 +202,11 @@ func TestProjectPolicy_Apply(t *testing.T) {
 				if a.ComplianceLevel != "strict" {
 					t.Errorf("ComplianceLevel = %q, want strict", a.ComplianceLevel)
 				}
-				if !a.Hooks.PreCommit || !a.Hooks.AuditLog || !a.Hooks.AutoFormat {
+				if !a.Hooks.AuditLog {
 					t.Errorf("strict hooks not enabled: %+v", a.Hooks)
+				}
+				if a.Hooks.AutoFormat || a.Hooks.PreCommit {
+					t.Errorf("strict implied a preset no Claude Code hook implements: %+v", a.Hooks)
 				}
 				if a.PermissionLevel != "minimal" {
 					t.Errorf("PermissionLevel = %q, want the strict client's minimal", a.PermissionLevel)
@@ -240,7 +243,7 @@ func TestProjectPolicy_Apply(t *testing.T) {
 			answers: types.WizardAnswers{ClaudeCode: true},
 			check: func(t *testing.T, a types.WizardAnswers) {
 				t.Helper()
-				if a.ComplianceLevel != "enhanced" || !a.Hooks.PreCommit {
+				if a.ComplianceLevel != "enhanced" {
 					t.Errorf("floor not applied: level %q, hooks %+v", a.ComplianceLevel, a.Hooks)
 				}
 			},
@@ -364,5 +367,40 @@ func TestPreserveCommittedPolicy(t *testing.T) {
 	PreserveCommittedPolicy(&fresh, nil)
 	if fresh.Security.Level != "enhanced" || fresh.Client != nil {
 		t.Errorf("nil committed changed fresh: %+v", fresh)
+	}
+}
+
+// TestCommittedTools verifies a missing committed config is not an error
+// (no opt-out is recorded) while one that cannot be loaded is reported, so
+// callers can tell the two apart.
+func TestCommittedTools(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name        string
+		dir         func(t *testing.T) string
+		wantErr     bool
+		wantNil     bool
+		wantEnabled []string
+	}{
+		{name: "missing", dir: func(t *testing.T) string { return t.TempDir() }, wantNil: true},
+		{name: "unparseable", dir: func(t *testing.T) string { return writeProjectFiles(t, "tools: [\n", "") }, wantErr: true, wantNil: true},
+		{name: "loaded", dir: func(t *testing.T) string {
+			return writeProjectFiles(t, "version: 2\ntools:\n  enabled: [attach-guard]\n", "")
+		}, wantEnabled: []string{"attach-guard"}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			tools, err := CommittedTools(tt.dir(t))
+			if (err != nil) != tt.wantErr {
+				t.Fatalf("err = %v, wantErr %v", err, tt.wantErr)
+			}
+			if (tools == nil) != tt.wantNil {
+				t.Fatalf("tools = %+v, want nil %v", tools, tt.wantNil)
+			}
+			if tools != nil && !slices.Equal(tools.Enabled, tt.wantEnabled) {
+				t.Errorf("enabled = %v, want %v", tools.Enabled, tt.wantEnabled)
+			}
+		})
 	}
 }

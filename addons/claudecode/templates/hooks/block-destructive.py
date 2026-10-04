@@ -25,12 +25,16 @@ Configuration via environment variables:
   DESTRUCTIVE_PREVENTION_PRODUCTION_HOSTS   — comma-separated host name parts (default: prod,production,live,staging)
 """
 
-# Annotations stay unevaluated so the PEP 604 / PEP 585 forms below also load
-# on Python 3.9 (e.g. macOS's /usr/bin/python3); evaluating them there raised
-# TypeError at import, which exited 1 and failed open.
-from __future__ import annotations
-
 import sys
+
+# Keep this first: Python puts the script's own directory at the front of
+# sys.path, so a module planted beside this hook (json.py, re.py, a .pyc, a
+# package directory) would replace the stdlib module the hook imports and
+# could make it allow everything. -P, -I and PYTHONSAFEPATH leave the
+# directory out already. No `from __future__` import, which would load
+# __future__ before this scrub runs: keep annotations valid on Python 3.9.
+if __name__ == "__main__" and not (getattr(sys.flags, "safe_path", False) or sys.flags.isolated):
+    del sys.path[0]
 
 
 def _fail_closed(exc_type, exc, _tb) -> None:
@@ -52,8 +56,51 @@ import posixpath  # noqa: E402
 import re  # noqa: E402
 import shlex  # noqa: E402
 import subprocess  # noqa: E402
+import threading  # noqa: E402
 from datetime import datetime, timezone  # noqa: E402
 from pathlib import Path  # noqa: E402
+from typing import Optional  # noqa: E402
+
+# U17-WS7: moves to qsdev_hooklib
+# Oldest interpreter the hook supports (Go: types.MinHookPython). Below it,
+# block (exit 2) instead of crashing with exit 1, which Claude Code treats as
+# a non-blocking error.
+_MIN_PYTHON = (3, 9)
+if sys.version_info < _MIN_PYTHON:
+    print(f"destructive-prevention requires Python {'.'.join(map(str, _MIN_PYTHON))}+ "
+          f"(found {sys.version.split()[0]}); blocking to fail closed.", file=sys.stderr)
+    sys.exit(2)
+
+# U17-WS7: moves to qsdev_hooklib
+# Internal deadline: the hook's registered settings.json timeout minus 2s.
+# Claude Code lets the tool call through when a hook times out, so the
+# watchdog blocks first. QSDEV_HOOK_DEADLINE_MS can only shorten it. Known
+# limit: a C-level regex match that holds the GIL cannot be interrupted by
+# any in-process watchdog.
+_HOOK_DEADLINE_S = 8
+
+
+def _deadline_seconds() -> float:
+    """The effective deadline: _HOOK_DEADLINE_S, or QSDEV_HOOK_DEADLINE_MS
+    when that is shorter."""
+    try:
+        return min(float(_HOOK_DEADLINE_S), int(os.environ.get("QSDEV_HOOK_DEADLINE_MS", "")) / 1000)
+    except ValueError:
+        return float(_HOOK_DEADLINE_S)
+
+
+def _arm_deadline() -> None:
+    """Start a daemon watchdog that blocks (exit 2) once the deadline passes."""
+    seconds = _deadline_seconds()
+
+    def expire() -> None:
+        sys.stderr.write(f"destructive-prevention: evaluation exceeded {seconds:g}s deadline; blocking (fail closed)\n")
+        sys.stderr.flush()
+        os._exit(2)
+
+    timer = threading.Timer(seconds, expire)
+    timer.daemon = True
+    timer.start()
 
 # Tools whose tool_input.command runs in a shell. The hook's settings.json
 # matcher must list exactly these tools (hook_registry.go shellToolMatcher;
@@ -153,7 +200,7 @@ class Cmd:
 
     __slots__ = ("argv", "redirects", "pipe_in", "pipeline", "parent")
 
-    def __init__(self, pipeline: int, pipe_in: bool = False, parent: Cmd | None = None):
+    def __init__(self, pipeline: int, pipe_in: bool = False, parent: Optional["Cmd"] = None):
         self.argv: list[str] = []
         self.redirects: list[tuple[str, str]] = []
         self.pipe_in = pipe_in          # stdin comes from the previous command
@@ -170,13 +217,13 @@ class _Parser:
         self.next_pipeline += 1
         return self.next_pipeline
 
-    def parse(self, text: str, depth: int, parent: Cmd | None) -> None:
+    def parse(self, text: str, depth: int, parent: Optional["Cmd"]) -> None:
         tokens = _tokenize(text)
         start = len(self.cmds)
         cur = Cmd(self._new_pipeline(), parent=parent)
         # Open substitutions/groups: (kind, command to resume after closing).
-        stack: list[tuple[str, Cmd | None]] = []
-        pending_redirect: str | None = None
+        stack: list[tuple[str, Optional[Cmd]]] = []
+        pending_redirect: Optional[str] = None
 
         def finish(c: Cmd) -> None:
             if c.argv or c.redirects:
@@ -442,7 +489,7 @@ def _anchor(p: str) -> str:
     return _normpath(p)
 
 
-def _absolute(path: str, cwd: str) -> str | None:
+def _absolute(path: str, cwd: str) -> Optional[str]:
     """A shell word naming a path as an absolute, slash-separated path that
     keeps any drive letter: ~, $HOME and ${HOME} are expanded, trailing `/*`
     globs dropped (`dir/*` reaches everything `dir` holds), and relative paths
@@ -463,14 +510,14 @@ def _absolute(path: str, cwd: str) -> str | None:
     return p
 
 
-def resolve_path(path: str, cwd: str) -> str | None:
+def resolve_path(path: str, cwd: str) -> Optional[str]:
     """Resolve a shell word naming a path (see _absolute) to the normalised,
     drive-less form paths are compared in. None when it cannot be resolved."""
     p = _absolute(path, cwd)
     return None if p is None else _anchor(p)  # a drive root compares like "/"
 
 
-def resolve_dir(path: str, cwd: str) -> str | None:
+def resolve_dir(path: str, cwd: str) -> Optional[str]:
     """Like resolve_path, but keeps the drive letter: for a directory the hook
     itself opens (the repository `git -C` or `cd` moves to), where a drive-less
     path would resolve against this process's current drive on Windows."""
@@ -515,25 +562,39 @@ def _is_temp(resolved: str) -> bool:
 _CHDIR = frozenset({"cd", "pushd", "chdir", "set-location", "sl"})
 
 
-def working_dirs(cmds: list[Cmd], cwd: str) -> list[str]:
-    """The directory each command runs in: cwd, as changed by any earlier
-    top-level `cd` (so `cd .. && rm -rf project` resolves against the parent).
-    A cd whose target cannot be resolved (`cd "$DIR"`) keeps the last known
-    directory."""
-    dirs: list[str] = []
-    cur = cwd
+def tracked_dirs(cmds: list[Cmd], cwd: str) -> list[tuple[str, bool]]:
+    """The directory each command runs in, with whether it is known: cwd, as
+    changed by any earlier top-level `cd` (so `cd .. && rm -rf project`
+    resolves against the parent). A cd whose target cannot be resolved
+    (`cd "$DIR"`, `cd -`) keeps the last known directory but marks it unknown
+    until a later cd names an absolute one."""
+    dirs: list[tuple[str, bool]] = []
+    cur, known = cwd, True
     for cmd in cmds:
-        dirs.append(cur)
+        dirs.append((cur, known))
         argv = effective_argv(cmd.argv)
         if cmd.parent is not None or not argv or prog(argv[0]) not in _CHDIR:
             continue
         operands = [a for a in argv[1:] if not a.startswith("-")]
         if argv[1:2] == ["-"]:
-            continue  # `cd -`: the previous directory, unknown here
-        target = resolve_dir(operands[0] if operands else "~", cur)
-        if target is not None:
+            known = False  # `cd -`: the previous directory, unknown here
+            continue
+        operand = operands[0] if operands else "~"
+        target = resolve_dir(operand, cur)
+        if target is None:
+            known = False
+        else:
+            # A relative cd from an unknown directory stays unknown; an
+            # absolute one (the same from any cwd) makes it known again.
+            known = known or _absolute(operand, "/a") == _absolute(operand, "/b")
             cur = target
     return dirs
+
+
+def working_dirs(cmds: list[Cmd], cwd: str) -> list[str]:
+    """The directory each command runs in (see tracked_dirs); an unresolvable
+    cd keeps the last known directory."""
+    return [d for d, _ in tracked_dirs(cmds, cwd)]
 
 
 # ---------------------------------------------------------------------------
@@ -618,7 +679,7 @@ def _find_deletes(args: list[str]) -> tuple[bool, list[str]]:
     return deletes, starts or ["."]
 
 
-def _rsync_delete_target(args: list[str]) -> str | None:
+def _rsync_delete_target(args: list[str]) -> Optional[str]:
     """The destination of an rsync that deletes extraneous files, else None."""
     if not any(a == "--del" or a.startswith("--delete") for a in args):
         return None
@@ -626,7 +687,7 @@ def _rsync_delete_target(args: list[str]) -> str | None:
     return positional[-1] if len(positional) >= 2 else None
 
 
-def check_filesystem(cmds: list[Cmd], cwd: str, project: str) -> tuple[str, str] | None:
+def check_filesystem(cmds: list[Cmd], cwd: str, project: str) -> Optional[tuple[str, str]]:
     whole_tree = (
         "Recursive deletion of root/home directory or the project tree detected.",
         "Use targeted rm on specific files or directories within the project.",
@@ -696,31 +757,44 @@ _GIT_VALUE_OPTS = frozenset({
 _PUSH_VALUE_OPTS = frozenset({"-o", "--push-option", "--repo", "--receive-pack", "--exec"})
 
 
-def _git_subcommand(args: list[str], cwd: str) -> tuple[str, list[str], str]:
+def _git_subcommand(
+    args: list[str], cwd: Optional[str],
+) -> tuple[str, list[str], Optional[str]]:
     """git's subcommand, its arguments, and the directory it runs in (cwd as
-    changed by -C)."""
+    changed by -C); None when that directory cannot be resolved."""
     k = 0
     while k < len(args) and args[k].startswith("-"):
         if args[k] == "-C" and k + 1 < len(args):
-            cwd = resolve_dir(args[k + 1], cwd) or cwd
+            cwd = resolve_dir(args[k + 1], cwd) if cwd is not None else None
         k += 2 if args[k] in _GIT_VALUE_OPTS else 1
     if k >= len(args):
         return "", [], cwd
     return args[k], args[k + 1:], cwd
 
 
-def current_branch(repo_dir: str) -> str | None:
-    """The branch checked out in repo_dir, or None (detached, not a repo, or
-    git unavailable)."""
+# current_branch's answer when git could not be asked (missing, failed to
+# start, or timed out), failed (not a repository, a fatal error), or the
+# directory it would run in is unknown. A space cannot appear in a ref name, so
+# no real branch collides with it.
+BRANCH_UNKNOWN = "(branch unknown)"
+
+
+def current_branch(repo_dir: Optional[str]) -> Optional[str]:
+    """The branch checked out in repo_dir; None when HEAD is detached;
+    BRANCH_UNKNOWN when repo_dir is unknown or git could not answer."""
+    if repo_dir is None:
+        return BRANCH_UNKNOWN
     try:
         out = subprocess.run(
             ["git", "-C", repo_dir, "symbolic-ref", "--short", "-q", "HEAD"],
             capture_output=True, text=True, timeout=2,
         )
     except (OSError, subprocess.SubprocessError):
-        return None
+        return BRANCH_UNKNOWN
+    if out.returncode == 1:
+        return None  # `symbolic-ref -q` on a detached HEAD
     if out.returncode != 0:
-        return None
+        return BRANCH_UNKNOWN  # 128: not a repository, or a fatal error
     return out.stdout.strip() or None
 
 
@@ -731,7 +805,7 @@ def _branch_of(ref: str) -> str:
     return ref
 
 
-def _push_rewrites_protected(args: list[str], repo_dir: str) -> bool:
+def _push_rewrites_protected(args: list[str], repo_dir: Optional[str]) -> bool:
     force = delete = False
     positional: list[str] = []
     k = 0
@@ -765,19 +839,21 @@ def _push_rewrites_protected(args: list[str], repo_dir: str) -> bool:
             continue
         if target in ("HEAD", "@"):
             target = current_branch(repo_dir) or ""
-        if target in protected:
+        # A history-rewriting push of a branch git could not name may be a
+        # push to a protected one: fail closed.
+        if target == BRANCH_UNKNOWN or target in protected:
             return True
     return False
 
 
-def check_git(cmds: list[Cmd], cwd: str) -> tuple[str, str] | None:
+def check_git(cmds: list[Cmd], cwd: str) -> Optional[tuple[str, str]]:
     """Check for destructive git operations: force pushes and deletes of
     protected branches, hard resets, forced cleans and forced branch deletes."""
-    for cmd, cmd_cwd in zip(cmds, working_dirs(cmds, cwd)):
+    for cmd, (cmd_cwd, known) in zip(cmds, tracked_dirs(cmds, cwd)):
         argv = effective_argv(cmd.argv)
         if not argv or prog(argv[0]) != "git":
             continue
-        sub, args, repo_dir = _git_subcommand(argv[1:], cmd_cwd)
+        sub, args, repo_dir = _git_subcommand(argv[1:], cmd_cwd if known else None)
         flags = _short_flags(args)
         if sub == "push" and _push_rewrites_protected(args, repo_dir):
             return (
@@ -845,7 +921,7 @@ def _sql_texts(cmds: list[Cmd], command: str) -> list[str]:
     return texts
 
 
-def check_database(cmds: list[Cmd], command: str) -> tuple[str, str] | None:
+def check_database(cmds: list[Cmd], command: str) -> Optional[tuple[str, str]]:
     for text in _sql_texts(cmds, command):
         for pattern, reason, remediation in DB_PATTERNS:
             if pattern.search(text):
@@ -912,7 +988,7 @@ _PS_DOWNLOAD_EXEC = re.compile(
 )
 
 
-def check_remote_code(cmds: list[Cmd], command: str, powershell: bool) -> tuple[str, str] | None:
+def check_remote_code(cmds: list[Cmd], command: str, powershell: bool) -> Optional[tuple[str, str]]:
     fetch_pipelines = {c.pipeline for c in cmds if _is_fetch(c)}
     for idx, cmd in enumerate(cmds):
         # Downloaded content piped into anything that executes stdin.
@@ -1045,7 +1121,7 @@ def _file_op_operands(name: str, args: list[str]) -> list[str]:
     return operands[-1:] if len(operands) > 1 else []
 
 
-def _outside_project_operand(name: str, args: list[str], cwd: str, project: str) -> str | None:
+def _outside_project_operand(name: str, args: list[str], cwd: str, project: str) -> Optional[str]:
     """The first operand cp/mv/rsync writes that resolves outside the project
     tree and outside the temp directories, else None."""
     project_real = _slash(os.path.realpath(project))
@@ -1064,7 +1140,7 @@ def _outside_project_operand(name: str, args: list[str], cwd: str, project: str)
     return None
 
 
-def check_cross_environment(cmds: list[Cmd], cwd: str, project: str) -> tuple[str, str] | None:
+def check_cross_environment(cmds: list[Cmd], cwd: str, project: str) -> Optional[tuple[str, str]]:
     """Check for operations targeting production or outside project scope."""
     for cmd, cwd in zip(cmds, working_dirs(cmds, cwd)):
         argv = effective_argv(cmd.argv)
@@ -1139,7 +1215,7 @@ def _terraform_subcommand(args: list[str]) -> tuple[str, list[str]]:
     return "", []
 
 
-def check_infrastructure(cmds: list[Cmd]) -> tuple[str, str] | None:
+def check_infrastructure(cmds: list[Cmd]) -> Optional[tuple[str, str]]:
     for cmd in cmds:
         argv = effective_argv(cmd.argv)
         if not argv:
@@ -1194,6 +1270,7 @@ def check_infrastructure(cmds: list[Cmd]) -> tuple[str, str] | None:
 # ---------------------------------------------------------------------------
 
 def main() -> None:
+    _arm_deadline()
     try:
         input_data = json.load(sys.stdin)
     except (json.JSONDecodeError, ValueError) as e:

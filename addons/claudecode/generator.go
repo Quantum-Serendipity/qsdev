@@ -5,6 +5,7 @@ import (
 	"slices"
 	"strings"
 
+	qsdevanswers "github.com/Quantum-Serendipity/qsdev/internal/answers"
 	"github.com/Quantum-Serendipity/qsdev/internal/catalog"
 	"github.com/Quantum-Serendipity/qsdev/internal/tier"
 	"github.com/Quantum-Serendipity/qsdev/internal/toolreg"
@@ -52,6 +53,12 @@ func resolveTier(answers types.WizardAnswers) tier.Tier {
 // toolreg.Tool.IsAgentTool) are produced by the devinit addon's tool-files
 // producer, so they do not depend on Claude Code being configured.
 func (g *ClaudeCodeGenerator) Generate(answers types.WizardAnswers) ([]types.GeneratedFile, error) {
+	// Apply the answers invariants here too, so every entry point (claude
+	// subcommands, init --update, repair, the MCP adapter) generates from
+	// answers that satisfy them. answers is a value copy; slices it shares
+	// with the caller are not touched.
+	qsdevanswers.EnforceInvariants(&answers)
+
 	var files []types.GeneratedFile
 	t := resolveTier(answers)
 
@@ -79,7 +86,7 @@ func (g *ClaudeCodeGenerator) Generate(answers types.WizardAnswers) ([]types.Gen
 	files = append(files, hookFiles...)
 
 	// Gate 1: tier >= Standard for CLAUDE.md, skills, rules
-	if t < tier.Standard {
+	if !tier.GeneratesAgentConfig(answers) {
 		return files, nil
 	}
 
@@ -315,7 +322,7 @@ func dedupeFilesByPath(files []types.GeneratedFile) []types.GeneratedFile {
 // an unqualified success. After the standard-tier fix (skills + configured MCP
 // now emit at Standard), suppression only happens below Standard.
 func SuppressedConfigWarnings(answers types.WizardAnswers) []string {
-	if resolveTier(answers) >= tier.Standard {
+	if tier.GeneratesAgentConfig(answers) {
 		return nil
 	}
 	var warnings []string

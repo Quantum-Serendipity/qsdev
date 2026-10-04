@@ -23,9 +23,26 @@ We will acknowledge receipt within 48 hours and provide a resolution timeline wi
 
 ## Security Practices
 
-- Releases are built with [SLSA Level 3](https://slsa.dev/) provenance
+- Releases carry [SLSA](https://slsa.dev/) Build L2 provenance (GitHub artifact attestations)
 - All release artifacts are signed with Cosign (Sigstore)
 - Dependencies are monitored with Dependabot and govulncheck
 - Code is scanned with CodeQL on every PR
 - Branch protection enforces peer review on `main`
 - All CI actions are pinned to commit SHAs
+
+## Guardrail Invariants
+
+Every command that generates `.claude/settings.json` registers two hooks,
+whatever the saved answers say:
+
+- **Self-protection** (`qsdev selfprotect`) is always registered. It has no
+  opt-out; the `hooks.self_protection` answer is kept only for schema
+  compatibility and is rewritten to `true`.
+- **package-guard** (`.claude/hooks/package-guard.py`) is registered unless
+  the project opts out with `qsdev disable attach-guard --force`, which
+  records the opt-out in the committed `.qsdev.yaml`. Editing the answers
+  file, or passing `--claude-hooks`, does not remove it. A project without a
+  committed `.qsdev.yaml` (set up with only `qsdev claude init`) cannot opt
+  out: `disable --force` refuses there until `qsdev init` creates the file.
+
+CI enforces both for every generating command (`cmd/qsdev/guardrail_invariants_test.go`).

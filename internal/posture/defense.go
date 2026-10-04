@@ -1,14 +1,21 @@
 package posture
 
 import (
-	"encoding/json"
 	"fmt"
+	"maps"
 	"os"
 	"path/filepath"
 	"regexp"
+	"runtime"
 	"slices"
 	"strings"
+	"sync"
 
+	"github.com/Quantum-Serendipity/qsdev/internal/claudesettings"
+	"github.com/Quantum-Serendipity/qsdev/internal/selfprotect/cmdscan"
+	"github.com/Quantum-Serendipity/qsdev/internal/shebang"
+	"github.com/Quantum-Serendipity/qsdev/internal/state"
+	"github.com/Quantum-Serendipity/qsdev/pkg/branding"
 	"github.com/Quantum-Serendipity/qsdev/pkg/ecosystem"
 	"github.com/Quantum-Serendipity/qsdev/pkg/types"
 )
@@ -30,7 +37,6 @@ func init() {
 // Artifacts whose presence or content the defense layers inspect.
 const (
 	packageGuardPath    = ".claude/hooks/package-guard.py"
-	claudeSettingsPath  = ".claude/settings.json"
 	preCommitConfigPath = ".pre-commit-config.yaml"
 	devenvNixPath       = "devenv.nix"
 	grypeConfigPath     = ".grype.yaml"
@@ -88,6 +94,30 @@ type assessmentInput struct {
 	Detected     types.DetectedProject
 	// GenState lists the generated files that are present on disk.
 	GenState types.GeneratedState
+	// claudeSettings returns the effective Claude settings of ProjectPath,
+	// read once on first use; nil reads as an empty view.
+	claudeSettings func() (claudesettings.Effective, error)
+	// guardOnce returns the package guard's state, judged once on first use.
+	guardOnce func() guardState
+	// userSettingsRead records that claudeSettings includes the user file.
+	userSettingsRead bool
+	// packageGuard is the generator's package-guard.py (see
+	// AssessOptions.PackageGuard).
+	packageGuard []byte
+}
+
+// guardState is whether the package guard is in force, and why.
+type guardState struct {
+	Status LayerStatus
+	Reason string
+}
+
+// settings returns the effective Claude settings of the project.
+func (in assessmentInput) settings() (claudesettings.Effective, error) {
+	if in.claudeSettings == nil {
+		return claudesettings.Read("")
+	}
+	return in.claudeSettings()
 }
 
 // has reports whether the generated file at rel is present.
@@ -107,6 +137,110 @@ func (in assessmentInput) content(rel string) []byte {
 		return nil
 	}
 	return data
+}
+
+// guard returns whether package-guard.py is verifiably in force.
+func (in assessmentInput) guard() guardState {
+	return in.guardOnce()
+}
+
+// judgeGuard judges the package guard from the effective Claude settings, the
+// enabled tools and the guard script on disk. The first check that fails
+// decides; the guard is in force only when none does. Managed settings are
+// never read, user settings only when the assessment was asked to.
+func (in assessmentInput) judgeGuard() guardState {
+	disabled := func(reason string) guardState { return guardState{Status: LayerDisabled, Reason: reason} }
+	settings, err := in.settings()
+	switch {
+	case err != nil:
+		return disabled(fmt.Sprintf("Claude settings unreadable: %v", err))
+	case settings.Project != nil && settings.Project.Unloadable != "":
+		return disabled(fmt.Sprintf("Claude Code does not load %s (%s), so none of its hooks or deny rules apply",
+			claudesettings.ProjectRelPath, settings.Project.Unloadable))
+	case settings.DisableAllHooks:
+		return disabled(fmt.Sprintf("hooks disabled (%s in %s)",
+			claudesettings.KeyDisableAllHooks, strings.Join(settings.Sources[claudesettings.KeyDisableAllHooks], ", ")))
+	case !in.EnabledTools["attach-guard"]:
+		return disabled("attach-guard not enabled")
+	case !in.has(packageGuardPath):
+		return disabled("package-guard.py not present")
+	}
+	if reason := in.guardModified(); reason != "" {
+		return disabled(reason)
+	}
+	if reason := in.guardUnrunnable(); reason != "" {
+		return disabled(reason)
+	}
+	for _, name := range slices.Sorted(maps.Keys(settings.Env)) {
+		if value := settings.Env[name]; value != "" && claudesettings.IsLaunchEnv(name) {
+			return disabled(fmt.Sprintf("hook commands run with %s=%q (set in %s), which decides what program or code a hook runs, so the hook may never run package-guard.py",
+				name, value, strings.Join(settings.Sources[claudesettings.EnvSourceKey(name)], ", ")))
+		}
+	}
+	for _, tool := range cmdscan.ShellTools {
+		if !settings.RunsScript(claudesettings.EventPreToolUse, tool, packageGuardPath, branding.Get().AppName, claudesettings.GuardHookTimeout) {
+			return disabled(fmt.Sprintf("package-guard.py not registered as a blocking PreToolUse hook matching %s "+
+				"(not async, timeout at least %ds) in %s or %s, so %s commands run unguarded",
+				tool, claudesettings.GuardHookTimeout, claudesettings.ProjectRelPath, claudesettings.LocalRelPath, tool))
+		}
+	}
+	unread := "user/managed"
+	if in.userSettingsRead {
+		unread = "managed"
+	}
+	return guardState{Status: LayerEnabled, Reason: "package-guard.py unmodified and registered as a PreToolUse hook " +
+		"matching " + strings.Join(cmdscan.ShellTools, ", ") + " (" + unread + " settings not inspected)"}
+}
+
+// guardUnrunnable returns why the kernel cannot start package-guard.py on
+// this platform, or "": a CRLF interpreter line (which the content comparison
+// ignores) makes the fail-closed hook block every shell command without
+// checking any.
+func (in assessmentInput) guardUnrunnable() string {
+	if in.ProjectPath == "" {
+		return ""
+	}
+	line, err := shebang.Read(filepath.Join(in.ProjectPath, filepath.FromSlash(packageGuardPath)))
+	switch {
+	case err != nil:
+		return fmt.Sprintf("package-guard.py unreadable: %v", err)
+	case line.CRLFFails(runtime.GOOS):
+		return "package-guard.py has a CRLF interpreter line, so it cannot start: every shell command is blocked " +
+			"and none is checked; convert " + packageGuardPath + " to LF line endings"
+	}
+	return ""
+}
+
+// guardModified returns why package-guard.py on disk cannot be credited as the
+// generated version, or "" when it is the content the generator writes (see
+// AssessOptions.PackageGuard), line endings aside, with its recorded mode.
+// The local state and the committed manifest are not consulted for the
+// content: either can be re-hashed along with an edited guard.
+func (in assessmentInput) guardModified() string {
+	switch {
+	case in.ProjectPath == "":
+		return "package-guard.py content not inspected"
+	case in.packageGuard == nil:
+		return "package-guard.py content not verified: no generated version to compare it with"
+	}
+	fs := state.CheckContent(in.ProjectPath, packageGuardPath, in.packageGuard, in.GenState.Files[packageGuardPath].Mode)
+	switch fs.Status {
+	case types.Unmodified:
+		return ""
+	case types.Deleted:
+		return "package-guard.py not present"
+	case types.Modified:
+		return "package-guard.py modified from the generated version this qsdev writes; run " +
+			"'qsdev update --configs-only --overwrite-modified' to restore " + packageGuardPath
+	default:
+		return fmt.Sprintf("package-guard.py unreadable: %v", fs.Error)
+	}
+}
+
+// guardLayer reports the package guard's state as a layer result.
+func guardLayer(input assessmentInput) (LayerStatus, int, string) {
+	g := input.guard()
+	return g.Status, 0, g.Reason
 }
 
 // hasLockFileAuditHook reports whether the lock file audit hook is configured
@@ -184,39 +318,6 @@ func (in assessmentInput) ageUngatedLanguages() []string {
 	return out
 }
 
-// packageGuardRegistered reports whether .claude/settings.json registers
-// package-guard.py as a PreToolUse hook and does not disable all hooks. The script on disk does nothing
-// unless Claude Code is told to run it.
-func (in assessmentInput) packageGuardRegistered() bool {
-	data := in.content(claudeSettingsPath)
-	if data == nil {
-		return false
-	}
-	// Keys are read exactly, as Claude Code reads them (encoding/json would
-	// also accept a decoy "Hooks" key), and hooks switched off wholesale
-	// guard nothing.
-	var settings map[string]any
-	if err := json.Unmarshal(data, &settings); err != nil {
-		return false
-	}
-	if off, _ := settings["disableAllHooks"].(bool); off {
-		return false
-	}
-	events, _ := settings["hooks"].(map[string]any)
-	matchers, _ := events["PreToolUse"].([]any)
-	for _, m := range matchers {
-		mm, _ := m.(map[string]any)
-		hooks, _ := mm["hooks"].([]any)
-		for _, h := range hooks {
-			hm, _ := h.(map[string]any)
-			if cmd, _ := hm["command"].(string); strings.Contains(cmd, packageGuardPath) {
-				return true
-			}
-		}
-	}
-	return false
-}
-
 // layerSpec defines one defense layer's metadata and assessment logic.
 type layerSpec struct {
 	Name    string
@@ -231,40 +332,19 @@ var layerTable = []layerSpec{
 		Name:    "pretooluse-hooks",
 		Weight:  WeightCritical,
 		MinTier: 1,
-		Assess: func(input assessmentInput) (LayerStatus, int, string) {
-			attachGuardEnabled := input.EnabledTools["attach-guard"]
-			hasPackageGuard := input.has(packageGuardPath)
-
-			if attachGuardEnabled && hasPackageGuard {
-				// Judged from the hook actually registered in settings.json:
-				// a script nothing runs guards nothing.
-				if !input.packageGuardRegistered() {
-					return LayerPartial, 5, "package-guard.py present but not run as a PreToolUse hook (not registered in " + claudeSettingsPath + ", or hooks are disabled)"
-				}
-				return LayerEnabled, 0, "attach-guard enabled and package-guard.py registered as a PreToolUse hook"
-			}
-			if attachGuardEnabled || hasPackageGuard {
-				if !attachGuardEnabled {
-					return LayerPartial, 5, "package-guard.py present but attach-guard not enabled"
-				}
-				return LayerPartial, 5, "attach-guard enabled but package-guard.py not present"
-			}
-			return LayerDisabled, 0, "attach-guard not enabled"
-		},
+		// The layer is the package guard itself.
+		Assess: guardLayer,
 	},
 	{
 		Name:    "age-gating",
 		Weight:  WeightHigh,
 		MinTier: 2,
 		Assess: func(input assessmentInput) (LayerStatus, int, string) {
-			if !input.EnabledTools["attach-guard"] {
-				return LayerDisabled, 0, "attach-guard not enabled; age-gating requires it"
-			}
 			// Age-gating is built into package-guard.py (MIN_AGE_DAYS), which
 			// checks publication age only for some registries: a project using
 			// another package ecosystem is only partly gated.
-			if !input.has(packageGuardPath) {
-				return LayerDisabled, 0, "package-guard.py not present"
+			if g := input.guard(); g.Status != LayerEnabled {
+				return g.Status, 0, g.Reason
 			}
 			if uncovered := input.ageUngatedLanguages(); len(uncovered) > 0 {
 				return LayerPartial, 5, fmt.Sprintf("package-guard.py checks publication age only for %s packages; not for: %s",
@@ -277,12 +357,8 @@ var layerTable = []layerSpec{
 		Name:    "install-script-blocking",
 		Weight:  WeightHigh,
 		MinTier: 1,
-		Assess: func(input assessmentInput) (LayerStatus, int, string) {
-			if input.EnabledTools["attach-guard"] {
-				return LayerEnabled, 0, "attach-guard blocks unverified install scripts"
-			}
-			return LayerDisabled, 0, "attach-guard not enabled"
-		},
+		// package-guard.py blocks unverified install scripts.
+		Assess: guardLayer,
 	},
 	{
 		Name:    "lock-file-enforcement",
@@ -294,16 +370,15 @@ var layerTable = []layerSpec{
 			// is judged from the hook's actual configuration, not from file
 			// names that merely contain "lock".
 			hasAuditHook := input.hasLockFileAuditHook()
-			attachGuard := input.EnabledTools["attach-guard"]
+			guard := input.guard()
 
-			if attachGuard && hasAuditHook {
-				return LayerEnabled, 0, "attach-guard enabled and " + lockFileAuditHookID + " hook configured"
-			}
-			if hasAuditHook {
-				return LayerPartial, 5, lockFileAuditHookID + " hook configured but attach-guard not enabled"
-			}
-			if attachGuard {
-				return LayerPartial, 5, "attach-guard enabled but " + lockFileAuditHookID + " hook not configured"
+			switch {
+			case guard.Status == LayerEnabled && hasAuditHook:
+				return LayerEnabled, 0, "package guard in force and " + lockFileAuditHookID + " hook configured"
+			case hasAuditHook:
+				return LayerPartial, 5, lockFileAuditHookID + " hook configured but package guard not in force: " + guard.Reason
+			case guard.Status == LayerEnabled:
+				return LayerPartial, 5, "package guard in force but " + lockFileAuditHookID + " hook not configured"
 			}
 			return LayerDisabled, 0, "no lock file enforcement configured"
 		},
@@ -320,7 +395,7 @@ var layerTable = []layerSpec{
 			if input.EnabledTools["container-security"] && input.has(grypeConfigPath) {
 				return LayerEnabled, 0, "container-security enabled and .grype.yaml present"
 			}
-			if input.EnabledTools["attach-guard"] && input.has(packageGuardPath) {
+			if input.guard().Status == LayerEnabled {
 				return LayerEnabled, 0, "package-guard.py checks package installs against OSV.dev"
 			}
 			if input.EnabledTools["container-security"] {
@@ -328,6 +403,9 @@ var layerTable = []layerSpec{
 			}
 			if input.EnabledTools["socket-dev-mcp"] {
 				return LayerPartial, 5, "socket-dev-mcp provides on-demand lookups only; no scanner configured"
+			}
+			if input.EnabledTools["attach-guard"] {
+				return LayerDisabled, 0, "no vulnerability scanning in force: " + input.guard().Reason
 			}
 			return LayerDisabled, 0, "no vulnerability scanning configured"
 		},
@@ -460,13 +538,25 @@ func assessLayer(spec layerSpec, input assessmentInput) DefenseLayer {
 //
 // Enabled and Total count only the layers in scope at currentTier, matching
 // the tier-relative Score, so the "N/M layers" summary never contradicts it.
-func AssessDefenseLayers(projectPath string, enabledTools map[string]bool, detected types.DetectedProject, genState types.GeneratedState, currentTier int) DefenseCoverage {
+//
+// opts.ClaudeUserDir also reads the user Claude settings, so a user-level
+// disableAllHooks disables the guard layers; opts.PackageGuard is what the
+// guard on disk is judged against. opts.FreshScan is not used here.
+func AssessDefenseLayers(projectPath string, opts AssessOptions, enabledTools map[string]bool,
+	detected types.DetectedProject, genState types.GeneratedState, currentTier int) DefenseCoverage {
+	settingsOpts := claudesettings.ReadOptions{UserDir: opts.ClaudeUserDir}
 	input := assessmentInput{
 		ProjectPath:  projectPath,
 		EnabledTools: enabledTools,
 		Detected:     detected,
 		GenState:     genState,
+		claudeSettings: sync.OnceValues(func() (claudesettings.Effective, error) {
+			return claudesettings.ReadWith(projectPath, settingsOpts)
+		}),
+		userSettingsRead: settingsOpts.UserDir != "",
+		packageGuard:     opts.PackageGuard,
 	}
+	input.guardOnce = sync.OnceValue(input.judgeGuard)
 
 	layers := make([]DefenseLayer, len(layerTable))
 	for i, spec := range layerTable {

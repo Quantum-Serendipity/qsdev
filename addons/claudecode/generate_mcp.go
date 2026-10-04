@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/Quantum-Serendipity/qsdev/internal/catalog"
+	"github.com/Quantum-Serendipity/qsdev/internal/mcpregistry"
 	"github.com/Quantum-Serendipity/qsdev/internal/merge"
 	"github.com/Quantum-Serendipity/qsdev/pkg/fileutil"
 	"github.com/Quantum-Serendipity/qsdev/pkg/types"
@@ -115,21 +116,19 @@ func buildMcpServers(answers types.WizardAnswers, cfg Config) (map[string]MCPSer
 	return servers, nil
 }
 
-// catalogDefToEntry converts a catalog MCP server definition to a .mcp.json entry.
-// HTTP-transport servers get type+url; stdio servers get command+args.
+// catalogDefToEntry converts a catalog MCP server definition to its pinned
+// launcher .mcp.json entry (mcpregistry.LauncherSpec).
 func catalogDefToEntry(def catalog.MCPServerDef) MCPServerEntry {
-	if def.Transport == "http" && def.URL != "" {
-		return MCPServerEntry{
-			Type: "http",
-			URL:  def.URL,
-			Env:  def.Env,
-		}
+	return launchSpecEntry(mcpregistry.LauncherSpec(def))
+}
+
+// launchSpecEntry converts a launch definition to a .mcp.json entry:
+// remote servers get type+url; stdio servers get command+args.
+func launchSpecEntry(s mcpregistry.LaunchSpec) MCPServerEntry {
+	if s.URL != "" {
+		return MCPServerEntry{Type: "http", URL: s.URL, Headers: s.Headers, Env: s.Env}
 	}
-	return MCPServerEntry{
-		Command: def.Command,
-		Args:    def.Args,
-		Env:     def.Env,
-	}
+	return MCPServerEntry{Command: s.Command, Args: s.Args, Env: s.Env}
 }
 
 // mcpServerNameList returns a sorted, comma-separated list of known server

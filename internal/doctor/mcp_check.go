@@ -1,11 +1,13 @@
 package doctor
 
 import (
+	"fmt"
 	"strconv"
 	"strings"
 	"unicode"
 
 	"github.com/Quantum-Serendipity/qsdev/internal/mcphealth"
+	"github.com/Quantum-Serendipity/qsdev/internal/mcpregistry"
 )
 
 // MCP server statuses in the doctor report.
@@ -24,6 +26,55 @@ const (
 // emptyServerName is the name mcphealth.ValidateConfig reports for a server
 // entry with an empty name.
 const emptyServerName = "(empty)"
+
+// MCPFindings statically validates the MCP servers the .mcp.json at
+// projectRoot configures (see mcphealth.ValidateConfig): each command is looked
+// up on PATH, each URL is checked for https, and each required or referenced
+// environment variable must be set. No server is started and no endpoint is
+// dialed, since .mcp.json is repository content and may name any command or
+// URL. Required variables come from the matching definition in reg; a catalog
+// that failed to load becomes a section warning. It returns nil outside a
+// project and for a project with no MCP servers, and an error when .mcp.json
+// cannot be read or parsed.
+func MCPFindings(projectRoot string, reg *mcpregistry.McpServerRegistry) (*MCPSection, error) {
+	return mcpFindings(projectRoot, reg, reg.CatalogErr())
+}
+
+// mcpFindings is MCPFindings with the registry's catalog error passed in, so
+// tests can supply one without a broken catalog on disk.
+func mcpFindings(projectRoot string, reg *mcpregistry.McpServerRegistry, catalogErr error) (*MCPSection, error) {
+	if projectRoot == "" {
+		return nil, nil
+	}
+	servers, err := mcpregistry.ConfiguredServers(projectRoot, reg)
+	if err != nil {
+		return nil, err // already names .mcp.json and the parse failure
+	}
+	return mcpServerFindings(servers, catalogErr), nil
+}
+
+// MCPServerFindings is MCPFindings for servers already loaded from .mcp.json
+// (mcpregistry.ConfiguredServers with reg), for a caller that also needs the
+// servers themselves: it reads nothing, so its rows are servers' rows, one
+// per server in order. It returns nil when servers is empty.
+func MCPServerFindings(servers []mcphealth.ServerConfig, reg *mcpregistry.McpServerRegistry) *MCPSection {
+	return mcpServerFindings(servers, reg.CatalogErr())
+}
+
+func mcpServerFindings(servers []mcphealth.ServerConfig, catalogErr error) *MCPSection {
+	if len(servers) == 0 {
+		return nil
+	}
+	var warnings []string
+	if catalogErr != nil {
+		warnings = append(warnings, fmt.Sprintf("required environment of catalog-defined servers not checked: %v", catalogErr))
+	}
+	byName := make(map[string]mcphealth.ServerConfig, len(servers))
+	for _, s := range servers {
+		byName[s.Name] = s
+	}
+	return NewMCPSection(servers, mcphealth.ValidateConfig(byName), warnings)
+}
 
 // NewMCPSection builds the doctor's MCP section from the configured servers
 // and the findings of mcphealth.ValidateConfig for them. It never starts a
@@ -74,6 +125,12 @@ func worseMCPStatus(current, severity string) string {
 		return current
 	}
 	return MCPStatusMisconfigured
+}
+
+// DisplayName is the server's name made safe to show in a terminal (see
+// displayMCPServerName).
+func (s MCPServerInfo) DisplayName() string {
+	return displayMCPServerName(s.Name)
 }
 
 // displayMCPServerName renders a server name from .mcp.json for the terminal.

@@ -3,11 +3,14 @@ package claudecode
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"path/filepath"
 	"slices"
 	"testing"
 
 	"github.com/Quantum-Serendipity/qsdev/internal/catalog"
+	"github.com/Quantum-Serendipity/qsdev/internal/mcphealth"
+	"github.com/Quantum-Serendipity/qsdev/internal/mcpregistry"
 	"github.com/Quantum-Serendipity/qsdev/internal/state"
 	"github.com/Quantum-Serendipity/qsdev/pkg/types"
 )
@@ -219,5 +222,90 @@ func TestSembleTextFiles_InstalledBinary(t *testing.T) {
 	want := append(append([]string{}, def.BinArgs...), "--include-text-files")
 	if res.Override.Command != def.Bin || !slices.Equal(res.Override.Args, want) {
 		t.Errorf("override = %s %v, want %s %v", res.Override.Command, res.Override.Args, def.Bin, want)
+	}
+}
+
+// TestSembleTextFilesServer_FromCatalog guards that the text-file flag comes
+// from the catalog's optional_args alone, so generation cannot drift from the
+// trusted variants: a definition declaring none is an error, not a guess.
+func TestSembleTextFilesServer_FromCatalog(t *testing.T) {
+	t.Parallel()
+	entry := MCPServerEntry{Command: "semble", Args: []string{"serve"}}
+	tests := []struct {
+		name     string
+		optional [][]string
+		wantArgs []string
+		wantErr  bool
+	}{
+		{name: "first optional group appended", optional: [][]string{{"--text", "on"}, {"--other"}}, wantArgs: []string{"serve", "--text", "on"}},
+		{name: "no optional args", wantErr: true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			got, err := sembleTextFilesServer(entry, catalog.MCPServerDef{OptionalArgs: tt.optional})
+			if (err != nil) != tt.wantErr {
+				t.Fatalf("err = %v, wantErr %v", err, tt.wantErr)
+			}
+			if !tt.wantErr && !slices.Equal(got.Args, tt.wantArgs) {
+				t.Errorf("args = %v, want %v", got.Args, tt.wantArgs)
+			}
+			if !tt.wantErr && !slices.Equal(entry.Args, []string{"serve"}) {
+				t.Errorf("entry args mutated: %v", entry.Args)
+			}
+		})
+	}
+}
+
+// TestTrustedDefinitions_CoversGeneratedVariants proves generation and the
+// probe trust set share one source: every entry generation can write for a
+// catalog server (each server, installed or not, semble text-file indexing on
+// or off) is one of mcpregistry.LaunchVariants, and every generated entry is
+// trusted by the CLI's probe gate.
+func TestTrustedDefinitions_CoversGeneratedVariants(t *testing.T) {
+	t.Parallel()
+	cat, err := catalog.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	trusted := mcpregistry.TrustedDefinitions(configuredServerSpecs())
+	configured := make(map[string]bool, len(addon.Config.MCPServers))
+	for _, srv := range addon.Config.MCPServers {
+		configured[srv.Name] = true
+	}
+	for _, installed := range []bool{false, true} {
+		for _, textFiles := range []bool{false, true} {
+			t.Run(fmt.Sprintf("installed=%v/textfiles=%v", installed, textFiles), func(t *testing.T) {
+				t.Parallel()
+				answers := types.WizardAnswers{MCPServers: cat.MCPServerNames(), ProjectRoot: t.TempDir()}
+				if installed {
+					writeInstalledMCPState(t, answers.ProjectRoot, installedAtPin(cat))
+				}
+				answers.AgentTools.SembleEnabled = true
+				answers.AgentTools.SembleMode = "mcp"
+				answers.AgentTools.SembleTextFiles = textFiles
+				sr, err := generateSembleConfig(answers)
+				if err != nil {
+					t.Fatal(err)
+				}
+				cfg := addon.Config
+				if sr.Override != nil {
+					cfg.MCPServers = append(append([]MCPServerConfig{}, cfg.MCPServers...), *sr.Override)
+				}
+				for name, e := range generatedEntries(t, answers, cfg) {
+					sc := mcphealth.ServerConfig{Name: name, Command: e.Command, Args: e.Args, URL: e.URL, Env: e.Env, Headers: e.Headers}
+					if !mcpregistry.MatchesTrusted(sc, trusted[name]) {
+						t.Errorf("generated %s (%s %v %s) is not trusted", name, e.Command, e.Args, e.URL)
+					}
+					def, ok := cat.MCPServer(name)
+					if !ok || configured[name] {
+						continue
+					}
+					if !mcpregistry.MatchesTrusted(sc, mcpregistry.LaunchVariants(def)) {
+						t.Errorf("generated %s (%s %v %s) is not in LaunchVariants", name, e.Command, e.Args, e.URL)
+					}
+				}
+			})
+		}
 	}
 }

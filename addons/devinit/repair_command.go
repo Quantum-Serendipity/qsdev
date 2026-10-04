@@ -11,7 +11,6 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/Quantum-Serendipity/qsdev/internal/cmdutil"
-	"github.com/Quantum-Serendipity/qsdev/internal/detect"
 	"github.com/Quantum-Serendipity/qsdev/internal/posture/drift"
 	"github.com/Quantum-Serendipity/qsdev/internal/repair"
 	"github.com/Quantum-Serendipity/qsdev/internal/state"
@@ -42,7 +41,8 @@ The devenv.nix file is never auto-modified regardless of flags.`,
 	cmd.Flags().BoolVar(&opts.Force, "force", false, "Fix files even when user modifications detected (backup first)")
 	cmd.Flags().StringVar(&opts.TargetFile, "file", "", "Repair a specific file only")
 	cmd.Flags().BoolVar(&opts.Reset, "reset", false, "Regenerate all files from saved answers (nuclear option)")
-	return cmd
+	// --force overwrites user-modified files, guard scripts included.
+	return cmdutil.MarkSensitive(cmdutil.MarkReadOnly(cmd, "dry-run"), cmdutil.Sensitivity{Flags: map[string]bool{"force": true}})
 }
 
 func runRepairCommand(cmd *cobra.Command, opts repair.RepairOptions) error {
@@ -50,14 +50,17 @@ func runRepairCommand(cmd *cobra.Command, opts repair.RepairOptions) error {
 	if err != nil {
 		return err
 	}
+	if err := requireJoined(projectRoot); err != nil {
+		return err
+	}
 
-	// Load answers.
-	answers, err := loadAnswersOrEmpty(projectRoot)
+	// Load answers reconciled against the committed .qsdev.yaml, as update
+	// and enable/disable do, so an opt-out recorded only in the answers file
+	// (not by `disable --force`) cannot drop a guardrail from the repair.
+	answers, err := loadLifecycleAnswers(cmd.Context(), cmd.ErrOrStderr(), projectRoot)
 	if err != nil {
 		return err
 	}
-	answers.Detected = detect.Detect(cmd.Context(), projectRoot)
-	answers.ProjectRoot = projectRoot
 
 	// Load state.
 	stateFile := filepath.Join(projectRoot, stateFilePath())

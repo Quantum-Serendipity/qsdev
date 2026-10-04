@@ -1,6 +1,8 @@
 package instance
 
 import (
+	"bytes"
+	"encoding/json"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -8,6 +10,7 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/spf13/cobra"
 
@@ -76,32 +79,8 @@ func TestDefaultRuntime(t *testing.T) {
 // reports the version stamped into VersionPackage and writes a redacted
 // session log under its own branding.
 func TestDownstreamExampleGetsDefaultRuntime(t *testing.T) {
-	if testing.Short() {
-		t.Skip("builds a binary")
-	}
-	goBin, err := exec.LookPath("go")
-	if err != nil {
-		t.Skip("go toolchain not on PATH")
-	}
-	moduleRoot, err := filepath.Abs("..")
-	if err != nil {
-		t.Fatal(err)
-	}
-	// Windows only executes (and exec.LookPath only resolves) files carrying
-	// an executable extension, so the built binary must be named acmedev.exe.
-	exeName := "acmedev"
-	if runtime.GOOS == "windows" {
-		exeName += ".exe"
-	}
-	bin := filepath.Join(t.TempDir(), exeName)
 	const stamped = "v9.8.7"
-	build := exec.Command(goBin, "build", "-o", bin,
-		"-ldflags", "-X "+VersionPackage+".version="+stamped, "./examples/downstream")
-	build.Dir = moduleRoot
-	build.Env = append(os.Environ(), "GOWORK=off", "GOFLAGS=-mod=vendor")
-	if out, err := build.CombinedOutput(); err != nil {
-		t.Fatalf("building examples/downstream: %v\n%s", err, out)
-	}
+	bin := buildDownstream(t, stamped)
 
 	home := t.TempDir()
 	logDir := t.TempDir()
@@ -161,4 +140,187 @@ func TestDownstreamExampleGetsDefaultRuntime(t *testing.T) {
 	if strings.Contains(string(content), secret) || !strings.Contains(string(content), logging.RedactionMarker) {
 		t.Errorf("session log is not redacted:\n%s", content)
 	}
+}
+
+// buildDownstream builds examples/downstream stamped with version and
+// returns the binary's path. It skips the test in -short mode or without a
+// go toolchain.
+func buildDownstream(t *testing.T, version string) string {
+	t.Helper()
+	if testing.Short() {
+		t.Skip("builds a binary")
+	}
+	goBin, err := exec.LookPath("go")
+	if err != nil {
+		t.Skip("go toolchain not on PATH")
+	}
+	moduleRoot, err := filepath.Abs("..")
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Windows only executes (and exec.LookPath only resolves) files carrying
+	// an executable extension, so the built binary must be named acmedev.exe.
+	exeName := "acmedev"
+	if runtime.GOOS == "windows" {
+		exeName += ".exe"
+	}
+	bin := filepath.Join(t.TempDir(), exeName)
+	build := exec.Command(goBin, "build", "-o", bin,
+		"-ldflags", "-X "+VersionPackage+".version="+version, "./examples/downstream")
+	build.Dir = moduleRoot
+	build.Env = append(os.Environ(), "GOWORK=off", "GOFLAGS=-mod=vendor")
+	if out, err := build.CombinedOutput(); err != nil {
+		t.Fatalf("building examples/downstream: %v\n%s", err, out)
+	}
+	return bin
+}
+
+// TestDownstreamExample_NoUpdateNoticeWhenPiped pins the XS-WS1 A6 wiring
+// in installDefaultRuntime: a real binary whose stderr is a pipe (as for a
+// hook, an MCP server or CI) prints no update notice and leaves the cache
+// untouched, even though the cache is fresh and names a newer release and the
+// opt-out variable is unset.
+func TestDownstreamExample_NoUpdateNoticeWhenPiped(t *testing.T) {
+	bin := buildDownstream(t, "v0.1.0")
+	home := t.TempDir()
+	dir := filepath.Join(home, ".acmedev")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now().UTC()
+	data, err := json.Marshal(map[string]any{
+		"checked_at": now, "attempted_at": now, "version": "9.9.9",
+		"url": "https://example.invalid/releases/v9.9.9", "owner": "acme-corp", "repo": "acmedev",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	cache := filepath.Join(dir, "update-check.json")
+	if err := os.WriteFile(cache, data, 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	var env []string
+	for _, kv := range os.Environ() {
+		if !strings.HasPrefix(kv, "ACMEDEV_") {
+			env = append(env, kv)
+		}
+	}
+	c := exec.Command(bin, "version")
+	c.Dir = home
+	c.Env = append(env,
+		"HOME="+home,
+		"USERPROFILE="+home,
+		"APPDATA="+filepath.Join(home, "AppData", "Roaming"),
+		"LOCALAPPDATA="+filepath.Join(home, "AppData", "Local"),
+		"XDG_CONFIG_HOME="+filepath.Join(home, ".config"),
+		"ACMEDEV_LOG_DIR="+t.TempDir(),
+	)
+	var stderr bytes.Buffer
+	c.Stderr = &stderr // a pipe, not a terminal
+	if err := c.Run(); err != nil {
+		t.Fatalf("acmedev version: %v\n%s", err, stderr.String())
+	}
+	if strings.Contains(stderr.String(), "9.9.9") || strings.Contains(stderr.String(), "new version") {
+		t.Errorf("piped stderr got an update notice:\n%s", stderr.String())
+	}
+	after, err := os.ReadFile(cache)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(data, after) {
+		t.Errorf("cache changed:\nbefore %s\nafter  %s", data, after)
+	}
+}
+
+// TestStartUpdateCheck_NonInteractive pins XS-WS1 A6: a non-interactive
+// process (hook, MCP server, CI) starts no update check, so it neither prints
+// a notice nor touches the cache (no request is attempted), whether the cache
+// is fresh and names a newer version or has expired.
+func TestStartUpdateCheck_NonInteractive(t *testing.T) {
+	b := branding.Get()
+	now := time.Now().UTC()
+	old := now.Add(-30 * 24 * time.Hour)
+	tests := []struct {
+		name      string
+		checkedAt time.Time
+	}{
+		{name: "fresh cache naming a newer version", checkedAt: now},
+		{name: "expired cache", checkedAt: old},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			home := t.TempDir()
+			t.Setenv("HOME", home)
+			t.Setenv("USERPROFILE", home)
+			t.Setenv(b.EnvNoUpdate, "")
+			cache := writeUpdateCache(t, home, tt.checkedAt)
+			before, err := os.ReadFile(cache)
+			if err != nil {
+				t.Fatalf("reading cache: %v", err)
+			}
+
+			if ch := startUpdateCheck(false, "0.1.0"); ch != nil {
+				t.Error("startUpdateCheck(non-interactive) returned a channel, want nil")
+			}
+
+			after, err := os.ReadFile(cache)
+			if err != nil {
+				t.Fatalf("re-reading cache: %v", err)
+			}
+			if !bytes.Equal(before, after) {
+				t.Errorf("cache changed:\nbefore %s\nafter  %s", before, after)
+			}
+		})
+	}
+
+	// Control: the same fresh cache does yield a notice for an interactive
+	// process (served from the cache, so no request is made).
+	t.Run("interactive control", func(t *testing.T) {
+		home := t.TempDir()
+		t.Setenv("HOME", home)
+		t.Setenv("USERPROFILE", home)
+		t.Setenv(b.EnvNoUpdate, "")
+		writeUpdateCache(t, home, now)
+
+		ch := startUpdateCheck(true, "0.1.0")
+		if ch == nil {
+			t.Fatal("startUpdateCheck(interactive) returned nil")
+		}
+		select {
+		case notice := <-ch:
+			if !strings.Contains(notice, "9.9.9") {
+				t.Errorf("notice = %q, want it to name 9.9.9", notice)
+			}
+		case <-time.After(10 * time.Second):
+			t.Fatal("timed out waiting for the cached notice")
+		}
+	})
+}
+
+// writeUpdateCache writes an update-check cache under home naming v9.9.9,
+// checked (and attempted) at checkedAt, and returns its path.
+func writeUpdateCache(t *testing.T, home string, checkedAt time.Time) string {
+	t.Helper()
+	b := branding.Get()
+	dir := filepath.Join(home, "."+b.AppName)
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatalf("creating cache dir: %v", err)
+	}
+	data, err := json.Marshal(map[string]any{
+		"checked_at":   checkedAt,
+		"attempted_at": checkedAt,
+		"version":      "9.9.9",
+		"url":          "https://example.invalid/releases/v9.9.9",
+		"owner":        b.GitHubOwner,
+		"repo":         b.GitHubRepo,
+	})
+	if err != nil {
+		t.Fatalf("encoding cache: %v", err)
+	}
+	path := filepath.Join(dir, "update-check.json")
+	if err := os.WriteFile(path, data, 0o644); err != nil {
+		t.Fatalf("writing cache: %v", err)
+	}
+	return path
 }

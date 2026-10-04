@@ -4,6 +4,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/Quantum-Serendipity/qsdev/internal/termutil"
+	"github.com/Quantum-Serendipity/qsdev/internal/toolreg"
 	"github.com/Quantum-Serendipity/qsdev/pkg/ecosystem"
 )
 
@@ -291,14 +292,14 @@ func WithSkills(v []string) func(*formState) {
 	return func(fs *formState) { fs.skills = v }
 }
 
-// WithAutoFormat sets autoFormat on formState.
-func WithAutoFormat(v bool) func(*formState) {
-	return func(fs *formState) { fs.autoFormat = v }
+// WithHookPresets sets the hook presets selected on formState.
+func WithHookPresets(v ...string) func(*formState) {
+	return func(fs *formState) { fs.hookPresets = v }
 }
 
-// WithSafetyBlock sets safetyBlock on formState.
-func WithSafetyBlock(v bool) func(*formState) {
-	return func(fs *formState) { fs.safetyBlock = v }
+// WithTools sets the tool registry on formState.
+func WithTools(v *toolreg.Registry) func(*formState) {
+	return func(fs *formState) { fs.tools = v }
 }
 
 // WithMCPServers sets mcpServers on formState.

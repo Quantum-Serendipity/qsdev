@@ -32,11 +32,12 @@ type Manifest map[string]string
 // BuildManifest returns the manifest entries for st: every tracked file whose
 // strategy is machine-owned. Human-edited files (see
 // MergeStrategy.IsHumanEdited) are left out, because their divergence from the
-// generated content is expected rather than drift.
+// generated content is expected rather than drift, and so are local-only
+// files (isLocalOnly), which no other checkout has.
 func BuildManifest(st types.GeneratedState) Manifest {
 	m := make(Manifest, len(st.Files))
 	for relPath, fs := range st.Files {
-		if fs.Strategy.IsHumanEdited() {
+		if fs.Strategy.IsHumanEdited() || isLocalOnly(relPath) {
 			continue
 		}
 		m[relPath] = fs.Hash
@@ -95,7 +96,10 @@ func ParseManifest(data []byte) (Manifest, error) {
 }
 
 // LoadManifest reads and parses the manifest at path. A missing file is
-// returned as an error wrapping os.ErrNotExist.
+// returned as an error wrapping os.ErrNotExist. An entry for a local-only
+// file, which earlier releases recorded, is dropped: no other checkout has
+// that file, so verifying it would fail everywhere but the machine that
+// wrote it.
 func LoadManifest(path string) (Manifest, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
@@ -105,14 +109,45 @@ func LoadManifest(path string) (Manifest, error) {
 	if err != nil {
 		return nil, fmt.Errorf("parsing manifest %s: %w", path, err)
 	}
+	maps.DeleteFunc(m, func(relPath, _ string) bool { return isLocalOnly(relPath) })
 	return m, nil
 }
 
-// WriteManifest writes m to ManifestFile under projectRoot atomically.
+// isLocalOnly reports whether relPath is a file each checkout keeps for
+// itself and gitignores: the developer's local config overrides.
+func isLocalOnly(relPath string) bool {
+	return relPath == branding.Get().LocalConfig
+}
+
+// ExpectedState overlays the committed manifest on the local state: a
+// manifest entry sets the expected hash of its file (keeping the strategy and
+// mode the local state records, if any), so a file matching the committed
+// manifest is not reported as modified just because the local state is older.
+func ExpectedState(genState types.GeneratedState, manifest Manifest) types.GeneratedState {
+	if len(manifest) == 0 {
+		return genState
+	}
+	expected := types.GeneratedState{Files: make(map[string]types.FileState, len(genState.Files)+len(manifest))}
+	maps.Copy(expected.Files, genState.Files)
+	for relPath, hash := range manifest {
+		entry := expected.Files[relPath]
+		entry.Hash = hash
+		expected.Files[relPath] = entry
+	}
+	return expected
+}
+
+// WriteManifest writes m to ManifestFile under projectRoot atomically. A
+// manifest already holding that text, perhaps as a CRLF checkout (Git's
+// core.autocrlf), is left alone: rewriting it would only make Git report the
+// committed file modified.
 func WriteManifest(projectRoot string, m Manifest) error {
 	data, err := m.Marshal()
 	if err != nil {
 		return fmt.Errorf("rendering manifest: %w", err)
+	}
+	if existing, err := os.ReadFile(filepath.Join(projectRoot, ManifestFile())); err == nil && EqualText(existing, data) {
+		return nil
 	}
 	if err := fileutil.WriteFileAtomicInRoot(projectRoot, ManifestFile(), data, fileutil.ModeReadWrite); err != nil {
 		return fmt.Errorf("writing manifest %s: %w", ManifestFile(), err)

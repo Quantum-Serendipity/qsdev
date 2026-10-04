@@ -265,6 +265,7 @@ const (
 // invocation is a server command normalised for the runtime-fetch criteria.
 type invocation struct {
 	kind invocationKind
+	name string // normalised launcher name, for a launcher (after unwrapping env)
 	rule launcherRule
 	args []string
 }
@@ -309,7 +310,7 @@ func classifyInvocation(command string, args []string) invocation {
 	if rule.fetchSubcommands != nil && !hasAnySubcommand(args, rule.fetchSubcommands) {
 		return invocation{kind: invocationLocal}
 	}
-	return invocation{kind: invocationLauncher, rule: rule, args: args}
+	return invocation{kind: invocationLauncher, name: name, rule: rule, args: args}
 }
 
 // commandName returns the lower-cased base name of command without a Windows
@@ -562,7 +563,7 @@ func isLoopbackURL(raw string) bool {
 // whenever it is started, whatever its arguments. It matches on the binary's
 // name (see commandName), so an absolute path or a Windows .cmd shim is
 // classified the same as the bare name. Launchers that fetch only for some
-// subcommands need their arguments; see launcherFetches. Callers that only
+// subcommands need their arguments; see fetchingLauncher. Callers that only
 // want to observe a server, such as health diagnostics, must not start such a
 // command: doing so installs and runs whatever version of the package is
 // currently published.
@@ -571,10 +572,14 @@ func LaunchesFromNetwork(command string) bool {
 	return ok && rule.fetchSubcommands == nil
 }
 
-// launcherFetches reports whether command run with args is a package-launcher
-// invocation that may fetch from the network at start (including subcommand
-// launchers and env-wrapped launchers) and is not forced offline.
-func launcherFetches(command string, args []string) bool {
+// fetchingLauncher returns the name of the package launcher command runs with
+// args when that invocation may fetch from the network at start (including
+// subcommand launchers and env-wrapped launchers) and is not forced offline,
+// or "". An env-wrapped launcher yields the inner launcher's name, not "env".
+func fetchingLauncher(command string, args []string) string {
 	inv := classifyInvocation(command, args)
-	return inv.kind == invocationLauncher && !inv.offline()
+	if inv.kind != invocationLauncher || inv.offline() {
+		return ""
+	}
+	return inv.name
 }

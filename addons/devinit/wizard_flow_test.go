@@ -14,6 +14,7 @@ import (
 	"github.com/charmbracelet/huh"
 	"github.com/spf13/cobra"
 
+	"github.com/Quantum-Serendipity/qsdev/addons/claudecode"
 	"github.com/Quantum-Serendipity/qsdev/internal/catalog"
 	"github.com/Quantum-Serendipity/qsdev/internal/toolreg"
 	"github.com/Quantum-Serendipity/qsdev/pkg/ecosystem"
@@ -152,7 +153,7 @@ func TestWizard_ExplicitFlagsSurvive(t *testing.T) {
 			t.Parallel()
 			partial, flags := parseInitFlags(t,
 				"--lang", "python", "--service", "redis", "--tier", "full",
-				"--env", "API_BASE=https://example.test", "--claude-hooks", "safety-block,pre-commit")
+				"--env", "API_BASE=https://example.test", "--claude-hooks", "safety-block,credential-scan")
 			partial.Detected = detected
 			fs := newFormState(detected, MapDetectionToDefaults(detected, "/tmp/project"), partial, flags)
 			if fs.quickChoice != "customize" {
@@ -175,8 +176,8 @@ func TestWizard_ExplicitFlagsSurvive(t *testing.T) {
 			if got.EnvVars["API_BASE"] != "https://example.test" {
 				t.Errorf("env vars = %v, want API_BASE kept", got.EnvVars)
 			}
-			if !got.Hooks.PreCommit {
-				t.Error("pre-commit hook from --claude-hooks was dropped")
+			if !got.Hooks.CredentialScan {
+				t.Error("credential-scan hook from --claude-hooks was dropped")
 			}
 			preview := renderPlanPreview(got)
 			if !strings.Contains(preview, "Python, Redis") || strings.Contains(preview, "Go") {
@@ -192,14 +193,15 @@ func TestWizard_CustomizeChoicesDriveEnabledTools(t *testing.T) {
 	partial, flags := parseInitFlags(t, "--lang", "go", "--tier", "full")
 	partial.Detected = detected
 	fs := newFormState(detected, MapDetectionToDefaults(detected, "/tmp/project"), partial, flags)
-	fs.agentPostmortem = false
 	fs.confirmed = true
 
 	got := mapFormToAnswers(fs, "/tmp/project", "project", detected)
 	toolreg.MergeInferredTools(&got, toolreg.DefaultRegistry())
 
-	if got.EnabledTools[toolreg.ToolAgentPostmortem] {
-		t.Error("agent-postmortem is enabled although the wizard turned it off")
+	// agent-postmortem is always-on: the wizard offers no toggle for it, and
+	// only `disable --force` drops it (U28-WS1).
+	if !got.EnabledTools[toolreg.ToolAgentPostmortem] || !got.AgentTools.PostmortemEnabled {
+		t.Error("always-on agent-postmortem missing on the customize path")
 	}
 	if !got.EnabledTools["secretspec"] {
 		t.Errorf("tier-derived tools missing from EnabledTools: %v", got.EnabledTools)
@@ -221,7 +223,7 @@ func TestNewFormState_SeedsOnlyFromExplicitFlags(t *testing.T) {
 		check    func(t *testing.T, fs *formState)
 	}{
 		{"no flags keeps safe seeds", nil, goOnly, func(t *testing.T, fs *formState) {
-			if !fs.safetyBlock || !fs.direnv || !fs.claudeCode || !fs.agentPostmortem || fs.autoFormat {
+			if !fs.direnv || !fs.claudeCode || len(fs.hookPresets) != 0 {
 				t.Errorf("seeds overwritten by unset flags: %+v", *fs)
 			}
 			if fs.agentVersionSentinel {
@@ -236,11 +238,6 @@ func TestNewFormState_SeedsOnlyFromExplicitFlags(t *testing.T) {
 				t.Error("--direnv=false ignored")
 			}
 		}},
-		{"--agent-postmortem=false", []string{"--agent-postmortem=false"}, goOnly, func(t *testing.T, fs *formState) {
-			if fs.agentPostmortem {
-				t.Error("--agent-postmortem=false ignored")
-			}
-		}},
 		{"--lang selects the version-sentinel seed", []string{"--lang", "python"}, goOnly, func(t *testing.T, fs *formState) {
 			if !fs.agentVersionSentinel {
 				t.Error("version-sentinel seed should follow the explicit --lang (Python is covered), not detection")
@@ -251,9 +248,11 @@ func TestNewFormState_SeedsOnlyFromExplicitFlags(t *testing.T) {
 				t.Error("--agent-version-sentinel=false ignored")
 			}
 		}},
-		{"--claude-hooks auto-format", []string{"--claude-hooks", "auto-format"}, goOnly, func(t *testing.T, fs *formState) {
-			if !fs.autoFormat || fs.safetyBlock {
-				t.Errorf("autoFormat=%v safetyBlock=%v, want true/false", fs.autoFormat, fs.safetyBlock)
+		{"--claude-hooks audit-log stays in the answers", []string{"--claude-hooks", "audit-log"}, goOnly, func(t *testing.T, fs *formState) {
+			fs.quickChoice = "customize"
+			got := mapFormToAnswers(fs, "/tmp/project", "project", goOnly)
+			if !got.Hooks.AuditLog {
+				t.Error("the wizard dropped the --claude-hooks preset")
 			}
 		}},
 		{"--tier selects its preset", []string{"--tier", "supply-chain-only"}, goOnly, func(t *testing.T, fs *formState) {
@@ -316,8 +315,11 @@ func TestPreviewBindings_CoverEveryFormField(t *testing.T) {
 	v := reflect.ValueOf(fs).Elem()
 	for i := range v.NumField() {
 		name := v.Type().Field(i).Name
-		if name == "partial" || name == "confirmed" || name == "moduleFields" {
-			continue // moduleFields are bound answer by answer, checked below
+		switch name {
+		case "partial", "tools", "confirmed":
+			continue // fixed inputs and the final confirm, not previewed fields
+		case "moduleFields":
+			continue // bound answer by answer, checked below
 		}
 		if !bound[v.Field(i).UnsafeAddr()] {
 			t.Errorf("formState.%s is missing from previewBindings; the Plan Preview would not refresh when it changes", name)
@@ -534,5 +536,36 @@ func TestHookNames_MarksHooksWithoutPolicy(t *testing.T) {
 				t.Errorf("hookNames = %v, want %v", got, tt.want)
 			}
 		})
+	}
+}
+
+func TestSelectableHookPresets_SingleSource(t *testing.T) {
+	t.Parallel()
+	selectable := claudecode.SelectableHookPresets()
+	enforced := types.WizardAnswers{ClaudeCode: true}
+	toolreg.EnforceAlwaysOn(&enforced, toolreg.DefaultRegistry())
+
+	for _, name := range catalog.MustDefault().HookPresets() {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			isSelectable := slices.Contains(selectable, name)
+
+			_, flagErr := AnswersFromFlags(InitOptions{ClaudeHooks: []string{name}}, "/tmp/project")
+			_, profileErr := ProfileToAnswers(Profile{ClaudeCode: true, Hooks: []string{name}}, "/tmp/project", "project")
+			for source, err := range map[string]error{"--claude-hooks": flagErr, "profile": profileErr} {
+				if isSelectable != (err == nil) {
+					t.Errorf("%s %q: err = %v, selectable = %v", source, name, err, isSelectable)
+				}
+			}
+
+			probe := enforced.Hooks
+			forced := probe.EnableHook(name) == nil && probe == enforced.Hooks
+			if want, got := isSelectable && !forced, slices.Contains(wizardHookPresets(toolreg.DefaultRegistry()), name); want != got {
+				t.Errorf("wizard offers %q = %v, want %v (selectable %v, forced on %v)", name, got, want, isSelectable, forced)
+			}
+		})
+	}
+	if slices.Contains(wizardHookPresets(toolreg.DefaultRegistry()), "safety-block") {
+		t.Error("wizard offers safety-block, which the always-on attach-guard already turns on")
 	}
 }

@@ -7,6 +7,8 @@ import (
 	"os"
 	"os/exec"
 	"strings"
+
+	"github.com/Quantum-Serendipity/qsdev/internal/procexec"
 )
 
 // errTailBytes bounds how much of a failed command's stderr is quoted in the
@@ -35,7 +37,7 @@ func (r *ExecRunner) LookPath(name string) (string, error) {
 }
 
 func (r *ExecRunner) Run(ctx context.Context, name string, args ...string) error {
-	cmd := exec.CommandContext(ctx, name, args...)
+	cmd := procexec.CommandContext(ctx, name, args...)
 	tail := &tailBuffer{max: errTailBytes}
 	cmd.Stdout = r.Stdout
 	cmd.Stderr = tail

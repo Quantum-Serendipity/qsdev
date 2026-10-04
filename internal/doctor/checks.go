@@ -7,6 +7,7 @@ import (
 
 	"github.com/Quantum-Serendipity/qsdev/internal/sysinfo"
 	"github.com/Quantum-Serendipity/qsdev/internal/toolcheck"
+	"github.com/Quantum-Serendipity/qsdev/pkg/types"
 )
 
 // ToolCheck defines how to detect and classify a single tool.
@@ -253,7 +254,8 @@ func DefaultChecks() []ToolCheck {
 			Binary:      "python3",
 			VersionFlag: "--version",
 			Required:    false,
-			MinVersion:  "3.11",
+			// The floor the Python security hooks enforce (D20).
+			MinVersion: types.MinHookPython,
 			ParseVersion: func(raw string) string {
 				// "Python 3.11.7" → "3.11.7"
 				return extractLastField(raw, "Python ")

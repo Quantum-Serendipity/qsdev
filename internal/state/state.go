@@ -1,13 +1,16 @@
 package state
 
 import (
+	"bytes"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"runtime"
 	"sort"
 	"time"
 
+	"github.com/Quantum-Serendipity/qsdev/internal/shebang"
 	"github.com/Quantum-Serendipity/qsdev/pkg/types"
 )
 
@@ -49,17 +52,46 @@ func RecordFiles(files []types.GeneratedFile) types.GeneratedState {
 	return state
 }
 
-// IsRecordedOutput reports whether content is exactly what one of states
-// recorded for relPath, i.e. a file on disk holding it is unmodified qsdev
-// output that may be regenerated in place rather than a file the user owns.
+// IsRecordedOutput reports whether content is what one of states recorded
+// for relPath, exactly or as a CRLF checkout of it (see MatchesHash), i.e. a
+// file on disk holding it is unmodified qsdev output that may be regenerated
+// in place rather than a file the user owns.
 func IsRecordedOutput(states []types.GeneratedState, relPath string, content []byte) bool {
-	hash := ComputeHash(content)
 	for _, st := range states {
-		if recorded, ok := st.Files[relPath]; ok && recorded.Hash == hash {
+		if recorded, ok := st.Files[relPath]; ok && MatchesHash(content, recorded.Hash) {
 			return true
 		}
 	}
 	return false
+}
+
+// MatchesHash reports whether data is the content hash names, exactly or as
+// a checkout of it whose lines end in CRLF (Git's core.autocrlf, the Git for
+// Windows default, converts LF to CRLF in the working tree while the
+// repository keeps LF). Recorded hashes are over the generated LF content.
+func MatchesHash(data []byte, hash string) bool {
+	if ComputeHash(data) == hash {
+		return true
+	}
+	return bytes.Contains(data, []byte("\r\n")) && ComputeHash(crlfToLF(data)) == hash
+}
+
+// HoldsOutput reports whether existing, a file's content on disk, holds the
+// generated content: exactly, or as a CRLF checkout of it (EqualText) that
+// still works on goos. A script whose interpreter line then ends in CR cannot
+// be started by the Linux or macOS kernel, so that spelling does not hold it
+// there and the script must be rewritten.
+func HoldsOutput(existing, content []byte, goos string) bool {
+	if bytes.Equal(existing, content) {
+		return true
+	}
+	return EqualText(existing, content) && !shebang.Parse(existing).CRLFFails(goos)
+}
+
+// EqualText reports whether a and b are the same text once CRLF line endings
+// are read as LF: one is the other as a CRLF checkout. A lone CR is content.
+func EqualText(a, b []byte) bool {
+	return bytes.Equal(a, b) || bytes.Equal(crlfToLF(a), crlfToLF(b))
 }
 
 // OrphanedFiles returns paths that exist in oldState but are not present in
@@ -83,56 +115,81 @@ func OrphanedFiles(oldState types.GeneratedState, newFiles []types.GeneratedFile
 // CheckModified compares each file in stored against its current on-disk
 // state under projectRoot and returns a map of path to FileStatus.
 func CheckModified(stored types.GeneratedState, projectRoot string) map[string]FileStatus {
-	if len(stored.Files) == 0 {
-		return map[string]FileStatus{}
-	}
-
 	results := make(map[string]FileStatus, len(stored.Files))
 	for relPath, fs := range stored.Files {
-		absPath := filepath.Join(projectRoot, relPath)
-		status := FileStatus{
-			Path:       relPath,
-			StoredHash: fs.Hash,
-		}
+		results[relPath] = CheckFile(projectRoot, relPath, fs)
+	}
+	return results
+}
 
-		info, err := os.Stat(absPath)
-		if err != nil {
-			if errors.Is(err, os.ErrNotExist) {
-				status.Status = types.Deleted
-			} else {
-				status.Status = types.Unknown
-				status.Error = err
-			}
-			results[relPath] = status
-			continue
-		}
+// CheckFile compares the generated file at relPath under projectRoot with its
+// recorded state: it is unmodified only when both the content hash (of the
+// file or of its CRLF checkout read as LF, see MatchesHash) and, where
+// recorded and meaningful, the permission bits match. An empty file is
+// content like any other.
+func CheckFile(projectRoot, relPath string, fs types.FileState) FileStatus {
+	return checkOnDisk(projectRoot, relPath, fs.Hash, fs.Mode, func(data []byte) bool {
+		return MatchesHash(data, fs.Hash)
+	})
+}
 
-		hash, err := ComputeFileHash(absPath)
-		if err != nil {
-			status.Status = types.Unknown
-			status.Error = err
-			results[relPath] = status
-			continue
-		}
-		status.CurrentHash = hash
+// CheckContent compares the file at relPath under projectRoot with want, the
+// content the generator writes for it, rather than with a recorded hash, so a
+// committed state or manifest re-hashed over other content cannot vouch for
+// it. A checkout whose lines end in CRLF (Git's core.autocrlf on Windows) of
+// want is unmodified; any other difference, a lone CR included, is not. mode
+// is compared as CheckFile compares the recorded mode.
+func CheckContent(projectRoot, relPath string, want []byte, mode os.FileMode) FileStatus {
+	return checkOnDisk(projectRoot, relPath, ComputeHash(want), mode, func(data []byte) bool {
+		return EqualText(data, want)
+	})
+}
 
-		hashMatch := hash == fs.Hash
-		// A zero stored mode means the mode was never recorded (legacy state or a
-		// generator that relied on the pipeline default), so only the hash can
-		// be compared.
-		modeMatch := runtime.GOOS == "windows" || fs.Mode == 0 || info.Mode().Perm() == fs.Mode.Perm()
+// crlfToLF replaces every CRLF line ending in data with LF.
+func crlfToLF(data []byte) []byte {
+	return bytes.ReplaceAll(data, []byte("\r\n"), []byte("\n"))
+}
 
-		switch {
-		case hashMatch && modeMatch:
-			status.Status = types.Unmodified
-		default:
-			status.Status = types.Modified
-		}
-
-		results[relPath] = status
+// checkOnDisk reads the file at relPath under projectRoot and reports it
+// unmodified when matches accepts its content and, where recorded and
+// meaningful, its permission bits equal mode. storedHash is reported as the
+// expected hash.
+func checkOnDisk(projectRoot, relPath, storedHash string, mode os.FileMode, matches func([]byte) bool) FileStatus {
+	absPath := filepath.Join(projectRoot, relPath)
+	status := FileStatus{
+		Path:       relPath,
+		StoredHash: storedHash,
 	}
 
-	return results
+	info, err := os.Stat(absPath)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			status.Status = types.Deleted
+		} else {
+			status.Status = types.Unknown
+			status.Error = err
+		}
+		return status
+	}
+
+	data, err := os.ReadFile(absPath)
+	if err != nil {
+		status.Status = types.Unknown
+		status.Error = fmt.Errorf("computing file hash for %s: %w", absPath, err)
+		return status
+	}
+	status.CurrentHash = ComputeHash(data)
+
+	// A zero stored mode means the mode was never recorded (legacy state or a
+	// generator that relied on the pipeline default), so only the content can
+	// be compared.
+	modeMatch := runtime.GOOS == "windows" || mode == 0 || info.Mode().Perm() == mode.Perm()
+	if matches(data) && modeMatch {
+		status.Status = types.Unmodified
+	} else {
+		status.Status = types.Modified
+	}
+	return status
 }
 
 // RecordFragments converts a fragment set into ledger entries grouped by target path.

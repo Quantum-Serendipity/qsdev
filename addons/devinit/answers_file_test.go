@@ -191,3 +191,49 @@ func TestAnswersFile_StrictDecoding(t *testing.T) {
 		})
 	}
 }
+
+// TestAnswersFile_RejectsUnimplementedHookPresets is the U28-17 regression
+// for answers files: a hook flag for a preset no Claude Code hook implements
+// is rejected on every answers-file path (init's load and join's overlay),
+// as --claude-hooks and profiles reject the preset name.
+func TestAnswersFile_RejectsUnimplementedHookPresets(t *testing.T) {
+	t.Parallel()
+	const base = "claude_code: true\npermission_level: standard\nlanguages: [{name: go}]\n"
+	tests := []struct {
+		name    string
+		hooks   string
+		wantErr string
+	}{
+		{name: "auto-format", hooks: "hooks: {auto_format: true}\n", wantErr: `unknown or unimplemented hook preset "auto-format"`},
+		{name: "pre-commit", hooks: "hooks: {pre_commit: true}\n", wantErr: `unknown or unimplemented hook preset "pre-commit"`},
+		{name: "selectable", hooks: "hooks: {safety_block: true, audit_log: true}\n"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			path := filepath.Join(t.TempDir(), "answers.yaml")
+			if err := os.WriteFile(path, []byte(base+tt.hooks), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			loaders := map[string]func() error{
+				"load": func() error { _, err := devinit.LoadAnswersFile(path); return err },
+				"overlay": func() error {
+					_, err := devinit.OverlayAnswersFile(types.WizardAnswers{}, path)
+					return err
+				},
+			}
+			for name, load := range loaders {
+				err := load()
+				if tt.wantErr == "" {
+					if err != nil {
+						t.Errorf("%s: %v, want nil", name, err)
+					}
+					continue
+				}
+				if err == nil || !strings.Contains(err.Error(), tt.wantErr) {
+					t.Errorf("%s: err = %v, want it to contain %q", name, err, tt.wantErr)
+				}
+			}
+		})
+	}
+}

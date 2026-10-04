@@ -77,12 +77,12 @@
   git-hooks.hooks = {
     # Always-on hooks (less any tiered above the security level)
 {{- range .SecurityHooks}}
-    {{ . }}.enable = true;
+    {{ nixHookID . }}.enable = true;
 {{- end}}
     # Enhanced hooks (language-aware, from ecosystem modules)
 {{- range .BuiltInHooks}}
 {{- if or .TypesOr .ExcludeTypes .Excludes .Settings }}
-    {{ .ID }} = {
+    {{ nixHookID .ID }} = {
       enable = true;
 {{- if .TypesOr }}
       types_or = {{ nixStringList .TypesOr }};
@@ -98,20 +98,20 @@
 {{- end }}
     };
 {{- else }}
-    {{ .ID }}.enable = true;
+    {{ nixHookID .ID }}.enable = true;
 {{- end }}
 {{- end}}
 {{- range .HookOverrides}}
 {{- if .TypesOr}}
-    {{ .ID }}.types_or = {{ nixStringList .TypesOr }};
+    {{ nixHookID .ID }}.types_or = {{ nixStringList .TypesOr }};
 {{- end}}
 {{- if .ExcludeTypes}}
-    {{ .ID }}.exclude_types = {{ nixStringList .ExcludeTypes }};
+    {{ nixHookID .ID }}.exclude_types = {{ nixStringList .ExcludeTypes }};
 {{- end}}
 {{- end}}
     # Specialized hooks (custom definitions)
 {{- range .CustomHooks}}
-    {{ .ID }} = {
+    {{ nixHookID .ID }} = {
       enable = true;
       name = {{ nixString .Name }};
       description = {{ nixString .Description }};

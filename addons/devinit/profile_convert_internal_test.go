@@ -141,3 +141,53 @@ func TestMergeProfileWithFlags_EnvVarsMergePerKey(t *testing.T) {
 		t.Error("merge mutated the base EnvVars map")
 	}
 }
+
+// TestMergeProfileWithFlags_HooksAdditive verifies --claude-hooks adds its
+// presets to the profile's (or answers file's) hooks instead of replacing
+// them, so naming one preset cannot drop the profile's safety block.
+func TestMergeProfileWithFlags_HooksAdditive(t *testing.T) {
+	t.Parallel()
+	base := types.WizardAnswers{Hooks: types.HookChoices{SafetyBlock: true, CredentialScan: true}}
+	overrides := types.WizardAnswers{Hooks: types.HookChoices{AuditLog: true}}
+
+	tests := []struct {
+		name    string
+		changed map[string]bool
+		want    types.HookChoices
+	}{
+		{"flag unset keeps profile hooks", map[string]bool{}, base.Hooks},
+		{
+			"flag set adds to profile hooks",
+			map[string]bool{"hooks": true},
+			types.HookChoices{SafetyBlock: true, CredentialScan: true, AuditLog: true},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			if got := MergeProfileWithFlags(base, overrides, tt.changed).Hooks; got != tt.want {
+				t.Errorf("Hooks = %+v, want %+v", got, tt.want)
+			}
+		})
+	}
+}
+
+// TestBuildAnswers_ClaudeHooksAddToProfileHooks drives the real flag parsing:
+// --claude-hooks with --profile keeps every hook the profile enables and adds
+// the named preset.
+func TestBuildAnswers_ClaudeHooksAddToProfileHooks(t *testing.T) {
+	t.Parallel()
+	p, ok := ensureProfileRegistry().Get("go-web")
+	if !ok {
+		t.Fatal("go-web profile not found")
+	}
+	profileHooks, err := hooksFromStrings(p.Hooks)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	got := answersFromInitArgs(t, "--profile", "go-web", "--claude-hooks", "audit-log").Hooks
+	if want := profileHooks.Union(types.HookChoices{AuditLog: true}); got.Union(want) != got {
+		t.Errorf("Hooks = %+v, want at least the profile hooks plus audit-log %+v", got, want)
+	}
+}

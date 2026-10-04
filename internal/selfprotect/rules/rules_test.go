@@ -3,7 +3,10 @@ package rules
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
+
+	"github.com/Quantum-Serendipity/qsdev/internal/selfprotect/cmdscan"
 )
 
 func homeDir(t *testing.T) string {
@@ -1618,96 +1621,321 @@ func TestSP013_AuditTrailWriteBlock(t *testing.T) {
 	}
 }
 
+// sensitiveFixture mirrors the shape of the sensitive commands the CLI marks
+// (cmdutil.MarkSensitive): unconditional ones, flag-conditioned ones, one
+// conditioned on a positional argument, one with a read-only flag and one
+// with a flag that takes a value. Each also reads --help, -h and --version
+// as read-only, as cmdutil.SensitiveCommands derives them from cobra.
+var sensitiveFixture = withInfoFlags([]cmdscan.CommandSpec{
+	{Path: [][]string{{"teardown"}}, ReadOnly: []string{"--dry-run"}},
+	{Path: [][]string{{"session"}, {"allow"}}, ValueFlags: []string{"--rules", "-r"}},
+	{Path: [][]string{{"sandbox"}, {"approve"}}},
+	{Path: [][]string{{"defaults"}, {"reset"}}},
+	{Path: [][]string{{"defaults"}, {"pin"}}},
+	{Path: [][]string{{"repair"}}, ReadOnly: []string{"--dry-run"}, Flags: []cmdscan.FlagCond{{Spellings: []string{"--force"}, Value: true}}},
+	{Path: [][]string{{"claude", "cc"}, {"init"}}, Flags: []cmdscan.FlagCond{{Spellings: []string{"--force", "-f"}, Value: true}}},
+	{Path: [][]string{{"self-update"}}, Flags: []cmdscan.FlagCond{
+		{Spellings: []string{"--no-strict"}, Value: true},
+		{Spellings: []string{"--strict"}, Value: false},
+	}},
+	{Path: [][]string{{"disable"}}, Args: func() []string { return []string{"attach-guard", "gitleaks"} }},
+})
+
+// withInfoFlags adds cobra's help and version flags to each spec's
+// read-only flags.
+func withInfoFlags(specs []cmdscan.CommandSpec) []cmdscan.CommandSpec {
+	for i := range specs {
+		specs[i].ReadOnly = append(specs[i].ReadOnly, "--help", "-h", "--version")
+	}
+	return specs
+}
+
+// TestSP014_CLISecurityControlBlock pins that SP-014 blocks exactly the
+// invocations the command tree marks sensitive, however they are spelled.
 func TestSP014_CLISecurityControlBlock(t *testing.T) {
 	t.Parallel()
-
 	tests := []struct {
-		name    string
-		ctx     EvalContext
+		command string
 		verdict Verdict
 	}{
-		{
-			name: "deny qsdev disable hooks",
-			ctx: EvalContext{
-				ToolName: "Bash",
-				Command:  "qsdev disable hooks",
-			},
-			verdict: Deny,
-		},
-		{
-			name: "deny qsdev enable hooks --force",
-			ctx: EvalContext{
-				ToolName: "Bash",
-				Command:  "qsdev enable hooks --force",
-			},
-			verdict: Deny,
-		},
-		{
-			name: "deny qsdev session allow (agent self-granted policy bypass)",
-			ctx: EvalContext{
-				ToolName: "Bash",
-				Command:  "qsdev session allow SC-001",
-			},
-			verdict: Deny,
-		},
-		{
-			name: "deny qsdev session allow via --rules",
-			ctx: EvalContext{
-				ToolName: "Bash",
-				Command:  "cd /repo && qsdev  session   allow --rules SC-001,SC-002",
-			},
-			verdict: Deny,
-		},
-		{
-			name: "deny qsdev sandbox approve (agent self-approved sandbox policy)",
-			ctx: EvalContext{
-				ToolName: "Bash",
-				Command:  "qsdev sandbox approve --policy .qsdev/policy.nix",
-			},
-			verdict: Deny,
-		},
-		{
-			name: "allow qsdev sandbox status",
-			ctx: EvalContext{
-				ToolName: "Bash",
-				Command:  "qsdev sandbox status",
-			},
-			verdict: Allow,
-		},
-		{
-			name: "allow qsdev session list",
-			ctx: EvalContext{
-				ToolName: "Bash",
-				Command:  "qsdev session list",
-			},
-			verdict: Allow,
-		},
-		{
-			name: "allow qsdev enable tool",
-			ctx: EvalContext{
-				ToolName: "Bash",
-				Command:  "qsdev enable semgrep",
-			},
-			verdict: Allow,
-		},
-		{
-			name: "allow qsdev status",
-			ctx: EvalContext{
-				ToolName: "Bash",
-				Command:  "qsdev status",
-			},
-			verdict: Allow,
-		},
+		{"qsdev teardown --force", Deny},
+		{"qsdev teardown", Deny},
+		{"qsdev teardown --dry-run", Allow},
+		{"qsdev session allow SC-001", Deny},
+		{"cd /repo && qsdev  session   allow --rules SC-001,SC-002", Deny},
+		{"qsdev sandbox approve --policy .qsdev/policy.nix", Deny},
+		{"qsdev defaults reset --yes", Deny},
+		{"qsdev repair --force", Deny},
+		{"qsdev repair --force=false", Allow},
+		{"qsdev repair", Allow},
+		{"qsdev repair --force --dry-run", Allow},
+		{"qsdev claude init --yes --force", Deny},
+		{"qsdev cc init -f", Deny},
+		{"qsdev claude init --yes", Allow},
+		{"qsdev self-update --no-strict", Deny},
+		{"qsdev self-update --strict=false", Deny},
+		{"qsdev self-update --strict=true", Allow},
+		{"qsdev self-update", Allow},
+		{"qsdev disable attach-guard --force", Deny},
+		{"qsdev disable gitleaks", Deny},
+		{"qsdev disable context7", Allow},
+		// Spellings that must not hide the program or the subcommand.
+		{`"qsdev" teardown --force`, Deny},
+		{`q''sdev teardown --force`, Deny},
+		{`q\sdev teardown --force`, Deny},
+		{`qsdev "session" allow X`, Deny},
+		{"/usr/local/bin/qsdev teardown --force", Deny},
+		{`C:\Users\me\bin\qsdev.exe teardown --force`, Deny},
+		{"env FOO=1 qsdev teardown --force", Deny},
+		{`bash -c "qsdev disable attach-guard --force"`, Deny},
+		{"eval 'qsdev teardown --force'", Deny},
+		{"qsdev status; qsdev teardown --force", Deny},
+		{"echo ok\nqsdev teardown --force", Deny},
+		{"qsdev --debug teardown --force", Deny},
+		{"QSDEV teardown --force", Deny},
+		// Regression (U18-WS1 round 5): a program or subcommand word the
+		// shell computes fails closed instead of hiding the invocation.
+		{`Q=qsdev; env -u CLAUDECODE script -qec "$Q defaults pin" /dev/null`, Deny},
+		{"Q=qsdev; $Q defaults pin", Deny},
+		{"${Q} defaults pin", Deny},
+		{"P=pin; qsdev defaults $P", Deny},
+		{"qsdev defaults ${P}", Deny},
+		{"qsdev defaults $(echo pin)", Deny},
+		{"qsdev defaults `echo pin`", Deny},
+		{"qsdev $(echo defaults pin)", Deny},
+		{"$(printf qs)dev defaults pin", Deny},
+		{"`echo qsdev` defaults pin", Deny},
+		{"{qsdev,} defaults pin", Deny},
+		{"qsdev defaults {pin,show}", Deny},
+		{"/run/current-system/sw/bin/qsde? teardown", Deny},
+		{"echo pin | xargs qsdev defaults", Deny},
+		{"echo defaults pin | xargs qsdev", Deny},
+		{"echo qsdev | xargs -I X X defaults pin", Deny},
+		{"echo qsdev | xargs -I{} {} defaults pin", Deny},
+		{"alias q=qsdev; q defaults pin", Deny},
+		{`f() { qsdev "$@"; }; f defaults pin`, Deny},
+		{"qsdev repair $FLAGS", Deny},
+		{"qsdev disable $TOOL", Deny},
+		{"qsdev teardown $X --dry-run", Allow},
+		// Regression (U18-WS1 round 6): the program named as an argument
+		// of another program, followed by a glob or a variable, is not a
+		// computed invocation; help and version forms print instead of
+		// running.
+		{"grep -rn qsdev internal/*.go", Allow},
+		{"rg qsdev *.md", Allow},
+		{"grep qsdev $FILE", Allow},
+		{"echo qsdev $X", Allow},
+		{`rg "qsdev" docs | head; node build.js`, Allow},
+		{`git commit -m "fix qsdev $X"`, Allow},
+		// The fixture has no command with a --version flag of its own; the
+		// real tree has one (self-update), so there this is denied.
+		{"qsdev --version $V", Allow},
+		{"qsdev $CMD --help", Allow},
+		{"qsdev defaults pin --help", Allow},
+		{"qsdev -h defaults pin", Allow},
+		{"qsdev help defaults pin", Allow},
+		{"qsdev defaults pin -- --help", Deny},
+		{"qsdev session allow --rules --help", Deny},
+		{"qsdev session allow -r --help SC-001", Deny},
+		// A flag before the path may take the next word as its value.
+		{"qsdev --config x self-update --no-strict", Deny},
+		{"qsdev -C x teardown", Deny},
+		// An unquoted argument that runs the program still counts when its
+		// subcommand is written out.
+		{`find . -exec qsdev teardown \;`, Deny},
+		{"devenv shell qsdev defaults pin", Deny},
+		{"go run ./cmd/qsdev teardown", Deny},
+		{"devenv shell qsdev defaults $P", Allow},
+		// Command lines another program runs, quoted or not.
+		{`sh -c 'cd /x && qsdev teardown'`, Deny},
+		{`env -S "qsdev teardown"`, Deny},
+		{`script -q -c "qsdev teardown" /dev/null`, Deny},
+		{`script --command="qsdev teardown" /dev/null`, Deny},
+		{`pwsh -Command "qsdev teardown"`, Deny},
+		{`cmd /c "qsdev teardown"`, Deny},
+		{`if qsdev teardown; then :; fi`, Deny},
+		{`! FOO=1 qsdev teardown`, Deny},
+		{`xargs sh -c 'qsdev defaults "$@"' _`, Deny},
+		// Regression (U18-WS1 round 8): a quoted string, an assignment's
+		// value or an argument that names the program with a sensitive
+		// subcommand counts whichever program takes it, for many run text
+		// they are given as code; text that only mentions the command is
+		// denied too (as on main), with a message saying so.
+		{`echo "qsdev session allow" | sh`, Deny},
+		{`echo 'qsdev session allow' | bash`, Deny},
+		{`printf 'qsdev session allow\n' | bash`, Deny},
+		{`bash <<< "qsdev session allow"`, Deny},
+		{`sh <<< 'qsdev session allow'`, Deny},
+		{"bash <<EOF\nqsdev session allow\nEOF", Deny},
+		{"cat <<'EOF' > x.sh\nqsdev session allow\nEOF", Deny},
+		{`ssh localhost "qsdev session allow"`, Deny},
+		{`watch "qsdev session allow"`, Deny},
+		{`tmux new -d "qsdev session allow"`, Deny},
+		{`echo "qsdev session allow" > x.sh && sh x.sh`, Deny},
+		{`echo "qsdev session allow" > x.sh; chmod +x x.sh; ./x.sh`, Deny},
+		{`echo "import os; os.system('qsdev session allow')" | python3`, Deny},
+		{`find . -exec "qsdev" teardown \;`, Deny},
+		{`x="qsdev session allow"; $x`, Deny},
+		{`x='qsdev session allow'; $x`, Deny},
+		{`x="qsdev session allow"; ${x}`, Deny},
+		{`x="qsdev defaults pin"; $x`, Deny},
+		{`read -r x <<< "qsdev session allow"; $x`, Deny},
+		{`set -- "qsdev session allow"; $1`, Deny},
+		{`trap "qsdev session allow" EXIT`, Deny},
+		{`bash -c 'trap "qsdev session allow" EXIT'`, Deny},
+		{`git rebase -x "qsdev session allow" HEAD~1`, Deny},
+		{`git rebase --exec "qsdev session allow" HEAD~1`, Deny},
+		{`flock /tmp/l -c "qsdev session allow"`, Deny},
+		{`parallel ::: "qsdev session allow"`, Deny},
+		{`parallel ::: "qsdev session allow" --help`, Deny},
+		{`npx -c "qsdev session allow"`, Deny},
+		{`npm exec -c "qsdev session allow"`, Deny},
+		{`vim -c '!qsdev session allow'`, Deny},
+		{`ex -c '!qsdev session allow'`, Deny},
+		{`less -c "!qsdev session allow" x`, Deny},
+		{`osascript -e 'do shell script "qsdev session allow"'`, Deny},
+		{`sed -n '1e qsdev session allow' x`, Deny},
+		{`expect -c 'spawn qsdev session allow'`, Deny},
+		{`gdb -batch -ex "shell qsdev session allow"`, Deny},
+		{`awk 'BEGIN{system("qsdev session allow")}'`, Deny},
+		{`git -c core.pager="qsdev session allow" log`, Deny},
+		{`git -c alias.z='!qsdev session allow' z`, Deny},
+		{`PROMPT_COMMAND="qsdev session allow" bash -i`, Deny},
+		{`GIT_EDITOR="qsdev session allow" git commit`, Deny},
+		{`GIT_SSH_COMMAND="qsdev session allow" git fetch`, Deny},
+		{`EDITOR="qsdev session allow" crontab -e`, Deny},
+		{`echo "see qsdev teardown"`, Deny},
+		{`echo "run: qsdev teardown" > notes.md`, Deny},
+		{`git commit -m "docs: explain qsdev teardown"`, Deny},
+		{`git commit -m "qsdev teardown is gated"`, Deny},
+		{`grep -l "qsdev teardown" docs/*`, Deny},
+		{`grep "qsdev session allow" README.md`, Deny},
+		{`git log --grep="qsdev teardown" -n 5`, Deny},
+		{`rg -n "qsdev defaults pin" docs/ $DIR`, Deny},
+		// Text that names the program without a sensitive subcommand
+		// written out after it stays open, whatever else the line runs.
+		{`git commit -m "docs: explain qsdev status" && python3 scripts/check.py`, Allow},
+		{`echo "see qsdev docs" && ./gotest.sh`, Allow},
+		{`git commit -m "teardown is gated in qsdev"`, Allow},
+		{`echo "myqsdev teardown"`, Allow},
+		// Computed program and subcommand words in command position stay
+		// denied; the program's name assigned to a variable anchors them.
+		{"Q=qsdev; $Q $S", Deny},
+		{`c=qsdev; s="session allow"; $c $s`, Deny},
+		{"c=qsdev; $c $s", Deny},
+		{"qsdev $CMD $ARGS", Deny},
+		{"$A $B", Allow},
+		// Computed words that cannot be an invocation stay open.
+		{"cp $a $b", Allow},
+		{"cd $DIR && ls", Allow},
+		{"echo $A $B $C", Allow},
+		{"ls | xargs grep foo", Allow},
+		{"find . -name '*.go' | xargs gofmt -l", Allow},
+		{`git commit -m "$(cat msg)"`, Allow},
+		{"for f in *.go; do gofmt -l $f; done", Allow},
+		{"qsdev status $X", Allow},
+		{"qsdev defaults show $X", Allow},
+		// Look-alikes and read-only commands stay open.
+		{"qsdev sandbox status", Allow},
+		{"qsdev session list", Allow},
+		{"qsdev enable semgrep", Allow},
+		{"qsdev status", Allow},
+		{"qsdevx teardown --force", Allow},
+		{"git commit -m 'teardown'", Allow},
 	}
-
 	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
+		t.Run(tt.command, func(t *testing.T) {
 			t.Parallel()
-			v, _ := sp014.Evaluate(&tt.ctx)
+			ctx := EvalContext{ToolName: "Bash", Command: tt.command, SensitiveCommands: sensitiveFixture}
+			v, reason := sp014.Evaluate(&ctx)
 			if v != tt.verdict {
-				t.Errorf("got %v, want %v", v, tt.verdict)
+				t.Errorf("SP-014(%q) = %v (%s), want %v", tt.command, v, reason, tt.verdict)
 			}
 		})
+	}
+}
+
+// TestSP014_Reason pins that SP-014 names a guardrail-weakening command only
+// when it is written out, says the command line mentions it when it is
+// written outside command position (text the agent may reword), and
+// otherwise says the command line is computed, so a denial never names a
+// command that may never run.
+func TestSP014_Reason(t *testing.T) {
+	t.Parallel()
+	const (
+		computed = "a computed qsdev command"
+		mentions = "the command line mentions 'qsdev teardown', which weakens a guardrail"
+	)
+	tests := []struct {
+		command, want string
+	}{
+		{"qsdev defaults pin", "'qsdev defaults pin' weakens a guardrail"},
+		{"echo qsdev teardown", mentions},
+		{`git commit -m "explain qsdev teardown"`, mentions},
+		{`x="qsdev session allow"; $x`, "the command line mentions 'qsdev session allow'"},
+		{`echo "qsdev teardown"; qsdev defaults pin`, "'qsdev defaults pin' weakens a guardrail"},
+		{"Q=qsdev; $Q $S", computed},
+		{"P=pin; qsdev defaults $P", computed},
+		{"qsdev defaults $(echo pin)", computed},
+		{"Q=qsdev; $Q defaults pin", computed},
+		{"echo pin | xargs qsdev defaults", computed},
+		{`Q=qsdev; env -u CLAUDECODE script -qec "$Q defaults pin" /dev/null`, computed},
+		{"qsdev $CMD", computed},
+		{"qsdev disable $TOOL; qsdev teardown", "'qsdev teardown' weakens a guardrail"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.command, func(t *testing.T) {
+			t.Parallel()
+			ctx := EvalContext{ToolName: "Bash", Command: tt.command, SensitiveCommands: sensitiveFixture}
+			v, reason := sp014.Evaluate(&ctx)
+			if v != Deny || !strings.HasPrefix(reason, tt.want) {
+				t.Errorf("SP-014(%q) = %v (%q), want deny starting %q", tt.command, v, reason, tt.want)
+			}
+		})
+	}
+}
+
+// TestSP014_VersionValue pins that `qsdev --version $V` is denied for a tree
+// with a command that defines a --version flag of its own (self-update): $V
+// may be `x self-update --no-strict`, which cobra reads as that flag's value
+// and self-update's flags.
+func TestSP014_VersionValue(t *testing.T) {
+	t.Parallel()
+	specs := []cmdscan.CommandSpec{{
+		Path:     [][]string{{"self-update"}},
+		ReadOnly: []string{"--help", "-h"},
+		Flags:    []cmdscan.FlagCond{{Spellings: []string{"--no-strict"}, Value: true}},
+	}}
+	tests := []struct {
+		command string
+		verdict Verdict
+	}{
+		{"qsdev --version $V", Deny},
+		{"qsdev --version x self-update --no-strict", Deny},
+		{"qsdev $CMD --help", Allow},
+	}
+	for _, tt := range tests {
+		t.Run(tt.command, func(t *testing.T) {
+			t.Parallel()
+			ctx := EvalContext{ToolName: "Bash", Command: tt.command, SensitiveCommands: specs}
+			if v, reason := sp014.Evaluate(&ctx); v != tt.verdict {
+				t.Errorf("SP-014(%q) = %v (%s), want %v", tt.command, v, reason, tt.verdict)
+			}
+		})
+	}
+}
+
+// TestSP014_NoTreeAllows pins that SP-014 has no list of its own: with no
+// sensitive commands it blocks nothing, and a non-shell tool is never judged.
+func TestSP014_NoTreeAllows(t *testing.T) {
+	t.Parallel()
+	for _, ctx := range []EvalContext{
+		{ToolName: "Bash", Command: "qsdev teardown --force"},
+		{ToolName: "Write", Command: "qsdev teardown --force", SensitiveCommands: sensitiveFixture},
+	} {
+		if v, reason := sp014.Evaluate(&ctx); v != Allow {
+			t.Errorf("SP-014(%s %q) = %v (%s), want allow", ctx.ToolName, ctx.Command, v, reason)
+		}
 	}
 }
 
@@ -1776,8 +2004,8 @@ func TestRuleSet_Rules(t *testing.T) {
 	t.Parallel()
 
 	rules := Tier1Rules.Rules()
-	if len(rules) != 18 {
-		t.Errorf("expected 18 rules, got %d", len(rules))
+	if len(rules) != 19 {
+		t.Errorf("expected 19 rules, got %d", len(rules))
 	}
 
 	expectedIDs := []string{
@@ -1785,7 +2013,7 @@ func TestRuleSet_Rules(t *testing.T) {
 		"SP-006", "SP-007", "SP-008", "SP-009", "SP-010",
 		"MCP-001", "MCP-002", "MCP-005",
 		"INT-001",
-		"SP-011", "SP-012", "SP-013", "SP-014",
+		"SP-011", "SP-012", "SP-013", "SP-014", "SP-015",
 	}
 	for i, expected := range expectedIDs {
 		if i >= len(rules) {

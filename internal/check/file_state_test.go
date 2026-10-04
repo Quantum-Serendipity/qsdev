@@ -4,9 +4,12 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
+	"github.com/Quantum-Serendipity/qsdev/internal/claudesettings"
 	"github.com/Quantum-Serendipity/qsdev/internal/state"
+	"github.com/Quantum-Serendipity/qsdev/pkg/branding"
 	"github.com/Quantum-Serendipity/qsdev/pkg/types"
 )
 
@@ -486,5 +489,149 @@ func TestCheckDenyRules_DecoyKeyCase(t *testing.T) {
 	results := checkDenyRules(CheckContext{ProjectRoot: dir, RequiredDenyRules: []string{`Bash(rm -rf *)`}})
 	if !ShouldFail(results, AuditLevelLow) {
 		t.Errorf("decoy-cased Permissions key satisfied the deny-rule check: %+v", results)
+	}
+}
+
+// guardHooksSettings registers package-guard.py as a PreToolUse guard (in the
+// fail-closed form the generator emits) and audit-log.sh as a PostToolUse
+// hook.
+const guardHooksSettings = `{"hooks": {
+  "PreToolUse": [{"matcher": "Bash", "hooks": [{"type": "command",
+    "command": "\"${CLAUDE_PROJECT_DIR}\"/.claude/hooks/package-guard.py || { echo blocked >&2; exit 2; }"}]}],
+  "PostToolUse": [{"matcher": "*", "hooks": [{"type": "command",
+    "command": "\"${CLAUDE_PROJECT_DIR}\"/.claude/hooks/audit-log.sh"}]}]
+}}`
+
+// TestFileSeverity_GuardScript checks that a machine-owned file a PreToolUse
+// hook runs is a guard: modifying or deleting it is critical, so
+// `check --audit-level critical` fails on a gutted guard, whether the hook
+// comes from the generated settings or, without them, from the project's
+// settings on disk. Other machine-owned files keep their severity.
+func TestFileSeverity_GuardScript(t *testing.T) {
+	t.Parallel()
+	const (
+		guard    = ".claude/hooks/package-guard.py"
+		auditLog = ".claude/hooks/audit-log.sh"
+		other    = ".gitleaks.toml"
+	)
+	tests := []struct {
+		name         string
+		expected     string            // ExpectedClaudeSettings
+		onDisk       map[string]string // settings files written to the project
+		gut          string            // tracked file emptied ("" for none)
+		remove       string            // tracked file deleted ("" for none)
+		wantName     string
+		wantSeverity CheckSeverity
+		wantCritical bool
+	}{
+		{name: "emptied guard", expected: guardHooksSettings, gut: guard,
+			wantName: "file_unmodified_" + guard, wantSeverity: SeverityCritical, wantCritical: true},
+		{name: "deleted guard", expected: guardHooksSettings, remove: guard,
+			wantName: "file_exists_" + guard, wantSeverity: SeverityCritical, wantCritical: true},
+		{name: "emptied guard registered in settings.json only",
+			onDisk: map[string]string{claudesettings.ProjectRelPath: guardHooksSettings}, gut: guard,
+			wantName: "file_unmodified_" + guard, wantSeverity: SeverityCritical, wantCritical: true},
+		{name: "emptied guard registered in settings.local.json only",
+			onDisk: map[string]string{claudesettings.LocalRelPath: guardHooksSettings}, gut: guard,
+			wantName: "file_unmodified_" + guard, wantSeverity: SeverityCritical, wantCritical: true},
+		{name: "modified PostToolUse script", expected: guardHooksSettings, gut: auditLog,
+			wantName: "file_unmodified_" + auditLog, wantSeverity: SeverityMedium},
+		{name: "modified non-hook machine-owned file", expected: guardHooksSettings, gut: other,
+			wantName: "file_unmodified_" + other, wantSeverity: SeverityMedium},
+		{name: "deleted non-hook machine-owned file", expected: guardHooksSettings, remove: other,
+			wantName: "file_exists_" + other, wantSeverity: SeverityHigh},
+		{name: "unregistered guard is not critical", gut: guard,
+			wantName: "file_unmodified_" + guard, wantSeverity: SeverityMedium},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			dir := t.TempDir()
+			var files []types.GeneratedFile
+			for _, rel := range []string{guard, auditLog, other} {
+				f := types.GeneratedFile{Path: rel, Content: []byte("content of " + rel + "\n"), Mode: 0o644}
+				files = append(files, f)
+				content := f.Content
+				if rel == tt.gut {
+					content = nil
+				}
+				if rel != tt.remove {
+					writeProjectFile(t, dir, rel, string(content))
+				}
+			}
+			for rel, content := range tt.onDisk {
+				writeProjectFile(t, dir, rel, content)
+			}
+			stateFile := filepath.Join(dir, ".qsdev", "state.yaml")
+			if err := state.SaveStateToFile(stateFile, state.RecordFiles(files)); err != nil {
+				t.Fatal(err)
+			}
+
+			results := checkGeneratedFiles(CheckContext{
+				ProjectRoot:            dir,
+				StateFile:              stateFile,
+				ExpectedClaudeSettings: []byte(tt.expected),
+			})
+
+			r := findResult(results, tt.wantName)
+			if r == nil {
+				t.Fatalf("no %s result in %+v", tt.wantName, results)
+			}
+			if r.Status != StatusFail || r.Severity != tt.wantSeverity {
+				t.Errorf("%s = %s/%s, want fail/%s", tt.wantName, r.Status, r.Severity, tt.wantSeverity)
+			}
+			if tt.wantCritical {
+				if want := "'qsdev update --configs-only --overwrite-modified' to restore the generated " + guard; !strings.Contains(r.Remediation, want) {
+					t.Errorf("Remediation = %q, want it to name %q", r.Remediation, want)
+				}
+			}
+			if got := ShouldFail(results, AuditLevelCritical); got != tt.wantCritical {
+				t.Errorf("ShouldFail(critical) = %v, want %v", got, tt.wantCritical)
+			}
+		})
+	}
+}
+
+func writeProjectFile(t *testing.T, root, rel, content string) {
+	t.Helper()
+	path := filepath.Join(root, filepath.FromSlash(rel))
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// TestVerifyGeneratedFiles_UnjoinedCheckoutJoinsFirst pins the remediation in
+// a checkout with a committed config but no local init state: repair, update
+// and auto-fix all refuse or fail there, so the advice is to join first and
+// the result is not offered for auto-fix.
+func TestVerifyGeneratedFiles_UnjoinedCheckoutJoinsFirst(t *testing.T) {
+	t.Parallel()
+	for _, joined := range []bool{false, true} {
+		dir := t.TempDir()
+		if err := os.WriteFile(filepath.Join(dir, branding.Get().ConfigFile), []byte("version: 2\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		if joined {
+			if err := state.SaveProjectState(dir, state.InitStateFile(), types.GeneratedState{}); err != nil {
+				t.Fatal(err)
+			}
+		}
+		expected := state.RecordFiles([]types.GeneratedFile{{Path: "deleted.txt", Content: []byte("x"), Mode: 0o644}})
+		var r *CheckResult
+		for _, res := range verifyGeneratedFiles(dir, expected, nil, nil) {
+			if res.Name == "file_exists_deleted.txt" {
+				r = &res
+			}
+		}
+		if r == nil {
+			t.Fatalf("joined=%v: deleted file not reported", joined)
+		}
+		joinsFirst := strings.HasPrefix(r.Remediation, joinFirstRemediation)
+		if joinsFirst == joined || r.AutoFixable == !joined {
+			t.Errorf("joined=%v: remediation %q, auto-fixable %v", joined, r.Remediation, r.AutoFixable)
+		}
 	}
 }

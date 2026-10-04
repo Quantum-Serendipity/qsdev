@@ -14,10 +14,10 @@ import (
 
 	"github.com/Quantum-Serendipity/qsdev/addons/claudecode"
 	"github.com/Quantum-Serendipity/qsdev/addons/devenv"
+	qsdevanswers "github.com/Quantum-Serendipity/qsdev/internal/answers"
 	"github.com/Quantum-Serendipity/qsdev/internal/catalog"
 	"github.com/Quantum-Serendipity/qsdev/internal/cmdutil"
 	qsdevconfig "github.com/Quantum-Serendipity/qsdev/internal/config"
-	"github.com/Quantum-Serendipity/qsdev/internal/detect"
 	"github.com/Quantum-Serendipity/qsdev/internal/merge"
 	"github.com/Quantum-Serendipity/qsdev/internal/repair"
 	"github.com/Quantum-Serendipity/qsdev/internal/state"
@@ -55,7 +55,7 @@ project-type profiles, and writes all files atomically.`,
 
 	RegisterInitFlags(cmd, &opts)
 
-	return cmd
+	return cmdutil.MarkReadOnly(cmd, "dry-run")
 }
 
 // updateOptionsFromInit maps init flags onto the update flow. For init,
@@ -77,6 +77,12 @@ func runInitWithModeDetection(cmd *cobra.Command, opts InitOptions) error {
 	projectRoot, err := cmdutil.WorkingDir()
 	if err != nil {
 		return err
+	}
+
+	// The postmortem skill backs an always-on tool: its only opt-out is
+	// disable --force.
+	if cmd.Flags().Changed("agent-postmortem") && !opts.AgentPostmortem {
+		return toolreg.OptOutFlagError("--agent-postmortem=false", toolreg.ToolAgentPostmortem)
 	}
 
 	// b. Handle --list-profiles early return.
@@ -135,7 +141,7 @@ func runInitWithModeDetection(cmd *cobra.Command, opts InitOptions) error {
 // runCreate is the original init flow for creating a project from scratch.
 func runCreate(cmd *cobra.Command, opts InitOptions, projectRoot string) error {
 	flagSet := NewFlagSet(cmd)
-	detected := detect.Detect(cmd.Context(), projectRoot)
+	detected := host.detectProject(cmd.Context(), projectRoot)
 	slog.Debug("ecosystem detection complete",
 		"ecosystems", len(detected.Ecosystems),
 		"has_go", detected.HasGoMod,
@@ -202,7 +208,7 @@ func warnOrInstallPrereqs(cmd *cobra.Command, opts InitOptions) {
 	if opts.ClaudeOnly || opts.DryRun {
 		return
 	}
-	prereqs := CheckPrerequisites(cmd.Context())
+	prereqs := host.prerequisites(cmd.Context())
 	if !prereqs.HasMissing() {
 		return
 	}
@@ -304,9 +310,11 @@ func buildAnswersFromInputs(cmd *cobra.Command, opts InitOptions, projectRoot st
 	if err != nil {
 		return types.WizardAnswers{}, fmt.Errorf("loading tool registry: %w", err)
 	}
-	toolreg.MergeInferredTools(&answers, treg)
+	if err := toolreg.ReconcileProject(cmd.ErrOrStderr(), projectRoot, &answers, treg); err != nil {
+		return types.WizardAnswers{}, err
+	}
 
-	enforceAnswerInvariants(&answers)
+	qsdevanswers.EnforceInvariants(&answers)
 	return answers, nil
 }
 
@@ -357,13 +365,20 @@ func writeAndRecordResults(cmd *cobra.Command, opts InitOptions, projectRoot str
 	slog.Info("files written",
 		"created", result.Created,
 		"updated", result.Updated,
-		"skipped", result.Skipped,
+		"unchanged", result.Unchanged,
+		"kept", result.Kept,
+		"sidecar", result.Sidecar,
 		"failed", result.Failed)
 
 	// The answers are saved even when some files failed: they are the input
 	// a re-run and repair regenerate from.
 	if err := saveAddonAnswers(cmd, projectRoot, answers, accResult); err != nil {
 		return err
+	}
+	// The summary is printed on partial failure too, so kept, sidecar and
+	// --force notes for the files that did succeed are not lost.
+	if !opts.Quiet {
+		_, _ = fmt.Fprintln(cmd.OutOrStdout(), result.Summary())
 	}
 	if result.HasFailures() {
 		// .qsdev.yaml is only written once every file is, so the project
@@ -374,25 +389,10 @@ func writeAndRecordResults(cmd *cobra.Command, opts InitOptions, projectRoot str
 		if !opts.Force && !opts.Merge {
 			rerun += " with --merge added"
 		}
-		return partialWriteError(result, len(successfulFiles), rerun)
-	}
-
-	if !opts.Quiet {
-		_, _ = fmt.Fprintln(cmd.OutOrStdout(), result.Summary())
+		return generate.PartialWriteError(result, len(successfulFiles), rerun)
 	}
 
 	return nil
-}
-
-// partialWriteError reports the files a write failed on and the command that
-// finishes the setup once their errors are fixed.
-func partialWriteError(result generate.WriteResult, recorded int, rerun string) error {
-	var details strings.Builder
-	for _, ff := range result.FailedFiles() {
-		fmt.Fprintf(&details, "\n  - %s: %v", ff.Path, ff.Error)
-	}
-	return fmt.Errorf("partial write: %d files failed (state saved for %d successful files); fix the errors below and re-run %s to finish setup%s",
-		result.Failed, recorded, rerun, details.String())
 }
 
 // saveAddonAnswers persists answers to the primary answers file and to each

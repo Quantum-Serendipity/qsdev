@@ -157,12 +157,16 @@ const (
 // CheckContext provides all dependencies for running checks.
 // Constructed by the command layer to avoid circular imports.
 type CheckContext struct {
-	ProjectRoot          string
-	BinaryVersion        string
-	QsdevConfig          *types.QsdevConfig
-	ConfigErr            error    // why QsdevConfig is nil: not found vs. failed to parse
-	ToolNames            []string // every registered tool, for config name validation
-	AlwaysOnToolNames    []string // tools that must never appear in tools.disabled
+	ProjectRoot       string
+	BinaryVersion     string
+	QsdevConfig       *types.QsdevConfig
+	ConfigErr         error    // why QsdevConfig is nil: not found vs. failed to parse
+	ToolNames         []string // every registered tool, for config name validation
+	AlwaysOnToolNames []string // tools that must never appear in tools.disabled
+	// RequiredMCPServers maps each always-on tool that the project's expected
+	// generation backs with an MCP server to that server, which the on-disk
+	// .mcp.json must configure.
+	RequiredMCPServers   map[string]string
 	MCPToolNames         []string // tools the MCP server can mount, for validating mcp.disabled_tools
 	ProfileNames         []string // project-type profiles, for validating `profile`
 	RequiredDenyRules    []string
@@ -174,6 +178,17 @@ type CheckContext struct {
 	// produces for the project's saved answers (nil when unknown); its hook
 	// registrations and bypass setting must still be in force on disk.
 	ExpectedClaudeSettings []byte
+	// GeneratedContent maps the project-relative path of each file the
+	// generator writes for the project's saved answers to its content (nil
+	// when unknown). A guard script is judged against it rather than against
+	// the recorded or committed hash, which a change to the guard can
+	// re-hash along with it.
+	GeneratedContent map[string][]byte
+	// ExpectedGenerationErr is why the generator's output for the project
+	// (ExpectedClaudeSettings, and the generated files beyond the embedded
+	// hook scripts) is unknown: the answers could not be derived from the
+	// config, or generation from them failed. Nil when that output is known.
+	ExpectedGenerationErr error
 	// ManifestFile is the committed manifest of machine-owned generated files
 	// (state.ManifestFile under the project root). Unlike StateFile it exists
 	// on a clean CI checkout, so it is what CI verifies generated files
@@ -183,6 +198,14 @@ type CheckContext struct {
 	// (.qsdev-policy.yaml) as evaluated against a posture assessment by the
 	// command layer; nil when the project has no custom policy.
 	CustomConformance *CustomConformance
+	// OrgConfigDrift is why the org overlay this run resolves is not the one
+	// the CLI reads for the project (see catalog.OrgConfigDrift), or "" when
+	// it is.
+	OrgConfigDrift string
+	// OrgConfigSource names the overlay the CLI reads for the project and
+	// why: pinned, or the account's home overlay when none is pinned (see
+	// catalog.ProjectOrgConfigSource).
+	OrgConfigSource string
 	// DeclaredEnv holds the environment variables the project's devenv
 	// modules (devenv.nix, devenv.local.nix) declare, read by the command
 	// layer; the cloud isolation check judges environment separation from
@@ -195,6 +218,13 @@ type CheckContext struct {
 	// HooksWithoutPolicy lists the hooks the saved answers enable without
 	// the policy they enforce (e.g. tool-gates with no allow or deny list).
 	HooksWithoutPolicy []HookWithoutPolicy
+	// LookPath resolves a hook's bare command word on PATH; nil uses
+	// toolcheck.LookPath.
+	LookPath func(file string) (string, error)
+	// ClaudeUserDir is the user Claude settings directory
+	// (canon.ClaudeConfigDir) whose settings.json is judged as a
+	// per-machine override; empty skips it.
+	ClaudeUserDir string
 }
 
 // CustomConformance carries the evaluated requirements of a project's custom

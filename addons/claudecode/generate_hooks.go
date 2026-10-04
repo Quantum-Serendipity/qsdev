@@ -5,13 +5,62 @@ import (
 	"github.com/Quantum-Serendipity/qsdev/pkg/types"
 )
 
+// PackageGuardPath is the project-relative path of the package guard.
+const PackageGuardPath = ".claude/hooks/package-guard.py"
+
+// packageGuardTemplate is the embedded template written to PackageGuardPath.
+const packageGuardTemplate = "templates/hooks/package-guard.py"
+
+// PackageGuardContent returns the content the generator writes to
+// PackageGuardPath: the embedded template, copied verbatim. The guard on
+// disk is judged against it (posture.AssessOptions.PackageGuard).
+func PackageGuardContent() []byte {
+	return HookScriptContents()[PackageGuardPath]
+}
+
+// HookScriptContents maps the project-relative path of every hook script the
+// generator can write, whatever the answers enable, to the content it writes
+// there: the embedded template, copied verbatim. A hook script on disk is
+// judged against it, so the judgement needs neither the project's answers nor
+// a successful generation run, either of which a committed config change can
+// take away.
+func HookScriptContents() map[string][]byte {
+	specs := hookFileSpecs(types.WizardAnswers{})
+	contents := make(map[string][]byte, len(specs))
+	for _, spec := range specs {
+		content, err := templateFS.ReadFile(spec.templatePath)
+		if err != nil {
+			continue // embedded at build time; a missing one is left unverified
+		}
+		contents[spec.outputPath] = content
+	}
+	return contents
+}
+
 // GenerateHookFiles returns GeneratedFile entries for all enabled hook presets.
 func GenerateHookFiles(answers types.WizardAnswers) ([]types.GeneratedFile, error) {
-	specs := []hookFileSpec{
+	var files []types.GeneratedFile
+	for _, spec := range hookFileSpecs(answers) {
+		f, err := generateHookFile(spec)
+		if err != nil {
+			return nil, err
+		}
+		if f != nil {
+			files = append(files, *f)
+		}
+	}
+
+	return files, nil
+}
+
+// hookFileSpecs lists every hook script the generator can write, each enabled
+// as answers decide.
+func hookFileSpecs(answers types.WizardAnswers) []hookFileSpec {
+	return []hookFileSpec{
 		{
-			enabled:      answers.Hooks.SafetyBlock,
-			templatePath: "templates/hooks/package-guard.py",
-			outputPath:   ".claude/hooks/package-guard.py",
+			enabled:      packageGuardEnabled(answers),
+			templatePath: packageGuardTemplate,
+			outputPath:   PackageGuardPath,
 			mode:         fileutil.ModeExecutable,
 			strategy:     types.Overwrite,
 			owner:        "attach-guard",
@@ -80,17 +129,4 @@ func GenerateHookFiles(answers types.WizardAnswers) ([]types.GeneratedFile, erro
 			strategy:     types.Overwrite,
 		},
 	}
-
-	var files []types.GeneratedFile
-	for _, spec := range specs {
-		f, err := generateHookFile(spec)
-		if err != nil {
-			return nil, err
-		}
-		if f != nil {
-			files = append(files, *f)
-		}
-	}
-
-	return files, nil
 }

@@ -153,19 +153,15 @@ func TestMapFormToAnswers_HookMapping(t *testing.T) {
 		devinit.WithQuickChoice("customize"),
 		devinit.WithConfirmed(true),
 		devinit.WithSelectedLanguages([]string{"go"}),
-		devinit.WithAutoFormat(true),
-		devinit.WithSafetyBlock(true),
+		devinit.WithHookPresets("audit-log"),
 		devinit.WithClaudeCode(true),
 		devinit.WithPermissionLevel("standard"),
 	)
 
 	answers := devinit.ExportMapFormToAnswers(fs, "/tmp/project", "myproject", detected)
 
-	if !answers.Hooks.AutoFormat {
-		t.Error("expected Hooks.AutoFormat=true")
-	}
-	if !answers.Hooks.SafetyBlock {
-		t.Error("expected Hooks.SafetyBlock=true")
+	if !answers.Hooks.AuditLog {
+		t.Error("expected the selected audit-log preset: Hooks.AuditLog=true")
 	}
 }
 

@@ -1,5 +1,7 @@
 package teardown
 
+import "github.com/Quantum-Serendipity/qsdev/internal/posture"
+
 // Profile selects the scope of a teardown operation.
 type Profile string
 
@@ -24,6 +26,9 @@ type TeardownOptions struct {
 	Archive     bool
 	DryRun      bool
 	ProjectRoot string
+	// Posture configures the final posture report of a compliance teardown;
+	// its PackageGuard is what the guard on disk is judged against.
+	Posture posture.AssessOptions
 }
 
 // FileAction describes a single file operation in the teardown plan.

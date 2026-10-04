@@ -2,7 +2,6 @@ package check
 
 import (
 	"testing"
-
 )
 
 func TestShouldFail_AuditLevelNone(t *testing.T) {

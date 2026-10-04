@@ -2,6 +2,7 @@ package instance
 
 import (
 	"fmt"
+	"log/slog"
 	"sync"
 
 	gdevinstance "fastcat.org/go/gdev/instance"
@@ -82,10 +83,23 @@ func buildVersionOverride(vi version.BuildInfo, overridden bool) (ver, commit st
 // add deny rules and hooks or raise compliance; anything else stops the
 // command with an error. Call it after SetBranding (the file's location
 // follows the app name) and before the command runs.
+//
+// It also pins the org overlay (catalog.UseOrgConfigPin) to the one a human
+// approved with the sensitive 'defaults pin' command, or without a pin to the
+// account's home overlay, for every run: whether a human runs the CLI cannot
+// be told reliably (an agent can drop its session marker and fake a terminal),
+// so an agent's command, or a file it wrote that sets <EnvPrefix>ORG_CONFIG,
+// cannot point a regeneration at an overlay of its own.
 func UseProjectDefaults() {
 	root, err := cmdutil.ProjectRoot()
-	if err != nil {
-		return
+	if err == nil {
+		catalog.SetProjectRoot(root)
+	} else {
+		root = ""
 	}
-	catalog.SetProjectRoot(root)
+	pin, err := catalog.LoadOrgConfigPin(root)
+	if err != nil {
+		slog.Warn("reading no pinned org overlay; using the account's home overlay", "error", err)
+	}
+	catalog.UseOrgConfigPin(root, pin)
 }

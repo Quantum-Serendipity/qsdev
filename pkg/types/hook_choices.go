@@ -7,6 +7,11 @@ import (
 	"slices"
 )
 
+// MinHookPython is the oldest python3 ("major.minor") the generated Python
+// hooks support (D20). Each hook script blocks (exit 2) below it; the
+// scripts' in-file `_MIN_PYTHON` tuples are pinned to it by tests.
+const MinHookPython = "3.9"
+
 // ErrUnknownHook reports a hook name that has no HookChoices field.
 var ErrUnknownHook = errors.New("unknown hook")
 
@@ -40,7 +45,34 @@ func (h *HookChoices) EnableHook(name string) error {
 	return nil
 }
 
+// SetSafetyBlock switches the safety block on or off. Switching it off is the
+// opt-out, so it records SafetyBlockOptOut; switching it on clears it.
+func (h *HookChoices) SetSafetyBlock(on bool) {
+	h.SafetyBlock = on
+	h.SafetyBlockOptOut = !on
+}
+
 // HookChoiceNames returns every name EnableHook accepts, sorted.
 func HookChoiceNames() []string {
 	return slices.Sorted(maps.Keys(hookChoiceFields))
+}
+
+// Union returns the choices with every hook that is on in h or in o turned
+// on, so hook sources add to one another instead of replacing each other.
+func (h HookChoices) Union(o HookChoices) HookChoices {
+	for _, field := range hookChoiceFields {
+		*field(&h) = *field(&h) || *field(&o)
+	}
+	return h
+}
+
+// EnabledNames returns, sorted, the name of every hook that is on in h.
+func (h HookChoices) EnabledNames() []string {
+	var names []string
+	for _, name := range HookChoiceNames() {
+		if *hookChoiceFields[name](&h) {
+			names = append(names, name)
+		}
+	}
+	return names
 }

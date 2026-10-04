@@ -98,3 +98,66 @@ func TestDetect_Output(t *testing.T) {
 		})
 	}
 }
+
+// TestDetect_RunsOutsideProject verifies a version probe does not run in the
+// project: there `go version` under GOTOOLCHAIN=auto would follow go.mod's
+// go line and download and run that toolchain.
+func TestDetect_RunsOutsideProject(t *testing.T) {
+	project := t.TempDir()
+	if err := os.WriteFile(filepath.Join(project, "go.mod"), []byte("module x\n\ngo 1.99.0\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	bin := t.TempDir()
+	cwdFile := filepath.Join(t.TempDir(), "cwd")
+	stub := "#!/bin/sh\npwd -P > '" + cwdFile + "'\necho 'go version go1.0 stub'\n"
+	if err := os.WriteFile(filepath.Join(bin, "go"), []byte(stub), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", bin)
+	t.Chdir(project)
+
+	info := toolcheck.Detect(context.Background(), "go", "version")
+	if !info.Found || info.Version == "" {
+		t.Fatalf("Detect = %+v, want the stub found with a version", info)
+	}
+	got, err := os.ReadFile(cwdFile)
+	if err != nil {
+		t.Fatalf("stub did not record its cwd: %v", err)
+	}
+	projectReal, err := filepath.EvalSymlinks(project)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cwd := strings.TrimSpace(string(got)); cwd == projectReal {
+		t.Errorf("version probe ran in the project %q", cwd)
+	}
+}
+
+// TestDetect_RefusesProjectBinary verifies a tool PATH resolves inside the
+// project (node_modules/.bin, a committed bin/) is never run: that would run
+// project code from a read-only command. It is reported found, without a
+// version.
+func TestDetect_RefusesProjectBinary(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	project := t.TempDir()
+	for _, dir := range []string{".git", "bin", "web"} {
+		if err := os.MkdirAll(filepath.Join(project, dir), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	marker := filepath.Join(t.TempDir(), "ran")
+	stub := "#!/bin/sh\ntouch '" + marker + "'\necho 'jq-1.0'\n"
+	if err := os.WriteFile(filepath.Join(project, "bin", "jq"), []byte(stub), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", filepath.Join(project, "bin"))
+	t.Chdir(filepath.Join(project, "web"))
+
+	info := toolcheck.Detect(context.Background(), "jq", "--version")
+	if _, err := os.Stat(marker); err == nil {
+		t.Fatal("Detect ran a binary inside the project")
+	}
+	if !info.Found || info.Version != "" {
+		t.Errorf("Detect = %+v, want found without a version", info)
+	}
+}

@@ -4,6 +4,7 @@ import (
 	"slices"
 	"time"
 
+	"github.com/Quantum-Serendipity/qsdev/internal/detect"
 	"github.com/Quantum-Serendipity/qsdev/internal/policyengine/sarif"
 	"github.com/Quantum-Serendipity/qsdev/internal/posture/drift"
 	"github.com/Quantum-Serendipity/qsdev/internal/tier"
@@ -297,4 +298,18 @@ type ToolStatus struct {
 type AssessOptions struct {
 	// FreshScan runs an OSV vulnerability scan of each detected lock file.
 	FreshScan bool
+	// ClaudeUserDir is the user Claude settings directory
+	// (canon.ClaudeConfigDir) whose settings.json the guard judgement also
+	// reads; empty judges the project files alone, so the result does not
+	// depend on the machine.
+	ClaudeUserDir string
+	// PackageGuard is the content the generator writes for package-guard.py
+	// (claudecode.PackageGuardContent). The guard on disk is credited only
+	// when it is this content, never by a recorded or committed hash, which
+	// a change to the guard can re-hash along with it; nil leaves the guard
+	// unverified, so it is not credited.
+	PackageGuard []byte
+	// DetectOptions replace the host probes project detection runs (the
+	// container runtime and OS); none probes the real host.
+	DetectOptions []detect.Option
 }

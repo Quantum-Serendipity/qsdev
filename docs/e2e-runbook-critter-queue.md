@@ -33,7 +33,7 @@ qsdev devenv doctor --check && echo "ALL CLEAR" || echo "MISSING TOOLS"
 ```bash
 qsdev init --list-profiles
 ```
-You'll see: go-web, ts-fullstack, python-data, rust-cli. Note ts-fullstack: JavaScript (pnpm), PostgreSQL, Redis, standard permissions, deploy + security-review skills, safety-block + auto-format + pre-commit hooks. All profiles include AlwaysOn MCP servers (context7, github, socket, semble) and AlwaysOn skills/agents (agent-postmortem, version-sentinel, semble-search, security-review, qsdev-add-dep).
+You'll see: go-web, ts-fullstack, python-data, rust-cli. Note ts-fullstack: JavaScript (pnpm), PostgreSQL, Redis, standard permissions, deploy + security-review skills, safety-block hook (plus the always-on hooks). All profiles include AlwaysOn MCP servers (context7, github, socket, semble) and AlwaysOn skills/agents (agent-postmortem, version-sentinel, semble-search, security-review, qsdev-add-dep).
 
 ### PF-5: Create clean project
 ```bash
@@ -918,8 +918,9 @@ qsdev logs list --json | jq '.[0]'
 
 **A5-27:**
 ```bash
-qsdev outdated
-qsdev outdated --ecosystem javascript
+qsdev outdated                     # plans only: names each command, exits non-zero asking for --online
+qsdev outdated --online
+qsdev outdated --online --ecosystem javascript
 ```
 
 ### Info

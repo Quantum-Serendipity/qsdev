@@ -27,7 +27,7 @@ func mcpCmd() *cobra.Command {
 	// The universal MCP server (internal/mcpserve) is the single allowed
 	// dependency edge from addons/claudecode into mcpserve. mcpserve must never
 	// import back into addons/claudecode (see internal/mcpserve/doc.go).
-	cmd.AddCommand(mcpserve.Command())
+	cmd.AddCommand(mcpserve.Command(mcpserve.WithTrustedServers(configuredServerSpecs())))
 	cmd.AddCommand(mcpserve.LegacyModuleCommands()...)
 
 	cmd.AddCommand(mcpStatusCmd())

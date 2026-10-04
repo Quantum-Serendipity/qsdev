@@ -71,8 +71,8 @@ func assertStrictAcmePolicy(t *testing.T, a types.WizardAnswers) {
 	if a.ComplianceLevel != "strict" {
 		t.Errorf("ComplianceLevel = %q, want the client's strict", a.ComplianceLevel)
 	}
-	if !a.Hooks.AuditLog || !a.Hooks.PreCommit {
-		t.Errorf("strict hooks missing: %+v", a.Hooks)
+	if !a.Hooks.AuditLog || a.Hooks.PreCommit {
+		t.Errorf("strict hooks = %+v, want audit-log and no pre-commit (a devenv git hook)", a.Hooks)
 	}
 	if !slices.Equal(a.MCPPolicy.Blocked, []string{types.MCPWildcard}) {
 		t.Errorf("MCPPolicy = %+v, want the client's", a.MCPPolicy)

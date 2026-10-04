@@ -13,6 +13,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/Quantum-Serendipity/qsdev/internal/catalog"
 	"github.com/Quantum-Serendipity/qsdev/internal/cmdutil"
 	"github.com/Quantum-Serendipity/qsdev/internal/container"
 	"github.com/Quantum-Serendipity/qsdev/internal/doctor"
@@ -46,7 +47,7 @@ exit code (suitable for CI).`,
 	cmd.Flags().BoolVar(&jsonOutput, "json", false, "Output machine-readable JSON")
 	cmd.Flags().BoolVar(&checkMode, "check", false, "Exit 0 if all required tools present, exit 1 if any missing")
 
-	return cmd
+	return cmdutil.MarkReadOnly(cmd, "")
 }
 
 func runDoctor(cmd *cobra.Command, jsonOutput, checkMode bool) error {
@@ -90,6 +91,9 @@ func runDoctor(cmd *cobra.Command, jsonOutput, checkMode bool) error {
 		LookPath:  exec.LookPath,
 	}))
 	report.SetProjectToolchains(toolchainWarnings)
+	if projectRoot != "" {
+		report.SetOrgOverlayDrift(catalog.ProjectOrgConfigDrift(projectRoot))
+	}
 	slog.Info("doctor check complete",
 		"required_tools", len(report.RequiredTools),
 		"optional_tools", len(report.OptionalTools),

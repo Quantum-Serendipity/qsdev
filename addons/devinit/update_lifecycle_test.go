@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	"github.com/Quantum-Serendipity/qsdev/addons/claudecode"
+	"github.com/Quantum-Serendipity/qsdev/internal/claudesettings"
 	"github.com/Quantum-Serendipity/qsdev/internal/state"
 	"github.com/Quantum-Serendipity/qsdev/pkg/branding"
 	"github.com/Quantum-Serendipity/qsdev/pkg/types"
@@ -296,17 +297,20 @@ func TestPlanOrphans(t *testing.T) {
 		"disabled-tool.yml":        {Owner: "old-tool"},
 		"../outside.md":            {},
 		branding.Get().LocalConfig: {},
+		// Claude Code switched off: the settings file is no longer generated.
+		claudesettings.ProjectRelPath: {},
 	}}
 	modStatus := map[string]state.FileStatus{
-		"kept.md":                  {Status: types.Unmodified},
-		"stale.md":                 {Status: types.Unmodified},
-		"edited.md":                {Status: types.Modified},
-		"gone.md":                  {Status: types.Deleted},
-		"tool.yml":                 {Status: types.Unmodified},
-		"retired-tool.yml":         {Status: types.Unmodified},
-		"disabled-tool.yml":        {Status: types.Unmodified},
-		"../outside.md":            {Status: types.Unmodified},
-		branding.Get().LocalConfig: {Status: types.Unmodified},
+		"kept.md":                     {Status: types.Unmodified},
+		"stale.md":                    {Status: types.Unmodified},
+		"edited.md":                   {Status: types.Modified},
+		"gone.md":                     {Status: types.Deleted},
+		"tool.yml":                    {Status: types.Unmodified},
+		"retired-tool.yml":            {Status: types.Unmodified},
+		"disabled-tool.yml":           {Status: types.Unmodified},
+		"../outside.md":               {Status: types.Unmodified},
+		branding.Get().LocalConfig:    {Status: types.Unmodified},
+		claudesettings.ProjectRelPath: {Status: types.Unmodified},
 	}
 	// semgrep is enabled but its generator did not run (no semgrep-owned file
 	// in this generation), so its tracked files stay with the enable/disable
@@ -326,6 +330,8 @@ func TestPlanOrphans(t *testing.T) {
 		"disabled-tool.yml": UpdateActionRemove,
 		"retired-tool.yml":  UpdateActionRemove,
 		"../outside.md":     UpdateActionUntrack,
+		// It registers the self-protection hook: left in place (U18-01).
+		claudesettings.ProjectRelPath: UpdateActionUntrack,
 	}
 	if len(got) != len(want) {
 		keys := make([]string, 0, len(got))

@@ -83,7 +83,7 @@ func Default() (*Catalog, error) {
 			projOpts = append(projOpts, WithProjectConfigFile(projFile))
 		}
 
-		orgFile := OrgConfigFile()
+		orgFile := PolicyOrgConfigFile()
 		if orgFile == "" {
 			defaultCat, defaultErr = Load(projOpts...)
 			return

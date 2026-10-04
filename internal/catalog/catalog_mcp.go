@@ -37,6 +37,20 @@ func (c *Catalog) DefaultMCPServers() []string {
 	return out
 }
 
+// AlwaysOnMCPServers returns, sorted, the MCP servers that back the
+// catalog's always-on tools (their mcp_server_name): enforcement adds each to
+// every configuration the tool applies to, as a default init does.
+func (c *Catalog) AlwaysOnMCPServers() []string {
+	var out []string
+	for _, def := range c.Tools() {
+		if def.DefaultPolicy == "always-on" && def.MCPServerName != "" {
+			out = append(out, def.MCPServerName)
+		}
+	}
+	slices.Sort(out)
+	return slices.Compact(out)
+}
+
 // --- Bootstrap tool accessors ---
 
 // BootstrapToolClaudeCode is the bootstrap_tools entry that pins the Claude

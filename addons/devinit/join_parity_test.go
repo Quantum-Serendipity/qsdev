@@ -15,7 +15,6 @@ import (
 	"github.com/spf13/cobra"
 
 	qsdevconfig "github.com/Quantum-Serendipity/qsdev/internal/config"
-	"github.com/Quantum-Serendipity/qsdev/internal/detect"
 	"github.com/Quantum-Serendipity/qsdev/pkg/branding"
 	"github.com/Quantum-Serendipity/qsdev/pkg/types"
 )
@@ -38,7 +37,7 @@ func newInitTestCmd(t *testing.T, args ...string) (*cobra.Command, InitOptions, 
 func createAnswers(t *testing.T, dir string, args ...string) types.WizardAnswers {
 	t.Helper()
 	cmd, opts, _ := newInitTestCmd(t, append([]string{"--yes"}, args...)...)
-	answers, err := buildAnswersFromInputs(cmd, opts, dir, detect.Detect(context.Background(), dir), NewFlagSet(cmd))
+	answers, err := buildAnswersFromInputs(cmd, opts, dir, host.detectProject(context.Background(), dir), NewFlagSet(cmd))
 	if err != nil {
 		t.Fatalf("building create answers: %v", err)
 	}
@@ -438,6 +437,7 @@ func TestRunJoin_DryRunLeavesWorkingTreeUntouched(t *testing.T) {
 // step never runs (and so never auto-installs) for a preview or a
 // Claude-only join, like the create path.
 func TestJoinPrerequisites_SkippedForDryRunAndClaudeOnly(t *testing.T) {
+	useRealHostProber(t)
 	t.Setenv("PATH", t.TempDir()) // every prerequisite is missing
 
 	tests := []struct {
@@ -594,5 +594,30 @@ func TestJoin_JavaScriptSubprojectParity(t *testing.T) {
 	}
 	if _, ok := joinFiles[".npmrc"]; ok {
 		t.Error("join generated a root .npmrc for a frontend/ subproject")
+	}
+}
+
+// TestBuildJoinAnswers_WarnsWhenAlwaysOnKept verifies join warns like init,
+// update and claude init when an --answers-file overlay tries to switch off
+// an always-on tool: the safety block is kept on and the opt-out is named.
+func TestBuildJoinAnswers_WarnsWhenAlwaysOnKept(t *testing.T) {
+	dir := newGoProject(t)
+	commitConfig(t, dir, createAnswers(t, dir, "--lang", "go"))
+	answersFile := filepath.Join(t.TempDir(), "join.yaml")
+	if err := os.WriteFile(answersFile, []byte("hooks:\n  safety_block: false\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	cmd, opts, buf := newInitTestCmd(t, "--answers-file", answersFile)
+	answers, err := buildJoinAnswers(cmd, opts, dir)
+	if err != nil {
+		t.Fatalf("buildJoinAnswers: %v", err)
+	}
+	if !answers.Hooks.SafetyBlock {
+		t.Errorf("safety block switched off by the answers file overlay")
+	}
+	want := "always-on tool \"attach-guard\" kept enabled; opt out with `qsdev disable attach-guard --force`"
+	if !strings.Contains(buf.String(), want) {
+		t.Errorf("join output does not contain %q:\n%s", want, buf.String())
 	}
 }

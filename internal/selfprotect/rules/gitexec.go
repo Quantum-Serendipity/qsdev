@@ -59,7 +59,7 @@ func gitCodeExecution(cmds []cmdscan.Command, depth int) (string, bool) {
 	}
 	for _, c := range cmds {
 		words := append([]string{c.Name}, c.Args...)
-		if script, ok := shellScript(words); ok {
+		if script, ok := cmdscan.ShellScript(words); ok {
 			if depth >= maxGitScriptDepth {
 				if reGitWord.MatchString(script) {
 					return "git runs inside too many nested shell scripts to be checked", true
@@ -124,35 +124,6 @@ func envAssignment(c cmdscan.Command, match func(string) bool) string {
 	return ""
 }
 
-// commandWrappers run their operand as a command, so `sudo git -c ...` and
-// `env X=1 git ...` run git.
-var commandWrappers = map[string]bool{
-	"env": true, "command": true, "exec": true, "builtin": true, "nice": true,
-	"nohup": true, "sudo": true, "doas": true, "xargs": true, "time": true,
-	"timeout": true, "stdbuf": true, "ionice": true, "setsid": true,
-	"chrt": true, "taskset": true, "unbuffer": true,
-}
-
-// scriptShells run a script string passed with -c.
-var scriptShells = map[string]bool{
-	"sh": true, "bash": true, "zsh": true, "dash": true, "ksh": true, "mksh": true, "ash": true,
-}
-
-// commandWordIndexes returns the indexes of the words that can name the program
-// run: the first word, and when that is a wrapper, every later word.
-func commandWordIndexes(words []string) []int {
-	if len(words) == 0 {
-		return nil
-	}
-	idx := []int{0}
-	if commandWrappers[path.Base(words[0])] {
-		for i := 1; i < len(words); i++ {
-			idx = append(idx, i)
-		}
-	}
-	return idx
-}
-
 // gitInvocation returns the arguments of the git program the words run.
 func gitInvocation(words []string) ([]string, bool) {
 	return programInvocation(words, func(name string) bool { return path.Base(name) == "git" })
@@ -161,33 +132,12 @@ func gitInvocation(words []string) ([]string, bool) {
 // programInvocation returns the arguments of the program the words run when
 // isProgram accepts its command word, directly or through a wrapper.
 func programInvocation(words []string, isProgram func(string) bool) ([]string, bool) {
-	for _, i := range commandWordIndexes(words) {
+	for _, i := range cmdscan.CommandWordIndexes(words) {
 		if isProgram(words[i]) {
 			return words[i+1:], true
 		}
 	}
 	return nil, false
-}
-
-// shellScript returns the script the words run through a shell's -c option
-// (`sh -c '...'`, `bash -ec '...'`) or eval.
-func shellScript(words []string) (string, bool) {
-	for _, i := range commandWordIndexes(words) {
-		name := path.Base(words[i])
-		if name == "eval" {
-			return strings.Join(words[i+1:], " "), true
-		}
-		if !scriptShells[name] {
-			continue
-		}
-		rest := words[i+1:]
-		for j, a := range rest {
-			if len(a) > 1 && a[0] == '-' && a[1] != '-' && strings.ContainsRune(a[1:], 'c') && j+1 < len(rest) {
-				return rest[j+1], true
-			}
-		}
-	}
-	return "", false
 }
 
 // gitGlobalValueOptions are git's global options that take their value as the

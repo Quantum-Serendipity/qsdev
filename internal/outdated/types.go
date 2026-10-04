@@ -1,5 +1,7 @@
 package outdated
 
+import "strings"
+
 // OutdatedOptions configures the outdated check.
 type OutdatedOptions struct {
 	Ecosystem string // Filter to a single ecosystem, empty means all
@@ -7,6 +9,8 @@ type OutdatedOptions struct {
 	// configured with (e.g. javascript -> pnpm), so the matching tool runs even
 	// when another manager for the same ecosystem comes first on PATH.
 	PackageManagers map[string]string
+	// Online runs the selected commands. Without it they are only planned.
+	Online bool
 }
 
 // EcosystemCommand maps an ecosystem to its native outdated command.
@@ -23,6 +27,11 @@ type EcosystemCommand struct {
 	Unsupported func(projectRoot string) string
 }
 
+// String returns the command line, as shown to the user.
+func (c EcosystemCommand) String() string {
+	return strings.Join(append([]string{c.Binary}, c.Args...), " ")
+}
+
 // EcosystemCheck holds the result of running one ecosystem's outdated command.
 type EcosystemCheck struct {
 	Name        string
@@ -30,8 +39,10 @@ type EcosystemCheck struct {
 	HasOutdated bool
 	Skipped     bool
 	SkipReason  string
-	ExitCode    int
-	Error       error
+	// Planned is set when Command was selected but not run (offline mode).
+	Planned  bool
+	ExitCode int
+	Error    error
 }
 
 // OutdatedResult holds the results for all checked ecosystems.
@@ -60,4 +71,16 @@ func (r *OutdatedResult) FailedEcosystems() []string {
 		}
 	}
 	return failed
+}
+
+// PlannedEcosystems returns the ecosystems whose command was selected but not
+// run because the check was offline.
+func (r *OutdatedResult) PlannedEcosystems() []string {
+	var planned []string
+	for _, e := range r.Ecosystems {
+		if e.Planned {
+			planned = append(planned, e.Name)
+		}
+	}
+	return planned
 }

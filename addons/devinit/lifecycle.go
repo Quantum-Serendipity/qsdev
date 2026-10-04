@@ -5,7 +5,9 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"io/fs"
+	"maps"
 	"os"
 	"path/filepath"
 	"sort"
@@ -14,9 +16,9 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/Quantum-Serendipity/qsdev/internal/claudesettings"
 	"github.com/Quantum-Serendipity/qsdev/internal/cmdutil"
 	qsdevconfig "github.com/Quantum-Serendipity/qsdev/internal/config"
-	"github.com/Quantum-Serendipity/qsdev/internal/detect"
 	"github.com/Quantum-Serendipity/qsdev/internal/state"
 	"github.com/Quantum-Serendipity/qsdev/internal/surgery"
 	"github.com/Quantum-Serendipity/qsdev/internal/tier"
@@ -59,8 +61,12 @@ func runEnable(cmd *cobra.Command, toolName string, opts enableOptions) error {
 	if err != nil {
 		return err
 	}
+	if err := requireJoined(projectRoot); err != nil {
+		return err
+	}
 
-	answers, tool, err := loadToolForEnable(cmdContext(cmd), projectRoot, toolName)
+	registry := toolreg.DefaultRegistry()
+	answers, tool, err := loadToolForEnable(cmdContext(cmd), cmd.ErrOrStderr(), registry, projectRoot, toolName)
 	if err != nil {
 		return err
 	}
@@ -72,7 +78,7 @@ func runEnable(cmd *cobra.Command, toolName string, opts enableOptions) error {
 	}
 
 	// Validate prerequisites and conflicts.
-	if err := toolreg.ValidateEnable(toolreg.DefaultRegistry(), toolName, answers.EnabledTools); err != nil {
+	if err := toolreg.ValidateEnable(registry, toolName, answers.EnabledTools); err != nil {
 		return err
 	}
 
@@ -125,14 +131,14 @@ func runEnable(cmd *cobra.Command, toolName string, opts enableOptions) error {
 }
 
 // loadToolForEnable loads saved answers, infers enabled tools, and looks up
-// the named tool in the registry.
-func loadToolForEnable(ctx context.Context, projectRoot, toolName string) (types.WizardAnswers, *toolreg.Tool, error) {
-	answers, err := loadLifecycleAnswers(ctx, projectRoot)
+// the named tool in registry.
+func loadToolForEnable(ctx context.Context, w io.Writer, registry *toolreg.Registry, projectRoot, toolName string) (types.WizardAnswers, *toolreg.Tool, error) {
+	answers, err := loadLifecycleAnswers(ctx, w, projectRoot)
 	if err != nil {
 		return types.WizardAnswers{}, nil, err
 	}
 
-	tool, ok := toolreg.DefaultRegistry().ByName(toolName)
+	tool, ok := registry.ByName(toolName)
 	if !ok {
 		return types.WizardAnswers{}, nil, fmt.Errorf("unknown tool %q; use '%s list' to see available tools", toolName, branding.Get().AppName)
 	}
@@ -141,17 +147,21 @@ func loadToolForEnable(ctx context.Context, projectRoot, toolName string) (types
 }
 
 // loadLifecycleAnswers loads saved answers (empty if no prior init) and
-// refreshes them exactly as update does — current detection plus inferred
-// tools — so the shared files enable/disable regenerate match what the next
-// update would produce.
-func loadLifecycleAnswers(ctx context.Context, projectRoot string) (types.WizardAnswers, error) {
+// refreshes them as update does — current detection plus the answers settled
+// against the committed .qsdev.yaml (see toolreg.SettleProject), with its
+// warnings written to w — so the shared files enable/disable regenerate match
+// what the next update would produce and the committed config they sync never
+// takes a choice only the local answers file made.
+func loadLifecycleAnswers(ctx context.Context, w io.Writer, projectRoot string) (types.WizardAnswers, error) {
 	answers, err := loadAnswersOrEmpty(projectRoot)
 	if err != nil {
 		return types.WizardAnswers{}, fmt.Errorf("loading answers: %w", err)
 	}
 	answers.ProjectRoot = projectRoot
-	answers.Detected = detect.Detect(ctx, projectRoot)
-	toolreg.MergeInferredTools(&answers, toolreg.DefaultRegistry())
+	answers.Detected = host.detectProject(ctx, projectRoot)
+	if err := toolreg.SettleProject(w, projectRoot, &answers, toolreg.DefaultRegistry()); err != nil {
+		return types.WizardAnswers{}, err
+	}
 	return answers, nil
 }
 
@@ -517,10 +527,13 @@ func runDisable(cmd *cobra.Command, toolName string, opts disableOptions) error 
 	if err != nil {
 		return err
 	}
+	if err := requireJoined(projectRoot); err != nil {
+		return err
+	}
 
 	registry := toolreg.DefaultRegistry()
 
-	answers, err := loadLifecycleAnswers(cmdContext(cmd), projectRoot)
+	answers, err := loadLifecycleAnswers(cmdContext(cmd), cmd.ErrOrStderr(), projectRoot)
 	if err != nil {
 		return err
 	}
@@ -539,11 +552,13 @@ func runDisable(cmd *cobra.Command, toolName string, opts disableOptions) error 
 	// Validate that the tool can be disabled.
 	if err := toolreg.ValidateDisable(registry, toolName, answers.EnabledTools); err != nil {
 		var alwaysOnErr *toolreg.AlwaysOnError
-		if errors.As(err, &alwaysOnErr) && opts.Force {
-			fmt.Fprintf(cmd.ErrOrStderr(), "Warning: disabling always-on tool %q.\n", toolName)
-		} else {
+		if !errors.As(err, &alwaysOnErr) || !opts.Force {
 			return err
 		}
+		if err := requireCommittedConfig(projectRoot, toolName); err != nil {
+			return err
+		}
+		fmt.Fprintf(cmd.ErrOrStderr(), "Warning: disabling always-on tool %q.\n", toolName)
 	}
 
 	stateFile := filepath.Join(projectRoot, stateFilePath())
@@ -602,6 +617,27 @@ func runDisable(cmd *cobra.Command, toolName string, opts disableOptions) error 
 	return nil
 }
 
+// errOptOutNeedsCommittedConfig reports a forced disable of an always-on tool
+// in a project without a loadable committed config: the committed
+// tools.disabled is the only record of such an opt-out (toolreg.Reconcile),
+// so without one the next regeneration would silently turn the tool back on.
+var errOptOutNeedsCommittedConfig = errors.New("opting out of an always-on tool needs a committed project config")
+
+// requireCommittedConfig returns errOptOutNeedsCommittedConfig, with the way
+// to create the config, when projectRoot has no loadable committed config.
+func requireCommittedConfig(projectRoot, toolName string) error {
+	committed, err := qsdevconfig.CommittedTools(projectRoot)
+	if err != nil {
+		return fmt.Errorf("disabling %q: %w", toolName, err)
+	}
+	if committed != nil {
+		return nil
+	}
+	b := branding.Get()
+	return fmt.Errorf("disabling %q: %w (%s); run '%s init' to create it, then retry",
+		toolName, errOptOutNeedsCommittedConfig, b.ConfigFile, b.AppName)
+}
+
 // planToolDisable regenerates the tool's shared files with the tool disabled.
 func planToolDisable(
 	tool *toolreg.Tool, toolName, projectRoot string,
@@ -632,7 +668,10 @@ type exclusiveRemoval struct {
 // the tool — and refuses, before anything is deleted, when any was modified by
 // the user (unless force). Files qsdev never recorded are always left in place,
 // whatever force says. Files that are shared with other tools are never
-// candidates, whatever owner an older state recorded for them.
+// candidates, whatever owner an older state recorded for them, and neither is
+// the Claude Code settings file (or a directory holding it), which registers
+// the self-protection hook: the catalog rejects such an exclusive declaration,
+// and the state file that records owners is no authority to delete it.
 func planExclusiveRemoval(
 	registry *toolreg.Registry, tool *toolreg.Tool, toolName, projectRoot string,
 	st types.GeneratedState, force bool,
@@ -653,6 +692,7 @@ func planExclusiveRemoval(
 			candidates[p] = true
 		}
 	}
+	maps.DeleteFunc(candidates, func(p string, _ bool) bool { return claudesettings.HoldsProjectSettings(p) })
 	paths := make([]string, 0, len(candidates))
 	for p := range candidates {
 		paths = append(paths, p)

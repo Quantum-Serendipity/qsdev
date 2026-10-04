@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/Quantum-Serendipity/qsdev/addons/claudecode"
+	"github.com/Quantum-Serendipity/qsdev/pkg/ecosystem"
 	"github.com/Quantum-Serendipity/qsdev/pkg/types"
 )
 
@@ -28,36 +29,92 @@ func TestVersionSentinel_Disabled(t *testing.T) {
 	}
 }
 
-func TestVersionSentinelIgnore_GoProject(t *testing.T) {
-	reg := newTestRegistry(t, goMock())
+// elixirMock declares mix.exs, a manifest Version-Sentinel has no check for.
+func elixirMock() *ecosystem.MockModule {
+	return &ecosystem.MockModule{
+		NameVal:        "elixir",
+		DisplayNameVal: "Elixir",
+		TierVal:        2,
+		ManifestFilesVal: []ecosystem.ManifestFileInfo{
+			{Path: "mix.exs", Ecosystem: "elixir", LockFile: "mix.lock"},
+		},
+	}
+}
+
+// pnpmMock declares package.json locked by pnpm-lock.yaml, which
+// Version-Sentinel checks only for presence.
+func pnpmMock() *ecosystem.MockModule {
+	return &ecosystem.MockModule{
+		NameVal:        "pnpm",
+		DisplayNameVal: "pnpm",
+		TierVal:        2,
+		ManifestFilesVal: []ecosystem.ManifestFileInfo{
+			{Path: "package.json", Ecosystem: "npm", LockFile: "pnpm-lock.yaml"},
+		},
+	}
+}
+
+// versionSentinelIgnore returns the generated .version-sentinel/ignore, or
+// nil when none is generated. The file comes from the registered ecosystem
+// modules, so langs name real ones.
+func versionSentinelIgnore(t *testing.T, langs ...string) *types.GeneratedFile {
+	t.Helper()
+	reg := newTestRegistry(t, goMock(), jsMock(), elixirMock())
 	answers := types.WizardAnswers{
 		Tier:       "full",
-		Languages:  []types.LanguageChoice{{Name: "go"}},
 		AgentTools: types.AgentToolsAnswers{VersionSentinel: true},
 	}
-
-	gen := claudecode.NewClaudeCodeGenerator(reg, claudecode.Config{})
-	files, err := gen.Generate(answers)
+	for _, l := range langs {
+		answers.Languages = append(answers.Languages, types.LanguageChoice{Name: l})
+	}
+	files, err := claudecode.NewClaudeCodeGenerator(reg, claudecode.Config{}).Generate(answers)
 	if err != nil {
 		t.Fatal(err)
 	}
-
-	var ignoreFile *types.GeneratedFile
 	for i, f := range files {
 		if f.Path == ".version-sentinel/ignore" {
-			ignoreFile = &files[i]
-			break
+			return &files[i]
 		}
 	}
+	return nil
+}
 
-	if ignoreFile == nil {
-		t.Fatal("expected .version-sentinel/ignore file for Go project (VS doesn't cover go.mod)")
-		return
+// TestVersionSentinelIgnore lists exactly the manifests whose versions
+// Version-Sentinel never compares (manifest_coverage's presence_only and
+// uncovered), and is absent when every manifest is version-diffed.
+func TestVersionSentinelIgnore(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		langs []string
+		want  []string // nil: no ignore file
+	}{
+		{langs: []string{"go"}},
+		{langs: []string{"go", "javascript"}},
+		{langs: []string{"go", "elixir"}, want: []string{"mix.exs"}},
 	}
-
-	content := string(ignoreFile.Content)
-	if !strings.Contains(content, "go.mod") {
-		t.Errorf("ignore file should contain go.mod, got:\n%s", content)
+	for _, tt := range tests {
+		t.Run(strings.Join(tt.langs, "+"), func(t *testing.T) {
+			t.Parallel()
+			f := versionSentinelIgnore(t, tt.langs...)
+			if tt.want == nil {
+				if f != nil {
+					t.Fatalf("unexpected ignore file:\n%s", f.Content)
+				}
+				return
+			}
+			if f == nil {
+				t.Fatal("no ignore file")
+			}
+			var got []string
+			for _, line := range strings.Split(strings.TrimSpace(string(f.Content)), "\n") {
+				if !strings.HasPrefix(line, "#") {
+					got = append(got, line)
+				}
+			}
+			if strings.Join(got, ",") != strings.Join(tt.want, ",") {
+				t.Errorf("ignore lists %q, want %q", got, tt.want)
+			}
+		})
 	}
 }
 
@@ -129,9 +186,10 @@ func TestVersionSentinelRecoverySkill(t *testing.T) {
 	}
 }
 
-// TestVersionSentinelClaudeMdSection verifies the CLAUDE.md section only claims
-// coverage for covered manifests and describes it as advisory: a Go-only
-// project (no covered manifests) must not read "guards dependency changes in: .".
+// TestVersionSentinelClaudeMdSection verifies the CLAUDE.md section states
+// the coverage manifest_coverage reports (version-diffed, lockfile presence
+// only, not covered) and describes it as advisory, never "guards dependency
+// changes".
 func TestVersionSentinelClaudeMdSection(t *testing.T) {
 	t.Parallel()
 	cases := []struct {
@@ -143,22 +201,37 @@ func TestVersionSentinelClaudeMdSection(t *testing.T) {
 			name:  "go only",
 			langs: []string{"go"},
 			want: "<!-- qsdev:version-sentinel -->\n" +
-				"- Version-Sentinel does NOT cover: go.mod. Review these manually.\n" +
+				"- **Version-Sentinel** MCP tools give advisory (non-blocking) dependency version checks for: go.mod. Use them when changing dependencies.\n" +
 				"<!-- /qsdev:version-sentinel -->",
 		},
 		{
 			name:  "go and javascript",
 			langs: []string{"go", "javascript"},
 			want: "<!-- qsdev:version-sentinel -->\n" +
-				"- **Version-Sentinel** MCP tools give advisory (non-blocking) dependency version checks for: package.json. Use them when changing dependencies.\n" +
-				"- Version-Sentinel does NOT cover: go.mod. Review these manually.\n" +
+				"- **Version-Sentinel** MCP tools give advisory (non-blocking) dependency version checks for: go.mod, package.json. Use them when changing dependencies.\n" +
+				"<!-- /qsdev:version-sentinel -->",
+		},
+		{
+			name:  "every coverage class",
+			langs: []string{"go", "pnpm", "elixir"},
+			want: "<!-- qsdev:version-sentinel -->\n" +
+				"- **Version-Sentinel** MCP tools give advisory (non-blocking) dependency version checks for: go.mod. Use them when changing dependencies.\n" +
+				"- Version-Sentinel only checks that a lockfile exists for: package.json. Their versions are not compared; review them manually.\n" +
+				"- Version-Sentinel does NOT cover: mix.exs. Review these manually.\n" +
+				"<!-- /qsdev:version-sentinel -->",
+		},
+		{
+			name:  "uncovered only",
+			langs: []string{"elixir"},
+			want: "<!-- qsdev:version-sentinel -->\n" +
+				"- Version-Sentinel does NOT cover: mix.exs. Review these manually.\n" +
 				"<!-- /qsdev:version-sentinel -->",
 		},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			reg := newTestRegistry(t, goMock(), jsMock())
+			reg := newTestRegistry(t, goMock(), jsMock(), elixirMock(), pnpmMock())
 			answers := types.WizardAnswers{
 				Tier:         "standard",
 				AgentTools:   types.AgentToolsAnswers{VersionSentinel: true},
@@ -179,44 +252,5 @@ func TestVersionSentinelClaudeMdSection(t *testing.T) {
 				t.Error("CLAUDE.md claims Version-Sentinel guards changes; it is advisory")
 			}
 		})
-	}
-}
-
-func TestVersionSentinelIgnore_GoAndJsProject(t *testing.T) {
-	reg := newTestRegistry(t, goMock(), jsMock())
-	answers := types.WizardAnswers{
-		Tier: "full",
-		Languages: []types.LanguageChoice{
-			{Name: "go"},
-			{Name: "javascript"},
-		},
-		AgentTools: types.AgentToolsAnswers{VersionSentinel: true},
-	}
-
-	gen := claudecode.NewClaudeCodeGenerator(reg, claudecode.Config{})
-	files, err := gen.Generate(answers)
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	var ignoreFile *types.GeneratedFile
-	for i, f := range files {
-		if f.Path == ".version-sentinel/ignore" {
-			ignoreFile = &files[i]
-			break
-		}
-	}
-
-	if ignoreFile == nil {
-		t.Fatal("expected ignore file for Go+JS project (go.mod is uncovered)")
-		return
-	}
-
-	content := string(ignoreFile.Content)
-	if !strings.Contains(content, "go.mod") {
-		t.Error("ignore file should contain go.mod")
-	}
-	if strings.Contains(content, "package.json") {
-		t.Error("ignore file should NOT contain package.json (npm is covered)")
 	}
 }

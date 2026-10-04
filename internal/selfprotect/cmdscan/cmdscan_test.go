@@ -1,6 +1,9 @@
 package cmdscan
 
-import "testing"
+import (
+	"slices"
+	"testing"
+)
 
 func TestParse_SegmentsAndArgs(t *testing.T) {
 	t.Parallel()
@@ -43,6 +46,33 @@ func TestParse_ExpansionDetection(t *testing.T) {
 		if got != wantExp {
 			t.Errorf("Parse(%q): eval-expansion = %v, want %v (%+v)", cmd, got, wantExp, cmds)
 		}
+	}
+}
+
+func TestParse_NameHasExpansion(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name, cmd string
+		want      bool
+	}{
+		{"literal name, expanded argument", `python3 "${CLAUDE_PROJECT_DIR}"/x.py`, false},
+		{"expanded name", `"${CLAUDE_PROJECT_DIR}"/x.py arg`, true},
+		{"substituted name", `$(which python3) x.py`, true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			cmds, err := Parse(tt.cmd)
+			if err != nil || len(cmds) == 0 {
+				t.Fatalf("Parse(%q) = %+v, %v; want the outer command first", tt.cmd, cmds, err)
+			}
+			if got := cmds[0].NameHasExpansion; got != tt.want {
+				t.Errorf("Parse(%q).NameHasExpansion = %v, want %v", tt.cmd, got, tt.want)
+			}
+			if !cmds[0].HasExpansion {
+				t.Errorf("Parse(%q).HasExpansion = false, want true", tt.cmd)
+			}
+		})
 	}
 }
 
@@ -162,5 +192,341 @@ func TestParse_MalformedReturnsError(t *testing.T) {
 	// Unterminated quote — callers must fail closed on this error.
 	if _, err := Parse(`rm "unterminated`); err == nil {
 		t.Error("expected parse error for malformed command, got nil")
+	}
+}
+
+func TestParse_Guard(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		command string
+		want    map[string]Guard // by command name; unnamed ones are Unguarded
+	}{
+		{"a; b", map[string]Guard{}},
+		{"a && b", map[string]Guard{"b": GuardedByAnd}},
+		{"a && b && c", map[string]Guard{"b": GuardedByAnd, "c": GuardedByAnd}},
+		{"a | b && c", map[string]Guard{"c": GuardedByAnd}},
+		{"a || b", map[string]Guard{"b": Guarded}},
+		{"a && b || c", map[string]Guard{"b": GuardedByAnd, "c": Guarded}},
+		{"a || b && c", map[string]Guard{"b": Guarded, "c": Guarded}},
+		{"! a && b", map[string]Guard{"b": Guarded}},
+		{"[[ -x p ]] && b", map[string]Guard{"b": Guarded}},
+		{"a && { b; c; }; d", map[string]Guard{"b": GuardedByAnd, "c": GuardedByAnd}},
+		{"a || (b; c)", map[string]Guard{"b": Guarded, "c": Guarded}},
+		{"time a && b", map[string]Guard{"b": Guarded}},
+		{"if a; then b; fi; c", map[string]Guard{"a": Guarded, "b": Guarded}},
+		{"for x in 1; do a; done", map[string]Guard{"a": Guarded}},
+		{"f() { a; }; b", map[string]Guard{"a": Guarded}},
+		{"a && echo $(b)", map[string]Guard{"echo": GuardedByAnd, "b": GuardedByAnd}},
+		{"a || x=$(b)", map[string]Guard{"b": Guarded}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.command, func(t *testing.T) {
+			t.Parallel()
+			cmds, err := Parse(tt.command)
+			if err != nil {
+				t.Fatal(err)
+			}
+			for _, c := range cmds {
+				if c.Name == "" {
+					continue
+				}
+				if want := tt.want[c.Name]; c.Guard != want {
+					t.Errorf("%s: Guard = %d, want %d", c.Name, c.Guard, want)
+				}
+			}
+		})
+	}
+}
+
+func TestParse_Tested(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		command string
+		tested  []string // names of the commands that are Tested
+	}{
+		{"cd x && b", nil},
+		{"test -f x && b", []string{"b"}},
+		{"prog && b", []string{"b"}},
+		{"command -v x && b", []string{"b"}},
+		{"command cd x && b", nil},
+		{"cd x || b", nil},
+		{"[ -x p ] || b", []string{"b"}},
+		{"cd x && { test -f y; b; }", nil},
+		{"test -f x && { cd y; b; }", []string{"cd", "b"}},
+		{"cd x && test -f y && b", []string{"b"}},
+		{"if ! command -v x; then b; fi", []string{"b"}},
+		{"if cd x; then b; fi", nil},
+		{"if cd x; then a; elif test -f y; then b; else c; fi", []string{"b", "c"}},
+		{"while test -f x; do b; done", []string{"b"}},
+		{"[[ -x p ]] && b", []string{"b"}},
+		{"x=$(prog) || b", []string{"b"}},
+		{"export A=1 && b", nil},
+		{"f() { a; }; b", nil},
+	}
+	for _, tt := range tests {
+		t.Run(tt.command, func(t *testing.T) {
+			t.Parallel()
+			cmds, err := Parse(tt.command)
+			if err != nil {
+				t.Fatal(err)
+			}
+			for _, c := range cmds {
+				if c.Name == "" {
+					continue
+				}
+				if want := slices.Contains(tt.tested, c.Name); c.Tested != want {
+					t.Errorf("%s: Tested = %v, want %v", c.Name, c.Tested, want)
+				}
+			}
+		})
+	}
+}
+
+func TestParse_Subshell(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		command  string
+		subshell []string // names of the commands that run in a subshell
+	}{
+		{"a; b && c", nil},
+		{"{ a; b; }", nil},
+		{"(a; b); c", []string{"a", "b"}},
+		{"a | b; c", []string{"a", "b"}},
+		{"x=$(a); b", []string{"a"}},
+		{"b $(a)", []string{"a"}},
+		{"b <(a)", []string{"a"}},
+		{"a & b", []string{"a"}},
+		{"{ a; b; } | c", []string{"a", "b", "c"}},
+		{"(a | b)", []string{"a", "b"}},
+		{"if a; then b; fi", nil},
+	}
+	for _, tt := range tests {
+		t.Run(tt.command, func(t *testing.T) {
+			t.Parallel()
+			cmds, err := Parse(tt.command)
+			if err != nil {
+				t.Fatal(err)
+			}
+			for _, c := range cmds {
+				if c.Name == "" {
+					continue
+				}
+				if want := slices.Contains(tt.subshell, c.Name); c.Subshell != want {
+					t.Errorf("%s: Subshell = %v, want %v", c.Name, c.Subshell, want)
+				}
+			}
+		})
+	}
+}
+
+func TestParse_Defines(t *testing.T) {
+	t.Parallel()
+	cmds, err := Parse("f() { a; }; function g { b; }; f")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var order []string
+	for _, c := range cmds {
+		switch {
+		case c.Defines != "":
+			if c.Name != "" || len(c.Args) > 0 {
+				t.Errorf("definition of %s has a command word: %+v", c.Defines, c)
+			}
+			order = append(order, "def "+c.Defines)
+		default:
+			order = append(order, c.Name)
+		}
+	}
+	if want := []string{"def f", "a", "def g", "b", "f"}; !slices.Equal(order, want) {
+		t.Errorf("commands = %q, want %q", order, want)
+	}
+}
+
+func TestCommandShellBuiltin(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		command string
+		want    string // empty: no builtin
+	}{
+		{"cd /tmp", "cd"},
+		{"command cd /tmp", "cd"},
+		{"builtin exit 1", "exit"},
+		{"timeout 5 cd /tmp", ""},
+		{"exec cd /tmp", ""},
+		{"/usr/bin/cd /tmp", ""},
+		{"$X /tmp", ""},
+		{`command "$X" /tmp`, ""},
+		{"export A=1", "export"},
+		{"gofmt -l .", ""},
+	}
+	for _, tt := range tests {
+		t.Run(tt.command, func(t *testing.T) {
+			t.Parallel()
+			cmds, err := Parse(tt.command)
+			if err != nil || len(cmds) != 1 {
+				t.Fatalf("Parse(%q) = %+v, %v", tt.command, cmds, err)
+			}
+			got, ok := cmds[0].ShellBuiltin()
+			if got != tt.want || ok != (tt.want != "") {
+				t.Errorf("ShellBuiltin() = %q, %v, want %q", got, ok, tt.want)
+			}
+		})
+	}
+}
+
+func TestEndsShellAndSourcesCode(t *testing.T) {
+	t.Parallel()
+	for name, want := range map[string]bool{"exit": true, "return": false, "logout": false, "exec": false} {
+		if got := EndsShell(name); got != want {
+			t.Errorf("EndsShell(%q) = %v, want %v", name, got, want)
+		}
+	}
+	for name, want := range map[string]bool{".": true, "source": true, "eval": true, "cd": false, "export": false} {
+		if got := SourcesCode(name); got != want {
+			t.Errorf("SourcesCode(%q) = %v, want %v", name, got, want)
+		}
+	}
+}
+
+func TestParse_FailureHandled(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		command string
+		handled []string // names of the commands whose failure the line handles
+	}{
+		{"a; b", nil},
+		{"a || exit 0; b", []string{"a"}},
+		{"a || b", []string{"a"}},
+		{"a && b", nil},
+		{"a && b || c", []string{"a", "b"}},
+		{"{ a; b; } || c", []string{"b"}},
+		{"(a; b) || c", []string{"b"}},
+		{"a | b || c", []string{"b"}},
+		{"! a; b", []string{"a"}},
+		{"if a; then b; elif c; then d; fi", []string{"a", "c"}},
+		{"while a; do b; done", []string{"a"}},
+		{"until a; do b; done", []string{"a"}},
+		{"time a || b", []string{"a"}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.command, func(t *testing.T) {
+			t.Parallel()
+			cmds, err := Parse(tt.command)
+			if err != nil {
+				t.Fatal(err)
+			}
+			for _, c := range cmds {
+				if c.Name == "" {
+					continue
+				}
+				if want := slices.Contains(tt.handled, c.Name); c.FailureHandled != want {
+					t.Errorf("%s: FailureHandled = %v, want %v", c.Name, c.FailureHandled, want)
+				}
+			}
+		})
+	}
+}
+
+func TestChangesDir(t *testing.T) {
+	t.Parallel()
+	for name, want := range map[string]bool{"cd": true, "pushd": true, "popd": true, "export": false, "source": false} {
+		if got := ChangesDir(name); got != want {
+			t.Errorf("ChangesDir(%q) = %v, want %v", name, got, want)
+		}
+	}
+}
+
+func TestCommandDirTarget(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		command string
+		want    string // empty: not known
+	}{
+		{"cd /srv/app", "/srv/app"},
+		{"cd -- /srv/app", "/srv/app"},
+		{"pushd /srv/app", "/srv/app"},
+		{"command cd /srv/app", "/srv/app"},
+		{"cd frontend", ""},
+		{"cd", ""},
+		{"cd -", ""},
+		{"cd -P /srv/app", ""},
+		{"pushd +1", ""},
+		{"popd", ""},
+		{"timeout 5 cd /srv/app", ""},
+		{"echo /srv/app", ""},
+	}
+	for _, tt := range tests {
+		t.Run(tt.command, func(t *testing.T) {
+			t.Parallel()
+			cmds, err := Parse(tt.command)
+			if err != nil || len(cmds) != 1 {
+				t.Fatalf("Parse(%q) = %+v, %v", tt.command, cmds, err)
+			}
+			got, ok := cmds[0].DirTarget()
+			if got != tt.want || ok != (tt.want != "") {
+				t.Errorf("DirTarget() = %q, %v, want %q", got, ok, tt.want)
+			}
+		})
+	}
+}
+
+func TestCommandBindsCommand(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		command string
+		want    bool
+	}{
+		{"hash -p /opt/ruff ruff", true},
+		{"hash -tp /opt/ruff ruff", true},
+		{"builtin hash -p /opt/ruff ruff", true},
+		{"hash -r", false},
+		{"hash ruff", false},
+		{"hash -- -p", false},
+		{"timeout 5 hash -p /opt/ruff ruff", false},
+		{"ruff -p", false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.command, func(t *testing.T) {
+			t.Parallel()
+			cmds, err := Parse(tt.command)
+			if err != nil || len(cmds) != 1 {
+				t.Fatalf("Parse(%q) = %+v, %v", tt.command, cmds, err)
+			}
+			if got := cmds[0].BindsCommand(); got != tt.want {
+				t.Errorf("BindsCommand() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
+// TestWordHasExpansion pins which words of a command are built from an
+// expansion: the command word and arguments alike, by word index.
+func TestWordHasExpansion(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		line string
+		want []bool // per word, Name first
+	}{
+		{"env -i $Q claude", []bool{false, false, true, false}},
+		{"$X -c y", []bool{true, false, false}},
+		{"exec -c ${Q:-qsdev} update", []bool{false, false, true, false}},
+		{"ls a b", []bool{false, false, false}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.line, func(t *testing.T) {
+			t.Parallel()
+			cmds, err := Parse(tt.line)
+			if err != nil || len(cmds) != 1 {
+				t.Fatalf("Parse(%q) = %v, %v", tt.line, cmds, err)
+			}
+			for i, want := range tt.want {
+				if got := cmds[0].WordHasExpansion(i); got != want {
+					t.Errorf("WordHasExpansion(%d) = %v, want %v", i, got, want)
+				}
+			}
+			if cmds[0].WordHasExpansion(len(tt.want)) || cmds[0].WordHasExpansion(-1) {
+				t.Error("WordHasExpansion out of range = true, want false")
+			}
+		})
 	}
 }

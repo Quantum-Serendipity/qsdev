@@ -62,6 +62,10 @@ $GithubOrg = "Quantum-Serendipity"
 $GithubRepo = "qsdev"
 $BinaryName = "qsdev"
 
+# Which verifier ran: none, checksum or cosign. Set only on each verifier's
+# success path, so the final verdict cannot overclaim.
+$script:VerifiedBy = "none"
+
 function Detect-Architecture {
     if ($ForceArch) {
         $arch = $ForceArch
@@ -154,6 +158,7 @@ function Download-AndVerify {
     }
 
     Write-Host "Checksum verified." -ForegroundColor Green
+    $script:VerifiedBy = "checksum"
 
     Verify-Sigstore -ResolvedVersion $ResolvedVersion -TmpDir $TmpDir
     return $filename
@@ -189,7 +194,7 @@ function Verify-Sigstore {
         if ($RequireSignature) {
             throw "cosign not found, but a verified Sigstore signature is required (-RequireSignature)."
         }
-        Write-Host "cosign not found; skipping Sigstore verification. Install cosign for enhanced security." -ForegroundColor Cyan
+        Write-Warning "cosign not found; skipping Sigstore verification. The release is checked by checksum only, which does not detect replaced release assets. Install cosign v2+ or re-run with -RequireSignature."
         return
     }
 
@@ -227,6 +232,17 @@ function Verify-Sigstore {
         throw "Sigstore verification FAILED. The checksums file may have been tampered with."
     }
     Write-Host "Sigstore signature verified." -ForegroundColor Green
+    $script:VerifiedBy = "cosign"
+}
+
+# Prints the one-line summary of $script:VerifiedBy; it is the single source
+# of the wording that says which verifier ran.
+function Write-VerificationVerdict {
+    switch ($script:VerifiedBy) {
+        "cosign" { Write-Host "Authenticity verified by cosign (Sigstore signature on checksums.txt)." -ForegroundColor Green }
+        "checksum" { Write-Warning "checksum only, NOT authenticity-verified: install cosign v2+ or re-run with -RequireSignature." }
+        default { Write-Warning "NOT verified (no checksum or signature check ran)." }
+    }
 }
 
 function Extract-AndInstall {
@@ -311,6 +327,9 @@ function Install-Qsdev {
         Update-Path
 
         Write-Host ""
+        if (-not $DryRun) {
+            Write-VerificationVerdict
+        }
         Write-Host "Installation complete!" -ForegroundColor Green
         Write-Host ""
         Write-Host "Next steps:" -ForegroundColor Cyan

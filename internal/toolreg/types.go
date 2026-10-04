@@ -4,6 +4,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/Quantum-Serendipity/qsdev/internal/tier"
 	"github.com/Quantum-Serendipity/qsdev/pkg/ecosystem"
 	"github.com/Quantum-Serendipity/qsdev/pkg/types"
 )
@@ -95,6 +96,11 @@ type EnableFunc func(answers *types.WizardAnswers)
 // DisableFunc modifies WizardAnswers to reflect a tool being disabled.
 type DisableFunc func(answers *types.WizardAnswers)
 
+// ForceOnFunc switches on the answers state backing a tool and reports
+// whether it overrode an explicit off: a backing toggle set to false. A
+// skill missing from the skills list is not an explicit off.
+type ForceOnFunc func(answers *types.WizardAnswers) (overrode bool)
+
 // GenerateFunc produces the exclusive files for a tool given the current answers.
 type GenerateFunc func(answers types.WizardAnswers) ([]types.GeneratedFile, error)
 
@@ -136,6 +142,25 @@ type Tool struct {
 	DisableFunc   DisableFunc
 	GenerateFunc  GenerateFunc // Produces exclusive files.
 
+	// ForceOnFunc switches on what backs the tool (its catalog toggle_field,
+	// skill_name and mcp_server_name), so EnforceAlwaysOn makes an always-on
+	// tool it records as enabled actually generate. The servers of always-on
+	// tools never imply a tier (see tier.Infer), so adding one leaves tier
+	// inference unchanged. Nil when the catalog declares none of them.
+	ForceOnFunc ForceOnFunc
+
+	// MCPServer is the MCP server that backs the tool (its catalog
+	// mcp_server_name), or empty.
+	MCPServer string
+
+	// ClaudeCodeBacked is set when the catalog backs the tool with Claude
+	// Code answers (mcp_server_name, skill_name or toggle_field).
+	ClaudeCodeBacked bool
+
+	// SkillBacked is set when the catalog backs the tool with a skill
+	// (skill_name).
+	SkillBacked bool
+
 	// SharedContent maps a shared-file section (path + SectionID) to a
 	// function that produces that section's content in the file's format.
 	// The devenv generator renders the devenv.nix entries for enabled tools.
@@ -152,6 +177,30 @@ type Tool struct {
 // project and are generated whether or not Claude Code is configured.
 func (t *Tool) IsAgentTool() bool {
 	return t.Category == CategoryAIAgent
+}
+
+// ConfiguresClaudeCode reports whether the tool's effect is Claude Code
+// configuration: it is an agent tool or Claude Code answers back it. Such a
+// tool does nothing in a project without Claude Code.
+func (t *Tool) ConfiguresClaudeCode() bool {
+	return t.IsAgentTool() || t.ClaudeCodeBacked
+}
+
+// EnforcedFor reports whether the tool is always on for answers: its default
+// policy is always-on; when it configures Claude Code, the answers enable
+// Claude Code; and when it is agent configuration (an agent tool or a skill),
+// the answers' tier generates that configuration, so a tool recorded as
+// enabled is one that is actually generated.
+func (t *Tool) EnforcedFor(answers *types.WizardAnswers) bool {
+	switch {
+	case t.Default != AlwaysOn:
+		return false
+	case t.ConfiguresClaudeCode() && !answers.ClaudeCode:
+		return false
+	case (t.IsAgentTool() || t.SkillBacked) && !tier.GeneratesAgentConfig(*answers):
+		return false
+	}
+	return true
 }
 
 // ExclusiveFiles returns all files this tool exclusively owns.

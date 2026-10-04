@@ -1,7 +1,9 @@
 package config
 
 import (
+	"errors"
 	"fmt"
+	"io/fs"
 	"maps"
 	"path/filepath"
 	"slices"
@@ -48,6 +50,33 @@ func LoadProjectPolicy(projectRoot string) (*ProjectPolicy, error) {
 	return ResolveProjectPolicy(project, local)
 }
 
+// CommittedConfig returns projectRoot's committed .qsdev.yaml as resolved on
+// its own (ProjectPolicy.Committed). It returns nil and no error when there
+// is no committed config, and an error when one exists but cannot be loaded,
+// so callers do not mistake a broken config for a missing one.
+func CommittedConfig(projectRoot string) (*types.QsdevConfig, error) {
+	policy, err := LoadProjectPolicy(projectRoot)
+	if errors.Is(err, fs.ErrNotExist) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	return policy.Committed, nil
+}
+
+// CommittedTools returns the tools block of projectRoot's committed
+// .qsdev.yaml. It returns nil and no error when there is no committed config
+// (no opt-out is recorded), and an error when one exists but cannot be loaded
+// (see CommittedConfig).
+func CommittedTools(projectRoot string) (*types.ToolsConfig, error) {
+	cfg, err := CommittedConfig(projectRoot)
+	if cfg == nil || err != nil {
+		return nil, err
+	}
+	return &cfg.Tools, nil
+}
+
 // ResolveProjectPolicy resolves an already-parsed project config and optional
 // local overrides with an empty organization-defaults layer.
 func ResolveProjectPolicy(project *types.QsdevConfig, local *LocalConfig) (*ProjectPolicy, error) {
@@ -79,9 +108,7 @@ func (p *ProjectPolicy) Apply(a *types.WizardAnswers) {
 	overlay := p.clientComplianceOverlay()
 	if a.ClaudeCode {
 		implied := levelHookChoices(level)
-		a.Hooks.PreCommit = a.Hooks.PreCommit || implied.PreCommit
-		a.Hooks.AuditLog = a.Hooks.AuditLog || implied.AuditLog
-		a.Hooks.AutoFormat = a.Hooks.AutoFormat || implied.AutoFormat
+		a.Hooks = a.Hooks.Union(implied)
 		if a.PermissionLevel == "" && overlay != nil {
 			a.PermissionLevel = overlay.ClaudeCode.PermissionLevel
 		}
@@ -98,8 +125,7 @@ func (p *ProjectPolicy) Apply(a *types.WizardAnswers) {
 		}
 	}
 
-	a.MCPPolicy = ClientMCPPolicy(p.Committed)
-	a.MCPServers = a.MCPPolicy.Filter(a.MCPServers)
+	AdoptClientMCPPolicy(a, p.Committed)
 	a.BranchPattern = p.Committed.Git.BranchPattern
 	a.HookPolicy = p.Committed.Hooks.Clone()
 	// The java and cloud blocks have no wizard or flag equivalent: the committed file is
@@ -213,6 +239,17 @@ func (p *ProjectPolicy) Warnings() []string {
 		warnings = append(warnings, fmt.Sprintf("%s: %s raised to %v (%s)", v.Field, attempted, v.Enforced, v.Reason))
 	}
 	return warnings
+}
+
+// AdoptClientMCPPolicy gives answers the client MCP policy cfg, the committed
+// .qsdev.yaml, declares and drops every MCP server it does not permit. The
+// committed client block is the only source of that policy: the copy the
+// local answers file saves may be stale or missing, and a server the policy
+// blocks is never configured, so an always-on tool must not record it (see
+// toolreg's MCP force-on) nor check require it.
+func AdoptClientMCPPolicy(a *types.WizardAnswers, cfg *types.QsdevConfig) {
+	a.MCPPolicy = ClientMCPPolicy(cfg)
+	a.MCPServers = a.MCPPolicy.Filter(a.MCPServers)
 }
 
 // ClientMCPPolicy returns the MCP server policy cfg's client block declares.

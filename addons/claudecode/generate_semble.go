@@ -3,6 +3,7 @@ package claudecode
 import (
 	"fmt"
 	"os/exec"
+	"slices"
 
 	"github.com/Quantum-Serendipity/qsdev/internal/catalog"
 	"github.com/Quantum-Serendipity/qsdev/pkg/fileutil"
@@ -40,7 +41,10 @@ func generateSembleConfig(answers types.WizardAnswers) (*sembleResult, error) {
 				return nil, fmt.Errorf("semble MCP server not found in catalog")
 			}
 			entry := catalogServerEntry(sembleServerName, def, installedMCPServers(answers.ProjectRoot))
-			override := sembleTextFilesServer(entry)
+			override, err := sembleTextFilesServer(entry, def)
+			if err != nil {
+				return nil, err
+			}
 			result.Override = &override
 		}
 	}
@@ -78,12 +82,17 @@ const sembleServerName = types.SembleMCPServer
 
 // sembleTextFilesServer returns the .mcp.json definition written for semble
 // when text-file indexing is enabled: the server's entry (installed binary or
-// pinned launcher) plus --include-text-files.
-func sembleTextFilesServer(entry MCPServerEntry) MCPServerConfig {
+// pinned launcher) plus the catalog's text-file argument group, the first of
+// def.OptionalArgs. The catalog is the only place the flag is defined, so the
+// written entry is always one of mcpregistry.LaunchVariants(def).
+func sembleTextFilesServer(entry MCPServerEntry, def catalog.MCPServerDef) (MCPServerConfig, error) {
+	if len(def.OptionalArgs) == 0 {
+		return MCPServerConfig{}, fmt.Errorf("semble catalog entry declares no optional_args for text-file indexing")
+	}
 	return MCPServerConfig{
 		Name:    sembleServerName,
 		Command: entry.Command,
-		Args:    append(append([]string{}, entry.Args...), "--include-text-files"),
+		Args:    slices.Concat(entry.Args, def.OptionalArgs[0]),
 		Env:     entry.Env,
-	}
+	}, nil
 }

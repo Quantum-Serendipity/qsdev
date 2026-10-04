@@ -8,6 +8,7 @@ import (
 	"os/exec"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/Quantum-Serendipity/qsdev/internal/selfprotect/hookio"
 	"github.com/Quantum-Serendipity/qsdev/internal/selfprotect/rules"
@@ -74,26 +75,41 @@ func TestSelfprotectHelperProcess(t *testing.T) {
 // stdin in dir and returns its exit status and stderr.
 func runSelfprotectHook(t *testing.T, dir, payload string) (int, string) {
 	t.Helper()
+	code, stderr, _ := runSelfprotectHookCPU(t, dir, payload)
+	return code, stderr
+}
+
+// runSelfprotectHookCPU is runSelfprotectHook that also reports the CPU time
+// (user plus system) the hook process used, which, unlike its wall time, does
+// not depend on how loaded the machine is.
+func runSelfprotectHookCPU(t *testing.T, dir, payload string) (int, string, time.Duration) {
+	t.Helper()
 	self, err := os.Executable()
 	if err != nil {
 		t.Fatal(err)
 	}
 	cmd := exec.Command(self, "-test.run=^TestSelfprotectHelperProcess$") //nolint:gosec // re-executes this test binary
-	cmd.Env = append(os.Environ(), selfprotectHelperEnv+"=1")
+	// A -race build sleeps a second before exiting unless told not to.
+	cmd.Env = append(os.Environ(), selfprotectHelperEnv+"=1",
+		"GORACE="+strings.TrimSpace(os.Getenv("GORACE")+" atexit_sleep_ms=0"))
 	cmd.Dir = dir
 	cmd.Stdin = strings.NewReader(payload)
 	var stderr bytes.Buffer
 	cmd.Stderr = &stderr
 	err = cmd.Run()
+	var cpu time.Duration
+	if ps := cmd.ProcessState; ps != nil {
+		cpu = ps.UserTime() + ps.SystemTime()
+	}
 	var exitErr *exec.ExitError
 	switch {
 	case err == nil:
-		return 0, stderr.String()
+		return 0, stderr.String(), cpu
 	case errors.As(err, &exitErr):
-		return exitErr.ExitCode(), stderr.String()
+		return exitErr.ExitCode(), stderr.String(), cpu
 	default:
 		t.Fatalf("running selfprotect hook: %v", err)
-		return -1, ""
+		return -1, "", 0
 	}
 }
 
@@ -174,6 +190,15 @@ func TestSelfprotectHook_Decisions(t *testing.T) {
 		{"shell -c rewrite of .npmrc is blocked", bash(`sh -c 'echo ignore-scripts=false >> .npmrc'`), 2, "GD-004"},
 		{"inline program rewriting .npmrc is blocked", bash(`python3 -c "open('.npmrc','w').write('')"`), 2, "GD-004"},
 		{"dd onto .npmrc is blocked", bash("dd if=/tmp/x of=.npmrc"), 2, "GD-004"},
+		// ln into a directory an earlier command of the line creates: the
+		// link lands under the source's name, though the directory does not
+		// exist when the hook runs.
+		{"ln -s into a directory mkdir -p creates is blocked", bash("mkdir -p pkg && ln -s ../evil/.npmrc pkg"), 2, "GD-004"},
+		{"ln -s into a directory mkdir creates is blocked", bash("mkdir pkg; ln -s ../evil/.npmrc pkg"), 2, "GD-004"},
+		{"hard ln into a directory mkdir creates is blocked", bash("mkdir -p pkg && ln ../evil/.npmrc pkg"), 2, "GD-004"},
+		{"ln -s .yarnrc.yml into a created directory is blocked", bash("mkdir -p pkg && ln -s ../evil/.yarnrc.yml pkg"), 2, "GD-004"},
+		{"ln into a new worktree is blocked", bash("git worktree add w && ln -s ../evil/.npmrc w"), 2, "GD-004"},
+		{"ln -s of .npmrc to a new file name is allowed", bash("ln -s ../shared/.npmrc npmrc-link.txt"), 0, ""},
 		{"yarn config set is blocked", bash("yarn config set enableScripts true"), 2, "GD-004"},
 		{"pnpm approve-builds is blocked", bash("pnpm approve-builds esbuild"), 2, "GD-004"},
 		{"pr text naming .npmrc is allowed", bash(`gh pr create --title "chore: harden .npmrc" --body "x"`), 0, ""},

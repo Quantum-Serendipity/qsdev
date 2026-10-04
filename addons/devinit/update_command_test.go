@@ -2,6 +2,8 @@ package devinit
 
 import (
 	"bytes"
+	"context"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -11,6 +13,8 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/Quantum-Serendipity/qsdev/internal/procexec"
+	"github.com/Quantum-Serendipity/qsdev/internal/selfupdate"
 	"github.com/Quantum-Serendipity/qsdev/pkg/branding"
 	"github.com/Quantum-Serendipity/qsdev/pkg/types"
 )
@@ -203,9 +207,10 @@ func TestRunFullUpdate_AllStages(t *testing.T) {
 			wantInOutput: []string{"Config regeneration: not a qsdev project", "Devenv inputs: not a qsdev project"},
 		},
 		{
-			// A teammate's clone has the shared config but no local answers;
-			// it is still a project, so the real error must surface.
-			name: "project config without answers is still a project",
+			// A teammate's clone has the shared config but no local state;
+			// it is still a project, and both project stages must refuse
+			// with the join hint rather than regenerate or bump devenv.lock.
+			name: "project config without local state asks to join",
 			setup: func(t *testing.T, dir string) {
 				t.Helper()
 				if err := os.WriteFile(filepath.Join(dir, branding.Get().ConfigFile), []byte("version: 1\n"), 0o644); err != nil {
@@ -213,7 +218,7 @@ func TestRunFullUpdate_AllStages(t *testing.T) {
 				}
 			},
 			wantErr:      true,
-			wantInOutput: []string{"✗ Config regeneration", "no saved answers"},
+			wantInOutput: []string{"✗ Config regeneration", "✗ Devenv inputs", "init --yes"},
 		},
 		{
 			name: "inside a project a config failure fails the run",
@@ -489,5 +494,165 @@ func TestUpdateCmd_HasExpectedFlags(t *testing.T) {
 		if cmd.Flags().Lookup(name) == nil {
 			t.Errorf("expected flag --%s to be registered", name)
 		}
+	}
+}
+
+// codedErr is a stage error that carries a process exit code.
+type codedErr struct{ code int }
+
+func (e codedErr) Error() string { return fmt.Sprintf("coded %d", e.code) }
+func (e codedErr) ExitCode() int { return e.code }
+
+func TestPrintStageSummary_PropagatesStageExitCode(t *testing.T) {
+	t.Parallel()
+	plain := errors.New("plain failure")
+	tests := []struct {
+		name     string
+		results  []StageResult
+		wantErr  bool
+		wantCode int // 0: the error must not carry an exit code
+	}{
+		{name: "all succeeded", results: []StageResult{{Name: "a", Status: StageSuccess}}},
+		{
+			name:    "failure without exit code",
+			results: []StageResult{{Name: "a", Status: StageFailed, Err: plain}},
+			wantErr: true,
+		},
+		{
+			name:     "coded failure",
+			results:  []StageResult{{Name: "a", Status: StageFailed, Err: fmt.Errorf("wrapped: %w", codedErr{3})}},
+			wantErr:  true,
+			wantCode: 3,
+		},
+		{
+			name: "first coded failure wins",
+			results: []StageResult{
+				{Name: "a", Status: StageFailed, Err: plain},
+				{Name: "b", Status: StageFailed, Err: codedErr{3}},
+				{Name: "c", Status: StageFailed, Err: codedErr{4}},
+			},
+			wantErr:  true,
+			wantCode: 3,
+		},
+		{
+			name:    "coded error on a skipped stage is ignored",
+			results: []StageResult{{Name: "a", Status: StageSkipped, Err: codedErr{3}}},
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			cmd, _ := newTestCmd()
+			err := printStageSummary(cmd, tc.results)
+			if (err != nil) != tc.wantErr {
+				t.Fatalf("err = %v, wantErr %v", err, tc.wantErr)
+			}
+			var coded interface{ ExitCode() int }
+			hasCode := errors.As(err, &coded)
+			switch {
+			case tc.wantCode == 0 && hasCode:
+				t.Errorf("err %v carries exit code %d, want none", err, coded.ExitCode())
+			case tc.wantCode != 0 && (!hasCode || coded.ExitCode() != tc.wantCode):
+				t.Errorf("err %v does not carry exit code %d", err, tc.wantCode)
+			}
+		})
+	}
+}
+
+// TestUpdateDryRunNoLockChange is the U14 regression test: `update --dry-run`
+// in an initialized project previews the devenv-input stage without running
+// `devenv update`, so devenv.lock stays byte-identical and devenv is never
+// started, even though it is on PATH.
+func TestUpdateDryRunNoLockChange(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "go.mod"), []byte("module example.com/dry\n\ngo 1.24\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	binDir := t.TempDir()
+	marker := filepath.Join(t.TempDir(), "devenv-ran")
+	writeFakeExecutable(t, binDir, "devenv", fmt.Sprintf("echo \"$@\" > %q\necho bumped > devenv.lock\n", marker))
+	t.Setenv("PATH", binDir)
+	if out, err := executeInitCmd(t, dir, "--yes", "--lang", "go"); err != nil {
+		t.Fatalf("init: %v\n%s", err, out)
+	}
+	// init may probe `devenv version`; only what update does is under test.
+	if err := os.Remove(marker); err != nil && !errors.Is(err, os.ErrNotExist) {
+		t.Fatal(err)
+	}
+	lockPath := filepath.Join(dir, "devenv.lock")
+	lock := []byte(`{"nodes":{"root":{}},"root":"root","version":7}` + "\n")
+	if err := os.WriteFile(lockPath, lock, 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	t.Chdir(dir)
+	t.Setenv(procexec.ForbidExecEnv, "1")
+	cmd := updateCmd()
+	var out bytes.Buffer
+	cmd.SetOut(&out)
+	cmd.SetErr(&out)
+	cmd.SetArgs([]string{"--dry-run"})
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("update --dry-run: %v\n%s", err, out.String())
+	}
+
+	if _, err := os.Stat(marker); err == nil {
+		ran, _ := os.ReadFile(marker)
+		t.Errorf("update --dry-run started devenv %s", ran)
+	}
+	got, err := os.ReadFile(lockPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(got, lock) {
+		t.Errorf("devenv.lock changed by update --dry-run:\n got %q\nwant %q", got, lock)
+	}
+	if !strings.Contains(out.String(), "would run: devenv update") {
+		t.Errorf("dry-run did not preview the devenv stage:\n%s", out.String())
+	}
+}
+
+// TestUpdateDryRun_ReleaseBuildQueriesNothing pins the read-only contract
+// for `update --dry-run` on a release build: the preview names the binary
+// stage but makes no release metadata query (no network), download, install
+// or exec. `update --check` is the explicit network query.
+func TestUpdateDryRun_ReleaseBuildQueriesNothing(t *testing.T) {
+	t.Chdir(t.TempDir())
+	t.Setenv(procexec.ForbidExecEnv, "1")
+
+	origVersion, origCheck, origDo := binaryVersion, checkForUpdate, doSelfUpdate
+	t.Cleanup(func() { binaryVersion, checkForUpdate, doSelfUpdate = origVersion, origCheck, origDo })
+	binaryVersion = func() string { return "v0.7.9" }
+	checks := 0
+	checkForUpdate = func(context.Context, selfupdate.Config, string) (*selfupdate.Release, error) {
+		checks++
+		return &selfupdate.Release{Version: "0.8.0"}, nil
+	}
+	doSelfUpdate = func(context.Context, selfupdate.Config, *selfupdate.Release) error {
+		t.Error("update --dry-run installed a binary")
+		return nil
+	}
+
+	for _, args := range [][]string{
+		{"--dry-run", "--self-only"},
+		{"--dry-run", "--self-only", "--force"},
+	} {
+		t.Run(strings.Join(args, " "), func(t *testing.T) {
+			checks = 0
+			cmd := updateCmd()
+			var out bytes.Buffer
+			cmd.SetOut(&out)
+			cmd.SetErr(&out)
+			cmd.SetArgs(args)
+			if err := cmd.Execute(); err != nil {
+				t.Fatalf("update %v: %v\n%s", args, err, out.String())
+			}
+			if checks != 0 {
+				t.Errorf("release metadata queried %d times, want 0", checks)
+			}
+			if !strings.Contains(out.String(), stageSelfUpdate) || !strings.Contains(out.String(), "qsdev update --check") {
+				t.Errorf("dry-run did not preview the binary stage:\n%s", out.String())
+			}
+		})
 	}
 }

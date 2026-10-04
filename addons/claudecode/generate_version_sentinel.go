@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/Quantum-Serendipity/qsdev/internal/vsentinel"
 	"github.com/Quantum-Serendipity/qsdev/pkg/ecosystem"
 	"github.com/Quantum-Serendipity/qsdev/pkg/fileutil"
 	"github.com/Quantum-Serendipity/qsdev/pkg/types"
@@ -28,14 +29,13 @@ func generateVersionSentinelFiles(answers types.WizardAnswers, registry *ecosyst
 		Strategy: types.LibraryManaged,
 	})
 
-	// Ignore file for unsupported ecosystems.
-	report := ecosystem.LanguageManifestCoverage(answers.Languages, registry)
-	if report.HasUncovered() {
+	// Ignore file for the manifests whose versions Version-Sentinel never
+	// compares, by the classification manifest_coverage reports.
+	notDiffed := vsentinel.ClassifyManifests(ecosystem.LanguageManifestCoverage(answers.Languages, registry).AllManifests).NotDiffed
+	if len(notDiffed) > 0 {
 		var lines []string
-		lines = append(lines, "# Ecosystems not covered by Version-Sentinel — verify versions manually")
-		for _, m := range report.Uncovered {
-			lines = append(lines, m.Path)
-		}
+		lines = append(lines, "# Manifests Version-Sentinel does not version-diff — verify versions manually")
+		lines = append(lines, vsentinel.ManifestPaths(notDiffed)...)
 		lines = append(lines, "")
 
 		files = append(files, types.GeneratedFile{

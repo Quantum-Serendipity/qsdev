@@ -3,6 +3,7 @@ package claudecode
 import (
 	"strings"
 
+	"github.com/Quantum-Serendipity/qsdev/internal/claudesettings"
 	"github.com/Quantum-Serendipity/qsdev/internal/selfprotect/cmdscan"
 	"github.com/Quantum-Serendipity/qsdev/internal/tier"
 	"github.com/Quantum-Serendipity/qsdev/pkg/branding"
@@ -32,6 +33,9 @@ type HookDefinition struct {
 	// PolicyKey names the .qsdev.yaml key that sets the policy.
 	HasPolicy func(types.WizardAnswers) bool
 	PolicyKey string
+	// FailClosed marks a security hook whose failure to run must block the
+	// tool call: its emitted command is wrapped by failClosedCommand.
+	FailClosed bool
 }
 
 // lacksPolicy reports whether the hook is enabled by answers but has no
@@ -47,6 +51,28 @@ func (h HookDefinition) commandFor(answers types.WizardAnswers) string {
 		return h.CommandFunc(answers)
 	}
 	return h.Command
+}
+
+// emittedCommand returns the command written into settings.json for answers:
+// commandFor, then the sandbox prefix when the sandbox is enabled, then the
+// fail-closed wrapper, which is therefore always outermost. app is the branded
+// binary the sandbox prefix invokes.
+func (h HookDefinition) emittedCommand(answers types.WizardAnswers, app string) string {
+	cmd := h.commandFor(answers)
+	if answers.Hooks.SandboxEnabled {
+		cmd = sandboxHookCommand(app, h.SandboxCategory, cmd)
+	}
+	if h.FailClosed {
+		cmd = failClosedCommand(h.Owner, cmd)
+	}
+	return cmd
+}
+
+// failClosedCommand wraps a hook command so that a crash blocks the tool call
+// instead of letting it through (see claudesettings.FailClosedCommand, which
+// also defines the shape posture recognizes).
+func failClosedCommand(owner, cmd string) string {
+	return claudesettings.FailClosedCommand(owner, cmd)
 }
 
 // HookRegistry collects hook definitions and produces the hooks map for
@@ -81,7 +107,7 @@ func (r *HookRegistry) HooksForEvent(event string, answers types.WizardAnswers) 
 			Matcher: h.Matcher,
 			Hooks: []HookEntry{{
 				Type:          "command",
-				Command:       h.commandFor(answers),
+				Command:       h.emittedCommand(answers, branding.Get().AppName),
 				Timeout:       h.Timeout,
 				StatusMessage: h.StatusMessage,
 			}},
@@ -148,6 +174,13 @@ func (r *HookRegistry) Definitions() []HookDefinition {
 // same command sent through PowerShell or Monitor.
 var shellToolMatcher = strings.Join(cmdscan.ShellTools, "|")
 
+// packageGuardEnabled reports whether the package-guard hook is registered
+// and its script generated: always, unless the answers record a safety-block
+// opt-out (`disable attach-guard --force`, honoured only when committed).
+func packageGuardEnabled(a types.WizardAnswers) bool {
+	return !a.Hooks.SafetyBlockOptOut
+}
+
 // defaultHookRegistry returns a registry pre-populated with the built-in hooks
 // (package-guard and audit-log).
 func defaultHookRegistry() *HookRegistry {
@@ -155,6 +188,11 @@ func defaultHookRegistry() *HookRegistry {
 
 	selfprotectApp := branding.Get().AppName
 
+	// Self-protection guards the guardrails themselves, so it has no
+	// EnabledFunc: every generated settings.json carries it whatever the
+	// answers say. The answers file is agent-writable, and an opt-out read
+	// from it would let an agent edit the file and regenerate the hook away
+	// (U18-01). HookChoices.SelfProtection is ignored here.
 	r.Register(HookDefinition{
 		Owner:         "self-protection",
 		Event:         "PreToolUse",
@@ -162,9 +200,12 @@ func defaultHookRegistry() *HookRegistry {
 		Command:       selfprotectApp + " selfprotect",
 		Timeout:       10,
 		StatusMessage: "Checking self-protection rules...",
-		EnabledFunc:   func(a types.WizardAnswers) bool { return a.Hooks.SelfProtection },
+		FailClosed:    true,
 	})
 
+	// Package-guard derives from the one opt-out bit, not the
+	// Hooks.SafetyBlock mirror, so no hook-choice subset handed to the
+	// registry can drop it unless the opt-out is recorded.
 	guardCmd := `"${CLAUDE_PROJECT_DIR}"/.claude/hooks/package-guard.py`
 
 	r.Register(HookDefinition{
@@ -172,10 +213,11 @@ func defaultHookRegistry() *HookRegistry {
 		Event:           "PreToolUse",
 		Matcher:         shellToolMatcher,
 		Command:         guardCmd,
-		Timeout:         30,
+		Timeout:         claudesettings.GuardHookTimeout,
 		StatusMessage:   "Checking package install safety...",
 		SandboxCategory: "linter",
-		EnabledFunc:     func(a types.WizardAnswers) bool { return a.Hooks.SafetyBlock },
+		EnabledFunc:     packageGuardEnabled,
+		FailClosed:      true,
 	})
 
 	r.Register(HookDefinition{
@@ -187,6 +229,7 @@ func defaultHookRegistry() *HookRegistry {
 		StatusMessage:   "Scanning for credentials...",
 		SandboxCategory: "linter",
 		EnabledFunc:     func(a types.WizardAnswers) bool { return a.Hooks.CredentialScan },
+		FailClosed:      true,
 	})
 
 	r.Register(HookDefinition{
@@ -194,10 +237,11 @@ func defaultHookRegistry() *HookRegistry {
 		Event:           "PreToolUse",
 		Matcher:         shellToolMatcher,
 		Command:         `"${CLAUDE_PROJECT_DIR}"/.claude/hooks/block-destructive.py`,
-		Timeout:         5,
+		Timeout:         10,
 		StatusMessage:   "Checking command safety...",
 		SandboxCategory: "linter",
 		EnabledFunc:     func(a types.WizardAnswers) bool { return a.Hooks.DestructivePrevention },
+		FailClosed:      true,
 	})
 
 	r.Register(HookDefinition{
@@ -205,10 +249,11 @@ func defaultHookRegistry() *HookRegistry {
 		Event:           "PreToolUse",
 		Matcher:         "Write|Edit|MultiEdit|NotebookEdit|Read|Grep|Glob",
 		Command:         `"${CLAUDE_PROJECT_DIR}"/.claude/hooks/file-boundary.py`,
-		Timeout:         5,
+		Timeout:         10,
 		StatusMessage:   "Checking file boundary...",
 		SandboxCategory: "linter",
 		EnabledFunc:     func(a types.WizardAnswers) bool { return a.Hooks.FileBoundary },
+		FailClosed:      true,
 	})
 
 	r.Register(HookDefinition{
@@ -216,12 +261,13 @@ func defaultHookRegistry() *HookRegistry {
 		Event:           "PreToolUse",
 		Matcher:         "*",
 		Command:         `"${CLAUDE_PROJECT_DIR}"/.claude/hooks/tool-gates.py`,
-		Timeout:         3,
+		Timeout:         10,
 		StatusMessage:   "Checking tool policy...",
 		SandboxCategory: "linter",
 		EnabledFunc:     func(a types.WizardAnswers) bool { return a.Hooks.ToolGates },
 		HasPolicy:       func(a types.WizardAnswers) bool { return a.HookPolicy.ToolGates.HasPolicy() },
 		PolicyKey:       "hooks.tool_gates",
+		FailClosed:      true,
 	})
 
 	soc2Cmd := `"${CLAUDE_PROJECT_DIR}"/.claude/hooks/soc2-audit-log.py`
@@ -323,9 +369,10 @@ func defaultHookRegistry() *HookRegistry {
 		Event:         "PreToolUse",
 		Matcher:       "*",
 		Command:       enforceApp + " enforce --hook PreToolUse",
-		Timeout:       5,
+		Timeout:       10,
 		StatusMessage: "Evaluating security policy...",
 		EnabledFunc:   func(a types.WizardAnswers) bool { return a.Hooks.SecurityEnforcement },
+		FailClosed:    true,
 	})
 
 	r.Register(HookDefinition{

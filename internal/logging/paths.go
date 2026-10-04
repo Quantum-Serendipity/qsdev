@@ -1,6 +1,8 @@
 package logging
 
 import (
+	"errors"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"strings"
@@ -51,12 +53,23 @@ func ResolveLogDir(projectRoot string, projectScoped bool) string {
 // each candidate directory from startDir upward, so callers encode their own
 // project-root marker set inside it. This is the single shared traversal
 // primitive used by project-root detection across packages; callers keep their
-// own marker semantics by supplying the predicate.
+// own marker semantics by supplying the predicate. WalkUp has no ceiling; see
+// FindProjectRoot for the repository-bounded walk.
 func WalkUp(startDir string, match func(dir string) bool) (string, bool) {
+	return walkUpUntil(startDir, match, nil)
+}
+
+// walkUpUntil is WalkUp with an optional ceiling: after match fails for a
+// directory, a non-nil stop reporting true for it ends the walk there, so no
+// ancestor of that directory is visited.
+func walkUpUntil(startDir string, match, stop func(dir string) bool) (string, bool) {
 	dir := startDir
 	for {
 		if match(dir) {
 			return dir, true
+		}
+		if stop != nil && stop(dir) {
+			return "", false
 		}
 		parent := filepath.Dir(dir)
 		if parent == dir {
@@ -66,15 +79,83 @@ func WalkUp(startDir string, match func(dir string) bool) (string, bool) {
 	}
 }
 
+// gitEntryName is the entry that marks a repository toplevel: a directory in
+// an ordinary clone, a gitlink file in a worktree or submodule.
+const gitEntryName = ".git"
+
+// isRepoToplevel reports whether dir holds a .git entry of any kind (directory,
+// file or symlink). It fails closed: any Lstat error other than not-exist, such
+// as a permission error, is treated as a toplevel too, so an entry that cannot
+// be inspected never lets the walk escape the repository.
+func isRepoToplevel(dir string) bool {
+	_, err := os.Lstat(filepath.Join(dir, gitEntryName))
+	return !errors.Is(err, fs.ErrNotExist)
+}
+
 // DetectProjectRoot returns the root of the qsdev project enclosing the
 // current directory (see FindProjectRoot), or "" if not inside a project.
 func DetectProjectRoot() string {
-	dir, err := os.Getwd()
+	dir, err := workingDir()
 	if err != nil {
 		return ""
 	}
 	root, _ := FindProjectRoot(dir)
 	return root
+}
+
+// ProbeBoundary returns the directory whose content belongs to the project
+// the current directory is in, as a version probe must see it: the nearest
+// repository toplevel at or above the working directory, or the working
+// directory itself outside a repository. It needs no qsdev marker, since a
+// repository not yet initialised is project content too. It returns "" when
+// that directory is the home directory or above it (run from ~, from a
+// dotfiles repository at ~, or from /), which is no project, or when the
+// working directory is unknown.
+func ProbeBoundary() string {
+	wd, err := workingDir()
+	if err != nil {
+		return ""
+	}
+	home, err := userHomeDir()
+	if err != nil {
+		home = ""
+	}
+	return probeBoundary(wd, home)
+}
+
+// probeBoundary is ProbeBoundary for the working directory wd and the home
+// directory home ("" when unknown).
+func probeBoundary(wd, home string) string {
+	wd = filepath.Clean(wd)
+	root, ok := walkUpUntil(wd, isRepoToplevel, nil)
+	if !ok {
+		root = wd
+	}
+	if home == "" {
+		return root
+	}
+	rootInfo, err := os.Stat(root)
+	if err != nil {
+		return root
+	}
+	if _, holdsHome := WalkUp(filepath.Clean(home), func(dir string) bool {
+		info, err := os.Stat(dir)
+		return err == nil && os.SameFile(info, rootInfo)
+	}); holdsHome {
+		return ""
+	}
+	return root
+}
+
+// workingDir is the one place the package reads the working directory.
+func workingDir() (string, error) {
+	return os.Getwd()
+}
+
+// userHomeDir is the one place the package resolves the home directory for
+// matching (GlobalLogDir resolves it for its own path).
+func userHomeDir() (string, error) {
+	return os.UserHomeDir()
 }
 
 // FindProjectRoot walks up from start to the nearest directory (start itself
@@ -89,16 +170,22 @@ func DetectProjectRoot() string {
 //   - the project data directory ("."+AppName), except in the user's home
 //     directory, where the same name is the per-user global data directory
 //     (logs, cache, binaries) rather than a project.
+//
+// The walk never climbs above the repository toplevel: after checking a
+// directory for markers it stops if that directory holds a .git entry, so a
+// marker in an ancestor of the repository is never adopted. A submodule or
+// nested repository is its own boundary. Markers at the toplevel or between
+// start and the toplevel (a monorepo subdirectory) still resolve.
 func FindProjectRoot(start string) (string, bool) {
 	isHome := HomeDirMatcher()
 	b := branding.Get()
 	dataDir := "." + b.AppName
-	return WalkUp(filepath.Clean(start), func(dir string) bool {
+	return walkUpUntil(filepath.Clean(start), func(dir string) bool {
 		if fileutil.FileExists(dir, b.ConfigFile) || fileutil.DirExists(dir, b.StateDir) {
 			return true
 		}
 		return fileutil.DirExists(dir, dataDir) && !isHome(dir)
-	})
+	}, isRepoToplevel)
 }
 
 // HomeDirMatcher returns a predicate reporting whether a directory is the
@@ -107,7 +194,7 @@ func FindProjectRoot(start string) (string, bool) {
 // case-insensitive filesystem still matches the resolved working directory.
 // With no resolvable home directory it matches nothing.
 func HomeDirMatcher() func(dir string) bool {
-	home, err := os.UserHomeDir()
+	home, err := userHomeDir()
 	if err != nil || home == "" {
 		return func(string) bool { return false }
 	}

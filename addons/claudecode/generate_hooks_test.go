@@ -1,6 +1,7 @@
 package claudecode_test
 
 import (
+	"bytes"
 	"strings"
 	"testing"
 
@@ -46,7 +47,8 @@ func TestGenerateHookFiles_AllEnabled(t *testing.T) {
 		t.Parallel()
 		answers := types.WizardAnswers{
 			Hooks: types.HookChoices{
-				AuditLog: true,
+				AuditLog:          true,
+				SafetyBlockOptOut: true,
 			},
 			LSP: types.LSPSettings{Enforcement: "off"},
 		}
@@ -83,10 +85,12 @@ func TestGenerateHookFiles_AllEnabled(t *testing.T) {
 
 	t.Run("none enabled", func(t *testing.T) {
 		t.Parallel()
-		// Disable LSP too so no hooks at all are generated; the lsp-guard is
-		// otherwise on by default (enforcement defaults to "block").
+		// Opt out of the safety block and disable LSP too so no hooks at all
+		// are generated; package-guard and the lsp-guard are otherwise on by
+		// default (enforcement defaults to "block").
 		answers := types.WizardAnswers{
-			LSP: types.LSPSettings{Enforcement: "off"},
+			Hooks: types.HookChoices{SafetyBlockOptOut: true},
+			LSP:   types.LSPSettings{Enforcement: "off"},
 		}
 		files, err := claudecode.GenerateHookFiles(answers)
 		if err != nil {
@@ -123,4 +127,59 @@ func TestGenerateHookFiles_AllEnabled(t *testing.T) {
 			}
 		}
 	})
+}
+
+// TestPackageGuardContent pins that the content posture judges the guard
+// against is exactly what the generator writes for it.
+func TestPackageGuardContent(t *testing.T) {
+	t.Parallel()
+	files, err := claudecode.GenerateHookFiles(types.WizardAnswers{Hooks: types.HookChoices{SafetyBlock: true}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := claudecode.PackageGuardContent()
+	if len(want) == 0 {
+		t.Fatal("PackageGuardContent is empty")
+	}
+	for _, f := range files {
+		if f.Path == claudecode.PackageGuardPath {
+			if !bytes.Equal(f.Content, want) {
+				t.Error("generated package-guard.py differs from PackageGuardContent")
+			}
+			return
+		}
+	}
+	t.Fatalf("no %s generated", claudecode.PackageGuardPath)
+}
+
+// TestHookScriptContents pins that every hook script the generator writes,
+// whichever answers enable it, is listed with exactly the content written.
+func TestHookScriptContents(t *testing.T) {
+	t.Parallel()
+	all := types.HookChoices{
+		SafetyBlock: true, AuditLog: true, CredentialScan: true, DestructivePrevention: true,
+		FileBoundary: true, ToolGates: true,
+	}
+	soc2 := all
+	soc2.SOC2Audit = true
+	contents := claudecode.HookScriptContents()
+	if len(contents[claudecode.PackageGuardPath]) == 0 {
+		t.Fatalf("HookScriptContents lacks %s", claudecode.PackageGuardPath)
+	}
+	for _, hooks := range []types.HookChoices{all, soc2} {
+		files, err := claudecode.GenerateHookFiles(types.WizardAnswers{Tier: "full", Hooks: hooks, AgentTools: types.AgentToolsAnswers{SembleEnabled: true}})
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, f := range files {
+			want, ok := contents[f.Path]
+			if !ok {
+				t.Errorf("HookScriptContents lacks generated %s", f.Path)
+				continue
+			}
+			if !bytes.Equal(f.Content, want) {
+				t.Errorf("generated %s differs from HookScriptContents", f.Path)
+			}
+		}
+	}
 }

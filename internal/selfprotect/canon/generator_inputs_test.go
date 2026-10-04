@@ -195,7 +195,14 @@ func TestIsProtected_GeneratorInputs_WhiteLabel(t *testing.T) {
 		}
 		got = append(got, e.path)
 	}
-	wantDir := filepath.Join(home, ".config", "acme") + string(filepath.Separator)
+	// Entries are absolute: on Windows a rooted path without a volume
+	// (\home\alice) is the current drive's, and the protected spelling
+	// names that drive.
+	wantDir, err := filepath.Abs(filepath.Join(home, ".config", "acme"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	wantDir += string(filepath.Separator)
 	if !slices.Contains(got, wantDir) {
 		t.Errorf("org overlay entries %q lack %q", got, wantDir)
 	}

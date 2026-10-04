@@ -12,6 +12,7 @@ import (
 	"strings"
 	"sync"
 	"syscall"
+	"unicode"
 
 	"github.com/Quantum-Serendipity/qsdev/internal/userhome"
 	"github.com/Quantum-Serendipity/qsdev/pkg/branding"
@@ -778,16 +779,41 @@ func (o matchOptions) index() int {
 }
 
 // key returns p in the form protected-path comparisons use: slash-separated,
-// with the platform's filesystem name aliases normalized away.
+// with the platform's filesystem name aliases normalized away. Folding case
+// before stripping aliases gives the same key, since folding never adds or
+// removes the ':', '.' and ' ' that stripping looks at; it lets the separator
+// conversion and the fold share one copy of p.
 func (o matchOptions) key(p string) string {
-	s := filepath.ToSlash(p)
+	var s string
+	if o.foldCase {
+		s = toSlashLower(p)
+	} else {
+		s = filepath.ToSlash(p)
+	}
 	if o.windowsAliases {
 		s = stripWindowsAliases(s)
 	}
-	if o.foldCase {
-		s = strings.ToLower(s)
-	}
 	return s
+}
+
+// toSlashLower is strings.ToLower(filepath.ToSlash(p)) in a single copy, and
+// none when p is already slash-separated lower case.
+func toSlashLower(p string) string {
+	return sepToSlashLower(p, filepath.Separator)
+}
+
+// sepToSlashLower is toSlashLower for an explicit separator, so the Windows
+// form can be tested on any platform.
+func sepToSlashLower(p string, sep rune) string {
+	if sep == '/' {
+		return strings.ToLower(p)
+	}
+	return strings.Map(func(r rune) rune {
+		if r == sep {
+			return '/'
+		}
+		return unicode.ToLower(r)
+	}, p)
 }
 
 // stripWindowsAliases removes, from each component of a slash-separated path,

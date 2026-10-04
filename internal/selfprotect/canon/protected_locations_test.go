@@ -435,3 +435,43 @@ func TestIsProtected_RunningExecutable(t *testing.T) {
 		t.Errorf("IsProtected(%q) = true; only the executable itself should be protected", sibling)
 	}
 }
+
+// TestSepToSlashLower_MatchesTwoStepKey pins that converting separators and
+// folding case in one pass gives the key the two separate steps gave, and
+// that folding before stripping Windows aliases does not change the key.
+func TestSepToSlashLower_MatchesTwoStepKey(t *testing.T) {
+	t.Parallel()
+	paths := []string{
+		"",
+		`C:\Users\RUNNER~1\AppData\Local\Temp\Project\Src\Main.go`,
+		`C:\Repo\.CLAUDE.\Settings.JSON::$DATA`,
+		`\\server\Share\.Claude \hooks\`,
+		"/home/Alice/.Config/QSDEV/defaults.yaml",
+		"mixed/Sep\\Path/ÄÖÜ/İstanbul",
+		"already/lower/case",
+	}
+	for _, sep := range []rune{'/', '\\'} {
+		for _, p := range paths {
+			slashed := strings.ReplaceAll(p, string(sep), "/")
+			if want, got := strings.ToLower(slashed), sepToSlashLower(p, sep); got != want {
+				t.Errorf("sepToSlashLower(%q, %q) = %q, want %q", p, sep, got, want)
+			}
+			oldOrder := strings.ToLower(stripWindowsAliases(slashed))
+			newOrder := stripWindowsAliases(sepToSlashLower(p, sep))
+			if oldOrder != newOrder {
+				t.Errorf("key(%q, sep %q): strip-then-fold %q, fold-then-strip %q", p, sep, oldOrder, newOrder)
+			}
+		}
+	}
+}
+
+// TestSepToSlashLower_OneCopy pins that a Windows path is converted and
+// folded in a single allocation, so a key costs the same on Windows as on
+// Linux (filepath.ToSlash followed by strings.ToLower copied it twice there).
+// Not parallel: AllocsPerRun counts every allocation in the process.
+func TestSepToSlashLower_OneCopy(t *testing.T) {
+	p := `C:\Users\RUNNER~1\AppData\Local\Temp\Project\Src\Main.go`
+	if got := testing.AllocsPerRun(100, func() { sepToSlashLower(p, '\\') }); got > 1 {
+		t.Errorf("sepToSlashLower(%q) made %v allocations, want at most 1", p, got)
+	}
+}

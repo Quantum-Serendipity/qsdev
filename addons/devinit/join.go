@@ -15,7 +15,6 @@ import (
 	qsdevanswers "github.com/Quantum-Serendipity/qsdev/internal/answers"
 	"github.com/Quantum-Serendipity/qsdev/internal/catalog"
 	qsdevconfig "github.com/Quantum-Serendipity/qsdev/internal/config"
-	"github.com/Quantum-Serendipity/qsdev/internal/detect"
 	"github.com/Quantum-Serendipity/qsdev/internal/merge"
 	"github.com/Quantum-Serendipity/qsdev/internal/state"
 	"github.com/Quantum-Serendipity/qsdev/internal/toolreg"
@@ -101,7 +100,7 @@ func joinPrerequisites(cmd *cobra.Command, opts InitOptions) bool {
 	if opts.DryRun || opts.ClaudeOnly {
 		return false
 	}
-	prereqs := CheckPrerequisites(cmd.Context())
+	prereqs := host.prerequisites(cmd.Context())
 	if !prereqs.HasMissing() {
 		return false
 	}
@@ -135,7 +134,7 @@ func buildJoinAnswers(cmd *cobra.Command, opts InitOptions, projectRoot string) 
 	}
 	warnPolicyViolations(cmd.ErrOrStderr(), policy)
 
-	detected := detect.Detect(cmdContext(cmd), projectRoot)
+	detected := host.detectProject(cmdContext(cmd), projectRoot)
 	answers := qsdevconfig.ConfigToAnswers(policy.Committed, detected, projectRoot)
 
 	committedAnswers := answers

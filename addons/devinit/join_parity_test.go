@@ -438,6 +438,7 @@ func TestRunJoin_DryRunLeavesWorkingTreeUntouched(t *testing.T) {
 // step never runs (and so never auto-installs) for a preview or a
 // Claude-only join, like the create path.
 func TestJoinPrerequisites_SkippedForDryRunAndClaudeOnly(t *testing.T) {
+	useRealHostProber(t)
 	t.Setenv("PATH", t.TempDir()) // every prerequisite is missing
 
 	tests := []struct {

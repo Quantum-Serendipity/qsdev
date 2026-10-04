@@ -18,7 +18,6 @@ import (
 	"github.com/Quantum-Serendipity/qsdev/internal/catalog"
 	"github.com/Quantum-Serendipity/qsdev/internal/cmdutil"
 	qsdevconfig "github.com/Quantum-Serendipity/qsdev/internal/config"
-	"github.com/Quantum-Serendipity/qsdev/internal/detect"
 	"github.com/Quantum-Serendipity/qsdev/internal/merge"
 	"github.com/Quantum-Serendipity/qsdev/internal/repair"
 	"github.com/Quantum-Serendipity/qsdev/internal/state"
@@ -142,7 +141,7 @@ func runInitWithModeDetection(cmd *cobra.Command, opts InitOptions) error {
 // runCreate is the original init flow for creating a project from scratch.
 func runCreate(cmd *cobra.Command, opts InitOptions, projectRoot string) error {
 	flagSet := NewFlagSet(cmd)
-	detected := detect.Detect(cmd.Context(), projectRoot)
+	detected := host.detectProject(cmd.Context(), projectRoot)
 	slog.Debug("ecosystem detection complete",
 		"ecosystems", len(detected.Ecosystems),
 		"has_go", detected.HasGoMod,
@@ -209,7 +208,7 @@ func warnOrInstallPrereqs(cmd *cobra.Command, opts InitOptions) {
 	if opts.ClaudeOnly || opts.DryRun {
 		return
 	}
-	prereqs := CheckPrerequisites(cmd.Context())
+	prereqs := host.prerequisites(cmd.Context())
 	if !prereqs.HasMissing() {
 		return
 	}

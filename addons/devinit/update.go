@@ -18,7 +18,6 @@ import (
 	"github.com/Quantum-Serendipity/qsdev/internal/claudesettings"
 	"github.com/Quantum-Serendipity/qsdev/internal/cmdutil"
 	qsdevconfig "github.com/Quantum-Serendipity/qsdev/internal/config"
-	"github.com/Quantum-Serendipity/qsdev/internal/detect"
 	"github.com/Quantum-Serendipity/qsdev/internal/merge"
 	"github.com/Quantum-Serendipity/qsdev/internal/state"
 	"github.com/Quantum-Serendipity/qsdev/internal/toolreg"
@@ -275,7 +274,7 @@ func loadAndRefreshForUpdate(ctx context.Context, w io.Writer, projectRoot strin
 	qsdevconfig.AdoptCommitted(projectRoot, &answers)
 
 	// Refresh detection.
-	answers.Detected = detect.Detect(ctx, projectRoot)
+	answers.Detected = host.detectProject(ctx, projectRoot)
 	answers.ProjectRoot = projectRoot
 
 	if err := applyCommittedPolicy(w, projectRoot, &answers); err != nil {

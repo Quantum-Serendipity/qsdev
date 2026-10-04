@@ -19,7 +19,6 @@ import (
 	"github.com/Quantum-Serendipity/qsdev/internal/claudesettings"
 	"github.com/Quantum-Serendipity/qsdev/internal/cmdutil"
 	qsdevconfig "github.com/Quantum-Serendipity/qsdev/internal/config"
-	"github.com/Quantum-Serendipity/qsdev/internal/detect"
 	"github.com/Quantum-Serendipity/qsdev/internal/state"
 	"github.com/Quantum-Serendipity/qsdev/internal/surgery"
 	"github.com/Quantum-Serendipity/qsdev/internal/tier"
@@ -159,7 +158,7 @@ func loadLifecycleAnswers(ctx context.Context, w io.Writer, projectRoot string) 
 		return types.WizardAnswers{}, fmt.Errorf("loading answers: %w", err)
 	}
 	answers.ProjectRoot = projectRoot
-	answers.Detected = detect.Detect(ctx, projectRoot)
+	answers.Detected = host.detectProject(ctx, projectRoot)
 	if err := toolreg.SettleProject(w, projectRoot, &answers, toolreg.DefaultRegistry()); err != nil {
 		return types.WizardAnswers{}, err
 	}

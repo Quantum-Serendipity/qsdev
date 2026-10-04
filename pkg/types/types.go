@@ -239,7 +239,7 @@ type FileState struct {
 	Hash        string        `yaml:"hash"         json:"hash"`
 	Strategy    MergeStrategy `yaml:"strategy"      json:"strategy"`
 	Mode        os.FileMode   `yaml:"mode"          json:"mode"`
-	BaseContent []byte        `yaml:"base_content,omitempty" json:"base_content,omitempty"`
+	BaseContent Blob          `yaml:"base_content,omitempty" json:"base_content,omitempty"`
 	Owner       string        `yaml:"owner,omitempty"        json:"owner,omitempty"`
 }
 

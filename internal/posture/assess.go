@@ -171,7 +171,7 @@ func Assess(projectPath string, opts AssessOptions) (*PostureReport, error) {
 		Files:        merged.Files,
 		EnabledTools: merged.EnabledTools,
 	}
-	detected := detect.Detect(context.Background(), projectPath)
+	detected := detect.Detect(context.Background(), projectPath, opts.DetectOptions...)
 
 	// Defense and conformance also credit protection the project has outside
 	// qsdev's state, such as a hand-written pre-commit config. That goes into a

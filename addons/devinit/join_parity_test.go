@@ -15,7 +15,6 @@ import (
 	"github.com/spf13/cobra"
 
 	qsdevconfig "github.com/Quantum-Serendipity/qsdev/internal/config"
-	"github.com/Quantum-Serendipity/qsdev/internal/detect"
 	"github.com/Quantum-Serendipity/qsdev/pkg/branding"
 	"github.com/Quantum-Serendipity/qsdev/pkg/types"
 )
@@ -38,7 +37,7 @@ func newInitTestCmd(t *testing.T, args ...string) (*cobra.Command, InitOptions, 
 func createAnswers(t *testing.T, dir string, args ...string) types.WizardAnswers {
 	t.Helper()
 	cmd, opts, _ := newInitTestCmd(t, append([]string{"--yes"}, args...)...)
-	answers, err := buildAnswersFromInputs(cmd, opts, dir, detect.Detect(context.Background(), dir), NewFlagSet(cmd))
+	answers, err := buildAnswersFromInputs(cmd, opts, dir, host.detectProject(context.Background(), dir), NewFlagSet(cmd))
 	if err != nil {
 		t.Fatalf("building create answers: %v", err)
 	}

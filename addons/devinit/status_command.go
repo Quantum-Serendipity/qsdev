@@ -286,9 +286,11 @@ func exitForAudit(report *posture.PostureReport, auditLevel string) error {
 
 // postureOptions returns opts with the generator's package guard as the
 // content the guard on disk is judged against, so every posture assessment
-// credits the guard only when it is what this qsdev writes.
+// credits the guard only when it is what this qsdev writes, and with the
+// host prober's detection probes.
 func postureOptions(opts posture.AssessOptions) posture.AssessOptions {
 	opts.PackageGuard = claudecode.PackageGuardContent()
+	opts.DetectOptions = host.detectOptions
 	return opts
 }
 

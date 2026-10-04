@@ -12,7 +12,9 @@ import (
 // TestClaudeConfigDirEntries pins the files protected in a Claude Code
 // configuration directory relocated with CLAUDE_CONFIG_DIR: the same settings,
 // hook, agent, command and skill entries as a .claude directory, plus
-// .claude.json, and nothing when the variable is unset.
+// .claude.json, and nothing when the variable is unset. When the directory
+// resolves to another spelling (on macOS /home is a firmlink into
+// /System/Volumes/Data), the same entries follow under the resolved root.
 func TestClaudeConfigDirEntries(t *testing.T) {
 	t.Parallel()
 	dir := filepath.FromSlash("/home/alice/.config/claude")
@@ -21,22 +23,17 @@ func TestClaudeConfigDirEntries(t *testing.T) {
 		// the entries would gain the current drive; use a volume-qualified one.
 		dir = `C:\Users\alice\.config\claude`
 	}
-	sep := string(filepath.Separator)
+	want := configDirEntryPaths(dir)
+	if resolved, err := Canonicalize(dir); err == nil && resolved != dir {
+		want = append(want, configDirEntryPaths(resolved)...)
+	}
 	tests := []struct {
 		name string
 		dir  string
 		want []string
 	}{
 		{"unset", "", nil},
-		{"relocated", dir, []string{
-			filepath.Join(dir, "settings.json"),
-			filepath.Join(dir, "settings.local.json"),
-			filepath.Join(dir, ".claude.json"),
-			filepath.Join(dir, "hooks") + sep,
-			filepath.Join(dir, "agents") + sep,
-			filepath.Join(dir, "commands") + sep,
-			filepath.Join(dir, "skills") + sep,
-		}},
+		{"relocated", dir, want},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -52,6 +49,22 @@ func TestClaudeConfigDirEntries(t *testing.T) {
 				t.Errorf("entries = %q, want %q", got, tt.want)
 			}
 		})
+	}
+}
+
+// configDirEntryPaths lists the paths protected under one spelling of a
+// relocated configuration directory, in the order claudeConfigDirEntries
+// emits them.
+func configDirEntryPaths(root string) []string {
+	sep := string(filepath.Separator)
+	return []string{
+		filepath.Join(root, "settings.json"),
+		filepath.Join(root, "settings.local.json"),
+		filepath.Join(root, ".claude.json"),
+		filepath.Join(root, "hooks") + sep,
+		filepath.Join(root, "agents") + sep,
+		filepath.Join(root, "commands") + sep,
+		filepath.Join(root, "skills") + sep,
 	}
 }
 

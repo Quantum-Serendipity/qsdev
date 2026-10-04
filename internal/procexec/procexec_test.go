@@ -8,6 +8,7 @@ import (
 	"maps"
 	"os"
 	"path/filepath"
+	"runtime"
 	"slices"
 	"strings"
 	"testing"
@@ -138,7 +139,13 @@ func symlink(t *testing.T, target, link string) string {
 
 func TestForbidExec_VersionProbe(t *testing.T) {
 	project, elsewhere := t.TempDir(), t.TempDir()
-	outside := touch(t, filepath.Join(elsewhere, "bin", "tool"))
+	// Windows runs only a file whose extension PATHEXT names: exec.Command
+	// refuses an extensionless absolute path, as the shell would.
+	tool := "tool"
+	if runtime.GOOS == "windows" {
+		tool += ".exe"
+	}
+	outside := touch(t, filepath.Join(elsewhere, "bin", tool))
 	tests := []struct {
 		name    string
 		project string

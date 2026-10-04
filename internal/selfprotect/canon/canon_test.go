@@ -11,7 +11,8 @@ import (
 	"sync"
 	"syscall"
 	"testing"
-	"time"
+
+	"github.com/Quantum-Serendipity/qsdev/internal/testutil"
 )
 
 func TestExpandTilde(t *testing.T) {
@@ -653,8 +654,8 @@ func TestResolveMissing_EquivalentSemantics(t *testing.T) {
 }
 
 // TestResolveMissing_DeepMissingTail pins the U18-04 fix: a long missing tail
-// (what a chain of cd into nonexistent directories builds) canonicalizes in
-// linear time.
+// (what a chain of cd into nonexistent directories builds) canonicalizes
+// correctly and in linear time.
 func TestResolveMissing_DeepMissingTail(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
@@ -662,23 +663,23 @@ func TestResolveMissing_DeepMissingTail(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, depth := range []int{4000, 16000} {
-		t.Run(fmt.Sprint(depth), func(t *testing.T) {
-			tail := strings.Repeat("a"+string(filepath.Separator), depth) + "x"
-			start := time.Now()
-			got, err := Canonicalize(filepath.Join(dir, tail))
-			took := time.Since(start)
-			if err != nil {
-				t.Fatalf("Canonicalize: %v", err)
-			}
-			if want := filepath.Join(resolvedDir, tail); got != want {
-				t.Errorf("Canonicalize = %.80q..., want %.80q...", got, want)
-			}
-			if took > 100*time.Millisecond {
-				t.Errorf("Canonicalize of a %d-component missing tail took %v, want under 100ms", depth, took)
-			}
-		})
+	tail := func(depth int) string {
+		return strings.Repeat("a"+string(filepath.Separator), depth) + "x"
 	}
+	for _, depth := range []int{4000, 16000} {
+		got, err := Canonicalize(filepath.Join(dir, tail(depth)))
+		if err != nil {
+			t.Fatalf("Canonicalize at depth %d: %v", depth, err)
+		}
+		if want := filepath.Join(resolvedDir, tail(depth)); got != want {
+			t.Errorf("Canonicalize at depth %d = %.80q..., want %.80q...", depth, got, want)
+		}
+	}
+	testutil.AssertLinearTime(t, "Canonicalize of a missing tail", 64000, func(depth int) {
+		if _, err := Canonicalize(filepath.Join(dir, tail(depth))); err != nil {
+			t.Errorf("Canonicalize at depth %d: %v", depth, err)
+		}
+	})
 }
 
 func BenchmarkResolveMissing_DeepTail(b *testing.B) {

@@ -3,7 +3,8 @@ package cmdscan
 import (
 	"strings"
 	"testing"
-	"time"
+
+	"github.com/Quantum-Serendipity/qsdev/internal/testutil"
 )
 
 // TestOpaqueExpansions pins which spans opaqueExpansions turns into one
@@ -142,28 +143,26 @@ func TestInvokedSpecs(t *testing.T) {
 	}
 }
 
-// TestInvokedSpecsLinear pins that judging computed words stays fast on
+// TestInvokedSpecsLinear pins that judging computed words stays linear on
 // adversarial text (U18-WS2's budget): unclosed and deeply nested brackets,
 // and long flag runs under xargs.
 func TestInvokedSpecsLinear(t *testing.T) {
 	t.Parallel()
 	specs := []CommandSpec{{Path: [][]string{{"defaults"}, {"pin"}}, ReadOnly: []string{"--help"}, Flags: []FlagCond{{Spellings: []string{"--force"}, Value: true}}}}
-	for name, cmd := range map[string]string{
-		"unclosed braces":  strings.Repeat("{", 200000),
-		"nested braces":    strings.Repeat("{", 100000) + strings.Repeat("}", 100000),
-		"unclosed substs":  strings.Repeat("$(", 100000),
-		"xargs flag run":   "xargs " + strings.Repeat("-v ", 100000),
-		"dynamic word run": strings.Repeat("$x ", 100000),
-		"invocation run":   strings.Repeat("qsdev defaults pin ", 50000),
-		"mention run":      "echo " + strings.Repeat("qsdev defaults ", 50000) + "pin",
-		"command line run": strings.Repeat("sh -c ", 50000) + "qsdev defaults pin",
-		"quoted text run":  `echo "` + strings.Repeat("qsdev defaults ", 50000) + `pin" | sh`,
-		"script path run":  strings.Repeat("./x.sh ", 50000) + "x.sh",
+	for name, build := range map[string]func(n int) string{
+		"unclosed braces":  func(n int) string { return strings.Repeat("{", 4*n) },
+		"nested braces":    func(n int) string { return strings.Repeat("{", 2*n) + strings.Repeat("}", 2*n) },
+		"unclosed substs":  func(n int) string { return strings.Repeat("$(", 2*n) },
+		"xargs flag run":   func(n int) string { return "xargs " + strings.Repeat("-v ", 2*n) },
+		"dynamic word run": func(n int) string { return strings.Repeat("$x ", 2*n) },
+		"invocation run":   func(n int) string { return strings.Repeat("qsdev defaults pin ", n) },
+		"mention run":      func(n int) string { return "echo " + strings.Repeat("qsdev defaults ", n) + "pin" },
+		"command line run": func(n int) string { return strings.Repeat("sh -c ", n) + "qsdev defaults pin" },
+		"quoted text run":  func(n int) string { return `echo "` + strings.Repeat("qsdev defaults ", n) + `pin" | sh` },
+		"script path run":  func(n int) string { return strings.Repeat("./x.sh ", n) + "x.sh" },
 	} {
-		start := time.Now()
-		InvokedSpecs(cmd, "qsdev", specs)
-		if d := time.Since(start); d > 2*time.Second {
-			t.Errorf("InvokedSpecs on %s took %v, want well under 2s", name, d)
-		}
+		testutil.AssertLinearTime(t, "InvokedSpecs on "+name, 25000, func(n int) {
+			InvokedSpecs(build(n), "qsdev", specs)
+		})
 	}
 }

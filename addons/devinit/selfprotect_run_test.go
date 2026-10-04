@@ -260,11 +260,16 @@ func TestSelfprotect_TooManySimpleCommandsDenies(t *testing.T) {
 // TestSelfprotect_AdversarialInputsUnderBudget runs the production hook as a
 // process against inputs that used to take tens of seconds (or never finish),
 // long past Claude Code's hook timeout, which then allows the call. Each must
-// now be denied with exit 2 well inside the budget. This is XS-WS1 A3.
+// now be denied with exit 2, using under budget of CPU and answering inside
+// the hook's own deadline. This is XS-WS1 A3. The budget is CPU time because
+// the subtests run in parallel with the rest of the package, so wall time
+// measures the machine's load as much as the hook; wall time is held to the
+// deadline, which is the property Claude Code relies on.
 func TestSelfprotect_AdversarialInputsUnderBudget(t *testing.T) {
 	t.Parallel()
 
-	const budget = 2 * time.Second
+	budget := 2 * time.Second * raceScale
+	deadline := hookio.EvalDeadline * raceScale
 	tests := []struct {
 		name    string
 		command string
@@ -279,13 +284,16 @@ func TestSelfprotect_AdversarialInputsUnderBudget(t *testing.T) {
 			t.Parallel()
 			payload := toolCallJSON(t, "Bash", map[string]any{"command": tt.command})
 			start := time.Now()
-			code, stderr := runSelfprotectHook(t, t.TempDir(), payload)
+			code, stderr, cpu := runSelfprotectHookCPU(t, t.TempDir(), payload)
 			elapsed := time.Since(start)
 			if code != 2 {
 				t.Fatalf("exit code = %d, want 2 (stderr %.200q)", code, stderr)
 			}
-			if elapsed > budget {
-				t.Errorf("hook took %v, want under %v", elapsed, budget)
+			if cpu > budget {
+				t.Errorf("hook used %v of CPU, want under %v", cpu, budget)
+			}
+			if elapsed > deadline {
+				t.Errorf("hook took %v, want under the %v hook deadline", elapsed, deadline)
 			}
 		})
 	}

@@ -8,6 +8,7 @@ import (
 	"os/exec"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/Quantum-Serendipity/qsdev/internal/selfprotect/hookio"
 	"github.com/Quantum-Serendipity/qsdev/internal/selfprotect/rules"
@@ -74,6 +75,15 @@ func TestSelfprotectHelperProcess(t *testing.T) {
 // stdin in dir and returns its exit status and stderr.
 func runSelfprotectHook(t *testing.T, dir, payload string) (int, string) {
 	t.Helper()
+	code, stderr, _ := runSelfprotectHookCPU(t, dir, payload)
+	return code, stderr
+}
+
+// runSelfprotectHookCPU is runSelfprotectHook that also reports the CPU time
+// (user plus system) the hook process used, which, unlike its wall time, does
+// not depend on how loaded the machine is.
+func runSelfprotectHookCPU(t *testing.T, dir, payload string) (int, string, time.Duration) {
+	t.Helper()
 	self, err := os.Executable()
 	if err != nil {
 		t.Fatal(err)
@@ -87,15 +97,19 @@ func runSelfprotectHook(t *testing.T, dir, payload string) (int, string) {
 	var stderr bytes.Buffer
 	cmd.Stderr = &stderr
 	err = cmd.Run()
+	var cpu time.Duration
+	if ps := cmd.ProcessState; ps != nil {
+		cpu = ps.UserTime() + ps.SystemTime()
+	}
 	var exitErr *exec.ExitError
 	switch {
 	case err == nil:
-		return 0, stderr.String()
+		return 0, stderr.String(), cpu
 	case errors.As(err, &exitErr):
-		return exitErr.ExitCode(), stderr.String()
+		return exitErr.ExitCode(), stderr.String(), cpu
 	default:
 		t.Fatalf("running selfprotect hook: %v", err)
-		return -1, ""
+		return -1, "", 0
 	}
 }
 

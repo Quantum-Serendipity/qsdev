@@ -123,14 +123,20 @@ type HookConfig struct {
 	AdditionalDependencies []string `yaml:"additional_dependencies"   json:"additional_dependencies"`
 	BuiltIn                bool     `yaml:"built_in"                  json:"built_in"`
 	NixPackage             string   `yaml:"nix_package,omitempty"     json:"nix_package,omitempty"`
-	Excludes               []string `yaml:"excludes,omitempty"        json:"excludes,omitempty"` // Path regexes the hook skips (git-hooks.nix excludes); honored for built-in hooks too.
+	// LanguagePackage names the devenv language whose
+	// config.languages.<name>.package provides the hook binary, so the hook
+	// runs the shell's pinned toolchain. It is mutually exclusive with
+	// NixPackage and is never added to packages.
+	LanguagePackage string   `yaml:"language_package,omitempty" json:"language_package,omitempty"`
+	Excludes        []string `yaml:"excludes,omitempty"        json:"excludes,omitempty"` // Path regexes the hook skips (git-hooks.nix excludes); honored for built-in hooks too.
 	// Settings sets git-hooks.nix `settings.<key>` string options of a
 	// BuiltIn hook (e.g. binPath).
 	Settings map[string]string `yaml:"settings,omitempty" json:"settings,omitempty"`
 	// Script, when set, is a bash script run as the hook instead of Entry,
 	// for checks that need logic around the tool (preconditions, clear
 	// failure messages). Staged files arrive as "$@" when PassFilenames is
-	// set, and NixPackage's bin directory is first on PATH.
+	// set, and the bin directory of NixPackage or LanguagePackage is first
+	// on PATH.
 	Script string `yaml:"script,omitempty" json:"script,omitempty"`
 }
 

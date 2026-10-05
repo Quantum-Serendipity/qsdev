@@ -80,6 +80,23 @@ All notable changes to qsdev are recorded in this file. The format is based on
   checking nothing. `qsdev outdated --online` behaves as `qsdev outdated` did.
   A CI job that runs `qsdev outdated` must add `--online`.
 
+### Fixed
+
+- The generated `devenv.nix` for an Elixir project failed to evaluate: qsdev
+  and devenv's Elixir module both defined the `mix-format` hook's package at
+  the same priority, which Nix rejects as "defined multiple times" (U10-01).
+  Custom hook packages now render at `lib.mkOverride 999`, so a devenv
+  language's own setting wins. Elixir users must run `qsdev init --update` to
+  regenerate `devenv.nix`.
+- Formatter hooks now run the shell's pinned toolchain. `mix-format`,
+  `zig-fmt`, `dart-format`, `dotnet-format` and `terraform-format` (Terraform
+  or OpenTofu, honouring a `languages.terraform.version` pin) call
+  `config.languages.<language>.package`, the toolchain the shell already
+  provides (for Zig, the release `build.zig.zon`'s
+  `minimum_zig_version` selects), instead of a separate unpinned `pkgs.<tool>`.
+  They no longer add a second copy of that toolchain to `packages` (U10-08,
+  U10-09). Run `qsdev init --update` to pick this up.
+
 ### Security
 
 - An agent can no longer remove the self-protection hook by switching Claude

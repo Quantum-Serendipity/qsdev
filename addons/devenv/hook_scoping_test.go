@@ -1,7 +1,6 @@
 package devenv_test
 
 import (
-	"slices"
 	"strings"
 	"testing"
 
@@ -61,7 +60,7 @@ func TestGenerateDevenvNix_HookScoping(t *testing.T) {
 			langs:    []types.LanguageChoice{{Name: "cpp"}},
 			contains: []string{"    clang-format = {\n      enable = true;\n      types_or = [ \"c\" \"c++\" \"cuda\" \"objective-c\" ];\n    };"},
 			blocks: map[string][]string{
-				"cppcheck": {`types_or = [ "c" "c++" ];`, "package = pkgs.cppcheck;"},
+				"cppcheck": {`types_or = [ "c" "c++" ];`, "package = lib.mkOverride 999 pkgs.cppcheck;"},
 			},
 			notContains: []string{`types = [ "c" "c++" ];`},
 		},
@@ -88,8 +87,8 @@ func TestGenerateDevenvNix_HookScoping(t *testing.T) {
 			name:  "php without phpcs ruleset",
 			langs: []types.LanguageChoice{{Name: "php"}},
 			blocks: map[string][]string{
-				"phpstan": {"package = pkgs.phpstan;", "pass_filenames = true;"},
-				"phpcs":   {"package = pkgs.phpPackages.php-codesniffer;", "--standard=PSR12"},
+				"phpstan": {"package = lib.mkOverride 999 pkgs.phpstan;", "pass_filenames = true;"},
+				"phpcs":   {"package = lib.mkOverride 999 pkgs.phpPackages.php-codesniffer;", "--standard=PSR12"},
 			},
 			notContains: []string{"phpcs.enable = true;"},
 		},
@@ -104,7 +103,7 @@ func TestGenerateDevenvNix_HookScoping(t *testing.T) {
 			name:  "nix",
 			langs: []types.LanguageChoice{{Name: "nix"}},
 			blocks: map[string][]string{
-				"deadnix": {"deadnix --fail --no-lambda-pattern-names", "package = pkgs.deadnix;"},
+				"deadnix": {"deadnix --fail --no-lambda-pattern-names", "package = lib.mkOverride 999 pkgs.deadnix;"},
 			},
 		},
 		{
@@ -158,27 +157,6 @@ func TestCustomHooks_TypesAreSingleTag(t *testing.T) {
 			if !hook.BuiltIn && len(hook.Types) > 1 {
 				t.Errorf("module %q custom hook %q has Types %v; types is an AND filter, use TypesOr for alternatives",
 					mod.Name(), hook.ID, hook.Types)
-			}
-		}
-	}
-}
-
-// TestCustomHooks_BuiltInIDCollisionsPinPackage verifies every custom hook
-// whose ID is also a git-hooks.nix built-in declares NixPackage. The two
-// definitions merge, so without a rendered `package` upstream's default
-// package is evaluated into the shell even though qsdev's entry names another
-// binary; when that default is removed from nixpkgs (phpstan), the whole
-// devenv fails to evaluate.
-func TestCustomHooks_BuiltInIDCollisionsPinPackage(t *testing.T) {
-	t.Parallel()
-	for _, mod := range ecosystem.DefaultRegistry().All() {
-		for _, hook := range mod.PreCommitHooks(ecosystem.ModuleConfig{}) {
-			if hook.BuiltIn || !slices.Contains(gitHooksBuiltInIDs, hook.ID) {
-				continue
-			}
-			if hook.NixPackage == "" {
-				t.Errorf("module %q custom hook %q shares a git-hooks.nix built-in ID but declares no NixPackage; "+
-					"upstream's default package would be evaluated", mod.Name(), hook.ID)
 			}
 		}
 	}

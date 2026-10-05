@@ -3,6 +3,7 @@ package dart_test
 import (
 	"os"
 	"path/filepath"
+	"reflect"
 	"testing"
 
 	"github.com/Quantum-Serendipity/qsdev/pkg/ecosystem"
@@ -100,6 +101,30 @@ func TestDevenvPackages_Default(t *testing.T) {
 }
 
 // --- DevenvNixFragment tests ---
+
+// TestPreCommitHooks pins the dart-format hook to languages.dart.package, so
+// it formats with the SDK the shell provides (Flutter's, once that is the
+// language package) rather than a separate pkgs.dart (U10-08).
+func TestPreCommitHooks(t *testing.T) {
+	t.Parallel()
+	for _, cfg := range []ecosystem.ModuleConfig{{}, {Extras: map[string]string{"flutter": "true"}}} {
+		hooks := newModule().PreCommitHooks(cfg)
+		want := []ecosystem.HookConfig{{
+			ID:              "dart-format",
+			Name:            "dart-format",
+			Description:     "Check Dart code formatting with dart format",
+			Entry:           "dart format --set-exit-if-changed",
+			Language:        "system",
+			Types:           []string{"dart"},
+			Stages:          []string{"pre-commit"},
+			PassFilenames:   true,
+			LanguagePackage: "dart",
+		}}
+		if !reflect.DeepEqual(hooks, want) {
+			t.Errorf("PreCommitHooks(%+v) = %+v, want %+v", cfg, hooks, want)
+		}
+	}
+}
 
 func TestDevenvNixFragment_NonEmpty(t *testing.T) {
 	m := newModule()

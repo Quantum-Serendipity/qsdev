@@ -2,7 +2,6 @@ package gatedodge
 
 import (
 	"fmt"
-	"maps"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -33,7 +32,8 @@ var (
 	precommitResult = &ResultRule{ID: "GD-003", check: checkPrecommitResult}
 )
 
-// resultRules maps each guarded file's lower-cased base name to its rule.
+// resultRules maps each guarded file's lower-cased base name
+// (canon.GuardedConfigFiles, which owns the list) to its rule.
 var resultRules = map[string]*ResultRule{
 	".npmrc":                  npmrcResultRule,
 	".pre-commit-config.yaml": precommitResult,
@@ -49,13 +49,6 @@ var resultRules = map[string]*ResultRule{
 // guarding an unrelated differently-cased file elsewhere is harmless.
 func ResultRuleFor(filePath string) *ResultRule {
 	return resultRules[strings.ToLower(filepath.Base(filePath))]
-}
-
-// GuardedFileNames returns the lower-cased base names of the files that have
-// a ResultRule, sorted. A shell command that rewrites one of them bypasses the
-// before/after comparison, so callers deny those instead.
-func GuardedFileNames() []string {
-	return slices.Sorted(maps.Keys(resultRules))
 }
 
 // npmrcSettings are the .npmrc hardening settings besides ignore-scripts:

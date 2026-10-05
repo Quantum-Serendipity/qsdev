@@ -8,6 +8,27 @@ All notable changes to qsdev are recorded in this file. The format is based on
 
 ### Changed
 
+- `qsdev sandbox exec` keeps the project's control plane read-only for the
+  hook categories with a writable project (formatter, generator,
+  test-runner): git's hooks, config, info and modules, `.claude` (except the
+  hook log directory `.claude/logs`), the project data and state
+  directories, `.envrc`, `devenv.nix`/`devenv.yaml` and their `.local`
+  variants, `devenv.lock`, the devenv and direnv caches (`.devenv`, except
+  devenv's state directory `.devenv/state`, which holds `GOPATH` and the
+  Python venv and is created beforehand in a devenv project, and `.direnv`),
+  `.mcp.json`, `.qsdev.yaml` and `.qsdev.local.yaml`, and the
+  npm, pnpm, Yarn, Bun and pre-commit configuration. A hook that writes one
+  that exists gets "Read-only file system", and the directories holding them
+  (such as `.git`) cannot be renamed away. A missing one, or a symlinked one
+  such as a pre-commit configuration linked into the Nix store, cannot be
+  made read-only: a hook that creates or replaces one makes the run exit 2,
+  naming it, and qsdev moves what the hook left to
+  `<name>.qsdev-quarantined-<time>` (nothing is deleted) and puts a replaced
+  symlink back. Git staging and commits still work. The semble analytics
+  hook now logs to `.claude/logs/semble-searches.jsonl` (was
+  `.qsdev/analytics/`), next to the audit log, and both logging hooks
+  refuse to append through a symlink planted in the log directory.
+
 - Infrastructure endpoints in `.qsdev.yaml` are now validated whether or not
   an `infra_profile` is selected. A project whose `registry_proxy`,
   `registry_proxy_overrides` entry, `build_cache_url` or `nix_cache` uses plain

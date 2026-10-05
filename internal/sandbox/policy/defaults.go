@@ -87,10 +87,18 @@ func ToSandboxConfig(spec *PolicySpec, category sandbox.HookCategory, hookName, 
 	effectiveCategory := category.String()
 
 	// Check for per-hook override first to resolve category reassignment.
+	// CompilePolicy rejects an unknown category (validateCategories), so the
+	// error branch is reachable only for a spec that bypassed it; it keeps the
+	// caller's category rather than guessing one, which could widen access.
 	override, hasOverride := spec.HookOverrides[hookName]
 	if hasOverride && override.Category != "" {
-		effectiveCategory = override.Category
-		cfg.HookCategory = sandbox.ParseHookCategory(effectiveCategory)
+		if c, err := sandbox.ParseHookCategoryStrict(override.Category); err != nil {
+			slog.Warn("ignoring sandbox policy category override",
+				"field", overrideField(hookName)+".category", "error", err)
+		} else {
+			effectiveCategory = override.Category
+			cfg.HookCategory = c
+		}
 	}
 
 	// Apply the category profile.

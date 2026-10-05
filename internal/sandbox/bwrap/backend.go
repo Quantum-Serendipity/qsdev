@@ -78,13 +78,24 @@ func (b *BubblewrapBackend) Available() error {
 // signals a sandbox.LaunchGuard just before it execs the hook. A run that
 // never reached the hook (bwrap or ll-restrict failed, whatever exit code that
 // produced) is returned as an error wrapping sandbox.ErrSetupFailed, never as
-// the hook's exit code.
+// the hook's exit code. A run after which a project guardrail path was
+// created or replaced returns an error wrapping sandbox.ErrGuardrailModified
+// instead of the hook's result, once the change is undone as far as possible
+// (sandbox.GuardrailSnapshot.Enforce).
 func (b *BubblewrapBackend) RunHook(ctx context.Context, cfg *sandbox.SandboxConfig) (*sandbox.SandboxResult, error) {
 	if len(cfg.HookCommand) == 0 {
 		return &sandbox.SandboxResult{ExitCode: 0, Tier: b.tier}, nil
 	}
 
 	setupStart := time.Now()
+
+	// Taken before BuildArgs decides which guardrails exist to overlay, so a
+	// guardrail created in between is reported rather than left writable.
+	prepareWritableDirs(cfg)
+	guardrails, err := snapshotGuardrails(cfg)
+	if err != nil {
+		return nil, fmt.Errorf("%w: %w", sandbox.ErrSetupFailed, err)
+	}
 
 	args, err := BuildArgs(cfg, b.tier)
 	if err != nil {
@@ -156,6 +167,9 @@ func (b *BubblewrapBackend) RunHook(ctx context.Context, cfg *sandbox.SandboxCon
 		}
 		return nil, fmt.Errorf("%w: executing %s: %w", sandbox.ErrSetupFailed, name, err)
 	}
+	if err := guardrails.Enforce(); err != nil {
+		return nil, err
+	}
 	if err := guard.Err(result.ExitCode, func() string { return shim.LinkageHint(hostExe) }); err != nil {
 		if ctx.Err() != nil {
 			return nil, fmt.Errorf("executing %s: %w", name, ctx.Err())
@@ -168,6 +182,18 @@ func (b *BubblewrapBackend) RunHook(ctx context.Context, cfg *sandbox.SandboxCon
 	}
 	result.SandboxOverhead = sandboxOverhead
 	return result, nil
+}
+
+// snapshotGuardrails records the project's guardrail paths when the hook
+// gets a writable view of them (guardrailsExposed). The read-only overlays
+// cover only the paths that exist, so the snapshot is what catches one
+// created, or a symlinked one replaced, while the hook runs. Without a
+// writable view the snapshot is empty and always verifies.
+func snapshotGuardrails(cfg *sandbox.SandboxConfig) (*sandbox.GuardrailSnapshot, error) {
+	if !guardrailsExposed(cfg) {
+		return &sandbox.GuardrailSnapshot{}, nil
+	}
+	return sandbox.SnapshotGuardrails(cfg.ProjectDir)
 }
 
 // launchHook returns bwrap's ExtraFiles, the argv bwrap runs after its "--"

@@ -742,7 +742,7 @@ type segmentEntry struct {
 var staticSegments = []segmentEntry{
 	{".qsdev/audit/", "audit"},
 	// Hook audit logs and the SOC 2 session trail (~/.claude/audit).
-	{".claude/logs/", "audit"},
+	{HookLogDir + "/", "audit"},
 	{".claude/audit/", "audit"},
 	{".claude/hook-audit.log", "audit"},
 	{".claude/hook-audit.log.1", "audit"},
@@ -755,6 +755,12 @@ var staticSegments = []segmentEntry{
 	{".claude/commands/", "claude-settings"},
 	{".claude/skills/", "claude-settings"},
 }
+
+// HookLogDir is the project-relative, slash-separated directory the generated
+// Claude Code hooks append their logs to (git-ignored by init). It is an
+// "audit" location: the agent may not write it, only the hooks may, so the
+// hook sandbox keeps it writable inside the otherwise read-only .claude.
+const HookLogDir = ".claude/logs"
 
 // hasPathSegment reports whether the slash-separated path key contains seg as
 // whole path components: a directory segment ("x/y/") matches the directory
@@ -911,11 +917,11 @@ var brandedTables = sync.OnceValue(func() *pathTables {
 // name, and the file getenv says that variable names.
 func newPathTables(cfg branding.Config, getenv func(string) string) *pathTables {
 	stateDir := strings.Trim(filepath.ToSlash(cfg.StateDir), "/")
-	devenvCopy := "." + cfg.AppName + "-answers.yaml"
+	devenvCopy := path.Base(cfg.DevenvAnswersCopy())
 	t := &pathTables{
 		segments: append(slices.Clone(staticSegments),
 			segmentEntry{stateDir + "/", "answers"},
-			segmentEntry{".devenv/" + devenvCopy, "answers"},
+			segmentEntry{cfg.DevenvAnswersCopy(), "answers"},
 			segmentEntry{".envrc", "config"},
 		),
 		substrings: append(slices.Clone(staticSubstringPatterns), stateDir+"/", ".config/"+cfg.AppName+"/"),
@@ -951,6 +957,18 @@ func commandSpellings(p string) []string {
 	return out
 }
 
+// Segments returns the slash-separated relative locations canon protects
+// wherever they appear, a project checkout included (a directory ends in
+// "/"). The hook sandbox keeps them read-only inside the project.
+func Segments() []string {
+	t := brandedTables()
+	out := make([]string, len(t.segments))
+	for i, seg := range t.segments {
+		out[i] = seg.segment
+	}
+	return out
+}
+
 // ProtectedEnvVars returns the environment variables that relocate a
 // protected generator input (<EnvPrefix>ORG_CONFIG). Protection covers the
 // location the hook process sees, so a command that sets one can point a
@@ -970,12 +988,40 @@ func ProtectedEnvVars() []string {
 // devenv addon pins that. What these files import or source (another .nix
 // file, a ~/.bashrc.d fragment) is not listed: see catalog.OrgConfigPin for
 // the control that does not depend on it.
-var envSourceFiles = []string{
-	"devenv.yaml", "devenv.local.yaml", "devenv.nix", "devenv.local.nix",
+var envSourceFiles = append(slices.Clone(devenvSourceFiles),
 	".profile", ".bashrc", ".bash_profile", ".bash_login",
 	".zshenv", ".zprofile", ".zshrc", ".zlogin",
 	".kshrc", ".mkshrc", "config.fish", ".pam_environment",
 	"profile.ps1", "microsoft.powershell_profile.ps1",
+)
+
+// devenvSourceFiles are the members of envSourceFiles that live in a project
+// checkout: devenv's configuration files, which devenv evaluates (running
+// their code) on every shell entry.
+var devenvSourceFiles = []string{"devenv.yaml", "devenv.local.yaml", "devenv.nix", "devenv.local.nix"}
+
+// DevenvSourceFiles returns the base names of the project files devenv loads
+// its configuration from (see devenvSourceFiles).
+func DevenvSourceFiles() []string {
+	return slices.Clone(devenvSourceFiles)
+}
+
+// guardedConfigFiles are the lower-cased base names of the project files
+// whose protective settings gate-dodge result rules compare before and after
+// a change: the npm, pnpm, Yarn and Bun install-script, release-age and
+// registry settings, and the pre-commit configuration. gatedodge holds one
+// rule per name.
+var guardedConfigFiles = []string{
+	".npmrc", ".pre-commit-config.yaml", "pnpm-workspace.yaml",
+	".yarnrc.yml", ".yarnrc", "bunfig.toml",
+}
+
+// GuardedConfigFiles returns the base names in guardedConfigFiles, sorted. A
+// shell command that rewrites one of them bypasses the before/after
+// comparison, so selfprotect denies those, and the hook sandbox keeps them
+// read-only.
+func GuardedConfigFiles() []string {
+	return slices.Sorted(slices.Values(guardedConfigFiles))
 }
 
 // EnvSourceFiles returns the lower-cased base names of the files that set the

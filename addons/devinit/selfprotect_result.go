@@ -6,6 +6,7 @@ import (
 	"os"
 	"path"
 
+	"github.com/Quantum-Serendipity/qsdev/internal/selfprotect/canon"
 	"github.com/Quantum-Serendipity/qsdev/internal/selfprotect/gatedodge"
 	"github.com/Quantum-Serendipity/qsdev/internal/selfprotect/hookio"
 	"github.com/Quantum-Serendipity/qsdev/internal/selfprotect/rules"
@@ -55,7 +56,7 @@ func detectResultGateDodge(toolName string, input hookio.ToolInput, canonicalPat
 // so a shell append, delete or in-place edit, or a package manager's config
 // command, would skip it. Reading the file stays allowed.
 func detectBashGateDodge(ctx *rules.EvalContext) (bool, string, string) {
-	name, ok := rules.BashRewritesFile(ctx, gatedodge.GuardedFileNames())
+	name, ok := rules.BashRewritesFile(ctx, canon.GuardedConfigFiles())
 	if !ok {
 		name = configCommandTarget(ctx)
 	}

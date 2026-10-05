@@ -8,6 +8,20 @@ All notable changes to qsdev are recorded in this file. The format is based on
 
 ### Changed
 
+- Infrastructure endpoints in `.qsdev.yaml` are now validated whether or not
+  an `infra_profile` is selected. A project whose `registry_proxy`,
+  `registry_proxy_overrides` entry, `build_cache_url` or `nix_cache` uses plain
+  `http` to a non-local host, embeds credentials (`user:pass@`) or names a
+  documentation placeholder host, or whose `registry_proxy_paths` entry does
+  not start with `/`, now fails `qsdev init` (including `--mode join` and
+  `--update`) before writing anything, and `qsdev check` reports a
+  `config_validation` failure. The error names the exact field (for example
+  `infrastructure.registry_proxy_paths.npm`) and the fix: use `https`, supply
+  credentials through the environment (the profile's `AuthEnvVar` variable),
+  or write the path as an absolute path on the proxy host. Proxy paths are
+  now joined onto `registry_proxy` as URL paths, so they can no longer change
+  the proxy host.
+
 - Project-root detection now stops at the git repository toplevel. A submodule
   or nested repository is its own project boundary: a `.qsdev.yaml`, `.devinit/`
   or `.qsdev/` in a directory above a nested `.git` no longer resolves from

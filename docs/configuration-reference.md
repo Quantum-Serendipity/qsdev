@@ -134,7 +134,9 @@ validated against its own registry by `qsdev check`:
   `consulting-default`'s CI, Renovate and security-documentation files are
   generated and none of its components is applied: only the
   `infrastructure:` settings you set yourself are (`registry_proxy`, and
-  `nix_cache` with `nix_cache_public_key`, checked like a profile's).
+  `nix_cache` with `nix_cache_public_key`). Every `infrastructure:` endpoint
+  is validated the same way with or without an `infra_profile` (see
+  [Infrastructure settings](#infrastructure-settings)).
 
 `qsdev init` records both keys, and `qsdev init --mode join` restores both
 from the committed file, so a joining teammate generates the same CI,
@@ -301,7 +303,7 @@ installs on the public registries:
 
 | Profile component | Required setting | Applied as |
 |---|---|---|
-| Registry proxy (`consulting-default`: Nexus, `enterprise`: Artifactory) | `registry_proxy` (or a per-ecosystem `registry_proxy_overrides` entry), for each proxied ecosystem the project uses | Each package manager's config (`.npmrc`, `pip.conf`, `GOPROXY`, `.cargo/config.toml`, `nuget.config`, Maven/Gradle), using the vendor's group/virtual repository paths (`/repository/npm-group/`, `/api/npm/npm-virtual/`, ...); `registry_proxy_paths` entries win |
+| Registry proxy (`consulting-default`: Nexus, `enterprise`: Artifactory) | `registry_proxy` (or a per-ecosystem `registry_proxy_overrides` entry), for each proxied ecosystem the project uses | Each package manager's config (`.npmrc`, `pip.conf`, `GOPROXY`, `.cargo/config.toml`, `nuget.config`, Maven/Gradle), using the vendor's group/virtual repository paths (`/repository/npm-group/`, `/api/npm/npm-virtual/`, ...); `registry_proxy_paths` entries (an absolute path on the proxy host, starting with `/`) win |
 | Nix binary cache (Cachix in all three) | `nix_cache` and `nix_cache_public_key` | `cachix.pull` in `devenv.nix` for a Cachix cache, and the `trusted-substituters`/`trusted-public-keys` of `docs/nix-conf-hardening.md` |
 | Build cache (`sccache`, or Turborepo for `startup-github`) | none; `build_cache_url` optional (Turborepo only) | `infrastructure.build_cache`: sccache as Rust's `rustc-wrapper` (with the package); `TURBO_API` from `build_cache_url` |
 
@@ -309,10 +311,22 @@ installs on the public registries:
 and needs a token even to read, so it is not a pull-through proxy: nothing
 is routed through it unless you set `registry_proxy_overrides`.
 
-Endpoints must be `https` URLs (plain `http` only to `localhost`) without
-embedded credentials, and documentation placeholders are rejected: hosts
-under `example.com`/`.net`/`.org` or the `.example`, `.invalid` and `.test`
-domains, the `myorg` Cachix cache, and an all-zero public key. Set
+Every endpoint (`registry_proxy`, each `registry_proxy_overrides` entry,
+`build_cache_url` and `nix_cache`) is validated whether or not an
+`infra_profile` is selected, by `qsdev init` (including `--mode join` and
+`--update`) and by `qsdev check` (as a `config_validation` failure). Endpoints
+must be `https` URLs (plain `http` only to `localhost` or a loopback address)
+without embedded credentials (supply them through the environment, the
+profile's `AuthEnvVar` token variable such as `NEXUS_TOKEN`), and
+documentation placeholders are rejected: hosts under
+`example.com`/`.net`/`.org` or the `.example`, `.invalid` and `.test`
+domains, the `myorg` Cachix cache, and an all-zero public key. Each
+`registry_proxy_paths` entry must be an absolute path on the proxy host
+(starting with a single `/`, for example `/repository/npm/`); it is joined
+onto `registry_proxy` as a URL path, so it can never change the host (a base
+with a path, `https://a.io/art` plus `/api/npm/`, gives
+`https://a.io/art/api/npm/`). Errors name the exact key, for example
+`infrastructure.registry_proxy_paths.npm`. Set
 `registry_proxy: none` or `nix_cache: none` to keep a profile's CI and
 update tooling without that component. Credentials (`NEXUS_TOKEN`,
 `ARTIFACTORY_TOKEN`, `CACHIX_AUTH_TOKEN`, the sccache S3 credentials,

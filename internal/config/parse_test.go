@@ -648,3 +648,84 @@ func TestQsdevConfig_HooksToolGates(t *testing.T) {
 		})
 	}
 }
+
+func TestValidateQsdevConfig_Infrastructure(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name      string
+		infra     types.InfraConfig
+		wantField string // the infrastructure.* key the message must name; "" = valid
+		wantText  string
+	}{
+		{
+			name:  "valid https proxy with path",
+			infra: types.InfraConfig{RegistryProxy: "https://artifactory.corp.io", RegistryProxyPaths: map[string]string{"npm": "/api/npm/"}},
+		},
+		{
+			name:  "loopback http proxy",
+			infra: types.InfraConfig{RegistryProxy: "http://127.0.0.1:8081"},
+		},
+		{
+			name:      "plain http to remote host",
+			infra:     types.InfraConfig{RegistryProxy: "http://proxy.corp.lan:8081"},
+			wantField: "infrastructure.registry_proxy",
+			wantText:  "uses plain http to a non-local host",
+		},
+		{
+			name:      "embedded credentials",
+			infra:     types.InfraConfig{RegistryProxy: "https://alice:s3cret@proxy.corp.lan"},
+			wantField: "infrastructure.registry_proxy",
+			wantText:  "AuthEnvVar",
+		},
+		{
+			name:      "placeholder host",
+			infra:     types.InfraConfig{RegistryProxy: "https://registry.example.com"},
+			wantField: "infrastructure.registry_proxy",
+			wantText:  "example host",
+		},
+		{
+			name:      "embedded newline",
+			infra:     types.InfraConfig{RegistryProxy: "https://a.io\nregistry=https://evil.io"},
+			wantField: "infrastructure.registry_proxy",
+			wantText:  "not an absolute http(s) URL",
+		},
+		{
+			name:      "bad override",
+			infra:     types.InfraConfig{RegistryProxyOverrides: map[string]string{"pypi": "http://pypi.corp.lan"}},
+			wantField: "infrastructure.registry_proxy_overrides.pypi",
+			wantText:  "plain http",
+		},
+		{
+			name:      "path rewriting the host",
+			infra:     types.InfraConfig{RegistryProxy: "https://artifactory.corp.io", RegistryProxyPaths: map[string]string{"npm": "@attacker.io/npm/"}},
+			wantField: "infrastructure.registry_proxy_paths.npm",
+			wantText:  "absolute path",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			cfg := &types.QsdevConfig{Version: 1, Infrastructure: tt.infra}
+			errs := ValidateQsdevConfig(cfg, ValidateOptions{})
+			if tt.wantField == "" {
+				if len(errs) != 0 {
+					t.Fatalf("expected no errors, got %v", errs)
+				}
+				return
+			}
+			if len(errs) != 1 {
+				t.Fatalf("expected 1 error, got %d: %v", len(errs), errs)
+			}
+			e := errs[0]
+			if e.Field != "infrastructure" {
+				t.Errorf("Field = %q, want infrastructure", e.Field)
+			}
+			if !strings.Contains(e.Message, tt.wantField) || !strings.Contains(e.Message, tt.wantText) {
+				t.Errorf("Message = %q, want it to name %q and contain %q", e.Message, tt.wantField, tt.wantText)
+			}
+			if strings.Contains(e.Error(), "s3cret") {
+				t.Errorf("error echoes the embedded password: %q", e.Error())
+			}
+		})
+	}
+}

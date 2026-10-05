@@ -9,6 +9,7 @@ import (
 	"slices"
 	"strings"
 
+	"github.com/Quantum-Serendipity/qsdev/internal/projectctx"
 	"github.com/Quantum-Serendipity/qsdev/internal/selfprotect/canon"
 	"github.com/Quantum-Serendipity/qsdev/internal/selfprotect/cmdscan"
 	"github.com/Quantum-Serendipity/qsdev/internal/shebang"
@@ -99,7 +100,7 @@ func (ctx *EvalContext) hookTargetsFor() *hookTargets {
 // targets resolves every hook command registered in the settings files.
 func (e hookEnv) targets(fs *canon.Resolver) *hookTargets {
 	t := &hookTargets{files: make(map[string]bool), names: make(map[string][]string), dirKeys: make(map[string][]string), fs: fs}
-	if home, err := os.UserHomeDir(); err == nil {
+	if home, err := projectctx.HomeDir(); err == nil {
 		t.home = home
 	}
 	expand := strings.NewReplacer("${CLAUDE_PROJECT_DIR}", e.projectDir, "$CLAUDE_PROJECT_DIR", e.projectDir)

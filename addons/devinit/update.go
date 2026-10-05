@@ -109,10 +109,11 @@ type updateOutcome struct {
 }
 
 func runUpdate(cmd *cobra.Command, opts UpdateOptions) error {
-	projectRoot, err := cmdutil.ProjectRoot()
+	pc, err := cmdutil.Project(cmd)
 	if err != nil {
 		return err
 	}
+	projectRoot := pc.Root
 	if err := requireJoined(projectRoot); err != nil {
 		return err
 	}

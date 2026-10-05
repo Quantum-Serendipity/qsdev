@@ -21,7 +21,6 @@ import (
 	"github.com/Quantum-Serendipity/qsdev/internal/logcmd"
 	"github.com/Quantum-Serendipity/qsdev/internal/logging"
 	"github.com/Quantum-Serendipity/qsdev/internal/selfupdate"
-	"github.com/Quantum-Serendipity/qsdev/internal/version"
 )
 
 // Runtime is the process-wide runtime installed by DefaultRuntime: the
@@ -111,14 +110,38 @@ func exitCode(err error) int {
 // also covers commands the framework builds itself (the root, `config`).
 //
 // It also installs the human gate (cmdutil.InstallHumanGate), which refuses
-// every command marked sensitive unless a human runs it.
+// every command marked sensitive unless a human runs it, and gives the
+// commands the frameworks build (see markFrameworkProfiles) their runtime
+// profiles.
 //
 // It must be called after customizations are locked down, as [Main] does.
 func NewRootCommand() *cobra.Command {
 	root := gdevcmd.Root()
+	markFrameworkProfiles(root)
 	cmdutil.RejectUnknownSubcommands(root)
 	cmdutil.InstallHumanGate(root)
 	return root
+}
+
+// markFrameworkProfiles marks the runtime profile (cmdutil.MarkProfile) of the
+// commands cobra and gdev build rather than an addon: cobra's help and
+// default completion commands, created here instead of at execution so they
+// can carry a mark, are unlogged, and gdev's version is global. A command an
+// addon registered under one of those names keeps its own mark.
+func markFrameworkProfiles(root *cobra.Command) {
+	root.InitDefaultHelpCmd()
+	root.InitDefaultCompletionCmd()
+	frameworkProfiles := map[string]cmdutil.Profile{
+		"help":       cmdutil.ProfileUnlogged,
+		"completion": cmdutil.ProfileUnlogged,
+		"version":    cmdutil.ProfileGlobal,
+	}
+	for _, c := range root.Commands() {
+		p, ok := frameworkProfiles[c.Name()]
+		if _, marked := c.Annotations[cmdutil.ProfileAnnotation]; ok && !marked {
+			cmdutil.MarkProfile(c, p)
+		}
+	}
 }
 
 // DefaultRuntime installs the runtime every tool built on this framework
@@ -129,9 +152,12 @@ func NewRootCommand() *cobra.Command {
 //   - the release version stamped into VersionPackage (ApplyBuildVersion)
 //   - the project's .<app>/defaults.yaml catalog layer (UseProjectDefaults)
 //   - the standard commands: self-update, logs and bug-report
-//   - the --debug flag, the redacting session log (per-project, global or
-//     automated, per the invocation) and error logging for every command
-//   - the background self-update check, whose notice Finish prints
+//   - the --debug flag, and a cobra initializer (Runtime.initCommand) that
+//     resolves the executing command's project once and, per its runtime
+//     profile (cmdutil.ProfileOf), opens the redacting session log
+//     (per-project, global or automated) and starts the background
+//     self-update check, whose notice Finish prints
+//   - error logging for every command
 //
 // Main calls it. Call it directly only to install the runtime without Main
 // (as tests building the command tree do); a caller that then runs the tree
@@ -155,17 +181,20 @@ func installDefaultRuntime() *Runtime {
 	AddCommands(standardCommands(rt.logsCmd)...)
 
 	// --debug is consumed before cobra parses (it is not a registered flag)
-	// and turns on debug logging for initLogging.
+	// and turns on debug logging for the session log.
 	os.Args = extractDebugFlag(os.Args)
 
-	cobra.OnInitialize(rt.initLogging, func() { instrumentCommandErrors(rt.logsCmd.Root()) })
+	cobra.OnInitialize(
+		func() {
+			rt.initCommand(rt.logsCmd.Root(), os.Args[1:], os.Stderr, selfupdate.NoticeWanted(os.Stderr))
+		},
+		func() { instrumentCommandErrors(rt.logsCmd.Root()) },
+	)
 	// Cobra runs finalizers for the executed command whether or not it
 	// failed, so the session is closed (and the update notice shown) even
 	// when the tree is run by something that exits on failure, such as gdev's
 	// cmd.Main. Finish runs at most once, so Main's own call is harmless.
 	cobra.OnFinalize(rt.Finish)
-
-	rt.updateCh = startUpdateCheck(selfupdate.NoticeWanted(os.Stderr), version.Info().Version)
 	return rt
 }
 

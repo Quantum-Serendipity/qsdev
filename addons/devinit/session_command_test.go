@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/Quantum-Serendipity/qsdev/internal/policyengine/policy"
+	"github.com/Quantum-Serendipity/qsdev/pkg/branding"
 )
 
 const sessionTestPolicy = `apiVersion: qsdev/v1
@@ -71,6 +72,11 @@ func setupSessionTest(t *testing.T, inAgent bool) (statePath, project string) {
 		t.Fatal(err)
 	}
 	if err := os.WriteFile(filepath.Join(project, ".qsdev", "policy.yaml"), []byte(sessionTestPolicy), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	// The config file marks the project root; the .qsdev/ policy directory
+	// alone is no project marker.
+	if err := os.WriteFile(filepath.Join(project, branding.Get().ConfigFile), []byte("version: 1\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	t.Chdir(project)

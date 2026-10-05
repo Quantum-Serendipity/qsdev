@@ -19,6 +19,7 @@ import (
 	"github.com/Quantum-Serendipity/qsdev/internal/extlog"
 	"github.com/Quantum-Serendipity/qsdev/internal/logcmd"
 	"github.com/Quantum-Serendipity/qsdev/internal/logging"
+	"github.com/Quantum-Serendipity/qsdev/internal/projectctx"
 	"github.com/Quantum-Serendipity/qsdev/pkg/branding"
 )
 
@@ -395,7 +396,7 @@ func extLogDescription(reg *extlog.Registry, projectRoot, homeDir string) string
 // userHomeDir returns the user's home directory, or "" when it is unknown
 // (providers that read from it then detect nothing).
 func userHomeDir() string {
-	home, err := os.UserHomeDir()
+	home, err := projectctx.HomeDir()
 	if err != nil {
 		return ""
 	}

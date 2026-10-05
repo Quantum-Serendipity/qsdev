@@ -13,6 +13,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/Quantum-Serendipity/qsdev/internal/projectctx"
 	"github.com/Quantum-Serendipity/qsdev/pkg/branding"
 	"github.com/Quantum-Serendipity/qsdev/pkg/fileutil"
 )
@@ -175,18 +176,20 @@ func NewApprovalStore(path string) *ApprovalStore {
 }
 
 // DefaultApprovalStore returns the user-global store,
-// ~/.<app>/sandbox-policy-approvals.json. It fails when the home directory
-// cannot be determined or is not absolute: a relative fallback would resolve
-// against the working directory, which a cloned repository controls.
+// ~/.<app>/sandbox-policy-approvals.json (projectctx.LegacyDir). It fails
+// when the home directory cannot be determined or is not absolute: a relative
+// fallback would resolve against the working directory, which a cloned
+// repository controls.
+//
+// The approvals are security state and stay in the legacy directory, which
+// the self-protection canon guards by its .<app>/ path element, until XA-WS8
+// extends the canon to the per-user state directory.
 func DefaultApprovalStore() (*ApprovalStore, error) {
-	home, err := os.UserHomeDir()
+	legacy, err := projectctx.LegacyDir()
 	if err != nil {
 		return nil, fmt.Errorf("locating sandbox policy approvals: %w", err)
 	}
-	if !filepath.IsAbs(home) {
-		return nil, fmt.Errorf("locating sandbox policy approvals: home directory %q is not absolute", home)
-	}
-	return NewApprovalStore(filepath.Join(home, "."+branding.Get().AppName, "sandbox-policy-approvals.json")), nil
+	return NewApprovalStore(filepath.Join(legacy, "sandbox-policy-approvals.json")), nil
 }
 
 // Path returns the store's file path.

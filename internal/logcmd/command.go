@@ -16,6 +16,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/Quantum-Serendipity/qsdev/internal/cmdutil"
 	"github.com/Quantum-Serendipity/qsdev/internal/logging"
 	"github.com/Quantum-Serendipity/qsdev/pkg/branding"
 )
@@ -95,7 +96,7 @@ Outside a project, global logs are shown.`, app, app, app, app),
 	clean.Flags().BoolVar(&force, "force", false, "Skip confirmation prompt")
 
 	cmd.AddCommand(list, show, path, clean)
-	return cmd
+	return cmdutil.MarkProfile(cmd, cmdutil.ProfileUnlogged)
 }
 
 // listDefaultLimit caps how many sessions `logs list` prints when neither
@@ -115,16 +116,13 @@ type sessionInfo struct {
 	File     string    `json:"file"`
 }
 
+// resolveLogDir returns the log directory `logs` reads: the project tier of
+// the project cmd acts on, or the global tier outside a project or with
+// --global.
 func resolveLogDir(cmd *cobra.Command) string {
 	global, _ := cmd.Flags().GetBool("global")
-	if global {
-		return logging.GlobalLogDir()
-	}
-	projectRoot := logging.DetectProjectRoot()
-	if projectRoot != "" {
-		return logging.ProjectLogDir(projectRoot)
-	}
-	return logging.GlobalLogDir()
+	pc, err := cmdutil.Project(cmd)
+	return logging.ResolveLogDir(pc.Root, err == nil && pc.Found && !global)
 }
 
 func discoverSessions(dir string) ([]sessionInfo, error) {

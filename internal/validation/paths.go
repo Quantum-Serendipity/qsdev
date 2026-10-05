@@ -3,11 +3,11 @@ package validation
 import (
 	"errors"
 	"fmt"
-	"os"
 	"path"
 	"regexp"
 	"strings"
 
+	"github.com/Quantum-Serendipity/qsdev/internal/projectctx"
 	"github.com/Quantum-Serendipity/qsdev/internal/sandbox/denylist"
 )
 
@@ -28,7 +28,7 @@ const maxReadPathLen = 1024
 // not be, contain or lie inside a credential store (~/.ssh, ~/.aws,
 // /etc/shadow and the rest of the sandbox deny list).
 func CheckBoundaryReadPath(p string) error {
-	home, err := os.UserHomeDir()
+	home, err := projectctx.HomeDir()
 	if err != nil {
 		home = ""
 	}

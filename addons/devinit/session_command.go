@@ -13,6 +13,7 @@ import (
 
 	"github.com/Quantum-Serendipity/qsdev/internal/cmdutil"
 	"github.com/Quantum-Serendipity/qsdev/internal/policyengine/policy"
+	"github.com/Quantum-Serendipity/qsdev/internal/projectctx"
 )
 
 func sessionCmd() *cobra.Command {
@@ -39,7 +40,7 @@ func sessionAllowCmd() *cobra.Command {
 		Use:   "allow [rule-ids...] --session <claude-session-id>",
 		Short: "Bypass specific policy rules for one Claude Code session",
 		Long: `Grant bypasses of one or more policy rule IDs to a single Claude Code
-session in a single project. Grants are stored in ~/.qsdev/session-state.json.
+session in a single project. Grants are stored in ~/` + projectctx.DataDirName() + `/session-state.json.
 
 A rule with bypass_tier "session" is lifted for that session until the grant
 expires (default 8h). A rule with bypass_tier "command" gets a one-shot token:
@@ -245,7 +246,7 @@ func isSessionIDRune(r rune) bool {
 // typos) would only mislead the user about what is bypassed.
 func validateBypassableRules(ruleIDs, policyFiles []string) (map[string]policy.BypassTier, error) {
 	if len(policyFiles) == 0 {
-		return nil, fmt.Errorf("no policy files found (.qsdev/policy.yaml or ~/.qsdev/policy.yaml); there are no rules to bypass")
+		return nil, fmt.Errorf("no policy files found (%s); there are no rules to bypass", policyLocations())
 	}
 	sp, err := policy.LoadPolicyFiles(policyFiles...)
 	if err != nil {

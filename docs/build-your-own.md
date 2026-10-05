@@ -94,8 +94,12 @@ qsdev itself runs with, then starts the CLI:
 - the project's committed `.acmedev/defaults.yaml` catalog layer
 - the standard `self-update`, `logs` and `report` commands
 - the `--debug` flag and a redacting session log, written to the project's
-  `.acmedev/logs/` or to `~/.acmedev/logs/` (override with `ACMEDEV_LOG_DIR`)
-- the background update check against your GitHub releases
+  `.acmedev/logs/` or to `logs/` in the per-user state directory
+  (`$XDG_STATE_HOME/acmedev/`, by default `~/.local/state/acmedev/` on Linux;
+  override with `ACMEDEV_LOG_DIR`)
+- the background update check against your GitHub releases, cached in the
+  per-user cache directory (`$XDG_CACHE_HOME/acmedev/`, by default
+  `~/.cache/acmedev/` on Linux)
 
 Calling gdev's `cmd.Main()` directly skips all of this: `mcp serve` finds no
 framework adapters, nothing is logged, and unknown subcommands at the root and

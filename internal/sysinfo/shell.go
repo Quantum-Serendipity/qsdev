@@ -1,9 +1,10 @@
 package sysinfo
 
 import (
-	"os"
 	"path/filepath"
 	"runtime"
+
+	"github.com/Quantum-Serendipity/qsdev/internal/projectctx"
 )
 
 // detectShell populates the shell-related fields of the given OSInfo.
@@ -25,7 +26,7 @@ func isKnownShell(name string) bool {
 
 // resolveShellRCFile returns the path to the shell's interactive RC file.
 func resolveShellRCFile(shell string) string {
-	home, err := os.UserHomeDir()
+	home, err := projectctx.HomeDir()
 	if err != nil {
 		return ""
 	}

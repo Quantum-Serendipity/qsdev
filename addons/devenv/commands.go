@@ -86,10 +86,11 @@ func initCmd() *cobra.Command {
 		Short: "Initialize a security-hardened devenv environment",
 		Long:  "Generate devenv.yaml, devenv.nix, and security configuration files for the current project.",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			projectRoot, err := cmdutil.JoinedProjectRoot()
+			pc, err := cmdutil.JoinedProject(cmd)
 			if err != nil {
 				return err
 			}
+			projectRoot := pc.Root
 
 			// Check for existing devenv.nix unless --force is set.
 			if !force {
@@ -153,7 +154,7 @@ func initCmd() *cobra.Command {
 	cmd.Flags().BoolVar(&nixHardeningGuide, "nix-hardening-guide", false, "Generate docs/nix-conf-hardening.md with system-level Nix security recommendations")
 	cmd.Flags().StringVar(&profileName, "profile", "", "Infrastructure profile (consulting-default, startup-github, enterprise)")
 
-	return cmd
+	return cmdutil.MarkRootHere(cmd)
 }
 
 func updateCmd() *cobra.Command {
@@ -167,10 +168,11 @@ func updateCmd() *cobra.Command {
 		Short: "Regenerate devenv files from saved answers",
 		Long:  "Re-run generation using previously saved wizard answers, incorporating any detection changes.",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			projectRoot, err := cmdutil.JoinedProjectRoot()
+			pc, err := cmdutil.JoinedProject(cmd)
 			if err != nil {
 				return err
 			}
+			projectRoot := pc.Root
 
 			// Load saved answers.
 			answers, err := loadAnswers(projectRoot)
@@ -249,10 +251,11 @@ func makeAddCmd(spec itemSpec) *cobra.Command {
 		Args:              argsValidator,
 		ValidArgsFunction: cmdutil.CompleteFrom(spec.validArgs),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			projectRoot, err := cmdutil.JoinedProjectRoot()
+			pc, err := cmdutil.JoinedProject(cmd)
 			if err != nil {
 				return err
 			}
+			projectRoot := pc.Root
 
 			// Validate all arguments before loading state.
 			if spec.validate != nil {
@@ -354,10 +357,11 @@ func makeRemoveCmd(spec itemSpec) *cobra.Command {
 		Args:              argsValidator,
 		ValidArgsFunction: cmdutil.CompleteFrom(spec.validArgs),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			projectRoot, err := cmdutil.JoinedProjectRoot()
+			pc, err := cmdutil.JoinedProject(cmd)
 			if err != nil {
 				return err
 			}
+			projectRoot := pc.Root
 
 			answers, err := loadAnswers(projectRoot)
 			if err != nil {

@@ -155,10 +155,11 @@ type postureStatusOptions struct {
 }
 
 func runPostureStatus(cmd *cobra.Command, args []string, opts postureStatusOptions) error {
-	projectDir, err := cmdutil.ProjectRoot()
+	pc, err := cmdutil.Project(cmd)
 	if err != nil {
 		return err
 	}
+	projectDir := pc.Root
 
 	// Perform assessment.
 	report, err := posture.Assess(projectDir, postureOptions(posture.AssessOptions{FreshScan: opts.scan, ClaudeUserDir: claudeUserDir()}))

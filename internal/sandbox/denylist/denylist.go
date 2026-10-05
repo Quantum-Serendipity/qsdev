@@ -4,9 +4,10 @@
 package denylist
 
 import (
-	"os"
 	"path/filepath"
 	"strings"
+
+	"github.com/Quantum-Serendipity/qsdev/internal/projectctx"
 )
 
 // SystemDenyPaths returns absolute paths that must never be bind-mounted into
@@ -26,7 +27,7 @@ func SystemDenyPaths() []string {
 // user's home directory. If the home directory cannot be determined,
 // "/home/unknown" is used as a fallback so that the deny list is never empty.
 func HomeDenyPaths() []string {
-	home, err := os.UserHomeDir()
+	home, err := projectctx.HomeDir()
 	if err != nil {
 		home = "/home/unknown"
 	}

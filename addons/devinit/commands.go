@@ -55,7 +55,7 @@ project-type profiles, and writes all files atomically.`,
 
 	RegisterInitFlags(cmd, &opts)
 
-	return cmdutil.MarkReadOnly(cmd, "dry-run")
+	return cmdutil.MarkRootHere(cmdutil.MarkReadOnly(cmd, "dry-run"))
 }
 
 // updateOptionsFromInit maps init flags onto the update flow. For init,
@@ -73,11 +73,13 @@ func updateOptionsFromInit(opts InitOptions) UpdateOptions {
 // to the appropriate handler (create, join, update, repair).
 func runInitWithModeDetection(cmd *cobra.Command, opts InitOptions) error {
 	// a. Get project root. init creates (or re-initializes) the project in the
-	// directory it is run from, so it does not walk up to an enclosing project.
-	projectRoot, err := cmdutil.WorkingDir()
+	// directory it is run from (it is marked MarkRootHere), so it does not walk
+	// up to an enclosing project.
+	pc, err := cmdutil.Project(cmd)
 	if err != nil {
 		return err
 	}
+	projectRoot := pc.Root
 
 	// The postmortem skill backs an always-on tool: its only opt-out is
 	// disable --force.

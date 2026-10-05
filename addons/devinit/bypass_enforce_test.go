@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/Quantum-Serendipity/qsdev/internal/policyengine/policy"
+	"github.com/Quantum-Serendipity/qsdev/internal/projectctx"
 )
 
 // bypassEnforcePolicy has a session-tier rule blocking Bash and a
@@ -126,7 +127,7 @@ func TestRunEnforce_BypassGrantScope(t *testing.T) {
 			t.Setenv(envClaudeProjectDir, e.project)
 			t.Chdir(e.project)
 
-			statePath := filepath.Join(e.home, policyDirName, "session-state.json")
+			statePath := filepath.Join(e.home, projectctx.DataDirName(), "session-state.json")
 			scope := policy.BypassScope{ProjectRoot: canonicalProjectRoot(e.project), SessionID: "sess-a"}
 			if tt.otherScope {
 				scope.ProjectRoot = canonicalProjectRoot(t.TempDir())

@@ -66,8 +66,8 @@ dependencies.totals can pass (without one they fail as inconclusive).`,
 		"Run a fresh dependency vulnerability scan for custom conformance requirements")
 
 	// check reports a catalog that does not load as a config_catalog result
-	// (so --format json still writes a report) instead of the root gate's
-	// bare error.
+	// (so --format json still writes a report), alongside the checks that
+	// need no catalog, instead of the root gate's bare error.
 	return cmdutil.MarkCatalogOptional(cmdutil.MarkReadOnly(cmd, "", "auto-fix", "scan"))
 }
 
@@ -77,33 +77,18 @@ func runCheck(cmd *cobra.Command, format check.OutputFormat, auditLevel check.Au
 		return err
 	}
 	projectRoot := pc.Root
+	ctx := catalogFreeCheckContext(cmd, projectRoot)
 
-	// Build CheckContext.
-	ctx := check.CheckContext{
-		ProjectRoot:   projectRoot,
-		BinaryVersion: version.Info().Version,
-		StateFile:     filepath.Join(projectRoot, stateFilePath()),
-		ManifestFile:  filepath.Join(projectRoot, state.ManifestFile()),
-		ProbeTool: func(binary, versionArg string) toolcheck.Info {
-			return toolcheck.Detect(cmd.Context(), binary, versionArg)
-		},
-		ClaudeUserDir: claudeUserDir(),
-	}
-
-	// Parse config if present. The error travels in the context so the report
-	// (including machine-readable formats) distinguishes "not found" from a
-	// parse failure.
-	cfgFile := branding.Get().ConfigFile
-	ctx.QsdevConfig, ctx.ConfigErr = qsdevconfig.ParseQsdevConfig(filepath.Join(projectRoot, cfgFile))
-
-	// Tool names from registry for config validation. Without the catalog
-	// nothing else can be checked honestly, so its failure is the report.
+	// A catalog that does not load (a project defaults file it rejects), or
+	// a registry that cannot be built from it, is reported as a failing
+	// check alongside the checks that need no catalog. No auto-fix runs: the
+	// fixes regenerate from the catalog.
 	toolRegistry, failure := loadCheckRegistry()
 	if failure != nil {
-		report := check.BuildReport([]check.CheckResult{*failure},
-			ctx.BinaryVersion, filepath.Base(projectRoot))
-		return emitCheckReport(cmd, report, format, auditLevel)
+		return emitCheckReport(cmd, check.RunCatalogUnavailable(ctx, *failure), format, auditLevel)
 	}
+
+	// Tool names from registry for config validation.
 	ctx.ToolNames = toolRegistry.Names()
 
 	// mcp.disabled_tools names MCP tools, a namespace separate from the
@@ -127,6 +112,7 @@ func runCheck(cmd *cobra.Command, format check.OutputFormat, auditLevel check.Au
 	// rebuild them from the committed config the way join does, so CI still
 	// knows what the project must enforce.
 	var answersErr error
+	cfgFile := branding.Get().ConfigFile
 	if answers.ProjectName == "" && ctx.QsdevConfig != nil {
 		if answers, answersErr = buildJoinAnswers(cmd, InitOptions{}, projectRoot); answersErr != nil {
 			answersErr = fmt.Errorf("deriving answers from %s: %w", cfgFile, answersErr)
@@ -207,8 +193,6 @@ func runCheck(cmd *cobra.Command, format check.OutputFormat, auditLevel check.Au
 	}
 
 	ctx.CustomConformance = evaluateCustomConformance(projectRoot, scan)
-	ctx.OrgConfigDrift = catalog.ProjectOrgConfigDrift(projectRoot)
-	ctx.OrgConfigSource = catalog.ProjectOrgConfigSource(projectRoot)
 
 	// Environment separation for cloud providers is judged from what the
 	// devenv modules declare; no cloud CLI runs.
@@ -250,6 +234,29 @@ func loadCheckRegistry() (*toolreg.Registry, *check.CheckResult) {
 		return nil, &r
 	}
 	return reg, nil
+}
+
+// catalogFreeCheckContext returns the check context for the project at
+// projectRoot with every field that needs no catalog filled in: what
+// check.RunCatalogUnavailable judges when the catalog does not load.
+func catalogFreeCheckContext(cmd *cobra.Command, projectRoot string) check.CheckContext {
+	ctx := check.CheckContext{
+		ProjectRoot:   projectRoot,
+		BinaryVersion: version.Info().Version,
+		StateFile:     filepath.Join(projectRoot, stateFilePath()),
+		ManifestFile:  filepath.Join(projectRoot, state.ManifestFile()),
+		ProbeTool: func(binary, versionArg string) toolcheck.Info {
+			return toolcheck.Detect(cmd.Context(), binary, versionArg)
+		},
+		ClaudeUserDir:   claudeUserDir(),
+		OrgConfigDrift:  catalog.ProjectOrgConfigDrift(projectRoot),
+		OrgConfigSource: catalog.ProjectOrgConfigSource(projectRoot),
+	}
+	// Parse config if present. The error travels in the context so the report
+	// (including machine-readable formats) distinguishes "not found" from a
+	// parse failure.
+	ctx.QsdevConfig, ctx.ConfigErr = qsdevconfig.ParseQsdevConfig(filepath.Join(projectRoot, branding.Get().ConfigFile))
+	return ctx
 }
 
 // emitCheckReport writes report to cmd's output in format, emits GitHub

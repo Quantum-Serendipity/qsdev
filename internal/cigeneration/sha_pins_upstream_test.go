@@ -9,22 +9,6 @@ import (
 	"time"
 )
 
-// allPins is the action catalog every pin test walks: upstream resolution,
-// shape, and parity with this repository's workflows. Keep it in step with
-// the catalog; TestActionPinsResolveUpstream_CoversCatalog fails if it drifts.
-func allPins() map[string]ActionRef {
-	return map[string]ActionRef{
-		"ActionCheckout":         ActionCheckout,
-		"ActionHardenRunner":     ActionHardenRunner,
-		"ActionUploadArtifact":   ActionUploadArtifact,
-		"ActionDownloadArtifact": ActionDownloadArtifact,
-		"ActionOSVScanner":       ActionOSVScanner,
-		"ActionGrype":            ActionGrype,
-		"ActionInstallNix":       ActionInstallNix,
-		"ActionLabeler":          ActionLabeler,
-	}
-}
-
 // apiRepo strips any action subpath: google/osv-scanner-action/osv-scanner-action
 // lives in the repository google/osv-scanner-action.
 func apiRepo(ref ActionRef) string {
@@ -79,7 +63,7 @@ func TestActionPinsResolveUpstream(t *testing.T) {
 
 	client := &http.Client{Timeout: 30 * time.Second}
 
-	for name, ref := range allPins() {
+	for name, ref := range AllActionRefs() {
 		t.Run(name, func(t *testing.T) {
 			repo := apiRepo(ref)
 
@@ -142,12 +126,4 @@ func TestActionPinsResolveUpstream(t *testing.T) {
 			}
 		})
 	}
-}
-
-// TestActionPinsResolveUpstream_CoversCatalog fails when a pin is declared in
-// the catalog but not added to allPins, which would leave it unverified — the
-// state that let four unresolvable SHAs accumulate.
-func TestActionPinsResolveUpstream_CoversCatalog(t *testing.T) {
-	t.Parallel()
-	assertCoversCatalog(t, "ActionRef", allPins())
 }

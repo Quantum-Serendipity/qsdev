@@ -1,0 +1,102 @@
+name: Dependabot fixup
+
+# Finishes Dependabot branches with the generators Dependabot cannot run, so
+# its PRs pass CI without a human commit (U26-02, Decision D9):
+#   go_modules      go mod vendor (Dependabot leaves deleted packages behind)
+#   github_actions  go generate ./internal/cigeneration/ (pin catalog sync)
+#   nix             copy flake.lock's nixpkgs lock into devenv.lock
+#
+# Trust boundary: this runs on push to dependabot/** only, never on
+# pull_request_target, and executes no code the branch supplies beyond
+# go mod vendor and jq. The syncpins generator is this repository's own code
+# plus its vendored dependencies at the versions on main: it runs only on
+# github_actions branches, which change workflow YAML and never go.mod or
+# vendor/.
+# GITHUB_TOKEN stays read-only. The push uses DEPENDABOT_FIXUP_TOKEN, a
+# fine-grained PAT stored as a Dependabot secret, because a push made with
+# GITHUB_TOKEN would not trigger CI on the new commit. CONTRIBUTING.md
+# documents the token. TestDependabotFixupWorkflowScope pins this scope.
+
+on:
+  push:
+    branches:
+      - 'dependabot/**'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: dependabot-fixup-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  fixup:
+    # Only Dependabot's own pushes: Dependabot secrets are not exposed to
+    # other actors, and the fixup's own push must not re-run it.
+    if: github.actor == 'dependabot[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Harden Runner
+        uses: step-security/harden-runner@9af89fc71515a100421586dfdb3dc9c984fbf411 # v2.19.4
+        with:
+          egress-policy: audit
+
+      - name: Require fixup token
+        env:
+          FIXUP_TOKEN: ${{ secrets.DEPENDABOT_FIXUP_TOKEN }}
+        run: |
+          if [ -z "$FIXUP_TOKEN" ]; then
+            echo "::error::DEPENDABOT_FIXUP_TOKEN is not set as a Dependabot secret; see CONTRIBUTING.md (Dependabot fixup token)."
+            exit 1
+          fi
+
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          token: ${{ secrets.DEPENDABOT_FIXUP_TOKEN }}
+
+      - name: Set up Go
+        if: startsWith(github.ref_name, 'dependabot/go_modules/') || startsWith(github.ref_name, 'dependabot/github_actions/')
+        uses: actions/setup-go@4a3601121dd01d1626a1e23e37211e3254c1c06c # v6.4.0
+        with:
+          go-version-file: go.mod
+
+      - name: Re-vendor Go modules
+        if: startsWith(github.ref_name, 'dependabot/go_modules/')
+        # go mod vendor wipes and recreates vendor/, removing package
+        # directories the new module versions no longer contain.
+        env:
+          GOFLAGS: -mod=mod
+        run: go mod vendor
+
+      - name: Sync action pin catalog
+        if: startsWith(github.ref_name, 'dependabot/github_actions/')
+        run: go generate ./internal/cigeneration/
+
+      - name: Sync devenv.lock nixpkgs
+        if: startsWith(github.ref_name, 'dependabot/nix/')
+        # devenv.lock pins the same nixpkgs as flake.lock. Copy the lock
+        # entry Dependabot chose (cooldown already applied); devenv.lock has
+        # no trailing newline, which the command substitution preserves.
+        run: |
+          locked="$(jq -ce '.nodes.nixpkgs.locked' flake.lock)"
+          updated="$(jq --argjson locked "$locked" '.nodes.nixpkgs.locked = $locked' devenv.lock)"
+          printf '%s' "$updated" > devenv.lock
+
+      - name: Commit and push
+        env:
+          REF_NAME: ${{ github.ref_name }}
+        # Commits only when a step changed something, so a re-run is a no-op.
+        # The index is checked after staging, not the working tree: vendored
+        # files that are CRLF upstream show as modified before `git add`
+        # normalises them back to the committed content.
+        run: |
+          git add -A
+          if git diff --cached --quiet; then
+            echo "Nothing to fix up on $REF_NAME."
+            exit 0
+          fi
+          git config user.name "qsdev-dependabot-fixup"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git commit -m "chore(deps): regenerate derived files for Dependabot update"
+          git push origin "HEAD:refs/heads/$REF_NAME"

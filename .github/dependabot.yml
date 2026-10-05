@@ -1,10 +1,30 @@
+# Dependabot is this repository's only dependency bot (Decision D9).
+#
+# Every entry waits out a cooldown of at least the catalog's baseline age
+# gate (72h in internal/catalog/defaults.yaml) before proposing a release, so
+# the repository is held to the same supply-chain floor qsdev enforces on the
+# projects it configures. semver-*-days is set on gomod only: Dependabot
+# ignores it for GitHub Actions, Docker and Nix. Security updates are not
+# delayed by cooldown. TestDependabotConfigAgeGated enforces all of this.
+#
+# Dependabot cannot run the repository's generators, so
+# .github/workflows/dependabot-fixup.yml finishes each branch: it re-vendors
+# gomod updates, syncs internal/cigeneration's pin catalog on actions updates
+# and copies the nixpkgs lock into devenv.lock on nix updates.
 version: 2
 updates:
   - package-ecosystem: "gomod"
     directory: "/"
+    # Explicit even though Dependabot detects vendor/: the fixup workflow
+    # still re-runs go mod vendor, because Dependabot leaves behind package
+    # directories that a new module version deleted.
+    vendor: true
     schedule:
       interval: "weekly"
       day: "monday"
+    cooldown:
+      default-days: 3
+      semver-major-days: 14
     commit-message:
       prefix: "chore(deps):"
     groups:
@@ -17,6 +37,8 @@ updates:
     schedule:
       interval: "weekly"
       day: "monday"
+    cooldown:
+      default-days: 3
     commit-message:
       prefix: "chore(ci):"
     groups:
@@ -30,9 +52,24 @@ updates:
     schedule:
       interval: "weekly"
       day: "monday"
+    cooldown:
+      default-days: 3
     commit-message:
       prefix: "chore(docker):"
     groups:
       docker-images:
         patterns:
           - "*"
+
+  # flake.lock. devenv.lock pins the same nixpkgs revision; the fixup
+  # workflow copies it across (TestNixpkgsLocksAgree). devenv.lock's other
+  # inputs are updated by hand with devenv update (see CONTRIBUTING.md).
+  - package-ecosystem: "nix"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+    cooldown:
+      default-days: 3
+    commit-message:
+      prefix: "chore(nix):"

@@ -4,11 +4,13 @@ import (
 	"bytes"
 	"encoding/json"
 	"os"
+	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
 
 	"github.com/Quantum-Serendipity/qsdev/internal/sysinfo"
+	"github.com/Quantum-Serendipity/qsdev/pkg/branding"
 )
 
 func TestBuildReport(t *testing.T) {
@@ -356,6 +358,44 @@ func TestFormatReport_ProjectToolchains(t *testing.T) {
 			}
 			if got := strings.Contains(string(data), `"project_toolchains"`); got != (len(tt.warnings) > 0) {
 				t.Errorf("JSON has project_toolchains = %v, want %v: %s", got, len(tt.warnings) > 0, data)
+			}
+		})
+	}
+}
+
+// TestFormatReport_ProjectSkippedNote checks that the report says when the
+// project-scoped checks were skipped, and that project_root is always in the
+// JSON so consumers can tell "skipped" from "clean".
+func TestFormatReport_ProjectSkippedNote(t *testing.T) {
+	t.Parallel()
+	note := "Not inside a " + branding.Get().AppName + " project — project checks skipped."
+	tests := []struct {
+		name        string
+		projectRoot string
+		wantNote    bool
+	}{
+		{name: "outside a project", projectRoot: "", wantNote: true},
+		{name: "inside a project", projectRoot: filepath.Join("work", "proj"), wantNote: false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			r := &Report{QsdevVersion: "0.1.0", System: SystemInfo{OS: "Linux", Arch: "amd64"}, ProjectRoot: tt.projectRoot}
+			var buf bytes.Buffer
+			FormatReport(&buf, r, false)
+			if got := strings.Contains(buf.String(), note); got != tt.wantNote {
+				t.Errorf("output contains %q = %v, want %v:\n%s", note, got, tt.wantNote, buf.String())
+			}
+			data, err := json.Marshal(r)
+			if err != nil {
+				t.Fatal(err)
+			}
+			var m map[string]any
+			if err := json.Unmarshal(data, &m); err != nil {
+				t.Fatal(err)
+			}
+			if got, ok := m["project_root"]; !ok || got != tt.projectRoot {
+				t.Errorf("JSON project_root = %v (present %v), want %q", got, ok, tt.projectRoot)
 			}
 		})
 	}

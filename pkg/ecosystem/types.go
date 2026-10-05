@@ -1,6 +1,9 @@
 package ecosystem
 
-import "fmt"
+import (
+	"fmt"
+	"time"
+)
 
 // Confidence indicates how certain the detection logic is that an ecosystem
 // is present in a project directory.
@@ -65,6 +68,11 @@ type ModuleConfig struct {
 	// IsolateCLIConfig is .qsdev.yaml cloud.isolate_cli_config: a cloud CLI
 	// module points its CLI's configuration directory into the project.
 	IsolateCLIConfig bool `yaml:"isolate_cli_config,omitempty" json:"isolate_cli_config,omitempty"`
+	// MinReleaseAge is the release-age window of the project's compliance
+	// level (catalog age_gating_threshold_hours). Modules read it through
+	// ReleaseAge, which applies DefaultMinReleaseAge when it is unset and the
+	// package manager's floor.
+	MinReleaseAge time.Duration `yaml:"min_release_age,omitempty" json:"min_release_age,omitempty"`
 }
 
 // PM returns the configured PackageManager, falling back to defaultPM if empty.

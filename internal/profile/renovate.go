@@ -11,8 +11,9 @@ import (
 )
 
 // generateRenovateJSON produces a renovate.json GeneratedFile from the
-// profile's update configuration.
-func (p *InfraProfile) generateRenovateJSON() types.GeneratedFile {
+// profile's update configuration. Each minimumReleaseAge is at least the
+// project's compliance window (in.MinReleaseAge).
+func (p *InfraProfile) generateRenovateJSON(in ProjectInputs) types.GeneratedFile {
 	type packageRule struct {
 		MatchUpdateTypes  []string `json:"matchUpdateTypes,omitempty"`
 		MinimumReleaseAge string   `json:"minimumReleaseAge,omitempty"`
@@ -47,9 +48,9 @@ func (p *InfraProfile) generateRenovateJSON() types.GeneratedFile {
 	}
 
 	// Default age-gating rule.
-	if p.Updates.AgeGatingDays > 0 {
+	if days := in.updateAgeDays(p.Updates.AgeGatingDays); days > 0 {
 		cfg.PackageRules = append(cfg.PackageRules, packageRule{
-			MinimumReleaseAge: fmt.Sprintf("%d days", p.Updates.AgeGatingDays),
+			MinimumReleaseAge: fmt.Sprintf("%d days", days),
 		})
 	}
 
@@ -71,7 +72,7 @@ func (p *InfraProfile) generateRenovateJSON() types.GeneratedFile {
 		}
 		cfg.PackageRules = append(cfg.PackageRules, packageRule{
 			MatchManagers:     []string{manager},
-			MinimumReleaseAge: fmt.Sprintf("%d days", p.Updates.EcosystemOverrides[eco]),
+			MinimumReleaseAge: fmt.Sprintf("%d days", in.updateAgeDays(p.Updates.EcosystemOverrides[eco])),
 		})
 	}
 

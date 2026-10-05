@@ -11,7 +11,10 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"time"
 
+	"github.com/Quantum-Serendipity/qsdev/internal/catalog"
+	"github.com/Quantum-Serendipity/qsdev/internal/config"
 	"github.com/Quantum-Serendipity/qsdev/pkg/ecosystem"
 	"github.com/Quantum-Serendipity/qsdev/pkg/types"
 )
@@ -43,11 +46,15 @@ func CheckSecurityHardening(ctx CheckContext) []CheckResult {
 		}
 	}
 
+	// The release-age window generation applied: the project's effective
+	// compliance level's, so a strict project's configs must meet 14 days.
+	minReleaseAge := catalog.EffectiveAgeGate(config.EffectiveSecurityLevel(ctx.QsdevConfig))
+
 	var results []CheckResult
 
 	// Check lock files for each language.
 	for _, lang := range ctx.QsdevConfig.Languages {
-		results = append(results, checkLanguageLockFiles(ctx.ProjectRoot, lang)...)
+		results = append(results, checkLanguageLockFiles(ctx.ProjectRoot, lang, minReleaseAge)...)
 	}
 
 	// Check that the package-manager security configs qsdev generates for
@@ -55,7 +62,7 @@ func CheckSecurityHardening(ctx CheckContext) []CheckResult {
 	for _, lang := range ctx.QsdevConfig.Languages {
 		switch lang.Name {
 		case ecosystem.NameJavaScript, ecosystem.NamePython:
-			results = append(results, checkSecurityConfigSettings(ctx.ProjectRoot, lang)...)
+			results = append(results, checkSecurityConfigSettings(ctx.ProjectRoot, lang, minReleaseAge)...)
 		}
 	}
 
@@ -85,11 +92,12 @@ func CheckSecurityHardening(ctx CheckContext) []CheckResult {
 // LockFilesByEcosystem catalog use checkLockFile; every other ecosystem falls
 // back to the lock files its module declares via ManifestFileProvider, so
 // ecosystems such as Terraform (.terraform.lock.hcl) are not silently passed.
-func checkLanguageLockFiles(projectRoot string, lang types.LanguageConfig) []CheckResult {
+// minReleaseAge is the compliance window (see detectedModuleConfig).
+func checkLanguageLockFiles(projectRoot string, lang types.LanguageConfig, minReleaseAge time.Duration) []CheckResult {
 	mod, hasMod := ecosystem.DefaultRegistry().ByName(lang.Name)
 	cfg := ecosystem.ModuleConfig{Version: lang.Version, PackageManager: lang.PackageManager}
 	if hasMod {
-		cfg = detectedModuleConfig(projectRoot, mod, lang)
+		cfg = detectedModuleConfig(projectRoot, mod, lang, minReleaseAge)
 	}
 	// The ecosystem's own project may sit in a subdirectory (frontend/).
 	dir := cfg.Directory()
@@ -239,8 +247,9 @@ func checkLockFile(projectRoot, dir, langName string) (CheckResult, bool) {
 // ecosystem module generates for the configured package manager exists and
 // still contains the hardening settings the generator writes. The expected
 // settings are derived from the module itself so this check cannot drift
-// from what qsdev generates.
-func checkSecurityConfigSettings(projectRoot string, lang types.LanguageConfig) []CheckResult {
+// from what qsdev generates, including the release-age gate the project's
+// compliance window (minReleaseAge) requires.
+func checkSecurityConfigSettings(projectRoot string, lang types.LanguageConfig, minReleaseAge time.Duration) []CheckResult {
 	name := "security_config_" + lang.Name
 
 	mod, ok := ecosystem.DefaultRegistry().ByName(lang.Name)
@@ -255,7 +264,7 @@ func checkSecurityConfigSettings(projectRoot string, lang types.LanguageConfig) 
 	}
 
 	var results []CheckResult
-	for _, gf := range mod.SecurityConfigs(detectedModuleConfig(projectRoot, mod, lang)) {
+	for _, gf := range mod.SecurityConfigs(detectedModuleConfig(projectRoot, mod, lang, minReleaseAge)) {
 		results = append(results, checkConfigFileSettings(projectRoot, name, lang.Name, gf))
 	}
 	return results
@@ -265,9 +274,11 @@ func checkSecurityConfigSettings(projectRoot string, lang types.LanguageConfig) 
 // configured version and package manager completed from what the module
 // detects in projectRoot, the same merge types.DetectedProject.WithSuggested
 // applies. The checks therefore inspect the files generation actually wrote,
-// such as a subproject's frontend/.npmrc or a Yarn Classic .yarnrc.
-func detectedModuleConfig(projectRoot string, mod ecosystem.EcosystemModule, lang types.LanguageConfig) ecosystem.ModuleConfig {
-	cfg := ecosystem.ModuleConfig{Version: lang.Version, PackageManager: lang.PackageManager}
+// such as a subproject's frontend/.npmrc or a Yarn Classic .yarnrc, against
+// the release-age gates of the compliance window minReleaseAge, as
+// ecosystem.ToGenerationConfig passes it.
+func detectedModuleConfig(projectRoot string, mod ecosystem.EcosystemModule, lang types.LanguageConfig, minReleaseAge time.Duration) ecosystem.ModuleConfig {
+	cfg := ecosystem.ModuleConfig{Version: lang.Version, PackageManager: lang.PackageManager, MinReleaseAge: minReleaseAge}
 	det := mod.Detect(projectRoot)
 	if !det.Detected {
 		return cfg
@@ -302,14 +313,15 @@ func checkConfigFileSettings(projectRoot, name, langName string, gf types.Genera
 
 	missing := missingSettings(parseSettings(gf.Content), parseSettings(data))
 	if len(missing) > 0 {
+		settings := strings.Join(missing, ", ")
 		return CheckResult{
 			Category:    CategorySecurityHarden,
 			Name:        name,
 			Status:      StatusFail,
 			Severity:    SeverityMedium,
-			Message:     fmt.Sprintf("%s is missing or weakens hardening settings: %s", gf.Path, strings.Join(missing, ", ")),
+			Message:     fmt.Sprintf("%s is missing or weakens hardening settings: %s", gf.Path, settings),
 			FilePath:    gf.Path,
-			Remediation: remediation,
+			Remediation: settingsRemediation(gf, settings),
 		}
 	}
 
@@ -321,6 +333,17 @@ func checkConfigFileSettings(projectRoot, name, langName string, gf types.Genera
 		Message:  fmt.Sprintf("%s contains the required hardening settings", gf.Path),
 		FilePath: gf.Path,
 	}
+}
+
+// settingsRemediation tells the user how to restore settings in the
+// on-disk counterpart of gf. 'init --update' rewrites a skip-if-exists file
+// only while it still holds what qsdev generated; an edited one is the
+// user's, so the settings must be raised by hand.
+func settingsRemediation(gf types.GeneratedFile, settings string) string {
+	if gf.Strategy == types.Skip {
+		return fmt.Sprintf("Set %s (or stricter) in %s; 'qsdev init --update' rewrites it only while it is unchanged since qsdev generated it", settings, gf.Path)
+	}
+	return fmt.Sprintf("Run 'qsdev init --update' or 'qsdev repair' to restore %s in %s", settings, gf.Path)
 }
 
 // parseSettings extracts top-level "key = value" (INI/TOML/.npmrc) and

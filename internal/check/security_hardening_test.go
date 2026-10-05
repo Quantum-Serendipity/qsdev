@@ -480,3 +480,61 @@ func TestCheckSecurityHardening_JavaScriptSubproject(t *testing.T) {
 		})
 	}
 }
+
+// TestCheckSecurityHardening_AgeGateBelowComplianceLevel verifies that the
+// generated release-age gate the check compares against follows the project's
+// compliance level: a strict project's .npmrc must wait at least 14 days.
+func TestCheckSecurityHardening_AgeGateBelowComplianceLevel(t *testing.T) {
+	t.Parallel()
+	npmrc := func(days string) string {
+		return strings.Replace(hardenedNpmrc, "min-release-age=3", "min-release-age="+days, 1)
+	}
+	tests := []struct {
+		name        string
+		level       string
+		client      string
+		npmrc       string
+		wantStatus  CheckStatus
+		wantMessage string
+	}{
+		{name: "strict below level", level: "strict", npmrc: npmrc("3"), wantStatus: StatusFail, wantMessage: "min-release-age=14"},
+		{name: "strict at level", level: "strict", npmrc: npmrc("14"), wantStatus: StatusPass},
+		{name: "strict above level", level: "strict", npmrc: npmrc("21"), wantStatus: StatusPass},
+		{name: "enhanced below level", level: "enhanced", npmrc: npmrc("3"), wantStatus: StatusFail, wantMessage: "min-release-age=7"},
+		{name: "client raises level", level: "baseline", client: "strict", npmrc: npmrc("7"), wantStatus: StatusFail, wantMessage: "min-release-age=14"},
+		{name: "baseline", level: "baseline", npmrc: npmrc("3"), wantStatus: StatusPass},
+		{name: "unset level is baseline", npmrc: npmrc("3"), wantStatus: StatusPass},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			dir := t.TempDir()
+			if err := os.WriteFile(filepath.Join(dir, ".npmrc"), []byte(tt.npmrc), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			cfg := &types.QsdevConfig{
+				Languages: []types.LanguageConfig{{Name: "javascript"}},
+				Security:  types.SecurityConfig{Level: tt.level},
+			}
+			if tt.client != "" {
+				cfg.Client = &types.ClientConfig{SecurityLevel: tt.client}
+			}
+			got := findResult(CheckSecurityHardening(CheckContext{ProjectRoot: dir, QsdevConfig: cfg}), "security_config_javascript")
+			if got == nil {
+				t.Fatal("no security_config_javascript result")
+			}
+			if got.Status != tt.wantStatus {
+				t.Fatalf("Status = %s, want %s (%s)", got.Status, tt.wantStatus, got.Message)
+			}
+			if tt.wantMessage == "" {
+				return
+			}
+			if !strings.Contains(got.Message, tt.wantMessage) {
+				t.Errorf("Message = %q, want it to name %s", got.Message, tt.wantMessage)
+			}
+			if !strings.Contains(got.Remediation, tt.wantMessage) {
+				t.Errorf("Remediation = %q, want it to name %s", got.Remediation, tt.wantMessage)
+			}
+		})
+	}
+}

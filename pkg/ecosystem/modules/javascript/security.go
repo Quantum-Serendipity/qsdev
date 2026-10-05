@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
+	"time"
 
 	"gopkg.in/yaml.v3"
 
@@ -51,11 +52,6 @@ func pnpmSupportsHardening(pin string) bool {
 // to the `npm audit` step (CICommands), which is what actually gates on it.
 const npmAuditLevel = "moderate"
 
-// bunMinimumReleaseAgeSeconds is the Bun install age gate. bunfig.toml's
-// install.minimumReleaseAge is an integer number of SECONDS; a string such
-// as "7d" makes `bun install` fail with "Invalid Bunfig".
-const bunMinimumReleaseAgeSeconds = 7 * 24 * 60 * 60
-
 // SecurityConfigs returns generated security configuration files for the
 // detected (or user-selected) package manager. Only one PM-specific config
 // is generated per invocation.
@@ -79,25 +75,29 @@ func (m *Module) SecurityConfigs(config ecosystem.ModuleConfig) []types.Generate
 func securityConfig(config ecosystem.ModuleConfig) types.GeneratedFile {
 	pm := config.PM("npm")
 
+	// Each manager enforces the compliance window raised to the gate it
+	// shipped with (D18): npm and pnpm 3 days (DefaultMinReleaseAge), yarn
+	// and bun 7 days, so a catalog overlay with a shorter window never
+	// loosens them.
 	switch pm {
-	case "npm":
-		return npmSecurityConfig(config.RegistryProxy)
 	case "pnpm":
-		return pnpmSecurityConfig(config.RegistryProxy, config.Extra(ExtraPnpmVersion, ""))
+		return pnpmSecurityConfig(config.RegistryProxy, config.Extra(ExtraPnpmVersion, ""), config.ReleaseAge(ecosystem.DefaultMinReleaseAge))
 	case "yarn":
 		if config.Extra(ExtraYarnClassic, "") == "true" {
 			return yarnClassicSecurityConfig(config.RegistryProxy)
 		}
-		return yarnSecurityConfig(config.RegistryProxy)
+		return yarnSecurityConfig(config.RegistryProxy, config.ReleaseAge(ecosystem.WeekMinReleaseAgeFloor))
 	case "bun":
-		return bunSecurityConfig(config.RegistryProxy)
+		return bunSecurityConfig(config.RegistryProxy, config.ReleaseAge(ecosystem.WeekMinReleaseAgeFloor))
 	default:
-		return npmSecurityConfig(config.RegistryProxy)
+		return npmSecurityConfig(config.RegistryProxy, config.ReleaseAge(ecosystem.DefaultMinReleaseAge))
 	}
 }
 
-// npmSecurityConfig generates a hardened .npmrc in INI format.
-func npmSecurityConfig(registryProxy string) types.GeneratedFile {
+// npmSecurityConfig generates a hardened .npmrc in INI format. npm's
+// min-release-age is a whole number of days.
+func npmSecurityConfig(registryProxy string, minReleaseAge time.Duration) types.GeneratedFile {
+	days := ecosystem.ReleaseAgeDays(minReleaseAge)
 	var b strings.Builder
 	b.WriteString("# Security-hardened npm configuration\n")
 	b.WriteString("# " + branding.GeneratedBy() + " - do not remove security settings\n")
@@ -111,8 +111,8 @@ func npmSecurityConfig(registryProxy string) types.GeneratedFile {
 	b.WriteString("save-exact=true\n")
 	b.WriteString("# Disable lifecycle scripts to block malicious postinstall hooks\n")
 	b.WriteString("ignore-scripts=true\n")
-	b.WriteString("# Require packages to be published for at least 3 days\n")
-	b.WriteString("min-release-age=3\n")
+	fmt.Fprintf(&b, "# Require packages to be published for at least %d days\n", days)
+	fmt.Fprintf(&b, "min-release-age=%d\n", days)
 	b.WriteString("# Enable automatic security auditing on install\n")
 	b.WriteString("audit=true\n")
 	fmt.Fprintf(&b, "# Make `npm audit` exit non-zero on %s and above vulnerabilities.\n", npmAuditLevel)
@@ -129,9 +129,10 @@ func npmSecurityConfig(registryProxy string) types.GeneratedFile {
 }
 
 // pnpmSecurityConfig generates a hardened pnpm-workspace.yaml using yaml.Node
-// for comment support. Note: pnpm uses MINUTES for minimumReleaseAge (4320 = 3 days).
+// for comment support. Note: pnpm uses MINUTES for minimumReleaseAge.
 // pinnedVersion is the pnpm version package.json pins, if any.
-func pnpmSecurityConfig(registryProxy, pinnedVersion string) types.GeneratedFile {
+func pnpmSecurityConfig(registryProxy, pinnedVersion string, minReleaseAge time.Duration) types.GeneratedFile {
+	minutes := strconv.FormatInt(int64(minReleaseAge/time.Minute), 10)
 	mappingContent := []*yaml.Node{}
 
 	if registryProxy != "" {
@@ -168,9 +169,9 @@ func pnpmSecurityConfig(registryProxy, pinnedVersion string) types.GeneratedFile
 		&yaml.Node{
 			Kind:        yaml.ScalarNode,
 			Value:       "minimumReleaseAge",
-			LineComment: "Require packages to be published for at least 3 days (4320 minutes)",
+			LineComment: fmt.Sprintf("Require packages to be published for at least %s (%s minutes)", releaseAgeText(minReleaseAge), minutes),
 		},
-		&yaml.Node{Kind: yaml.ScalarNode, Value: "4320", Tag: "!!int"},
+		&yaml.Node{Kind: yaml.ScalarNode, Value: minutes, Tag: "!!int"},
 		&yaml.Node{
 			Kind:        yaml.ScalarNode,
 			Value:       "trustPolicy",
@@ -199,7 +200,7 @@ func pnpmSecurityConfig(registryProxy, pinnedVersion string) types.GeneratedFile
 	content, err := yaml.Marshal(doc)
 	if err != nil {
 		// Fallback to string-built content if marshaling fails.
-		content = []byte("# Security-hardened pnpm workspace configuration\nstrictDepBuilds: true\nminimumReleaseAge: 4320\ntrustPolicy: no-downgrade\nblockExoticSubdeps: true\n")
+		content = []byte("# Security-hardened pnpm workspace configuration\nstrictDepBuilds: true\nminimumReleaseAge: " + minutes + "\ntrustPolicy: no-downgrade\nblockExoticSubdeps: true\n")
 	}
 
 	return types.GeneratedFile{
@@ -211,8 +212,10 @@ func pnpmSecurityConfig(registryProxy, pinnedVersion string) types.GeneratedFile
 }
 
 // yarnSecurityConfig generates a hardened .yarnrc.yml using yaml.Node
-// for comment support.
-func yarnSecurityConfig(registryProxy string) types.GeneratedFile {
+// for comment support. Yarn's npmMinimalAgeGate is written in days.
+func yarnSecurityConfig(registryProxy string, minReleaseAge time.Duration) types.GeneratedFile {
+	days := ecosystem.ReleaseAgeDays(minReleaseAge)
+	gate := fmt.Sprintf("%dd", days)
 	mappingContent := []*yaml.Node{}
 
 	if registryProxy != "" {
@@ -245,9 +248,9 @@ func yarnSecurityConfig(registryProxy string) types.GeneratedFile {
 		&yaml.Node{
 			Kind:        yaml.ScalarNode,
 			Value:       "npmMinimalAgeGate",
-			LineComment: "Require packages to be published for at least 7 days",
+			LineComment: fmt.Sprintf("Require packages to be published for at least %d days", days),
 		},
-		&yaml.Node{Kind: yaml.ScalarNode, Value: "7d"},
+		&yaml.Node{Kind: yaml.ScalarNode, Value: gate},
 	)
 
 	doc := &yaml.Node{
@@ -263,7 +266,7 @@ func yarnSecurityConfig(registryProxy string) types.GeneratedFile {
 
 	content, err := yaml.Marshal(doc)
 	if err != nil {
-		content = []byte("# Security-hardened Yarn configuration\nenableHardenedMode: true\nenableScripts: false\nnpmMinimalAgeGate: 7d\n")
+		content = []byte("# Security-hardened Yarn configuration\nenableHardenedMode: true\nenableScripts: false\nnpmMinimalAgeGate: " + gate + "\n")
 	}
 
 	return types.GeneratedFile{
@@ -298,8 +301,10 @@ func yarnClassicSecurityConfig(registryProxy string) types.GeneratedFile {
 	}
 }
 
-// bunSecurityConfig generates a hardened bunfig.toml in string-built TOML format.
-func bunSecurityConfig(registryProxy string) types.GeneratedFile {
+// bunSecurityConfig generates a hardened bunfig.toml in string-built TOML
+// format. install.minimumReleaseAge is an integer number of SECONDS; a string
+// such as "7d" makes `bun install` fail with "Invalid Bunfig".
+func bunSecurityConfig(registryProxy string, minReleaseAge time.Duration) types.GeneratedFile {
 	var b strings.Builder
 	b.WriteString("# Security-hardened Bun configuration\n")
 	b.WriteString("# " + branding.GeneratedBy() + " - do not remove security settings\n")
@@ -313,8 +318,8 @@ func bunSecurityConfig(registryProxy string) types.GeneratedFile {
 	b.WriteString("# Disable lifecycle scripts, including Bun's built-in list of\n")
 	b.WriteString("# default-trusted packages that otherwise run postinstall hooks\n")
 	b.WriteString("ignoreScripts = true\n")
-	b.WriteString("# Require packages to be published for at least 7 days\n")
-	fmt.Fprintf(&b, "minimumReleaseAge = %d\n", bunMinimumReleaseAgeSeconds)
+	fmt.Fprintf(&b, "# Require packages to be published for at least %s\n", releaseAgeText(minReleaseAge))
+	fmt.Fprintf(&b, "minimumReleaseAge = %d\n", int64(minReleaseAge/time.Second))
 
 	return types.GeneratedFile{
 		Path:     "bunfig.toml",
@@ -322,4 +327,13 @@ func bunSecurityConfig(registryProxy string) types.GeneratedFile {
 		Mode:     fileutil.ModeReadWrite,
 		Strategy: types.Skip,
 	}
+}
+
+// releaseAgeText describes a release-age gate for a generated comment: whole
+// days as "N days", anything finer in hours.
+func releaseAgeText(d time.Duration) string {
+	if d%(24*time.Hour) == 0 {
+		return fmt.Sprintf("%d days", d/(24*time.Hour))
+	}
+	return fmt.Sprintf("%d hours", d/time.Hour)
 }

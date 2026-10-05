@@ -321,9 +321,9 @@ Infrastructure profiles control organization-wide policy:
 
 | Profile | Focus |
 |---------|-------|
-| `consulting-default` | Nexus proxy, OSV + Socket scanning, Renovate with 3-day age gate, Syft SBOM |
+| `consulting-default` | Nexus proxy, OSV + Socket scanning, Renovate with at least a 3-day age gate (raised to the compliance window), Syft SBOM |
 | `startup-github` | GitHub Packages, OSV + Socket scanning, Dependabot, Turborepo |
-| `enterprise` | Artifactory, Snyk + Socket scanning, Renovate with 7-day age gate, Cosign SBOM signing |
+| `enterprise` | Artifactory, Snyk + Socket scanning, Renovate with at least a 7-day age gate (raised to the compliance window), Cosign SBOM signing |
 
 A profile's registry proxy and Nix cache point at your organization's own
 endpoints (`--registry-proxy`, `--nix-cache`, `--nix-cache-public-key`, or

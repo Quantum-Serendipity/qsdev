@@ -150,14 +150,12 @@ claims:
     tests: [TestBuildHooks_SecurityHooksFailClosed, TestRunSelfprotect_DeadlineDenies, TestSelfprotectHookTimeoutCoversDeadline, TestHookRegistry_FailClosedTimeouts]
     tiers: [standard, full]
 
-  - id: age-gate-72h
+  - id: age-gate-per-level
     text: >-
-      The compliance level does not select the age gate yet: at every level,
-      the generated package-manager settings gate installs for at least 72
-      hours (3 days) where the package manager supports an age gate
+      The generated package-manager settings gate installs for at least the
+      level's window where the package manager supports an age gate.
     files: [docs/team-onboarding.md]
-    # No test yet generates at every compliance level and asserts the gate.
-    tests: []
+    tests: [TestSecurityConfigs_MinReleaseAgeByComplianceLevel, TestUVExcludeNewerByComplianceLevel, TestBuildHookEnv_PackageGuardMinAgeDays, TestPackageGuardMinAgeDays_NeverBelowFloor, TestGenerate_StrictTierAgeGates, TestCheckSecurityHardening_AgeGateBelowComplianceLevel, TestRenovate_MinimumReleaseAgeByComplianceLevel]
     tiers: [supply-chain-only, standard, full]
 
   - id: harden-runner-audit

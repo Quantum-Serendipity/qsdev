@@ -322,8 +322,8 @@ func (m *Module) DevenvNixFragment(config ecosystem.ModuleConfig) (string, error
 		if config.Extra(extraUVExcludeNewer, "") != "project" {
 			envVars = append(envVars, ecosystem.NixEnvVar{
 				Key:     "UV_EXCLUDE_NEWER",
-				Value:   ecosystem.NixString(uvCooldown),
-				Comment: "Ignore releases newer than 7 days when resolving (uv >= 0.9.17)",
+				Value:   ecosystem.NixString(uvExcludeNewer(config)),
+				Comment: fmt.Sprintf("Ignore releases newer than %d days when resolving (uv >= 0.9.17)", uvCooldownDays(config)),
 			})
 		}
 	default:
@@ -428,11 +428,19 @@ const pipConfigPath = "pip.conf"
 // cannot set require-hashes globally (see SecurityConfigs).
 const pipLockedInstallCommand = "pip install --require-hashes --only-binary :all: -r requirements.txt"
 
-// uvCooldown is the uv exclude-newer duration (ISO 8601, 7 days) applied to
-// uv projects that do not set their own. The same value must be used
-// everywhere: uv records it in uv.lock and treats a different setting as a
-// stale lockfile.
-const uvCooldown = "P7D"
+// uvCooldownDays is the uv release-age cooldown in whole days: the
+// compliance window, never below uv's historical 7-day floor (D18).
+func uvCooldownDays(config ecosystem.ModuleConfig) int {
+	return ecosystem.ReleaseAgeDays(config.ReleaseAge(ecosystem.WeekMinReleaseAgeFloor))
+}
+
+// uvExcludeNewer is the uv exclude-newer duration (ISO 8601 days) applied to
+// uv projects that do not set their own. The devenv shell and CI must use
+// the same value: uv records it in uv.lock and treats a different setting as
+// a stale lockfile.
+func uvExcludeNewer(config ecosystem.ModuleConfig) string {
+	return fmt.Sprintf("P%dD", uvCooldownDays(config))
+}
 
 // DevenvYamlInputs returns the extra flake input required for Python.
 //
@@ -577,12 +585,12 @@ func (m *Module) CICommands(config ecosystem.ModuleConfig) []ecosystem.CICommand
 		// UV_EXCLUDE_NEWER or uv treats the lockfile as stale.
 		command := "uv sync --locked"
 		if config.Extra(extraUVExcludeNewer, "") != "project" {
-			command += " --exclude-newer " + uvCooldown
+			command += " --exclude-newer " + uvExcludeNewer(config)
 		}
 		cmds = append(cmds, ecosystem.CICommand{
 			Name:        "uv-sync",
 			Command:     command,
-			Description: "Install Python dependencies from an up-to-date uv lockfile with a 7-day age gate",
+			Description: fmt.Sprintf("Install Python dependencies from an up-to-date uv lockfile with a %d-day age gate", uvCooldownDays(config)),
 			Phase:       ecosystem.CIPhaseInstall,
 		})
 	case "poetry":

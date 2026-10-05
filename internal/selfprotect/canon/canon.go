@@ -535,7 +535,7 @@ func (r *Resolver) walk(p string) (canonical string, missing bool, err error) {
 		if err != nil {
 			return "", false, fmt.Errorf("canonicalizing path %q: %w", p, err)
 		}
-		if isRooted(target) {
+		if IsRooted(target) {
 			// An absolute target restarts resolution at its root (the current
 			// volume when a Windows target is rooted without a drive).
 			targetVol := filepath.VolumeName(target)
@@ -579,14 +579,14 @@ func absWithoutClean(p string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	if isRooted(p) {
+	if IsRooted(p) {
 		return filepath.VolumeName(cwd) + p, nil
 	}
 	return cwd + string(filepath.Separator) + p, nil
 }
 
-// isRooted reports whether p is absolute or starts at a root separator.
-func isRooted(p string) bool {
+// IsRooted reports whether p is absolute or starts at a root separator.
+func IsRooted(p string) bool {
 	return filepath.IsAbs(p) || (p != "" && os.IsPathSeparator(p[0]))
 }
 
@@ -949,7 +949,7 @@ func commandSpellings(p string) []string {
 	for _, s := range spellings(p) {
 		out = append(out, filepath.ToSlash(s))
 	}
-	if isRooted(p) || strings.HasPrefix(p, "~") {
+	if IsRooted(p) || strings.HasPrefix(p, "~") {
 		if raw := filepath.ToSlash(p); !slices.Contains(out, raw) {
 			out = append(out, raw)
 		}

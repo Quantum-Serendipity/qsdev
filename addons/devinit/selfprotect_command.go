@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"os"
 	"path/filepath"
 	"time"
 
@@ -99,13 +100,7 @@ func evaluateSelfprotect(ctx context.Context, stdin io.Reader, stderr io.Writer,
 		hookio.WriteError(stderr, err.Error())
 		return errSelfprotectDeny
 	}
-	evalCtx := buildSelfprotectContext(call.ToolName, &input)
-	// The envelope's cwd is the session directory, which the Bash tool keeps
-	// across calls (a `cd` in one call moves the next); relative paths must be
-	// resolved against it, not against the hook process's own directory.
-	if call.CWD != "" {
-		evalCtx.CWD = call.CWD
-	}
+	evalCtx := buildSelfprotectContext(call, &input)
 	evalCtx.ToolInput = call.ToolInput
 	evalCtx.SensitiveCommands = sensitive
 
@@ -158,45 +153,67 @@ func evaluateSelfprotect(ctx context.Context, stdin io.Reader, stderr io.Writer,
 	return nil
 }
 
-func buildSelfprotectContext(toolName string, input *hookio.ToolInput) *rules.EvalContext {
+// buildSelfprotectContext builds the rule context for call. CWD is the
+// envelope's cwd: the session directory, which the Bash tool keeps across
+// calls (a `cd` in one call moves the next), so relative paths are resolved
+// against it, not against the hook process's own directory. Only when the
+// envelope has none does it fall back to the process working directory.
+// FilePath keeps the spelling the tool used, which rules match on;
+// CanonicalPath is the resolved target.
+func buildSelfprotectContext(call *hookio.ToolCall, input *hookio.ToolInput) *rules.EvalContext {
 	ctx := &rules.EvalContext{
-		ToolName: toolName,
+		ToolName: call.ToolName,
 		FilePath: input.FilePath,
 		Command:  input.Command,
 		Content:  input.EditedContent(),
-		Edits:    textEdits(toolName, input),
+		Edits:    textEdits(call.ToolName, input),
+		CWD:      call.CWD,
 	}
 
-	if cwd, err := projectctx.WorkingDir(); err == nil {
-		ctx.CWD = cwd
+	if ctx.CWD == "" {
+		if cwd, err := projectctx.WorkingDir(); err == nil {
+			ctx.CWD = cwd
+		}
 	}
 
 	if input.FilePath != "" {
-		ctx.CanonicalPath = targetPath(input.FilePath)
+		ctx.CanonicalPath = targetPath(input.FilePath, ctx.CWD)
 	}
 
 	return ctx
 }
 
-// targetPath returns the canonical form of filePath for the path-based rules.
+// targetPath returns the canonical form of filePath for the path-based rules,
+// resolving a relative path against cwd (or the process working directory
+// when cwd is empty). A Windows drive-relative (C:x) or rooted (\x) path is
+// not joined to cwd: it is left to canonicalization, as before.
+//
 // When canonicalization fails (a permission error on an ancestor, a symlink
 // loop, an unresolvable home directory) it falls back to the lexically
 // cleaned absolute path instead of leaving CanonicalPath empty: an empty path
 // is never protected, so dropping the error would let every path rule allow
 // the call. With the fallback a protected target is still denied, and an
 // unresolvable home makes canon.IsProtected fail closed.
-func targetPath(filePath string) string {
-	if canonical, err := canon.Canonicalize(filePath); err == nil {
+func targetPath(filePath, cwd string) string {
+	p, err := canon.ExpandTilde(filePath)
+	if err != nil {
+		p = filePath
+	}
+	if cwd != "" && !canon.IsRooted(p) && filepath.VolumeName(p) == "" {
+		// Not filepath.Join: cleaning would collapse lnk/.. before the
+		// symlink lnk is resolved, naming a different file than the tool's.
+		if !os.IsPathSeparator(cwd[len(cwd)-1]) {
+			cwd += string(filepath.Separator)
+		}
+		p = cwd + p
+	}
+	if canonical, err := canon.Canonicalize(p); err == nil {
 		return canonical
 	}
-	expanded, err := canon.ExpandTilde(filePath)
-	if err != nil {
-		expanded = filePath
-	}
-	if abs, err := filepath.Abs(expanded); err == nil {
+	if abs, err := filepath.Abs(p); err == nil {
 		return abs
 	}
-	return filepath.Clean(expanded)
+	return filepath.Clean(p)
 }
 
 // textEdits returns the replacements of an Edit/MultiEdit call, which rules

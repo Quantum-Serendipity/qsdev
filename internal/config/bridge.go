@@ -69,7 +69,7 @@ func ConfigToAnswers(cfg *types.QsdevConfig, detected types.DetectedProject, pro
 	}
 
 	// Security level: the stricter of the project and client levels.
-	level := effectiveSecurityLevel(cfg)
+	level := EffectiveSecurityLevel(cfg)
 	answers.ComplianceLevel = level
 	answers.HookTier = level
 
@@ -124,9 +124,10 @@ func mapClaudeCode(cfg *types.QsdevConfig, answers *types.WizardAnswers) {
 	answers.Hooks.SelfProtection = answers.ClaudeCode
 }
 
-// effectiveSecurityLevel returns the stricter of security.level and
-// client.security_level (a client can raise but never lower the floor).
-func effectiveSecurityLevel(cfg *types.QsdevConfig) string {
+// EffectiveSecurityLevel returns the stricter of security.level and
+// client.security_level (a client can raise but never lower the floor): the
+// compliance level the project's generated hardening must meet.
+func EffectiveSecurityLevel(cfg *types.QsdevConfig) string {
 	level := cfg.Security.Level
 	if cfg.Client != nil && cfg.Client.SecurityLevel != "" {
 		if CompareComplianceLevels(cfg.Client.SecurityLevel, level) > 0 {
@@ -139,7 +140,7 @@ func effectiveSecurityLevel(cfg *types.QsdevConfig) string {
 // securityToHookChoices maps a QsdevConfig's security settings to HookChoices:
 // the always-on safety block plus the hooks its effective level implies.
 func securityToHookChoices(cfg *types.QsdevConfig) types.HookChoices {
-	hc := levelHookChoices(effectiveSecurityLevel(cfg))
+	hc := levelHookChoices(EffectiveSecurityLevel(cfg))
 	hc.SafetyBlock = true // Always on.
 	return hc
 }

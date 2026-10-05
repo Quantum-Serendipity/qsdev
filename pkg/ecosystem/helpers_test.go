@@ -2,6 +2,7 @@ package ecosystem
 
 import (
 	"testing"
+	"time"
 
 	"github.com/Quantum-Serendipity/qsdev/pkg/types"
 )
@@ -87,5 +88,17 @@ func TestToModuleConfigWithInfra_BuildCache(t *testing.T) {
 				t.Errorf("build_cache = %q, want %q", got, tt.want)
 			}
 		})
+	}
+}
+
+// TestToGenerationConfig_MinReleaseAge checks the compliance release-age
+// window the caller resolves reaches the module unchanged.
+func TestToGenerationConfig_MinReleaseAge(t *testing.T) {
+	t.Parallel()
+	for _, age := range []time.Duration{0, 72 * time.Hour, 168 * time.Hour, 336 * time.Hour} {
+		got := ToGenerationConfig(types.LanguageChoice{Name: NameJavaScript}, types.WizardAnswers{}, age)
+		if got.MinReleaseAge != age {
+			t.Errorf("ToGenerationConfig(..., %v).MinReleaseAge = %v", age, got.MinReleaseAge)
+		}
 	}
 }

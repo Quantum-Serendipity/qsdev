@@ -100,7 +100,7 @@ func ResolveProjectPolicy(project *types.QsdevConfig, local *LocalConfig) (*Proj
 // `hooks` block) and the java and cloud blocks, which replace any earlier
 // ones because .qsdev.yaml is authoritative for them.
 func (p *ProjectPolicy) Apply(a *types.WizardAnswers) {
-	level := effectiveSecurityLevel(p.Effective.Config)
+	level := EffectiveSecurityLevel(p.Effective.Config)
 	if CompareComplianceLevels(level, a.ComplianceLevel) > 0 {
 		a.ComplianceLevel = level
 	}

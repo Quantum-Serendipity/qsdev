@@ -51,7 +51,7 @@ func (p *InfraProfile) ConfigFiles(in ProjectInputs) ([]types.GeneratedFile, err
 
 	switch p.Updates.Type {
 	case UpdateToolRenovate:
-		files = append(files, p.generateRenovateJSON())
+		files = append(files, p.generateRenovateJSON(in))
 	case UpdateToolDependabot:
 		f, err := p.generateDependabotYML(in)
 		if err != nil {

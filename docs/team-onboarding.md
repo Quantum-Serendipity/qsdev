@@ -37,9 +37,9 @@ Flags explicitly set on the command line always take precedence over profile def
 
 | Profile | When to Use |
 |---------|-------------|
-| `consulting-default` | Multi-client consulting shops; Nexus proxy, OSV + Socket scanning, Renovate with 3-day age gate |
+| `consulting-default` | Multi-client consulting shops; Nexus proxy, OSV + Socket scanning, Renovate with at least a 3-day age gate (raised to the compliance window) |
 | `startup-github` | GitHub-native; GitHub Packages, OSV + Socket scanning, Dependabot |
-| `enterprise` | Regulated environments; Artifactory, Snyk + Socket scanning, Renovate with 7-day age gate, Cosign signing |
+| `enterprise` | Regulated environments; Artifactory, Snyk + Socket scanning, Renovate with at least a 7-day age gate (raised to the compliance window), Cosign signing |
 
 An infrastructure profile needs your organization's real endpoints; qsdev
 refuses to apply one without them (see
@@ -53,13 +53,15 @@ qsdev init --profile go-web --infra-profile enterprise \
 
 ### Compliance Levels
 
-Each security tier maps to a compliance level that selects the generated pre-commit hooks. The compliance level does not select the age gate yet: at every level, the generated package-manager settings gate installs for at least 72 hours (3 days) where the package manager supports an age gate (npm and pnpm use 3 days; yarn, bun and uv use 7 days). The Renovate or Dependabot window comes from the infrastructure profile instead: 3 days for `consulting-default`, 7 days for `enterprise`, none for `startup-github`. Per-level windows are planned. Per-level SBOM policies and the strict-level license-compliance hook are planned and not generated yet.
+Each security tier maps to a compliance level, which selects the generated pre-commit hooks and the release-age window: how long a package version must have been published before it can be installed. The generated package-manager settings gate installs for at least the level's window where the package manager supports an age gate. Each package manager keeps its historical minimum, so neither a level nor an organization catalog overlay ever loosens it: npm and pnpm (and the Claude Code package guard, through `PACKAGE_GUARD_MIN_AGE_DAYS` in `.claude/settings.json`) never go below 3 days, and yarn, bun and uv never below 7 days. Renovate's `minimumReleaseAge` and Dependabot's `cooldown` use the larger of the infrastructure profile's delay (3 days for `consulting-default`, 7 days for `enterprise`, none for `startup-github`, or an ecosystem override) and the level's window. Per-level SBOM policies and the strict-level license-compliance hook are planned and not generated yet.
 
-| Level | Age Gate | Generated Hooks | Planned |
-|-------|---------|-----------------|---------|
-| `baseline` | at least 72 hours (3 days) | ripsecrets, gitleaks | none |
-| `enhanced` | at least 72 hours (3 days) | ripsecrets, gitleaks, semgrep | SBOM policy: on release |
-| `strict` | at least 72 hours (3 days) | ripsecrets, gitleaks, semgrep | license-compliance hook; SBOM policy: every build |
+| Level | Age Gate (npm, pnpm, package guard) | Age Gate (yarn, bun, uv) | Renovate / Dependabot delay | Generated Hooks | Planned |
+|-------|---------|---------|---------|-----------------|---------|
+| `baseline` | at least 3 days | at least 7 days | at least 3 days | ripsecrets, gitleaks | none |
+| `enhanced` | at least 7 days | at least 7 days | at least 7 days | ripsecrets, gitleaks, semgrep | SBOM policy: on release |
+| `strict` | at least 14 days | at least 14 days | at least 14 days | ripsecrets, gitleaks, semgrep | license-compliance hook; SBOM policy: every build |
+
+The JavaScript configs (`.npmrc`, `pnpm-workspace.yaml`, `.yarnrc.yml`, `bunfig.toml`) are created only if absent. `qsdev init --update` rewrites one only while it still holds what qsdev generated, so an edited file keeps its value; `qsdev check` fails `security_config_javascript` until its age gate meets the level's window.
 
 ### Container Runtime
 

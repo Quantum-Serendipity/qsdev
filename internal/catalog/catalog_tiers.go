@@ -4,6 +4,7 @@ import (
 	"cmp"
 	"maps"
 	"slices"
+	"time"
 )
 
 // --- Tier accessors ---
@@ -55,4 +56,34 @@ func (c *Catalog) ComplianceLevels() map[string]ComplianceLevelDef {
 func (c *Catalog) ComplianceLevel(name string) (ComplianceLevelDef, bool) {
 	d, ok := c.compliance.Levels[name]
 	return d, ok
+}
+
+// AgeGate returns the release-age window (age_gating_threshold_hours) of the
+// named compliance level: the one release-age policy every package manager
+// config, the package guard and the dependency-update bots enforce (each
+// raised to its own historical floor). An empty or unknown level gets the
+// lowest-order level's window, so a missing or mistyped security.level never
+// loosens the gate below baseline. A catalog without compliance levels
+// returns 0, which consumers clamp to their floor.
+func (c *Catalog) AgeGate(level string) time.Duration {
+	def, ok := c.compliance.Levels[level]
+	if !ok {
+		lowest := ""
+		for name, d := range c.compliance.Levels {
+			if lowest == "" || d.Order < def.Order || (d.Order == def.Order && name < lowest) {
+				lowest, def = name, d
+			}
+		}
+	}
+	return time.Duration(def.AgeGatingThresholdHours) * time.Hour
+}
+
+// EffectiveAgeGate returns the default catalog's AgeGate for the named
+// compliance level, or 0 when the catalog cannot be loaded.
+func EffectiveAgeGate(level string) time.Duration {
+	cat, err := Default()
+	if err != nil {
+		return 0
+	}
+	return cat.AgeGate(level)
 }

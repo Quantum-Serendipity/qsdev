@@ -6,6 +6,7 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/Quantum-Serendipity/qsdev/addons/claudecode"
 	"github.com/Quantum-Serendipity/qsdev/internal/catalog"
@@ -1405,5 +1406,81 @@ func TestGenerateSettings_ToolGatesPolicy(t *testing.T) {
 				t.Errorf("env = %#v, want %#v", settings.Env, tt.wantEnv)
 			}
 		})
+	}
+}
+
+// TestBuildHookEnv_PackageGuardMinAgeDays covers handing the compliance
+// level's release-age window to the package-guard hook through settings.json
+// "env": at least the catalog baseline (3 days), raised by the level.
+func TestBuildHookEnv_PackageGuardMinAgeDays(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name        string
+		level       string
+		safetyBlock bool
+		want        string // "" means the variable is absent
+	}{
+		{name: "baseline", level: "baseline", safetyBlock: true, want: "3"},
+		{name: "enhanced", level: "enhanced", safetyBlock: true, want: "7"},
+		{name: "strict", level: "strict", safetyBlock: true, want: "14"},
+		{name: "unset level gets baseline", level: "", safetyBlock: true, want: "3"},
+		{name: "unknown level gets baseline", level: "bogus", safetyBlock: true, want: "3"},
+		{name: "safety block off", level: "strict", safetyBlock: false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			answers := types.WizardAnswers{
+				ComplianceLevel: tt.level,
+				Hooks:           types.HookChoices{SafetyBlock: tt.safetyBlock},
+			}
+			settings := mustUnmarshalSettings(t, mustGenerateSettings(t, answers, nil))
+			got, ok := settings.Env[claudecode.PackageGuardMinAgeDaysEnv]
+			if tt.want == "" {
+				if ok {
+					t.Errorf("%s = %q, want it absent", claudecode.PackageGuardMinAgeDaysEnv, got)
+				}
+				return
+			}
+			if got != tt.want {
+				t.Errorf("%s = %q, want %q", claudecode.PackageGuardMinAgeDaysEnv, got, tt.want)
+			}
+		})
+	}
+}
+
+// TestPackageGuardMinAgeDays_NeverBelowFloor checks the package guard keeps
+// its 3-day floor (D18) when a catalog overlay defines a shorter compliance
+// window, and follows longer windows rounded up to whole days.
+func TestPackageGuardMinAgeDays_NeverBelowFloor(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		window time.Duration
+		want   int
+	}{
+		{0, 3},
+		{time.Hour, 3},
+		{24 * time.Hour, 3},
+		{72 * time.Hour, 3},
+		{100 * time.Hour, 5},
+		{336 * time.Hour, 14},
+	}
+	for _, tt := range tests {
+		t.Run(tt.window.String(), func(t *testing.T) {
+			t.Parallel()
+			if got := claudecode.ExportPackageGuardMinAgeDays(tt.window); got != tt.want {
+				t.Errorf("packageGuardMinAgeDays(%v) = %d, want %d", tt.window, got, tt.want)
+			}
+		})
+	}
+}
+
+// TestPackageGuardMinAgeEnvNameInTemplate verifies that package-guard.py reads
+// the variable the generator sets, so the two cannot drift apart.
+func TestPackageGuardMinAgeEnvNameInTemplate(t *testing.T) {
+	t.Parallel()
+	want := `_int_env("` + claudecode.PackageGuardMinAgeDaysEnv + `"`
+	if !strings.Contains(string(claudecode.PackageGuardContent()), want) {
+		t.Errorf("package-guard.py does not read %s (looked for %s)", claudecode.PackageGuardMinAgeDaysEnv, want)
 	}
 }

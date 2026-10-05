@@ -3,7 +3,9 @@ package claudecode
 import (
 	"encoding/json"
 	"fmt"
+	"strconv"
 	"strings"
+	"time"
 
 	"github.com/Quantum-Serendipity/qsdev/internal/catalog"
 	"github.com/Quantum-Serendipity/qsdev/internal/merge"
@@ -37,6 +39,10 @@ const (
 	ToolGatesAllowedEnv = "TOOL_GATES_ALLOWED"
 	ToolGatesDeniedEnv  = "TOOL_GATES_DENIED"
 )
+
+// PackageGuardMinAgeDaysEnv is the variable through which the package-guard
+// hook receives the compliance level's release-age window, in whole days.
+const PackageGuardMinAgeDaysEnv = "PACKAGE_GUARD_MIN_AGE_DAYS"
 
 // Permissions defines the permission rules for Claude Code.
 type Permissions struct {
@@ -321,6 +327,9 @@ func buildHookEnv(answers types.WizardAnswers) (map[string]string, error) {
 		setListEnv(env, ToolGatesAllowedEnv, answers.HookPolicy.ToolGates.Allowed)
 		setListEnv(env, ToolGatesDeniedEnv, answers.HookPolicy.ToolGates.Denied)
 	}
+	if answers.Hooks.SafetyBlock {
+		env[PackageGuardMinAgeDaysEnv] = strconv.Itoa(packageGuardMinAgeDays(catalog.EffectiveAgeGate(answers.ComplianceLevel)))
+	}
 	if len(env) == 0 {
 		return nil, nil
 	}
@@ -410,4 +419,12 @@ func GenerateSettings(answers types.WizardAnswers, registry *ecosystem.Registry,
 		Mode:     fileutil.ModeReadWrite,
 		Strategy: types.ThreeWayMerge,
 	}, nil
+}
+
+// packageGuardMinAgeDays returns the package guard's release-age gate in
+// days for a compliance window: the same gate npm and pnpm enforce, the
+// window raised to the 3-day floor the guard shipped with (D18), so a catalog
+// overlay with a shorter window never loosens it.
+func packageGuardMinAgeDays(window time.Duration) int {
+	return ecosystem.ReleaseAgeDays(ecosystem.EffectiveReleaseAge(window, ecosystem.DefaultMinReleaseAge))
 }

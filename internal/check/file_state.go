@@ -261,6 +261,9 @@ func verifyGeneratedFiles(projectRoot string, expected types.GeneratedState, gua
 				FilePath:    relPath,
 				Remediation: "Run 'qsdev repair' or 'qsdev init --force' to regenerate it; machine-owned generated files are not edited by hand",
 			}
+			if storedFile.Strategy == types.Skip {
+				r.Remediation = skipModifiedRemediation(relPath)
+			}
 			if slices.Contains(guards, relPath) {
 				r.Severity = SeverityCritical
 				r.Message = fmt.Sprintf("%s has been modified", guardRole(relPath, support))
@@ -504,4 +507,12 @@ func ClaudeCodeConfigured(cfg *types.QsdevConfig, stateFile string) bool {
 	}
 	_, tracked := genState.Files[ClaudeSettingsRelPath]
 	return tracked
+}
+
+// skipModifiedRemediation tells the user how to fix an edited
+// skip-if-exists file: generation never writes over an existing one that
+// differs from what qsdev generated, so 'qsdev repair' and
+// 'qsdev init --force' keep the edit.
+func skipModifiedRemediation(path string) string {
+	return fmt.Sprintf("%s is created only when absent, so 'qsdev repair' and 'qsdev init --force' keep your edits; review the change and fix it by hand, or delete the file and run 'qsdev repair' to regenerate it", path)
 }

@@ -604,6 +604,40 @@ func writeProjectFile(t *testing.T, root, rel, content string) {
 	}
 }
 
+// TestVerifyGeneratedFiles_ModifiedSkipFileRemediation checks an edited
+// skip-if-exists file is not sent to 'qsdev repair' or 'qsdev init --force',
+// which keep it, while other machine-owned files still are.
+func TestVerifyGeneratedFiles_ModifiedSkipFileRemediation(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name       string
+		strategy   types.MergeStrategy
+		wantRepair bool
+	}{
+		{"skip", types.Skip, false},
+		{"overwrite", types.Overwrite, true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			dir := t.TempDir()
+			const rel = ".npmrc"
+			writeProjectFile(t, dir, rel, "min-release-age=3\n")
+			expected := state.RecordFiles([]types.GeneratedFile{{Path: rel, Content: []byte("min-release-age=14\n"), Mode: 0o644, Strategy: tt.strategy}})
+			r := findResult(verifyGeneratedFiles(dir, expected, nil, nil, nil), "file_unmodified_"+rel)
+			if r == nil {
+				t.Fatal("modified file not reported")
+			}
+			if got := strings.Contains(r.Remediation, "to regenerate it; machine-owned"); got != tt.wantRepair {
+				t.Errorf("Remediation = %q, want repair advice %v", r.Remediation, tt.wantRepair)
+			}
+			if !tt.wantRepair && r.Remediation != skipModifiedRemediation(rel) {
+				t.Errorf("Remediation = %q, want %q", r.Remediation, skipModifiedRemediation(rel))
+			}
+		})
+	}
+}
+
 // TestVerifyGeneratedFiles_UnjoinedCheckoutJoinsFirst pins the remediation in
 // a checkout with a committed config but no local init state: repair, update
 // and auto-fix all refuse or fail there, so the advice is to join first and

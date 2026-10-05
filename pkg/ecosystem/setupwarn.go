@@ -5,9 +5,11 @@ import "github.com/Quantum-Serendipity/qsdev/pkg/types"
 // SetupWarnings returns the warnings each of the answers' languages' module
 // reports for the project at projectRoot (see SetupWarner), in language order,
 // each prefixed with the module's display name. Each module sees the
-// configuration generation uses (ToGenerationConfig). Languages without a
-// registered module, and modules that do not implement SetupWarner,
-// contribute nothing.
+// configuration generation uses (ToGenerationConfig), except that the
+// release-age window is left unset (DefaultMinReleaseAge): no setup warning
+// depends on it, and this package cannot resolve the compliance level's
+// window from the catalog. Languages without a registered module, and modules
+// that do not implement SetupWarner, contribute nothing.
 func (r *Registry) SetupWarnings(projectRoot string, answers types.WizardAnswers) []string {
 	var warnings []string
 	for _, lang := range answers.Languages {
@@ -19,7 +21,7 @@ func (r *Registry) SetupWarnings(projectRoot string, answers types.WizardAnswers
 		if !ok {
 			continue
 		}
-		for _, msg := range w.SetupWarnings(projectRoot, ToGenerationConfig(lang, answers)) {
+		for _, msg := range w.SetupWarnings(projectRoot, ToGenerationConfig(lang, answers, 0)) {
 			warnings = append(warnings, m.DisplayName()+": "+msg)
 		}
 	}

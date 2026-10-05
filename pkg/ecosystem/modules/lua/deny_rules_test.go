@@ -16,7 +16,7 @@ func TestDenyRules_CommandForms(t *testing.T) {
 	rules := (&lua.Module{}).DenyRules(ecosystem.ModuleConfig{})
 	denied := func(cmd string) bool {
 		for _, r := range rules {
-			if denyutil.MatchesDenyRule(r, "Bash("+cmd+")") {
+			if denyutil.MatchesBashRule(r, cmd) {
 				return true
 			}
 		}

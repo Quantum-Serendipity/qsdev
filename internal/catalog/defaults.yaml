@@ -1267,18 +1267,23 @@ permission_deny_rules:
         - "Bash(npm exec *)"
         - "Bash(npm x *)"
         - "Bash(deno x *)"
-        - "Bash(deno run *npm:*)"
-        - "Bash(deno run *jsr:*)"
-        - "Bash(deno serve *npm:*)"
-        - "Bash(deno serve *jsr:*)"
-        - "Bash(deno npm:*)"
-        - "Bash(deno jsr:*)"
-        - "Bash(deno watch *npm:*)"
-        - "Bash(deno watch *jsr:*)"
+        # The npm:/jsr: specifier runs straight into the package name, so the
+        # rules end in "**" ("*" matches any text). A rule ending in ":*" is
+        # the legacy spelling of a trailing " *" ("The legacy :* suffix ... is
+        # only recognized at the end of a pattern", code.claude.com/docs/en/
+        # permissions) and would only match "npm <args>", never "npm:pkg".
+        - "Bash(deno run *npm:**)"
+        - "Bash(deno run *jsr:**)"
+        - "Bash(deno serve *npm:**)"
+        - "Bash(deno serve *jsr:**)"
+        - "Bash(deno npm:**)"
+        - "Bash(deno jsr:**)"
+        - "Bash(deno watch *npm:**)"
+        - "Bash(deno watch *jsr:**)"
         # Flags before the module (`deno -A npm:x`, an implicit `deno run`) or
         # deno global flags before the subcommand (`deno -q run npm:x`).
-        - "Bash(deno -* npm:*)"
-        - "Bash(deno -* jsr:*)"
+        - "Bash(deno -* npm:**)"
+        - "Bash(deno -* jsr:**)"
         - "Bash(deno -* x *)"
     nix:
         - "Bash(nix-env -i *)"
@@ -1441,9 +1446,17 @@ permission_deny_rules:
         - "Bash(docker * --cap-add*)"
         - "Bash(docker * --security-opt*)"
         - "Bash(docker *docker.sock*)"
-        - "Bash(docker * -v /:*)"
-        - "Bash(docker * --volume /:*)"
-        - "Bash(docker * --volume=/:*)"
+        # Host-root mounts: the bind target follows "/:" and is an absolute
+        # container path, hence "/:/*" (a trailing ":*" is the legacy " *"
+        # suffix and would match nothing here); "-v / " mounts / with no
+        # explicit target. Best effort: path-normalized spellings of the
+        # host root ("-v //:/host", "-v /.:/host") get past these globs; the
+        # package guard hook and the sandbox are the backstop.
+        - "Bash(docker * -v /:/*)"
+        - "Bash(docker * --volume /:/*)"
+        - "Bash(docker * --volume=/:/*)"
+        - "Bash(docker * -v / *)"
+        - "Bash(docker * --volume / *)"
         - "Bash(docker * --mount *source=/,*)"
         - "Bash(podman * --privileged*)"
         - "Bash(podman * --pid=host*)"
@@ -1455,9 +1468,11 @@ permission_deny_rules:
         - "Bash(podman * --security-opt*)"
         - "Bash(podman *podman.sock*)"
         - "Bash(podman *docker.sock*)"
-        - "Bash(podman * -v /:*)"
-        - "Bash(podman * --volume /:*)"
-        - "Bash(podman * --volume=/:*)"
+        - "Bash(podman * -v /:/*)"
+        - "Bash(podman * --volume /:/*)"
+        - "Bash(podman * --volume=/:/*)"
+        - "Bash(podman * -v / *)"
+        - "Bash(podman * --volume / *)"
         - "Bash(podman * --mount *source=/,*)"
     # Prefix globs cannot enumerate every spelling of a destructive command,
     # so this set lists the common flag orders and short/long forms, plus the

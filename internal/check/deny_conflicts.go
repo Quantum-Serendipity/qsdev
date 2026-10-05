@@ -33,7 +33,7 @@ func CheckDenyRuleConflicts(ctx CheckContext) []CheckResult {
 	for _, skill := range ctx.SkillOps {
 		for _, op := range skill.AllowedTools {
 			for _, deny := range ctx.DenyRules {
-				if checkMatchesDenyRule(deny, op) {
+				if denyutil.Shadows(deny, op) {
 					allConflicts = append(allConflicts, denyConflict{
 						skill:     skill.Name,
 						operation: op,
@@ -98,8 +98,4 @@ func sanitizeName(rule string) string {
 		"/", "_",
 	)
 	return r.Replace(rule)
-}
-
-func checkMatchesDenyRule(denyRule, operation string) bool {
-	return denyutil.MatchesDenyRule(denyRule, operation)
 }

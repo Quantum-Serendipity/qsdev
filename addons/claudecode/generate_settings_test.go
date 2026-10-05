@@ -356,7 +356,7 @@ func TestGenerateSettings_DotnetPackageAddsAreAskGated(t *testing.T) {
 	}
 	denied := []string{"dnx evil-tool", "dotnet tool exec evil-tool", "dotnet new install Evil.Templates"}
 	matches := func(rules []string, cmd string) bool {
-		return slices.ContainsFunc(rules, func(r string) bool { return denyutil.MatchesDenyRule(r, "Bash("+cmd+")") })
+		return slices.ContainsFunc(rules, func(r string) bool { return denyutil.MatchesBashRule(r, cmd) })
 	}
 	for _, preset := range []string{"minimal", "standard", "permissive", "supply-chain-only"} {
 		t.Run(preset, func(t *testing.T) {
@@ -397,10 +397,12 @@ func TestGenerateSettings_DenoPackageCommands(t *testing.T) {
 	denied := []string{
 		"deno x evil-cli", "deno run -A npm:evil-cli", "deno -A npm:evil-cli", "deno npm:evil-cli",
 		"deno -q run npm:evil-cli", "deno serve jsr:@evil/server", "deno watch npm:evil-cli",
-		"deno -q x evil-cli",
+		"deno -q x evil-cli", "deno run --allow-net jsr:@evil/server",
 	}
+	// Running local code stays open: only the npm:/jsr: specifiers are denied.
+	notDenied := []string{"deno run main.ts", "deno run -A scripts/npm.ts", "deno test", "deno serve server.ts"}
 	matches := func(rules []string, cmd string) bool {
-		return slices.ContainsFunc(rules, func(r string) bool { return denyutil.MatchesDenyRule(r, "Bash("+cmd+")") })
+		return slices.ContainsFunc(rules, func(r string) bool { return denyutil.MatchesBashRule(r, cmd) })
 	}
 	for _, preset := range []string{"minimal", "standard", "permissive", "supply-chain-only"} {
 		t.Run(preset, func(t *testing.T) {
@@ -421,6 +423,11 @@ func TestGenerateSettings_DenoPackageCommands(t *testing.T) {
 			for _, cmd := range denied {
 				if !matches(s.Permissions.Deny, cmd) {
 					t.Errorf("%q is not denied", cmd)
+				}
+			}
+			for _, cmd := range notDenied {
+				if matches(s.Permissions.Deny, cmd) {
+					t.Errorf("%q is unexpectedly denied", cmd)
 				}
 			}
 		})
@@ -1150,13 +1157,12 @@ func TestCatalogCompliancePermissionLevelsAreDefinedPresets(t *testing.T) {
 // matching deny, then ask, then allow rule decides; otherwise the user is
 // prompted ("default").
 func permissionDecision(p claudecode.Permissions, command string) string {
-	op := "Bash(" + command + ")"
 	for _, set := range []struct {
 		name  string
 		rules []string
 	}{{"deny", p.Deny}, {"ask", p.Ask}, {"allow", p.Allow}} {
 		for _, r := range set.rules {
-			if denyutil.MatchesDenyRule(r, op) {
+			if denyutil.MatchesBashRule(r, command) {
 				return set.name
 			}
 		}

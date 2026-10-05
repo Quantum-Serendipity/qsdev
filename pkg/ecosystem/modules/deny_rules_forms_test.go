@@ -58,6 +58,7 @@ func TestDenyRules_InstallForms(t *testing.T) {
 				`Bash(Rscript -e 'remotes::install_github("attacker/pkg")')`,
 				`Bash(R -q -e "renv::install('evil')")`,
 				`Bash(Rscript -e 'pak::pak("attacker/pkg")')`, `Bash(R -e 'update.packages(ask = FALSE)')`,
+				`Bash(R -q -e 'pak::lockfile_create()')`,
 			},
 			allowed: []string{`Bash(Rscript -e "renv::restore()")`, `Bash(Rscript -e "testthat::test_dir('tests')")`},
 		},
@@ -108,8 +109,13 @@ func TestDenyRules_InstallForms(t *testing.T) {
 			}
 			rules := drp.DenyRules(ecosystem.ModuleConfig{})
 			denied := func(op string) bool {
+				tool, cmd := denyutil.ParseToolPattern(op)
+				match := denyutil.MatchesBashRule
+				if tool == "PowerShell" {
+					match = denyutil.MatchesPowerShellRule
+				}
 				for _, r := range rules {
-					if denyutil.MatchesDenyRule(r, op) {
+					if match(r, cmd) {
 						return true
 					}
 				}

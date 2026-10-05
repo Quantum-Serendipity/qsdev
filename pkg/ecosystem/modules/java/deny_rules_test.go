@@ -17,7 +17,7 @@ func TestDenyRules_CommandForms(t *testing.T) {
 	rules := (&java.Module{}).DenyRules(ecosystem.ModuleConfig{PackageManager: "both"})
 	denied := func(cmd string) bool {
 		for _, r := range rules {
-			if denyutil.MatchesDenyRule(r, "Bash("+cmd+")") {
+			if denyutil.MatchesBashRule(r, cmd) {
 				return true
 			}
 		}

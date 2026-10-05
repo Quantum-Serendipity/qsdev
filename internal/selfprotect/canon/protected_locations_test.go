@@ -7,6 +7,8 @@ import (
 	"slices"
 	"strings"
 	"testing"
+
+	"github.com/Quantum-Serendipity/qsdev/internal/pathmatch"
 )
 
 // TestIsProtected_ControlFilesAnyLocation pins the location-independent
@@ -104,14 +106,14 @@ func TestIsProtected_CaseInsensitiveFilesystems(t *testing.T) {
 	upperSettings := filepath.Join(home, ".CLAUDE", "Settings.JSON")
 	upperHook := filepath.FromSlash("/work/repo/.Claude/Hooks/pre.sh")
 
-	fold := matchOptions{foldCase: true}
-	win := matchOptions{foldCase: true, windowsAliases: true}
-	exact := matchOptions{}
+	fold := pathmatch.Options{FoldCase: true}
+	win := pathmatch.Options{FoldCase: true, WindowsAliases: true}
+	exact := pathmatch.Options{}
 
 	tests := []struct {
 		name     string
 		path     string
-		opts     matchOptions
+		opts     pathmatch.Options
 		wantProt bool
 	}{
 		{"folded home settings", upperSettings, fold, true},
@@ -197,55 +199,6 @@ func TestContainsProtectedPath_FoldCase(t *testing.T) {
 	}
 }
 
-func TestStripWindowsAliases(t *testing.T) {
-	t.Parallel()
-
-	tests := []struct {
-		in, want string
-	}{
-		{"C:/Users/u/.claude/settings.json::$DATA", "C:/Users/u/.claude/settings.json"},
-		{"C:/Users/u/.claude./settings.json. ", "C:/Users/u/.claude/settings.json"},
-		{"C:/a/../b/./c", "C:/a/../b/./c"},
-		{"//server/share/.claude/hooks/x.sh:stream", "//server/share/.claude/hooks/x.sh"},
-		{"", ""},
-		{"/", "/"},
-		{"a/b/", "a/b/"},
-		{"a./b", "a/b"},
-		{"a/b.", "a/b"},
-		{".../x", "/x"},
-	}
-	for _, tt := range tests {
-		t.Run(tt.in, func(t *testing.T) {
-			t.Parallel()
-			if got := stripWindowsAliases(tt.in); got != tt.want {
-				t.Errorf("stripWindowsAliases(%q) = %q, want %q", tt.in, got, tt.want)
-			}
-		})
-	}
-}
-
-// TestStripWindowsAliases_MatchesReference checks every string of up to six
-// characters over the bytes the stripping treats specially against the
-// original split-and-join implementation.
-func TestStripWindowsAliases_MatchesReference(t *testing.T) {
-	t.Parallel()
-
-	const alphabet = "a.: /"
-	var walk func(s string)
-	walk = func(s string) {
-		if got, want := stripWindowsAliases(s), stripWindowsAliasesReference(s); got != want {
-			t.Errorf("stripWindowsAliases(%q) = %q, want %q", s, got, want)
-		}
-		if len(s) == 6 {
-			return
-		}
-		for _, c := range alphabet {
-			walk(s + string(c))
-		}
-	}
-	walk("")
-}
-
 // TestIsProtected_EntryKeysComputedOnce pins that a protected-path check
 // computes the key of the path it is given, not of every protected entry
 // again: on Windows a key copies the path several times, and the rules check
@@ -255,31 +208,15 @@ func TestStripWindowsAliases_MatchesReference(t *testing.T) {
 // parallel: AllocsPerRun counts every allocation in the process.
 func TestIsProtected_EntryKeysComputedOnce(t *testing.T) {
 	resetProtectedPaths(t)
-	win := matchOptions{foldCase: true, windowsAliases: true}
+	win := pathmatch.Options{FoldCase: true, WindowsAliases: true}
 	p := filepath.Join(t.TempDir(), "Project", "Src", "Main.go")
 	// Folding the upper-case path is the one allocation a check needs.
 	const maxAllocs = 2
-	for _, opts := range []matchOptions{{}, {foldCase: true}, win} {
+	for _, opts := range []pathmatch.Options{{}, {FoldCase: true}, win} {
 		if got := testing.AllocsPerRun(100, func() { isProtected(p, opts) }); got > maxAllocs {
 			t.Errorf("isProtected(%q, %+v) made %v allocations, want at most %d (one key, not one per entry)", p, opts, got, maxAllocs)
 		}
 	}
-}
-
-// stripWindowsAliasesReference is the original stripWindowsAliases, which
-// split every path into components and joined them again.
-func stripWindowsAliasesReference(s string) string {
-	parts := strings.Split(s, "/")
-	for i, part := range parts {
-		if part == "." || part == ".." || (len(part) == 2 && part[1] == ':') {
-			continue
-		}
-		if j := strings.IndexByte(part, ':'); j >= 0 {
-			part = part[:j]
-		}
-		parts[i] = strings.TrimRight(part, ". ")
-	}
-	return strings.Join(parts, "/")
 }
 
 // TestCanonicalize_SymlinkResolutionForMissingTargets covers paths whose final
@@ -433,55 +370,5 @@ func TestIsProtected_RunningExecutable(t *testing.T) {
 	sibling := filepath.Join(filepath.Dir(exe), "unrelated.txt")
 	if prot, _ := IsProtected(sibling); prot {
 		t.Errorf("IsProtected(%q) = true; only the executable itself should be protected", sibling)
-	}
-}
-
-// TestSepToSlashLower_MatchesTwoStepKey pins that converting separators and
-// folding case in one pass gives the key the two separate steps gave, and
-// that folding before stripping Windows aliases does not change the key.
-func TestSepToSlashLower_MatchesTwoStepKey(t *testing.T) {
-	t.Parallel()
-	paths := []string{
-		"",
-		`C:\Users\RUNNER~1\AppData\Local\Temp\Project\Src\Main.go`,
-		`C:\Repo\.CLAUDE.\Settings.JSON::$DATA`,
-		`\\server\Share\.Claude \hooks\`,
-		"/home/Alice/.Config/QSDEV/defaults.yaml",
-		"mixed/Sep\\Path/ÄÖÜ/İstanbul",
-		"already/lower/case",
-	}
-	for _, sep := range []rune{'/', '\\'} {
-		for _, p := range paths {
-			slashed := strings.ReplaceAll(p, string(sep), "/")
-			if want, got := strings.ToLower(slashed), sepToSlashLower(p, sep); got != want {
-				t.Errorf("sepToSlashLower(%q, %q) = %q, want %q", p, sep, got, want)
-			}
-			oldOrder := strings.ToLower(stripWindowsAliases(slashed))
-			newOrder := stripWindowsAliases(sepToSlashLower(p, sep))
-			if oldOrder != newOrder {
-				t.Errorf("key(%q, sep %q): strip-then-fold %q, fold-then-strip %q", p, sep, oldOrder, newOrder)
-			}
-		}
-	}
-}
-
-// TestSepToSlashLower_OneCopy pins that a Windows path is converted and
-// folded in a single allocation, so a key costs the same on Windows as on
-// Linux (filepath.ToSlash followed by strings.ToLower copied it twice there).
-// Not parallel: AllocsPerRun counts every allocation in the process.
-func TestSepToSlashLower_OneCopy(t *testing.T) {
-	p := `C:\Users\RUNNER~1\AppData\Local\Temp\Project\Src\Main.go`
-	if got := testing.AllocsPerRun(100, func() { sepToSlashLower(p, '\\') }); got > 1 {
-		t.Errorf("sepToSlashLower(%q) made %v allocations, want at most 1", p, got)
-	}
-}
-
-// BenchmarkSepToSlashLower measures folding a long Windows path, the work a
-// long cd chain repeats for every command it scans.
-func BenchmarkSepToSlashLower(b *testing.B) {
-	p := `C:\Users\RUNNER~1\AppData\Local\Temp\` + strings.Repeat(`Missing\Dir\`, 200)
-	b.ReportAllocs()
-	for b.Loop() {
-		sepToSlashLower(p, '\\')
 	}
 }

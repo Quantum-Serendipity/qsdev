@@ -3,28 +3,18 @@ package merge
 import (
 	"encoding/json"
 	"fmt"
+	"maps"
 	"slices"
+
+	"github.com/Quantum-Serendipity/qsdev/internal/mcpconfig"
 )
-
-// mcpJSON mirrors the claudecode.McpJSON structure.
-type mcpJSON struct {
-	MCPServers map[string]mcpServerEntry `json:"mcpServers"`
-}
-
-type mcpServerEntry struct {
-	Type    string            `json:"type,omitempty"`
-	URL     string            `json:"url,omitempty"`
-	Command string            `json:"command,omitempty"`
-	Args    []string          `json:"args,omitempty"`
-	Env     map[string]string `json:"env,omitempty"`
-}
 
 // MergeMcpJson performs a three-way merge of .mcp.json content.
 // base: original generated content (from last generation — may be nil for first update)
 // theirs: current on-disk content (may have user modifications)
 // ours: newly generated content
 func MergeMcpJson(base, theirs, ours []byte) ([]byte, error) {
-	var baseParsed, theirsParsed, oursParsed mcpJSON
+	var baseParsed, theirsParsed, oursParsed mcpconfig.File
 
 	if len(base) > 0 {
 		if err := json.Unmarshal(base, &baseParsed); err != nil {
@@ -32,7 +22,7 @@ func MergeMcpJson(base, theirs, ours []byte) ([]byte, error) {
 		}
 	}
 	if baseParsed.MCPServers == nil {
-		baseParsed.MCPServers = make(map[string]mcpServerEntry)
+		baseParsed.MCPServers = make(map[string]mcpconfig.Server)
 	}
 
 	if len(theirs) == 0 {
@@ -42,18 +32,18 @@ func MergeMcpJson(base, theirs, ours []byte) ([]byte, error) {
 		return nil, fmt.Errorf("parsing theirs mcp.json: %w", err)
 	}
 	if theirsParsed.MCPServers == nil {
-		theirsParsed.MCPServers = make(map[string]mcpServerEntry)
+		theirsParsed.MCPServers = make(map[string]mcpconfig.Server)
 	}
 
 	if err := json.Unmarshal(ours, &oursParsed); err != nil {
 		return nil, fmt.Errorf("parsing ours mcp.json: %w", err)
 	}
 	if oursParsed.MCPServers == nil {
-		oursParsed.MCPServers = make(map[string]mcpServerEntry)
+		oursParsed.MCPServers = make(map[string]mcpconfig.Server)
 	}
 
-	// Capture raw top-level keys and per-server JSON so unmodeled fields (e.g. a
-	// per-server "headers" block) and sibling top-level keys survive: the merge
+	// Capture raw top-level keys and per-server JSON so unmodeled per-server
+	// fields and sibling top-level keys survive: the merge
 	// decisions are made on the typed structs, but output is assembled from the
 	// raw JSON.
 	theirsTop := map[string]json.RawMessage{}
@@ -88,14 +78,14 @@ func MergeMcpJson(base, theirs, ours []byte) ([]byte, error) {
 				resultRaw[name] = theirsServers[name]
 			default:
 				// User didn't touch modeled fields — use ours (updated) version,
-				// but preserve any unmodeled fields the user added (e.g. headers).
+				// but preserve any unmodeled fields the user added.
 				resultRaw[name] = mergeServerRaw(theirsServers[name], oursServers[name])
 			}
 		} else if inTheirs {
 			// Newly generated server whose name the user already configured
 			// (always the case on the nil-base create path): ours' modeled
-			// fields win, but the user's env keys and unmodeled fields (e.g.
-			// headers carrying tokens) survive.
+			// fields win, but the user's own env and header keys (e.g. tokens)
+			// and unmodeled fields survive.
 			resultRaw[name] = mergeServerRaw(theirsServers[name], oursServers[name])
 		} else {
 			// Newly generated server — add from ours.
@@ -166,8 +156,9 @@ func rawServers(raw json.RawMessage) map[string]json.RawMessage {
 }
 
 // mergeServerRaw overlays ours' server JSON onto theirs so ours' modeled fields
-// win while unmodeled fields the user added (e.g. headers) survive. It falls
-// back to ours when either side is absent or unparseable.
+// win while fields the user added that ours does not set survive: unmodeled
+// keys (e.g. a description) and extra env or header keys. It falls back to
+// ours when either side is absent or unparseable.
 func mergeServerRaw(theirsRaw, oursRaw json.RawMessage) json.RawMessage {
 	var theirsMap, oursMap map[string]any
 	if len(theirsRaw) == 0 || json.Unmarshal(theirsRaw, &theirsMap) != nil {
@@ -185,28 +176,15 @@ func mergeServerRaw(theirsRaw, oursRaw json.RawMessage) json.RawMessage {
 
 // isEmptyServer returns true if the entry has no meaningful fields set.
 // An empty object is never a valid user customization — it's corruption.
-func isEmptyServer(s mcpServerEntry) bool {
-	return s.Command == "" && s.URL == "" && s.Type == "" && len(s.Args) == 0 && len(s.Env) == 0
+func isEmptyServer(s mcpconfig.Server) bool {
+	return s.Command == "" && s.URL == "" && s.Type == "" &&
+		len(s.Args) == 0 && len(s.Env) == 0 && len(s.Headers) == 0
 }
 
-// serverEqual returns true if two mcpServerEntry values are equal.
-func serverEqual(a, b mcpServerEntry) bool {
-	if a.Type != b.Type || a.URL != b.URL {
-		return false
-	}
-	if a.Command != b.Command {
-		return false
-	}
-	if !slices.Equal(a.Args, b.Args) {
-		return false
-	}
-	if len(a.Env) != len(b.Env) {
-		return false
-	}
-	for k, v := range a.Env {
-		if bv, ok := b.Env[k]; !ok || bv != v {
-			return false
-		}
-	}
-	return true
+// serverEqual reports whether two entries agree on every modeled field, so a
+// user edit to any of them (headers included) counts as a modification.
+func serverEqual(a, b mcpconfig.Server) bool {
+	return a.Type == b.Type && a.URL == b.URL && a.Command == b.Command &&
+		slices.Equal(a.Args, b.Args) &&
+		maps.Equal(a.Env, b.Env) && maps.Equal(a.Headers, b.Headers)
 }

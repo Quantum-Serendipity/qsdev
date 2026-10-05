@@ -2,7 +2,7 @@
 name: incident-debug
 description: Systematic production incident debugging with hypothesis-test-conclude methodology.
 disable-model-invocation: true
-allowed-tools: Bash(*) Read Grep Glob
+allowed-tools: Bash(git log *) Bash(git diff *) Bash(git show *) Bash(git status *) Bash(git blame *) Read Grep Glob
 arguments: [symptom]
 argument-hint: "API returning 500 errors on /users endpoint"
 ---

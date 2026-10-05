@@ -10,8 +10,14 @@ import (
 // SkillOps describes a skill and the tool operations it requires.
 // This mirrors claudecode.SkillDefinition to avoid circular imports.
 type SkillOps struct {
-	Name         string
+	Name string
+	// AllowedTools is every tool the skill or subagent declares, checked
+	// against deny rules.
 	AllowedTools []string
+	// PreApproved is the subset a skill's allowed-tools grants without a
+	// prompt. A subagent's tools list only makes tools available, so it
+	// contributes nothing here.
+	PreApproved []string
 }
 
 // CheckDenyRuleConflicts validates that deny rules don't block skill operations.
@@ -78,6 +84,61 @@ func CheckDenyRuleConflicts(ctx CheckContext) []CheckResult {
 		})
 	}
 	return results
+}
+
+// CheckSkillPreApprovals validates that no skill pre-approves a command the
+// catalog gates behind ask. A skill's allowed-tools grant runs without a
+// prompt while the skill is active, so a rule such as Bash(npm *) or Bash(*)
+// would let a model-invoked skill install packages or execute code without
+// the ask prompt and the package-guard review that follows it. Each ask rule
+// is reduced to a sample command and every Bash pre-approval is matched
+// against it. Deny rules are not considered: deny always wins.
+func CheckSkillPreApprovals(ctx CheckContext) []CheckResult {
+	if len(ctx.AskRules) == 0 || len(ctx.SkillOps) == 0 {
+		return []CheckResult{skillPreApprovalResult(StatusSkip, "No ask rules or skill definitions to validate")}
+	}
+
+	var results []CheckResult
+	for _, skill := range ctx.SkillOps {
+		for _, grant := range skill.PreApproved {
+			matcher := grant
+			if matcher == "Bash" {
+				// A bare tool name grants every command of that tool.
+				matcher = "Bash(*)"
+			}
+			for _, ask := range ctx.AskRules {
+				sample, ok := denyutil.SampleCommand(ask)
+				if !ok || !denyutil.MatchesBashRule(matcher, sample) {
+					continue
+				}
+				results = append(results, CheckResult{
+					Category: CategoryDenyConflicts,
+					Name:     fmt.Sprintf("skill_preapproval_%s_%s", skill.Name, sanitizeName(ask)),
+					Status:   StatusFail,
+					Severity: SeverityHigh,
+					Message: fmt.Sprintf(
+						"skill %q pre-approves %q, which bypasses ask rule %q",
+						skill.Name, grant, ask),
+					Remediation: "Narrow the skill's allowed-tools to read-only commands; let ask-gated commands prompt",
+				})
+			}
+		}
+	}
+	if len(results) == 0 {
+		return []CheckResult{skillPreApprovalResult(StatusPass,
+			fmt.Sprintf("No skill pre-approves a command gated by any of %d ask rules", len(ctx.AskRules)))}
+	}
+	return results
+}
+
+func skillPreApprovalResult(status CheckStatus, msg string) CheckResult {
+	return CheckResult{
+		Category: CategoryDenyConflicts,
+		Name:     "skill_preapproval",
+		Status:   status,
+		Severity: SeverityInfo,
+		Message:  msg,
+	}
 }
 
 // denyConflict is an internal type used within the check package.

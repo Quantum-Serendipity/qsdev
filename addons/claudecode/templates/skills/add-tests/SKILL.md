@@ -2,7 +2,7 @@
 name: add-tests
 description: Generate tests for uncovered code. Follows existing test patterns in the codebase.
 disable-model-invocation: true
-allowed-tools: Bash(*) Read Write Edit Grep Glob
+allowed-tools: Bash(git log *) Bash(git diff *) Bash(git show *) Bash(git status *) Read Write Edit Grep Glob
 arguments: [target]
 argument-hint: "path/to/module"
 ---

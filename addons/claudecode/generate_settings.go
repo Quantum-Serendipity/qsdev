@@ -98,6 +98,16 @@ func AllBaseDenyRules() []string {
 	return cat.AllPermissionDenyRules()
 }
 
+// AllBaseAskRules returns every rule the catalog gates behind ask. Exported
+// for qsdev check, which verifies no skill pre-approves any of them.
+func AllBaseAskRules() []string {
+	cat, err := catalog.Default()
+	if err != nil {
+		return nil
+	}
+	return cat.AllPermissionAskRules()
+}
+
 // ---------------------------------------------------------------------------
 // Permission preset builder
 // ---------------------------------------------------------------------------

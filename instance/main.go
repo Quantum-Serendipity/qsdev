@@ -17,6 +17,7 @@ import (
 	gdevconfig "fastcat.org/go/gdev/lib/config"
 
 	"github.com/Quantum-Serendipity/qsdev/internal/bugreport"
+	"github.com/Quantum-Serendipity/qsdev/internal/catalog"
 	"github.com/Quantum-Serendipity/qsdev/internal/cmdutil"
 	"github.com/Quantum-Serendipity/qsdev/internal/logcmd"
 	"github.com/Quantum-Serendipity/qsdev/internal/logging"
@@ -118,24 +119,66 @@ func exitCode(err error) int {
 // also covers commands the framework builds itself (the root, `config`).
 //
 // It also installs the human gate (cmdutil.InstallHumanGate), which refuses
-// every command marked sensitive unless a human runs it, and gives the
-// commands the frameworks build (see markFrameworkProfiles) their runtime
-// profiles.
+// every command marked sensitive unless a human runs it, and the catalog gate
+// (installCatalogGate), which fails a command that needs the defaults catalog
+// cleanly when the catalog does not load, and gives the commands the
+// frameworks build (see markFrameworkProfiles) their runtime profiles.
 //
 // It must be called after customizations are locked down, as [Main] does.
 func NewRootCommand() *cobra.Command {
 	root := gdevcmd.Root()
 	markFrameworkProfiles(root)
 	cmdutil.RejectUnknownSubcommands(root)
-	cmdutil.InstallHumanGate(root)
+	installGates(root, loadCatalog)
 	return root
+}
+
+// installGates installs the human gate and the catalog gate on root. The
+// catalog gate is installed last so it runs first: the human gate's
+// sensitivity checks may read the catalog (disable's security-tool list
+// does), so the catalog must have loaded, or the command failed cleanly,
+// before they run. A catalog load is read-only, so loading before a refusal
+// costs nothing.
+func installGates(root *cobra.Command, load func() error) {
+	cmdutil.InstallHumanGate(root)
+	installCatalogGate(root, load)
+}
+
+// loadCatalog loads the defaults catalog (built-in, org and project layers).
+// catalog.Default caches its result, so later loads by the command reuse it.
+func loadCatalog() error {
+	_, err := catalog.Default()
+	return err
+}
+
+// installCatalogGate makes root fail every command that needs the defaults
+// catalog (cmdutil.CatalogRequired) with a wrapped error naming the repair
+// command when load fails, before the command runs. Once the gate passes the
+// catalog is cached as loaded, so the command's own catalog lookups cannot
+// fail. Commands that do not need it (hooks, the MCP server, global and
+// unlogged commands, catalog-optional ones) run regardless. It chains any
+// PersistentPreRunE root already has, as cmdutil.InstallHumanGate does.
+func installCatalogGate(root *cobra.Command, load func() error) {
+	next := root.PersistentPreRunE
+	root.PersistentPreRunE = func(cmd *cobra.Command, args []string) error {
+		if cmdutil.CatalogRequired(cmd) {
+			if err := load(); err != nil {
+				return fmt.Errorf("%w (run '%s')", catalog.LoadError(err), catalog.ValidateCommand())
+			}
+		}
+		if next != nil {
+			return next(cmd, args)
+		}
+		return nil
+	}
 }
 
 // markFrameworkProfiles marks the runtime profile (cmdutil.MarkProfile) of the
 // commands cobra and gdev build rather than an addon: cobra's help and
 // default completion commands, created here instead of at execution so they
 // can carry a mark, are unlogged, and gdev's version is global. A command an
-// addon registered under one of those names keeps its own mark.
+// addon registered under one of those names keeps its own mark. gdev's addons
+// command is also marked catalog-optional (cmdutil.MarkCatalogOptional).
 func markFrameworkProfiles(root *cobra.Command) {
 	root.InitDefaultHelpCmd()
 	root.InitDefaultCompletionCmd()
@@ -148,6 +191,11 @@ func markFrameworkProfiles(root *cobra.Command) {
 		p, ok := frameworkProfiles[c.Name()]
 		if _, marked := c.Annotations[cmdutil.ProfileAnnotation]; ok && !marked {
 			cmdutil.MarkProfile(c, p)
+		}
+		// gdev's addons command lists the compiled-in addons and reads no
+		// defaults catalog.
+		if c.Name() == "addons" {
+			cmdutil.MarkCatalogOptional(c)
 		}
 	}
 }

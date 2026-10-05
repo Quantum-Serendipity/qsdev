@@ -15,25 +15,38 @@ var projectProfileOrder = []string{
 	"rust-cli", "rust-web", "java-web", "elixir-web", "dotnet-web",
 }
 
+// errCatalogLoad marks a loadDefaultProjectProfiles failure caused by the
+// catalog itself rather than by one profile.
+var errCatalogLoad = errors.New("loading catalog")
+
 // DefaultProjectProfileRegistry returns a ProjectProfileRegistry pre-loaded
 // with the built-in project-type profiles. A profile that cannot be loaded
 // from the catalog is logged and left unregistered, so selecting it fails with
 // "unknown profile" instead of silently producing an empty configuration.
+//
+// A catalog that does not load at all registers nothing and is logged at
+// debug only: the registry is built at addon initialization for every
+// command, and the root catalog gate or check reports that failure to the
+// user for the commands that need the catalog.
 func DefaultProjectProfileRegistry() *ProjectProfileRegistry {
 	r, err := loadDefaultProjectProfiles()
-	if err != nil {
+	switch {
+	case errors.Is(err, errCatalogLoad):
+		slog.Debug("loading built-in project profiles", "error", err)
+	case err != nil:
 		slog.Error("loading built-in project profiles", "error", err)
 	}
 	return r
 }
 
 // loadDefaultProjectProfiles registers every built-in profile that loads and
-// returns the joined errors for those that do not.
+// returns the joined errors for those that do not, or an error wrapping
+// errCatalogLoad when the catalog does not load.
 func loadDefaultProjectProfiles() (*ProjectProfileRegistry, error) {
 	r := NewProjectProfileRegistry()
 	cat, err := catalog.Default()
 	if err != nil {
-		return r, fmt.Errorf("loading catalog: %w", err)
+		return r, fmt.Errorf("%w: %w", errCatalogLoad, err)
 	}
 	var errs []error
 	for _, name := range projectProfileOrder {

@@ -345,3 +345,22 @@ func TestDefault_AppliesProjectDefaults(t *testing.T) {
 		t.Error("project deny rule missing from AllPermissionDenyRules()")
 	}
 }
+
+// TestLoadError pins the one wording every command uses for a catalog that
+// does not load: it names the app's defaults, keeps the cause in the chain,
+// and the repair hint names the validate command.
+func TestLoadError(t *testing.T) {
+	t.Parallel()
+	app := branding.Get().AppName
+	cause := errors.New("project defaults may only add or tighten")
+	err := LoadError(cause)
+	if !errors.Is(err, cause) {
+		t.Errorf("LoadError(%v) = %v, does not wrap the cause", cause, err)
+	}
+	if want := "loading " + app + " defaults: " + cause.Error(); err.Error() != want {
+		t.Errorf("LoadError = %q, want %q", err, want)
+	}
+	if want := app + " defaults validate"; ValidateCommand() != want {
+		t.Errorf("ValidateCommand() = %q, want %q", ValidateCommand(), want)
+	}
+}

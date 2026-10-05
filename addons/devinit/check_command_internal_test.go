@@ -1,7 +1,9 @@
 package devinit
 
 import (
+	"bytes"
 	"encoding/json"
+	"errors"
 	"io/fs"
 	"maps"
 	"os"
@@ -881,5 +883,100 @@ func TestCheckCmd_GuardBypassWhenExpectedGenerationFails(t *testing.T) {
 				t.Errorf("claude_settings_posture passes without the expected settings:\n%s", out)
 			}
 		})
+	}
+}
+
+// invalidDefaultsProject returns a project whose .qsdev/defaults.yaml tries
+// to loosen the built-in defaults, so the catalog fails to load. It points
+// the process-global catalog at the project and resets the catalog and the
+// tool registry, undoing all of it when the test ends; callers must not run
+// in parallel.
+func invalidDefaultsProject(t *testing.T) string {
+	t.Helper()
+	dir := t.TempDir()
+	if err := os.Mkdir(filepath.Join(dir, ".git"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	defaultsFile := catalog.ProjectConfigPath(dir)
+	if err := os.MkdirAll(filepath.Dir(defaultsFile), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(defaultsFile, []byte("keep_vars: [AWS_SECRET_ACCESS_KEY]\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	catalog.ResetDefault()
+	catalog.SetProjectRoot(dir)
+	toolreg.ResetDefaultRegistry()
+	t.Cleanup(func() {
+		catalog.ResetDefault()
+		toolreg.ResetDefaultRegistry()
+	})
+	return dir
+}
+
+// runCheckSplit runs check in dir with args, returning stdout and stderr
+// separately. Usage and error printing are silenced, as the root command
+// silences them, so stdout holds only the report.
+func runCheckSplit(t *testing.T, dir string, args ...string) (stdout, stderr string, err error) {
+	t.Helper()
+	t.Chdir(dir)
+	var out, errOut bytes.Buffer
+	cmd := checkCmd()
+	cmd.SilenceUsage, cmd.SilenceErrors = true, true
+	cmd.SetOut(&out)
+	cmd.SetErr(&errOut)
+	cmd.SetArgs(args)
+	err = cmd.Execute()
+	return out.String(), errOut.String(), err
+}
+
+// TestRunCheck_InvalidProjectDefaults_JSON is the regression test for G-05:
+// a project defaults file that loosens the built-in defaults made check
+// panic in the tool registry and write nothing to stdout. It must report the
+// failure as a config_catalog result and exit 1.
+func TestRunCheck_InvalidProjectDefaults_JSON(t *testing.T) {
+	dir := invalidDefaultsProject(t)
+
+	stdout, stderr, err := runCheckSplit(t, dir, "--format", "json")
+	var report check.CheckReport
+	if jerr := json.Unmarshal([]byte(stdout), &report); jerr != nil {
+		t.Fatalf("stdout is not a JSON report: %v\nstdout:\n%s\nstderr:\n%s", jerr, stdout, stderr)
+	}
+	i := slices.IndexFunc(report.Checks, func(c check.CheckResult) bool { return c.Name == "config_catalog" })
+	if i < 0 {
+		t.Fatalf("report has no config_catalog check:\n%s", stdout)
+	}
+	got := report.Checks[i]
+	if got.Category != check.CategoryConfigIntegrity || got.Status != check.StatusFail {
+		t.Errorf("config_catalog = %s/%s, want %s/%s", got.Category, got.Status, check.CategoryConfigIntegrity, check.StatusFail)
+	}
+	if !strings.Contains(got.Message, "may only add or tighten") {
+		t.Errorf("config_catalog message %q does not name the violation", got.Message)
+	}
+	// The catalog's own error, worded as the root gate words it: not the
+	// tool registry's re-wrap ("loading catalog: ...").
+	if strings.Contains(got.Message, "loading catalog:") {
+		t.Errorf("config_catalog message %q repeats the tool registry's wrap", got.Message)
+	}
+	var coder interface{ ExitCode() int }
+	if !errors.As(err, &coder) || coder.ExitCode() != 1 {
+		t.Errorf("check returned %v, want an error with exit code 1", err)
+	}
+}
+
+// TestRunCheck_InvalidProjectDefaults_Human is the human-format variant of
+// TestRunCheck_InvalidProjectDefaults_JSON.
+func TestRunCheck_InvalidProjectDefaults_Human(t *testing.T) {
+	dir := invalidDefaultsProject(t)
+
+	stdout, stderr, err := runCheckSplit(t, dir)
+	for _, want := range []string{"[FAIL]", "config_catalog"} {
+		if !strings.Contains(stdout, want) {
+			t.Errorf("output lacks %q:\nstdout:\n%s\nstderr:\n%s", want, stdout, stderr)
+		}
+	}
+	var failed *check.CheckFailedError
+	if !errors.As(err, &failed) || failed.ExitCode() != 1 {
+		t.Errorf("check returned %v, want a CheckFailedError", err)
 	}
 }

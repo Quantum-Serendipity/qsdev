@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io/fs"
 
+	"github.com/Quantum-Serendipity/qsdev/internal/catalog"
 	"github.com/Quantum-Serendipity/qsdev/internal/config"
 	"github.com/Quantum-Serendipity/qsdev/internal/validation"
 	"github.com/Quantum-Serendipity/qsdev/pkg/branding"
@@ -128,6 +129,38 @@ func CheckConfigIntegrity(ctx CheckContext) []CheckResult {
 	}
 
 	return results
+}
+
+// CatalogLoadFailure is the result check reports when the defaults catalog
+// fails to load (e.g. a project defaults file that tries to loosen the
+// built-in defaults). Without the catalog no other check can be computed,
+// so it is reported alone, as config_parse is for an unparsable config.
+func CatalogLoadFailure(err error) CheckResult {
+	return CheckResult{
+		Category:    CategoryConfigIntegrity,
+		Name:        "config_catalog",
+		Status:      StatusFail,
+		Severity:    SeverityCritical,
+		Message:     catalog.LoadError(err).Error(),
+		Remediation: "Run '" + catalog.ValidateCommand() + "' and fix the defaults file it names",
+	}
+}
+
+// ToolRegistryFailure is the result check reports when the defaults catalog
+// loaded but the tool registry could not be built from it (a catalog value
+// the registry conversion does not recognize). It shares config_catalog's
+// slot, since no other check can be computed without the registry, but does
+// not blame the defaults file the catalog accepted.
+func ToolRegistryFailure(err error) CheckResult {
+	app := branding.Get().AppName
+	return CheckResult{
+		Category:    CategoryConfigIntegrity,
+		Name:        "config_catalog",
+		Status:      StatusFail,
+		Severity:    SeverityCritical,
+		Message:     fmt.Sprintf("building tool registry: %v", err),
+		Remediation: "Run '" + catalog.ValidateCommand() + "'; if it reports no problem, file a bug with '" + app + " report bug'",
+	}
 }
 
 // configParseFailed reports whether the config is unavailable because it

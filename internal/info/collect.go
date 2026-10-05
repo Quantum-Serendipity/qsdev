@@ -89,12 +89,17 @@ func CollectInfo(projectRoot string) (*ProjectInfo, error) {
 		}
 	}
 
-	// Tool breakdown by category from registry.
-	registry := toolreg.DefaultRegistry()
-	for _, tool := range registry.All() {
-		if genState.EnabledTools[tool.Name] {
-			cat := tool.Category.DisplayName()
-			info.ToolsByCategory[cat]++
+	// Tool breakdown by category from registry. A catalog that does not load
+	// (a rejected defaults file) is reported, not fatal: the bug report this
+	// feeds is what a person reaches for after that failure.
+	if registry, err := toolreg.Default(); err != nil {
+		info.Warnings = append(info.Warnings, fmt.Sprintf("tool registry could not be built: %v", err))
+	} else {
+		for _, tool := range registry.All() {
+			if genState.EnabledTools[tool.Name] {
+				cat := tool.Category.DisplayName()
+				info.ToolsByCategory[cat]++
+			}
 		}
 	}
 

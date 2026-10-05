@@ -1,9 +1,15 @@
 package devinit_test
 
 import (
+	"context"
+	"log/slog"
+	"os"
+	"path/filepath"
+	"sync"
 	"testing"
 
 	"github.com/Quantum-Serendipity/qsdev/addons/devinit"
+	"github.com/Quantum-Serendipity/qsdev/internal/catalog"
 )
 
 // builtinProfile returns a built-in profile from the default registry.
@@ -202,5 +208,67 @@ func TestDefaultProjectProfileRegistry_InsertionOrder(t *testing.T) {
 		if n != want[i] {
 			t.Errorf("Names[%d] = %q, want %q", i, n, want[i])
 		}
+	}
+}
+
+// recordingHandler is a slog handler that keeps every record it handles.
+type recordingHandler struct {
+	mu      sync.Mutex
+	records []slog.Record
+}
+
+func (h *recordingHandler) Enabled(context.Context, slog.Level) bool { return true }
+
+func (h *recordingHandler) Handle(_ context.Context, r slog.Record) error {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	h.records = append(h.records, r)
+	return nil
+}
+
+func (h *recordingHandler) WithAttrs([]slog.Attr) slog.Handler { return h }
+func (h *recordingHandler) WithGroup(string) slog.Handler      { return h }
+
+// TestDefaultProjectProfileRegistry_CatalogErrorNotLoggedAsError: a catalog
+// that fails to load is reported to the user by the root catalog gate or by
+// check, so building the profile registry (which every command does at
+// addon initialization) logs it at debug, not as a startup ERROR line on
+// every command. It mutates the process-global catalog, so it is not
+// parallel.
+func TestDefaultProjectProfileRegistry_CatalogErrorNotLoggedAsError(t *testing.T) {
+	dir := t.TempDir()
+	bad := catalog.ProjectConfigPath(dir)
+	if err := os.MkdirAll(filepath.Dir(bad), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(bad, []byte("keep_vars: [AWS_SECRET_ACCESS_KEY]\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	catalog.ResetDefault()
+	catalog.SetProjectRoot(dir)
+	prev := slog.Default()
+	h := &recordingHandler{}
+	slog.SetDefault(slog.New(h))
+	t.Cleanup(func() {
+		slog.SetDefault(prev)
+		catalog.ResetDefault()
+	})
+
+	if r := devinit.ExportDefaultProjectProfileRegistry(); len(r.Names()) != 0 {
+		t.Errorf("registered %q without a catalog", r.Names())
+	}
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	var debug int
+	for _, rec := range h.records {
+		switch {
+		case rec.Level >= slog.LevelWarn:
+			t.Errorf("catalog failure logged at %s: %s", rec.Level, rec.Message)
+		case rec.Level == slog.LevelDebug:
+			debug++
+		}
+	}
+	if debug == 0 {
+		t.Error("catalog failure not logged at debug")
 	}
 }

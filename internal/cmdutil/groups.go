@@ -45,6 +45,24 @@ func rejectUnknownSubcommands(c *cobra.Command) {
 	}
 	c.Args = validateGroupArgs
 	c.RunE = runGroup
+	if c.Annotations == nil {
+		c.Annotations = map[string]string{}
+	}
+	c.Annotations[helpOnlyGroupAnnotation] = "help"
+}
+
+// helpOnlyGroupAnnotation marks a group made runnable by
+// RejectUnknownSubcommands: run itself, it only shows help.
+const helpOnlyGroupAnnotation = "qsdev.group"
+
+// helpOnly reports whether running cmd itself only shows help: a group cobra
+// would not run, or one RejectUnknownSubcommands made runnable to show help.
+func helpOnly(cmd *cobra.Command) bool {
+	if !cmd.Runnable() {
+		return true
+	}
+	_, ok := cmd.Annotations[helpOnlyGroupAnnotation]
+	return ok
 }
 
 // validateGroupArgs is the Args validator installed on non-runnable command

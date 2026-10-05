@@ -12,7 +12,8 @@ import (
 
 // ---------------------------------------------------------------------------
 // Public accessors — each returns a fresh copy to prevent mutation.
-// Backed by the YAML catalog at internal/catalog/defaults/validation.yaml.
+// Backed by the embedded YAML catalog at internal/catalog/defaults.yaml
+// (languages, services, presets and related top-level sections).
 // ---------------------------------------------------------------------------
 
 // Languages returns all supported language/ecosystem identifiers in canonical order.

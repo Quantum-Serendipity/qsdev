@@ -148,7 +148,6 @@ pkg-public-leaf	pkg/aiframework/adapters/claudecode -> addons/claudecode	1
 pkg-public-leaf	pkg/aiframework/adapters/claudecode -> internal/sliceutil	1
 pkg-public-leaf	pkg/ecosystem -> internal/registry	1
 pkg-public-leaf	pkg/ecosystem -> internal/sliceutil	1
-pkg-public-leaf	pkg/ecosystem/modules/java -> internal/validation	1
 pkg-public-leaf	pkg/generate -> internal/merge	1
 pkg-public-leaf	pkg/generate -> internal/state	1
 pkg-public-leaf	pkg/types -> internal/enumtext	1

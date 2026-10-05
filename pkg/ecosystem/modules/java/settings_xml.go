@@ -8,8 +8,8 @@ import (
 	"log/slog"
 	"strings"
 
-	"github.com/Quantum-Serendipity/qsdev/internal/validation"
 	"github.com/Quantum-Serendipity/qsdev/pkg/branding"
+	"github.com/Quantum-Serendipity/qsdev/pkg/ecosystem"
 )
 
 // Settings is the root element of a Maven settings.xml file.
@@ -168,7 +168,7 @@ func mirrorOfExcept(allowlist []string) string {
 			continue
 		}
 		seen[id] = true
-		if !validation.IsValidToken(id) {
+		if !ecosystem.IsValidToken(id) {
 			slog.Warn("java: ignoring invalid java.repository_allowlist id", "id", id)
 			continue
 		}

@@ -3,6 +3,8 @@ package validation
 import (
 	"errors"
 	"regexp"
+
+	"github.com/Quantum-Serendipity/qsdev/pkg/ecosystem"
 )
 
 // Syntax validators for free-form answer values that generators splice into
@@ -16,7 +18,6 @@ import (
 var (
 	envKeyRe      = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
 	nixAttrPathRe = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_'-]*(\.[A-Za-z_][A-Za-z0-9_'-]*)*$`)
-	tokenRe       = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]*$`)
 	// Language versions may be constraints or aliases detected from project
 	// manifests (package.json engines ">=18 <21", "18.x || 20.x", .nvmrc
 	// "lts/iron"), so comparison and range operators, '/' and spaces are
@@ -36,7 +37,6 @@ var (
 const (
 	maxEnvKeyLen            = 256
 	maxNixAttrPathLen       = 256
-	maxTokenLen             = 64
 	maxVersionConstraintLen = 128
 	maxToolNamePatternLen   = 256
 )
@@ -56,9 +56,9 @@ func IsValidNixAttrPath(attr string) bool {
 // IsValidToken reports whether s is a single bare word of letters, digits,
 // '.', '_' and '-' (starting with a letter or digit), such as a service
 // version ("16"), a package manager ("pnpm") or a simple setting value.
-func IsValidToken(s string) bool {
-	return len(s) <= maxTokenLen && tokenRe.MatchString(s)
-}
+// It delegates to ecosystem.IsValidToken, the single implementation shared
+// with generator-side guards.
+func IsValidToken(s string) bool { return ecosystem.IsValidToken(s) }
 
 // IsValidVersionConstraint reports whether v is a version or version
 // constraint ("1.24", "3.12.1", ">=18 <21", "^20.0.0", "nightly-2024-01-01").

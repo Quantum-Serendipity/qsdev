@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/Quantum-Serendipity/qsdev/addons/claudecode"
 	"github.com/Quantum-Serendipity/qsdev/internal/state"
 	"github.com/Quantum-Serendipity/qsdev/pkg/types"
 )
@@ -460,5 +461,37 @@ func TestBuildUpdatePlan_SkipKeepsUserFile(t *testing.T) {
 				t.Errorf("action = %v (%s), want %v", got, plan.Files[0].Reason, tt.wantAction)
 			}
 		})
+	}
+}
+
+// TestUpdate_RemovesOrphanHookLib pins that update removes, and forgets, a
+// shared hook library left behind with no Python hook to load it (as a qsdev
+// whose disable did not clean it up would leave it): its owner is generator
+// support, not an enabled tool, so update owns the cleanup.
+func TestUpdate_RemovesOrphanHookLib(t *testing.T) {
+	dir := initLifecycleProject(t)
+	lib := filepath.Join(dir, filepath.FromSlash(claudecode.HookLibPath))
+	content, err := os.ReadFile(lib)
+	if err != nil {
+		t.Fatal(err)
+	}
+	entry := loadProjectState(t, dir).Files[claudecode.HookLibPath]
+	mustDisable(t, dir, "attach-guard", "--force")
+	// Put the library back as an older disable left it: on disk and tracked.
+	if err := os.WriteFile(lib, content, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	st := loadProjectState(t, dir)
+	st.Files[claudecode.HookLibPath] = entry
+	saveProjectState(t, dir, st)
+
+	out, err := executeInitCmd(t, dir, "--update")
+	if err != nil {
+		t.Fatalf("update: %v\n%s", err, out)
+	}
+
+	requireFileNotExists(t, dir, claudecode.HookLibPath)
+	if _, tracked := loadProjectState(t, dir).Files[claudecode.HookLibPath]; tracked {
+		t.Errorf("%s is still tracked after update", claudecode.HookLibPath)
 	}
 }

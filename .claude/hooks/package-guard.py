@@ -62,6 +62,7 @@ if __name__ == "__main__" and not (getattr(sys.flags, "safe_path", False) or sys
 import base64
 import binascii
 import gzip
+import importlib.util
 import json
 import os
 import queue
@@ -75,49 +76,28 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import NamedTuple, Optional
 
-# U17-WS7: moves to qsdev_hooklib
-# Oldest interpreter the guard supports (Go: types.MinHookPython). Below it,
-# block (exit 2) with a clear message instead of crashing with exit 1, which
-# Claude Code treats as a non-blocking error (the install would proceed
-# unguarded). The module must still COMPILE on older interpreters for this
-# check to run: no `from __future__ import annotations` (a SyntaxError on 3.6)
-# and no subscripted builtins (`list[str]`) in evaluated annotations.
-_MIN_PYTHON = (3, 9)
-if sys.version_info < _MIN_PYTHON:
-    print(f"package-guard requires Python {'.'.join(map(str, _MIN_PYTHON))}+ "
-          f"(found {sys.version.split()[0]}); blocking to fail closed.", file=sys.stderr)
+# Shared hook library (.claude/hooks/_qsdev_hooklib.py: audit log, deadline
+# watchdog, interpreter floor). It is loaded by explicit path, so this
+# directory never goes back on sys.path, and without bytecode, so no
+# __pycache__ lands in the project. Missing or broken, it blocks the call
+# (fail closed); below the minimum Python, its import exits 2.
+sys.dont_write_bytecode = True
+try:
+    _lib_spec = importlib.util.spec_from_file_location(
+        "_qsdev_hooklib", os.path.join(os.path.dirname(os.path.abspath(__file__)), "_qsdev_hooklib.py"))
+    lib = importlib.util.module_from_spec(_lib_spec)
+    _lib_spec.loader.exec_module(lib)
+    # What this hook uses: an empty or stale library blocks here, not with an
+    # AttributeError (exit 1, which Claude Code lets through) mid-evaluation.
+    lib.arm_deadline, lib.audit_log, lib.append_private, lib.WRAPPERS, lib.skip_wrapper  # noqa: B018
+except Exception as _exc:
+    print(f"package-guard: hook library unavailable ({_exc}); blocking (fail closed)", file=sys.stderr)
     sys.exit(2)
 
-# U17-WS7: moves to qsdev_hooklib
-# Internal deadline: the hook's registered settings.json timeout minus 2s.
-# Claude Code lets the tool call through when a hook times out, so the
-# watchdog blocks first. QSDEV_HOOK_DEADLINE_MS can only shorten it. Known
-# limit: a C-level regex match that holds the GIL cannot be interrupted by
-# any in-process watchdog.
+# Internal deadline (lib.arm_deadline): the hook's registered settings.json
+# timeout minus 2s, so the watchdog blocks before Claude Code's timeout lets
+# the call through.
 _HOOK_DEADLINE_S = 28
-
-
-def _deadline_seconds() -> float:
-    """The effective deadline: _HOOK_DEADLINE_S, or QSDEV_HOOK_DEADLINE_MS
-    when that is shorter."""
-    try:
-        return min(float(_HOOK_DEADLINE_S), int(os.environ.get("QSDEV_HOOK_DEADLINE_MS", "")) / 1000)
-    except ValueError:
-        return float(_HOOK_DEADLINE_S)
-
-
-def _arm_deadline() -> None:
-    """Start a daemon watchdog that blocks (exit 2) once the deadline passes."""
-    seconds = _deadline_seconds()
-
-    def expire() -> None:
-        sys.stderr.write(f"package-guard: evaluation exceeded {seconds:g}s deadline; blocking (fail closed)\n")
-        sys.stderr.flush()
-        os._exit(2)
-
-    timer = threading.Timer(seconds, expire)
-    timer.daemon = True
-    timer.start()
 
 # ---------------------------------------------------------------------------
 # Configuration (environment variable overrides)
@@ -260,12 +240,6 @@ def _call_timeout() -> float:
     return min(API_TIMEOUT, left)
 
 
-# Audit log. It sits with the other hooks' logs under .claude/logs/, which
-# `qsdev init` adds to .gitignore. Without a project directory it goes to the
-# user's own ~/.claude/logs, never a shared location such as /tmp.
-_PROJECT_DIR = os.environ.get("CLAUDE_PROJECT_DIR", "")
-AUDIT_LOG: Path = Path(_PROJECT_DIR or os.path.expanduser("~")) / ".claude" / "logs" / "hook-audit.jsonl"
-
 # SOC 2 dependency audit trail.
 SOC2_AUDIT_DIR: Path = Path(
     os.environ.get("CLAUDE_AUDIT_DIR", os.path.expanduser("~/.claude/audit"))
@@ -303,40 +277,13 @@ def redact(value):
     return value
 
 
-def _append_private(path: Path, line: str) -> None:
-    """Append to a 0600 file without following a planted symlink."""
-    path.parent.mkdir(parents=True, exist_ok=True)
-    fd = os.open(str(path), os.O_WRONLY | os.O_APPEND | os.O_CREAT | getattr(os, "O_NOFOLLOW", 0), 0o600)
-    with os.fdopen(fd, "a") as f:
-        f.write(line)
-
-
-AUDIT_LOG_MAX_BYTES = 10 * 1024 * 1024
-
-
-def audit_log(entry: dict) -> None:
-    """Append a JSON entry to the audit log file, rotating it to <name>.1 once
-    it exceeds AUDIT_LOG_MAX_BYTES."""
-    try:
-        try:
-            if AUDIT_LOG.lstat().st_size > AUDIT_LOG_MAX_BYTES:
-                os.replace(AUDIT_LOG, AUDIT_LOG.with_name(AUDIT_LOG.name + ".1"))
-        except FileNotFoundError:
-            pass
-        entry["timestamp"] = datetime.now(timezone.utc).isoformat()
-        _append_private(AUDIT_LOG, json.dumps(redact(entry)) + "\n")
-    except OSError:
-        # Logging failure must not block the hook decision.
-        pass
-
-
 def soc2_audit_log(entry: dict) -> None:
     """Append a dependency decision to the SOC 2 audit trail when enabled."""
     if not SOC2_AUDIT_ENABLED:
         return
     try:
         entry["timestamp"] = datetime.now(timezone.utc).isoformat()
-        _append_private(SOC2_AUDIT_FILE, json.dumps(redact(entry)) + "\n")
+        lib.append_private(SOC2_AUDIT_FILE, json.dumps(redact(entry)) + "\n")
     except OSError:
         pass  # SOC2 audit logging is best-effort; must not block hook decisions.
 
@@ -2131,68 +2078,8 @@ _INSTALL_VERB_WORDS: frozenset = frozenset(
 # Command wrappers and shells
 # ---------------------------------------------------------------------------
 
-class WrapperSpec(NamedTuple):
-    value: frozenset         # this wrapper's options that take a value (short ones may be clustered)
-    positional: str = ""     # "duration" / "one": a positional precedes the command
-    runtime: bool = False    # appends arguments read at run time (xargs, parallel)
-    script: frozenset = frozenset()   # options whose value is a shell script (flock -c)
-    no_exec: frozenset = frozenset()  # options that make it NOT run the command (command -v)
-    joins: bool = False      # runs its remaining arguments joined as a `sh -c` script (watch)
-
-
-def _wrapper(value: str = "", positional: str = "", runtime: bool = False,
-             script: str = "", no_exec: str = "", joins: bool = False) -> WrapperSpec:
-    return WrapperSpec(frozenset(value.split()), positional, runtime,
-                       frozenset(script.split()), frozenset(no_exec.split()), joins)
-
-
-# Exec wrappers that run the command that follows them, each with its OWN
-# option grammar: a flag that takes a value for one wrapper (`sudo -p PROMPT`)
-# is a boolean for another (`time -p`, `xargs -r`, `command -p`), so a shared
-# table would let the executable be swallowed as a flag value.
-WRAPPERS: dict = {
-    "sudo": _wrapper("-u --user -g --group -C --close-from -p --prompt -r --role -t --type -U "
-                     "--other-user -D --chdir -R --chroot -T --command-timeout --host"),
-    "doas": _wrapper("-u -C"),
-    "env": _wrapper("-u --unset -C --chdir -P"),
-    "command": _wrapper(no_exec="-v -V"),
-    "builtin": _wrapper(),
-    "exec": _wrapper("-a"),
-    "time": _wrapper("-f --format -o --output"),
-    "nice": _wrapper("-n --adjustment"),
-    "nohup": _wrapper(),
-    "stdbuf": _wrapper("-i --input -o --output -e --error"),
-    "setsid": _wrapper(),
-    "ionice": _wrapper("-c --class -n --classdata", no_exec="-p --pid -P --pgid -u --uid"),
-    "timeout": _wrapper("-k --kill-after -s --signal", positional="duration"),
-    "strace": _wrapper("-e -o -p -s -u -E -a -b -I -O -S -P -X -U"),
-    "ltrace": _wrapper("-e -o -p -s -u -n -a -A -D -F -l -x"),
-    "catchsegv": _wrapper(),
-    "proot": _wrapper("-r --rootfs -b --bind -m --mount -w --cwd -q --qemu -k --kernel-release"),
-    "firejail": _wrapper(),
-    "flock": _wrapper("-w --timeout -E --conflict-exit-code", positional="one", script="-c --command"),
-    "unshare": _wrapper("-S --setuid -G --setgid -R --root -w --wd --map-user --map-group "
-                        "--propagation --setgroups"),
-    "chrt": _wrapper("-T --sched-runtime -P --sched-period -D --sched-deadline", positional="one",
-                     no_exec="-p --pid"),
-    "taskset": _wrapper(positional="one", no_exec="-p --pid"),
-    "xargs": _wrapper("-a --arg-file -d --delimiter -E -I -L --max-lines -n --max-args -P "
-                      "--max-procs -s --max-chars --process-slot-var", runtime=True),
-    "parallel": _wrapper("-j --jobs -S --sshlogin --joblog --results -a --arg-file --delay "
-                         "--timeout --colsep -N --max-args", runtime=True),
-    "setpriv": _wrapper("--reuid --regid --ruid --rgid --euid --egid --groups --inh-caps "
-                        "--ambient-caps --bounding-set --securebits --pdeathsig --selinux-label "
-                        "--apparmor-profile --landlock-access --landlock-rule"),
-    "nsenter": _wrapper("-t --target -S --setuid -G --setgid -w --wd -r --root"),
-    "systemd-run": _wrapper("-p --property -u --unit --description --slice -E --setenv --uid --gid "
-                            "--working-directory -M --machine -H --host"),
-    "busybox": _wrapper(),
-    # `mono nuget.exe install ...`: Mono's options are `--opt` or `--opt=value`, except --config.
-    "mono": _wrapper("--config"),
-    "watch": _wrapper("-n --interval -q --equexit", joins=True),
-    "script": _wrapper("-E --echo -I --log-in -O --log-out -B --log-io -T --log-timing -m "
-                       "--logging-format", script="-c --command"),
-}
+# Exec wrappers (sudo, env, flock, tmux ...) and their option grammar live in
+# the shared hook library: lib.WRAPPERS, followed with lib.skip_wrapper.
 
 # Shell reserved words and grouping tokens that can precede a command in the
 # same segment (`if x; then npm install y; fi`, `! npm install y`, `{ ...; }`).
@@ -2276,7 +2163,7 @@ class Unwrapped(NamedTuple):
     off: int           # index of argv[0] in the segment's words (-1: argv was re-split)
     env: list          # VAR=value assignments applying to the command
     runtime: bool      # arguments are appended at run time (xargs/parallel)
-    script: Optional[str]  # a wrapper's own shell-script option value (flock -c)
+    scripts: list      # the wrappers' own shell scripts (flock -c, tmux new, watch)
 
 
 class Install(NamedTuple):
@@ -2320,25 +2207,6 @@ def _is_local(value: str, manifests: bool = False) -> bool:
         not _is_urlish(value) and value.lower().endswith(suffixes))
 
 
-def _short_cluster(flag: str, spec: WrapperSpec, name: str) -> tuple:
-    """Split a short-option token for a wrapper into (option, eq, inline value).
-    A cluster (`-Eu`, `-iS`, `-qc`, `-n10`) is read letter by letter up to the
-    first option that takes a value or stops execution; the rest of the token
-    is that option's inline value. Returns ("", "", "") for a cluster of
-    booleans. Short options take no `=`: `-S'A=1 npm i'` keeps its `=`."""
-    takes_value = spec.value | spec.script | ({"-S"} if name == "env" else set())
-    if flag in takes_value or flag in spec.no_exec or len(flag) <= 2:
-        return flag, "", ""
-    for k in range(1, len(flag)):
-        opt = "-" + flag[k]
-        if opt in spec.no_exec:
-            return opt, "", ""
-        if opt in takes_value:
-            inline = flag[k + 1:]
-            return opt, ("=" if inline else ""), inline
-    return "", "", ""
-
-
 def _unwrap(words: list) -> Unwrapped:
     """Strip leading environment assignments, reserved words and exec wrappers
     (each with its own option grammar), so argv[0] is the real executable."""
@@ -2349,7 +2217,7 @@ def _unwrap(words: list) -> Unwrapped:
     env: list = []
     runtime = False
     resplit = False
-    script: Optional[str] = None
+    scripts: list = []
     while i < n:
         tok = argv[i]
         if _ENV_ASSIGN_RE.match(tok) and not dyn[i]:
@@ -2368,61 +2236,25 @@ def _unwrap(words: list) -> Unwrapped:
             if argv[i:i + 1] == ["--"]:
                 i += 1
             continue
-        spec = WRAPPERS.get(name)
-        if spec is None or dyn[i]:
+        if name not in lib.WRAPPERS or dyn[i]:
             break
-        runtime = runtime or spec.runtime
-        j = i + 1
-        restart = False
-        while j < n and argv[j].startswith("-") and argv[j] != "-":
-            flag = argv[j]
-            j += 1
-            if flag == "--":
-                break
-            if flag.startswith("--"):
-                base, eq, inline = flag.partition("=")
-            else:
-                base, eq, inline = _short_cluster(flag, spec, name)
-                if not base:
-                    continue  # a cluster of boolean flags (`-Ei`)
-            if base in spec.no_exec:
-                return Unwrapped([], [], False, 0, env, runtime, None)
-            if name == "env" and base in ("--split-string", "-S"):
-                # env -S 'npm install x': the string is split into the command.
-                if eq:
-                    value = inline
-                else:
-                    value = argv[j] if j < n else ""
-                    j += 1
-                split = shlex.split(value)  # ValueError propagates: fail closed
-                argv = split + argv[j:]
-                dyn = [_SUBST in t or "$" in t for t in split] + dyn[j:]
-                brk = [False] * len(split) + brk[j:]
-                i, n = 0, len(argv)
-                resplit = restart = True
-                break
-            if base in spec.script:
-                if not eq:
-                    inline = argv[j] if j < n else ""
-                    j += 1
-                script = inline
-                continue
-            if not eq and base in spec.value and j < n:
-                j += 1
-        if restart:
+        runtime = runtime or lib.WRAPPERS[name].runtime
+        step = lib.skip_wrapper(argv, i, name)
+        scripts.extend(step.scripts)
+        if step.no_exec:
+            return Unwrapped([], [], False, 0, env, runtime, scripts)
+        if step.split is not None:
+            # env -S 'npm install x': the string is split into the command.
+            split = shlex.split(step.split)  # ValueError propagates: fail closed
+            argv = split + argv[step.end:]
+            dyn = [_SUBST in t or "$" in t for t in split] + dyn[step.end:]
+            brk = [False] * len(split) + brk[step.end:]
+            i, n = 0, len(argv)
+            resplit = True
             continue
-        if spec.joins:
-            script = " ".join(argv[j:])  # `watch 'npm install x'` runs `sh -c`
-            j = n
-        if spec.positional and j < n and not argv[j].startswith("-"):
-            if spec.positional == "one" or re.match(r"^[0-9]", argv[j]):
-                j += 1
-        if j < n and argv[j] in spec.script:  # `flock FILE -c 'script'`
-            script = argv[j + 1] if j + 1 < n else ""
-            j += 2
-        i = j
+        i = step.end
     off = -1 if resplit else i
-    return Unwrapped(argv[i:], dyn[i:], bool(argv[i:]) and (dyn[i] or brk[i]), off, env, runtime, script)
+    return Unwrapped(argv[i:], dyn[i:], bool(argv[i:]) and (dyn[i] or brk[i]), off, env, runtime, scripts)
 
 
 class ShellCall(NamedTuple):
@@ -3612,8 +3444,8 @@ def _scan_segment(seg: Segment, words: list, heres: list, u: Unwrapped, depth: i
     the assignments made earlier in the command (and by enclosing scripts),
     `subs` the command substitutions of this command line."""
     scope_env = env + u.env
-    if u.script is not None:
-        _recurse_script(u.script, depth, results, env=scope_env)
+    for script in u.scripts:
+        _recurse_script(script, depth, results, env=scope_env)
     argv, dyn = u.argv, u.dyn
     if not argv:
         return
@@ -4001,14 +3833,14 @@ def _fixed_denials(d: Detection) -> list:
 
 def main() -> None:
     global _deadline
-    _arm_deadline()
+    lib.arm_deadline("package-guard", _HOOK_DEADLINE_S)
     start_time = time.monotonic()
 
     # 1. Read JSON from stdin.
     try:
         input_data = json.load(sys.stdin)
     except (json.JSONDecodeError, ValueError) as e:
-        audit_log({"event": "parse_error", "error": str(e)})
+        lib.audit_log(redact({"event": "parse_error", "error": str(e)}))
         # Cannot parse input — fail closed.
         print(f"Hook error: failed to parse stdin JSON: {e}", file=sys.stderr)
         sys.exit(2)
@@ -4034,7 +3866,7 @@ def main() -> None:
     if CONFIG_ERRORS:
         reason = ("Package guard configuration is invalid: " + "; ".join(CONFIG_ERRORS)
                   + ". Installs are blocked until it is fixed.")
-        audit_log({"event": "deny_config", "command": command, "reason": reason})
+        lib.audit_log(redact({"event": "deny_config", "command": command, "reason": reason}))
         _decision("deny", reason)
 
     # 4. Collect what needs validating. Most restrictive wins across ALL segments.
@@ -4049,8 +3881,8 @@ def main() -> None:
         fixed = _fixed_denials(d)
         if fixed:
             deny_reasons.extend(fixed)
-            audit_log({"event": "deny_" + ("unanalyzable" if d.manager == _SUSPICIOUS_MANAGER else "segment"),
-                       "command": command, "segment": d.segment, "manager": d.manager, "reasons": fixed})
+            lib.audit_log(redact({"event": "deny_" + ("unanalyzable" if d.manager == _SUSPICIOUS_MANAGER else "segment"),
+                                  "command": command, "segment": d.segment, "manager": d.manager, "reasons": fixed}))
         if d.manager in (_SUSPICIOUS_MANAGER, "nix-env", "nix-profile"):
             continue
 
@@ -4110,18 +3942,18 @@ def main() -> None:
 
     # 6. Make final decision. Most restrictive wins across ALL segments.
     if deny_reasons:
-        audit_log({"event": "deny", "command": command, "packages": checked_packages,
-                   "reasons": deny_reasons, "elapsed_seconds": elapsed})
+        lib.audit_log(redact({"event": "deny", "command": command, "packages": checked_packages,
+                              "reasons": deny_reasons, "elapsed_seconds": elapsed}))
         _decision("deny", " | ".join(deny_reasons))
 
     updated = rewritten if rewritten != command else None
     if ask_reasons:
-        audit_log({"event": "ask", "command": command, "rewritten": updated,
-                   "packages": checked_packages, "reasons": ask_reasons, "elapsed_seconds": elapsed})
+        lib.audit_log(redact({"event": "ask", "command": command, "rewritten": updated,
+                              "packages": checked_packages, "reasons": ask_reasons, "elapsed_seconds": elapsed}))
         _decision("ask", " | ".join(ask_reasons), updated, tool_input)
 
-    audit_log({"event": "allow", "command": command, "rewritten": updated,
-               "packages": checked_packages, "elapsed_seconds": elapsed})
+    lib.audit_log(redact({"event": "allow", "command": command, "rewritten": updated,
+                          "packages": checked_packages, "elapsed_seconds": elapsed}))
     if updated is not None:
         # updatedInput needs a decision, and `allow` would skip the permission
         # prompt: it would approve every other command in a compound line, a
@@ -4143,7 +3975,10 @@ if __name__ == "__main__":
     except SystemExit:
         raise
     except BaseException as exc:  # noqa: BLE001 -- any internal error must block, not allow
-        audit_log({"event": "internal_error", "error": f"{type(exc).__name__}: {exc}"})
+        try:
+            lib.audit_log(redact({"event": "internal_error", "error": f"{type(exc).__name__}: {exc}"}))
+        except BaseException:  # noqa: BLE001 -- logging must not turn the block into exit 1
+            pass
         print(f"package-guard internal error ({type(exc).__name__}: {exc}); blocking to fail closed.",
               file=sys.stderr)
         sys.exit(2)

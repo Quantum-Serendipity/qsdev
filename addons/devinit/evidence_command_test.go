@@ -207,7 +207,7 @@ func TestEvidenceCmd_EnforcedLayerAddressed(t *testing.T) {
 
 	// Persist a real init-state manifest that enables attach-guard and records
 	// the generated guard files with their real hashes; the guard is the one
-	// the generator writes.
+	// the generator writes, and so is the hook library it loads.
 	st := types.GeneratedState{
 		QsdevVersion: "0.8.0",
 		EnabledTools: map[string]bool{"attach-guard": true},
@@ -215,6 +215,7 @@ func TestEvidenceCmd_EnforcedLayerAddressed(t *testing.T) {
 	}
 	for rel, content := range map[string]string{
 		claudecode.PackageGuardPath: string(claudecode.PackageGuardContent()),
+		claudecode.HookLibPath:      string(claudecode.PackageGuardSupportContents()[claudecode.HookLibPath]),
 		".claude/settings.json": `{"hooks": {"PreToolUse": [{"matcher": "` + strings.Join(cmdscan.ShellTools, "|") + `", "hooks": [` +
 			`{"type": "command", "command": "\"${CLAUDE_PROJECT_DIR}\"/.claude/hooks/package-guard.py"}]}]}}`,
 	} {

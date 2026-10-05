@@ -73,14 +73,7 @@ func runPackageGuard(t *testing.T, tool string, input map[string]any, env ...str
 		t.Fatal(err)
 	}
 	cmd := exec.Command(python, driver)
-	cmd.Env = append(os.Environ(),
-		"PYTHONDONTWRITEBYTECODE=1",
-		"PG_PATH="+hook,
-		"PG_ENVELOPE="+string(envelope),
-		"CLAUDE_PROJECT_DIR="+t.TempDir(),
-		"CLAUDE_AUDIT_DIR="+t.TempDir(),
-	)
-	cmd.Env = append(cmd.Env, env...)
+	cmd.Env = hookEnv(t, append([]string{"PG_PATH=" + hook, "PG_ENVELOPE=" + string(envelope)}, env...)...)
 	out, err := cmd.Output()
 	if err != nil {
 		t.Fatalf("driver failed: %v (stdout %q)", err, out)
@@ -142,6 +135,62 @@ func TestPackageGuard_EndToEnd(t *testing.T) {
 			env: []string{"PG_VULN=evil"}, want: "deny", reasonHas: "GHSA-stub-0001"},
 		{name: "monitor websocket source", tool: "Monitor", input: map[string]any{"ws": map[string]any{"url": "wss://x.example"}, "description": "d"},
 			want: "allow"},
+		// U17-07: terminal multiplexers run their command detached.
+		{name: "tmux new runs a script", tool: "Bash", input: bash("tmux new -d 'npm install evil'"), env: []string{"PG_VULN=evil"},
+			want: "deny", reasonHas: "GHSA-stub-0001"},
+		{name: "tmux new-session runs a script", tool: "Bash", input: bash("tmux new-session -d 'npm install evil'"),
+			env: []string{"PG_VULN=evil"}, want: "deny", reasonHas: "GHSA-stub-0001"},
+		{name: "screen runs its command", tool: "Bash", input: bash("screen -dmS s npm install evil"), env: []string{"PG_VULN=evil"},
+			want: "deny", reasonHas: "GHSA-stub-0001"},
+		// U17-07 review: screen -X/-Q, tmux prefixes/chains/shell commands, script FILE -c.
+		{name: "screen -X exec npm install evil", tool: "Bash", input: bash("screen -X exec npm install evil"), env: []string{"PG_VULN=evil"},
+			want: "deny", reasonHas: "GHSA-stub-0001"},
+		{name: "screen -X screen npm install evil", tool: "Bash", input: bash("screen -X screen npm install evil"), env: []string{"PG_VULN=evil"},
+			want: "deny", reasonHas: "GHSA-stub-0001"},
+		{name: "screen -S work -X screen -t t npm install evil", tool: "Bash", input: bash("screen -S work -X screen -t t npm install evil"), env: []string{"PG_VULN=evil"},
+			want: "deny", reasonHas: "GHSA-stub-0001"},
+		{name: "screen -x s -X exec npm install evil", tool: "Bash", input: bash("screen -x s -X exec npm install evil"), env: []string{"PG_VULN=evil"},
+			want: "deny", reasonHas: "GHSA-stub-0001"},
+		{name: "screen -r s -X exec npm install evil", tool: "Bash", input: bash("screen -r s -X exec npm install evil"), env: []string{"PG_VULN=evil"},
+			want: "deny", reasonHas: "GHSA-stub-0001"},
+		{name: "screen -Q exec npm install evil", tool: "Bash", input: bash("screen -Q exec npm install evil"), env: []string{"PG_VULN=evil"},
+			want: "deny", reasonHas: "GHSA-stub-0001"},
+		{name: "tmux new-s -d npm install evil", tool: "Bash", input: bash("tmux new-s -d 'npm install evil'"), env: []string{"PG_VULN=evil"},
+			want: "deny", reasonHas: "GHSA-stub-0001"},
+		{name: "tmux new-w npm install evil", tool: "Bash", input: bash("tmux new-w 'npm install evil'"), env: []string{"PG_VULN=evil"},
+			want: "deny", reasonHas: "GHSA-stub-0001"},
+		{name: "tmux run-shell npm install evil", tool: "Bash", input: bash("tmux run-shell 'npm install evil'"), env: []string{"PG_VULN=evil"},
+			want: "deny", reasonHas: "GHSA-stub-0001"},
+		{name: "tmux ls \\; new -d npm install evil", tool: "Bash", input: bash("tmux ls \\; new -d 'npm install evil'"), env: []string{"PG_VULN=evil"},
+			want: "deny", reasonHas: "GHSA-stub-0001"},
+		{name: "script /dev/null -c npm install evil", tool: "Bash", input: bash("script /dev/null -c 'npm install evil'"), env: []string{"PG_VULN=evil"},
+			want: "deny", reasonHas: "GHSA-stub-0001"},
+		{name: "script -q /dev/null -c npm install evil", tool: "Bash", input: bash("script -q /dev/null -c 'npm install evil'"), env: []string{"PG_VULN=evil"},
+			want: "deny", reasonHas: "GHSA-stub-0001"},
+		{name: "sudo -h h npm install evil", tool: "Bash", input: bash("sudo -h h npm install evil"), env: []string{"PG_VULN=evil"},
+			want: "deny", reasonHas: "GHSA-stub-0001"},
+		// screen -R creates a session running the command when none matches.
+		{name: "screen -R s npm install evil", tool: "Bash", input: bash("screen -R s npm install evil"), env: []string{"PG_VULN=evil"},
+			want: "deny", reasonHas: "GHSA-stub-0001"},
+		{name: "screen -RR npm install evil", tool: "Bash", input: bash("screen -RR npm install evil"), env: []string{"PG_VULN=evil"},
+			want: "deny", reasonHas: "GHSA-stub-0001"},
+		{name: "screen -RR npm npm install evil", tool: "Bash", input: bash("screen -RR npm npm install evil"), env: []string{"PG_VULN=evil"},
+			want: "deny", reasonHas: "GHSA-stub-0001"},
+		{name: "screen -dR s npm install evil", tool: "Bash", input: bash("screen -dR s npm install evil"), env: []string{"PG_VULN=evil"},
+			want: "deny", reasonHas: "GHSA-stub-0001"},
+		{name: "screen -dRR s npm install evil", tool: "Bash", input: bash("screen -dRR s npm install evil"), env: []string{"PG_VULN=evil"},
+			want: "deny", reasonHas: "GHSA-stub-0001"},
+		{name: "screen -xRR s npm install evil", tool: "Bash", input: bash("screen -xRR s npm install evil"), env: []string{"PG_VULN=evil"},
+			want: "deny", reasonHas: "GHSA-stub-0001"},
+		{name: "screen -d -RR s npm install evil", tool: "Bash", input: bash("screen -d -RR s npm install evil"), env: []string{"PG_VULN=evil"},
+			want: "deny", reasonHas: "GHSA-stub-0001"},
+		{name: "screen -D -RR s npm install evil", tool: "Bash", input: bash("screen -D -RR s npm install evil"), env: []string{"PG_VULN=evil"},
+			want: "deny", reasonHas: "GHSA-stub-0001"},
+		{name: "script -qc 'screen -R s npm install evil' /dev/null", tool: "Bash", input: bash("script -qc 'screen -R s npm install evil' /dev/null"), env: []string{"PG_VULN=evil"},
+			want: "deny", reasonHas: "GHSA-stub-0001"},
+		{name: "screen -R", tool: "Bash", input: bash("screen -R"), env: []string{"PG_VULN=evil"}, want: "allow"},
+		{name: "screen -dRR s", tool: "Bash", input: bash("screen -dRR s"), env: []string{"PG_VULN=evil"}, want: "allow"},
+		{name: "screen -r s", tool: "Bash", input: bash("screen -r s"), env: []string{"PG_VULN=evil"}, want: "allow"},
 		{name: "non-shell tool", tool: "Write", input: map[string]any{"file_path": "x", "content": "npm install evil"},
 			env: []string{"PG_VULN=evil"}, want: "allow"},
 	}

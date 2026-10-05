@@ -177,6 +177,7 @@ func runCheck(cmd *cobra.Command, format check.OutputFormat, auditLevel check.Au
 	// seeded from the embedded templates so the judgement holds when the
 	// generator cannot run or the config turns Claude Code off.
 	ctx.GeneratedContent = claudecode.HookScriptContents()
+	ctx.GuardSupportFiles = []string{claudecode.HookLibPath}
 	for rel, f := range freshFiles {
 		ctx.GeneratedContent[rel] = f.Content
 	}

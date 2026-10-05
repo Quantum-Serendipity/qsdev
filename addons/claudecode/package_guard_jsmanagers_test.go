@@ -2,7 +2,6 @@ package claudecode_test
 
 import (
 	"encoding/json"
-	"os"
 	"os/exec"
 	"path/filepath"
 	"slices"
@@ -58,15 +57,7 @@ func runPGJSDriver(t *testing.T, mode, command, manager string, v any) {
 		t.Fatal(err)
 	}
 	cmd := exec.Command(python, "-c", pgJSDriver)
-	cmd.Env = append(os.Environ(),
-		"PYTHONDONTWRITEBYTECODE=1",
-		"PG_PATH="+template,
-		"PG_MODE="+mode,
-		"PG_CMD="+command,
-		"PG_MGR="+manager,
-		"CLAUDE_PROJECT_DIR="+t.TempDir(),
-		"CLAUDE_AUDIT_DIR="+t.TempDir(),
-	)
+	cmd.Env = hookEnv(t, "PG_PATH="+template, "PG_MODE="+mode, "PG_CMD="+command, "PG_MGR="+manager)
 	out, err := cmd.Output()
 	if err != nil {
 		t.Fatalf("driver failed: %v\n%s", err, out)

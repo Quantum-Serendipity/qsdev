@@ -2,6 +2,8 @@ package claudecode_test
 
 import (
 	"bytes"
+	"os"
+	"slices"
 	"strings"
 	"testing"
 
@@ -30,12 +32,17 @@ func TestGenerateHookFiles_AllEnabled(t *testing.T) {
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
-		if len(files) != 6 {
-			t.Errorf("expected 6 files, got %d", len(files))
+		// Six hooks plus the shared Python hook library they load.
+		if len(files) != 7 {
+			t.Errorf("expected 7 files, got %d", len(files))
 		}
 		for _, f := range files {
-			if f.Mode != 0o755 {
-				t.Errorf("%s: mode = %o, want %o", f.Path, f.Mode, 0o755)
+			wantMode := os.FileMode(0o755)
+			if f.Path == claudecode.HookLibPath {
+				wantMode = 0o644 // loaded by path, never executed
+			}
+			if f.Mode != wantMode {
+				t.Errorf("%s: mode = %o, want %o", f.Path, f.Mode, wantMode)
 			}
 			if len(f.Content) == 0 {
 				t.Errorf("%s: content is empty", f.Path)
@@ -111,8 +118,8 @@ func TestGenerateHookFiles_AllEnabled(t *testing.T) {
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
-		if len(files) != 1 {
-			t.Fatalf("expected 1 file, got %d", len(files))
+		if len(files) != 2 || files[0].Path != claudecode.PackageGuardPath || files[1].Path != claudecode.HookLibPath {
+			t.Fatalf("files = %v, want the package guard and the hook library", files)
 		}
 		content := string(files[0].Content)
 		checks := []string{
@@ -181,5 +188,82 @@ func TestHookScriptContents(t *testing.T) {
 				t.Errorf("generated %s differs from HookScriptContents", f.Path)
 			}
 		}
+	}
+}
+
+// TestGenerateHookFiles_EmitsHookLib pins that the shared Python hook library
+// is written, with its template's exact content, exactly when a hook that
+// loads it is: such a hook without it blocks every call, and a library
+// nothing loads is clutter.
+func TestGenerateHookFiles_EmitsHookLib(t *testing.T) {
+	t.Parallel()
+	template, err := os.ReadFile(hookLibTemplate)
+	if err != nil {
+		t.Fatal(err)
+	}
+	noLSP := types.LSPSettings{Enforcement: "off"}
+	tests := []struct {
+		name    string
+		answers types.WizardAnswers
+		want    bool
+	}{
+		{"package guard only", types.WizardAnswers{Hooks: types.HookChoices{SafetyBlock: true}, LSP: noLSP}, true},
+		{"every hook", types.WizardAnswers{Hooks: types.HookChoices{
+			SafetyBlock: true, CredentialScan: true, DestructivePrevention: true,
+			FileBoundary: true, ToolGates: true, SOC2Audit: true,
+		}}, true},
+		// soc2-audit-log.py writes its own trail and does not load the library.
+		{"soc2 audit only", types.WizardAnswers{Hooks: types.HookChoices{SafetyBlockOptOut: true, SOC2Audit: true}, LSP: noLSP}, false},
+		{"shell hooks only", types.WizardAnswers{Hooks: types.HookChoices{SafetyBlockOptOut: true, AuditLog: true}}, false},
+		{"no hooks", types.WizardAnswers{Hooks: types.HookChoices{SafetyBlockOptOut: true}, LSP: noLSP}, false},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			files, err := claudecode.GenerateHookFiles(tc.answers)
+			if err != nil {
+				t.Fatal(err)
+			}
+			i := slices.IndexFunc(files, func(f types.GeneratedFile) bool { return f.Path == claudecode.HookLibPath })
+			if got := i >= 0; got != tc.want {
+				t.Fatalf("hook library emitted = %v, want %v (files %v)", got, tc.want, files)
+			}
+			if i < 0 {
+				return
+			}
+			if lib := files[i]; !bytes.Equal(lib.Content, template) || lib.Mode != 0o644 || lib.Strategy != types.Overwrite {
+				t.Errorf("hook library = mode %o strategy %v, content equal %v; want 644, Overwrite, the template",
+					lib.Mode, lib.Strategy, bytes.Equal(lib.Content, template))
+			}
+		})
+	}
+}
+
+// TestHookSupportPaths pins which hooks depend on the shared library, derived
+// from whether their template loads it, so whatever writes a hook (init,
+// update, enable) can write the library with it.
+func TestHookSupportPaths(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		path string
+		want []string
+	}{
+		{claudecode.PackageGuardPath, []string{claudecode.HookLibPath}},
+		{".claude/hooks/block-destructive.py", []string{claudecode.HookLibPath}},
+		{".claude/hooks/scan-secrets.py", []string{claudecode.HookLibPath}},
+		{".claude/hooks/file-boundary.py", []string{claudecode.HookLibPath}},
+		{".claude/hooks/tool-gates.py", []string{claudecode.HookLibPath}},
+		{".claude/hooks/soc2-audit-log.py", nil},
+		{".claude/hooks/audit-log.sh", nil},
+		{claudecode.HookLibPath, nil},
+		{"CLAUDE.md", nil},
+	}
+	for _, tc := range tests {
+		t.Run(tc.path, func(t *testing.T) {
+			t.Parallel()
+			if got := claudecode.HookSupportPaths(tc.path); !slices.Equal(got, tc.want) {
+				t.Errorf("HookSupportPaths(%q) = %v, want %v", tc.path, got, tc.want)
+			}
+		})
 	}
 }

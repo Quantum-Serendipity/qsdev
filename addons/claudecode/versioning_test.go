@@ -2,6 +2,7 @@ package claudecode_test
 
 import (
 	"io/fs"
+	pathpkg "path"
 	"strings"
 	"testing"
 
@@ -82,6 +83,9 @@ func TestTemplateFS_OnlyShippedFiles(t *testing.T) {
 			return err
 		}
 		base := d.Name()
+		if path == "templates/hooks/"+pathpkg.Base(claudecode.HookLibPath) {
+			return nil // the one underscore-prefixed template, embedded by name
+		}
 		if strings.HasPrefix(base, ".") || strings.HasPrefix(base, "_") || strings.HasSuffix(base, ".pyc") {
 			t.Errorf("embedded template tree contains build artifact %q", path)
 		}

@@ -1,6 +1,7 @@
 package cmdscan
 
 import (
+	"maps"
 	"slices"
 	"strings"
 	"unicode"
@@ -14,6 +15,11 @@ var commandWrappers = map[string]bool{
 	"timeout": true, "stdbuf": true, "ionice": true, "setsid": true,
 	"chrt": true, "taskset": true, "unbuffer": true,
 }
+
+// WrapperNames returns the names of the command wrappers the scanner follows,
+// sorted. The Python hooks' wrapper table is tested against it, so the two
+// cannot drift apart unnoticed.
+func WrapperNames() []string { return slices.Sorted(maps.Keys(commandWrappers)) }
 
 // wrapperOptionArgs lists the options of a wrapper that take the next word as
 // their argument, so it is not the program (`timeout -s KILL 30 cmd`).

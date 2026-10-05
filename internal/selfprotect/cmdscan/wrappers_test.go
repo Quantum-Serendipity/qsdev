@@ -366,3 +366,15 @@ func TestWrapperOptionIs(t *testing.T) {
 		}
 	}
 }
+
+func TestWrapperNames(t *testing.T) {
+	t.Parallel()
+	got := WrapperNames()
+	if want := slices.Sorted(maps.Keys(commandWrappers)); !slices.Equal(got, want) {
+		t.Errorf("WrapperNames() = %v, want %v", got, want)
+	}
+	got[0] = "mutated"
+	if WrapperNames()[0] == "mutated" {
+		t.Error("WrapperNames() shares its slice with the caller")
+	}
+}

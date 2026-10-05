@@ -1,0 +1,53 @@
+name: Tool pins
+
+# Keeps .github/tool-versions.env current: the CI and release tools no
+# Dependabot ecosystem covers (goreleaser, golangci-lint, gotestsum,
+# govulncheck). scripts/bump-tool-pins.sh takes a newer exact release only
+# once it is at least 3 days old, the catalog's baseline age gate, and opens
+# or updates one PR (U26-02, Decision D9).
+#
+# Trust boundary: runs only on its schedule or by hand, never on an event a
+# contributor controls. GITHUB_TOKEN stays read-only. The PR is opened with
+# TOOL_PINS_TOKEN, a fine-grained PAT stored as an Actions secret, because a
+# PR opened with GITHUB_TOKEN would not trigger CI. CONTRIBUTING.md documents
+# the token. TestToolPinsWorkflowScope pins this scope.
+
+on:
+  schedule:
+    - cron: "23 5 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: tool-pins
+  cancel-in-progress: false
+
+jobs:
+  bump:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Harden Runner
+        uses: step-security/harden-runner@9af89fc71515a100421586dfdb3dc9c984fbf411 # v2.19.4
+        with:
+          egress-policy: audit
+
+      - name: Require tool pins token
+        env:
+          TOOL_PINS_TOKEN: ${{ secrets.TOOL_PINS_TOKEN }}
+        run: |
+          if [ -z "$TOOL_PINS_TOKEN" ]; then
+            echo "::error::TOOL_PINS_TOKEN is not set as an Actions secret; see CONTRIBUTING.md (Tool pins token)."
+            exit 1
+          fi
+
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          token: ${{ secrets.TOOL_PINS_TOKEN }}
+
+      - name: Bump tool pins
+        env:
+          GH_TOKEN: ${{ secrets.TOOL_PINS_TOKEN }}
+        run: scripts/bump-tool-pins.sh --open-pr

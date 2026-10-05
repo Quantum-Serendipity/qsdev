@@ -44,8 +44,12 @@ func (a ActionRef) Comment() string {
 // plausible is worse than no pin: it fails at workflow run time, long after
 // review, and the tag comment beside it reads as authoritative.
 //
-// TestActionPinsMatchWorkflows keeps these in step with .github/workflows,
-// which Dependabot updates and this file it cannot see.
+// Dependabot updates .github/workflows and cannot see this file. On its
+// actions branches the dependabot-fixup workflow runs go generate, which
+// copies the bumped SHAs and tags into the entries those workflows use
+// (SyncActionPins); TestActionPinsMatchWorkflows fails if they still differ.
+//
+//go:generate go run ./cmd/syncpins
 var (
 	ActionCheckout = ActionRef{
 		Owner: "actions",
@@ -103,3 +107,20 @@ var (
 		Tag:   "v5.0.0",
 	}
 )
+
+// AllActionRefs returns every ActionRef in the catalog, keyed by variable
+// name. It is the single registry the drift, shape and upstream checks
+// iterate; TestAllActionRefsCoversExportedVars fails if it omits a declared
+// pin.
+func AllActionRefs() map[string]ActionRef {
+	return map[string]ActionRef{
+		"ActionCheckout":         ActionCheckout,
+		"ActionHardenRunner":     ActionHardenRunner,
+		"ActionUploadArtifact":   ActionUploadArtifact,
+		"ActionDownloadArtifact": ActionDownloadArtifact,
+		"ActionOSVScanner":       ActionOSVScanner,
+		"ActionGrype":            ActionGrype,
+		"ActionInstallNix":       ActionInstallNix,
+		"ActionLabeler":          ActionLabeler,
+	}
+}

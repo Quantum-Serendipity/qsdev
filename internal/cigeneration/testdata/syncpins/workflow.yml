@@ -1,0 +1,12 @@
+# Golden input for TestSyncPinsRewritesSHAAndTag. Dependabot has bumped
+# checkout and the subpath osv-scanner action; harden-runner is unchanged.
+name: ci
+on: push
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: step-security/harden-runner@9af89fc71515a100421586dfdb3dc9c984fbf411 # v2.19.4
+      - uses: actions/checkout@1111111111111111111111111111111111111111 # v6.1.0
+      - uses: google/osv-scanner-action/osv-scanner-action@2222222222222222222222222222222222222222 # v2.6.0
+      - uses: actions/setup-go@4a3601121dd01d1626a1e23e37211e3254c1c06c # v6.4.0

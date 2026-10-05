@@ -124,16 +124,9 @@
           seccomp-filter = sandboxPkgs.seccomp-profiles.filter;
         };
 
-        devShells.default = pkgs.mkShell {
-          buildInputs = [
-            go
-            pkgs.git
-            pkgs.goreleaser
-            pkgs.golangci-lint
-            pkgs.gopls
-            pkgs.delve
-            pkgs.syft
-          ];
-        };
+        # No devShells: `devenv shell` (devenv.nix, pinned by devenv.lock) is the
+        # only development environment. Add dev tools there with
+        # `qsdev devenv add-package <name>`, not here.
+        # TestFlakeHasNoDevShells enforces this.
       });
 }

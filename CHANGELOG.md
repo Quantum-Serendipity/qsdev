@@ -79,6 +79,18 @@ All notable changes to qsdev are recorded in this file. The format is based on
   non-zero with an error naming `--online`, so a CI step cannot pass while
   checking nothing. `qsdev outdated --online` behaves as `qsdev outdated` did.
   A CI job that runs `qsdev outdated` must add `--online`.
+- `devenv.nix`, `devenv.yaml`, the per-language security configs, development
+  tasks and `secretspec.toml` are now generated from the same module settings
+  the CI workflow already used: each language entry with the package manager
+  and extras it leaves unset completed from detection (U12-12). Before, CI ran
+  `uv sync --locked` for a Python project with a `uv.lock` while `devenv.nix`
+  set up pip and no `uv`. This applies to `qsdev devenv init` with fresh
+  detection as well as to recorded `.qsdev.yaml` entries, so a project whose
+  recorded language entry lacks a detected package manager or extra (for
+  example Python with `uv.lock`) will see a `devenv.nix` diff on the next
+  `qsdev init --update`. `devenv.yaml` and `secretspec.toml` generation now
+  also fail on a language no module implements, as `devenv.nix` generation
+  already did.
 
 ### Fixed
 
@@ -96,6 +108,11 @@ All notable changes to qsdev are recorded in this file. The format is based on
   `minimum_zig_version` selects), instead of a separate unpinned `pkgs.<tool>`.
   They no longer add a second copy of that toolchain to `packages` (U10-08,
   U10-09). Run `qsdev init --update` to pick this up.
+- A malformed `.qsdev/defaults.yaml` now makes devenv generation (`qsdev
+  init`, `qsdev devenv init`, `--update`) fail with an error naming the file
+  instead of panicking with a stack trace (U12-V01). Generation also no longer
+  silently drops the catalog's base packages, unset variables, security hooks
+  or release-age window when the catalog cannot be loaded (U12-09).
 
 ### Security
 

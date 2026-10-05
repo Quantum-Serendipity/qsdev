@@ -21,6 +21,7 @@ import (
 
 // Compile-time interface compliance checks.
 var _ ecosystem.EcosystemModule = (*Module)(nil)
+var _ ecosystem.PackageProvider = (*Module)(nil)
 var _ ecosystem.DenyRuleProvider = (*Module)(nil)
 
 func init() {
@@ -89,6 +90,17 @@ func (m *Module) Detect(projectRoot string) ecosystem.DetectionResult {
 			PackageManager: pm,
 		},
 	}
+}
+
+// DevenvPackages provisions luarocks for a LuaRocks project, whose CI
+// installs dependencies with it: devenv's Lua language ships only the
+// interpreter. luaPackages is the package set of pkgs.lua, the interpreter
+// devenv uses, as for the luacheck hook.
+func (m *Module) DevenvPackages(config ecosystem.ModuleConfig) []string {
+	if config.PM("") != "luarocks" {
+		return nil
+	}
+	return []string{"luaPackages.luarocks"}
 }
 
 // DevenvNixFragment returns the Nix code fragment to include in devenv.nix

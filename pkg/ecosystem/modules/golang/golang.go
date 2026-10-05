@@ -312,9 +312,10 @@ func (m *Module) DeclaresDependencies(projectRoot string) (bool, error) {
 	return len(mf.Require) > 0, nil
 }
 
-// DevenvPackages returns standard Go development tool packages.
+// DevenvPackages returns standard Go development tool packages, and
+// govulncheck, which the CI scan runs whatever the hook tier.
 func (m *Module) DevenvPackages(_ ecosystem.ModuleConfig) []string {
-	return []string{"gopls", "golangci-lint", "delve", "goreleaser"}
+	return []string{"gopls", "golangci-lint", "delve", "goreleaser", "govulncheck"}
 }
 
 // requiredGoRelease returns the minimum Go release the project needs, as a

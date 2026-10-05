@@ -12,6 +12,7 @@ import (
 	"strings"
 
 	"github.com/Quantum-Serendipity/qsdev/internal/catalog"
+	"github.com/Quantum-Serendipity/qsdev/internal/sliceutil"
 	"github.com/Quantum-Serendipity/qsdev/internal/toolreg"
 	"github.com/Quantum-Serendipity/qsdev/internal/version"
 	"github.com/Quantum-Serendipity/qsdev/pkg/branding"
@@ -212,6 +213,10 @@ func BuildDevenvNixData(answers types.WizardAnswers, registry *ecosystem.Registr
 	// enable/disable lines for every detected ecosystem (plus always-on nixd).
 	// Analyzer config lives in the generated .lsp.json, not devenv.
 	collectLSPSection(answers, data)
+
+	// A program both a hook and its module provision (a CI tool such as
+	// cppcheck, which the module adds whatever the hook tier) is listed once.
+	data.Packages = sliceutil.Dedup(data.Packages)
 
 	// 4f. Sections enabled tools contribute to devenv.nix (e.g. the starship
 	// env var, commit-ticket/branch-naming hooks). Rendering them here makes

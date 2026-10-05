@@ -4,6 +4,9 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io/fs"
+	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -20,11 +23,11 @@ const ghcProbeTimeout = 5 * time.Second
 // is unset (a .qsdev.yaml from before qsdev recorded it), or the configured
 // haskell version is not exactly the GHC stack.yaml needs (Stack's default
 // compiler check accepts no other), as after a snapshot bump, since
-// .qsdev.yaml keeps the version detected at init. Cabal projects need no
-// check.
+// .qsdev.yaml keeps the version detected at init. For a Cabal project it
+// reports unpinned dependencies instead (see cabalFreezeWarnings).
 func (m *Module) SetupWarnings(projectRoot string, config ecosystem.ModuleConfig) []string {
 	if config.Extra("build_tool", "cabal") != "stack" {
-		return nil
+		return cabalFreezeWarnings(projectRoot)
 	}
 	sc, err := readStackCompiler(projectRoot)
 	switch {
@@ -49,6 +52,29 @@ func (m *Module) SetupWarnings(projectRoot string, config ecosystem.ModuleConfig
 			"set the haskell version to %s and run `qsdev init --update` to use nixpkgs' haskell.compiler.%s where it exists",
 			sc.ghc, sc.source, sc.ghc, compilerAttr(sc.ghc))}
 	}
+}
+
+// cabalFreezeWarnings reports a Cabal project whose dependencies are not
+// pinned: without cabal.project.freeze the CI install step fails, and a
+// freeze file without an index-state line pins versions but not the Hackage
+// index, so revisions published later still change the build plan.
+func cabalFreezeWarnings(projectRoot string) []string {
+	data, err := os.ReadFile(filepath.Join(projectRoot, "cabal.project.freeze"))
+	switch {
+	case errors.Is(err, fs.ErrNotExist):
+		return []string{"cabal.project.freeze is missing, so the CI install step fails and dependencies are not pinned; " +
+			"run `cabal freeze` and commit cabal.project.freeze"}
+	case err != nil:
+		return []string{fmt.Sprintf("cannot check that cabal.project.freeze pins the dependencies: %v", err)}
+	}
+	for line := range strings.Lines(string(data)) {
+		// Cabal field names are case-insensitive.
+		if strings.HasPrefix(strings.ToLower(strings.TrimSpace(line)), "index-state:") {
+			return nil
+		}
+	}
+	return []string{"cabal.project.freeze has no index-state line, so `cabal update` lets later Hackage revisions change the build plan; " +
+		"add `index-state: <timestamp>` to cabal.project and re-run `cabal freeze`"}
 }
 
 // ToolchainWarnings reports when a Stack project's stack.yaml needs a GHC

@@ -44,6 +44,7 @@ func TestDetectionReachesModuleOutput(t *testing.T) {
 		wantPackages []string // DevenvPackages / DevenvPackageExprs substrings
 		wantFragment []string
 		wantHook     map[string]string // hook ID -> exact Entry
+		wantCI       []string          // exact CI commands
 	}{
 		{
 			name:         "flutter",
@@ -104,6 +105,28 @@ func TestDetectionReachesModuleOutput(t *testing.T) {
 			lang:     "ruby",
 			wantHook: map[string]string{"rubocop": "bundle exec rubocop --autocorrect --force-exclusion"},
 		},
+		{
+			name: "clojure clj-watson alias",
+			files: map[string]string{"deps.edn": "{:aliases {:clj-watson {:replace-deps {io.github.clj-holmes/clj-watson {:git/tag \"v6.0.0\" :git/sha \"cb02879\"}}\n" +
+				"                       :main-opts [\"-m\" \"clj-watson.cli\"]}}}\n"},
+			lang:   "clojure",
+			wantCI: []string{"clojure -M:clj-watson scan -p deps.edn"},
+		},
+		{
+			name:   "leiningen lein-nvd plugin",
+			files:  map[string]string{"project.clj": "(defproject x \"0.1.0\"\n  :plugins [[lein-nvd \"2.0.0\"]])\n"},
+			lang:   "clojure",
+			wantCI: []string{"lein nvd check"},
+		},
+		{
+			name: "elixir mix_audit",
+			files: map[string]string{
+				"mix.exs":  "defmodule X.MixProject do\n  defp deps, do: [{:mix_audit, \"~> 2.1\", only: [:dev, :test], runtime: false}]\nend\n",
+				"mix.lock": "%{}\n",
+			},
+			lang:   "elixir",
+			wantCI: []string{"mix deps.audit"},
+		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -139,6 +162,16 @@ func TestDetectionReachesModuleOutput(t *testing.T) {
 			for _, want := range tt.wantFragment {
 				if !strings.Contains(frag, want) {
 					t.Errorf("fragment missing %q (config %+v):\n%s", want, cfg, frag)
+				}
+			}
+
+			var ci []string
+			for _, c := range mod.CICommands(cfg) {
+				ci = append(ci, c.Command)
+			}
+			for _, want := range tt.wantCI {
+				if !slices.Contains(ci, want) {
+					t.Errorf("CI commands %q missing %q (config %+v)", ci, want, cfg)
 				}
 			}
 

@@ -715,3 +715,16 @@ func TestPreCommitHooks_FormatRunsLanguagePackage(t *testing.T) {
 		})
 	}
 }
+
+// TestDevenvPackages verifies tflint and tfsec, which the CI scan runs for
+// both variants, are provisioned whatever the hook tier.
+func TestDevenvPackages(t *testing.T) {
+	t.Parallel()
+	want := []string{"tflint", "tfsec"}
+	for _, variant := range []string{"terraform", "opentofu"} {
+		cfg := ecosystem.ModuleConfig{Extras: map[string]string{"variant": variant}}
+		if got := (&terraform.Module{}).DevenvPackages(cfg); !slices.Equal(got, want) {
+			t.Errorf("DevenvPackages(variant=%s) = %q, want %q", variant, got, want)
+		}
+	}
+}

@@ -477,6 +477,54 @@ func TestBuildDevenvNixData_LanguagePackageHook(t *testing.T) {
 	}
 }
 
+// TestBuildDevenvNixData_CIToolsAtEveryTier verifies the programs module CI
+// steps run are in devenv.nix at every hook tier, the supply-chain-only
+// baseline included, where the language hooks that also carry them (cppcheck,
+// tflint) are left out; and that a program both a hook and its module
+// provision is listed once.
+func TestBuildDevenvNixData_CIToolsAtEveryTier(t *testing.T) {
+	t.Parallel()
+	langs := []types.LanguageChoice{
+		{Name: "cpp", PackageManager: "conan"},
+		{Name: "terraform"},
+		{Name: "go"},
+		{Name: "perl"},
+		{Name: "lua", PackageManager: "luarocks"},
+	}
+	ciTools := []string{"cppcheck", "conan", "tflint", "tfsec", "govulncheck", "perlPackages.Carton", "perlPackages.CPANAudit", "luaPackages.luarocks"}
+	for _, tier := range []string{"", "baseline", "enhanced", "strict"} {
+		name := tier
+		if name == "" {
+			name = "unset"
+		}
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			answers := types.WizardAnswers{ProjectName: "ci-tools", Languages: langs, HookTier: tier, ComplianceLevel: tier}
+			out, err := renderDevenvNix(answers, ecosystem.DefaultRegistry())
+			if err != nil {
+				t.Fatalf("renderDevenvNix: %v", err)
+			}
+			nix := string(out)
+			for _, tool := range ciTools {
+				if n := strings.Count(nix, " pkgs."+tool+" "); n != 1 {
+					t.Errorf("devenv.nix package list holds pkgs.%s %d times, want once", tool, n)
+				}
+			}
+			data, err := BuildDevenvNixData(answers, ecosystem.DefaultRegistry())
+			if err != nil {
+				t.Fatalf("BuildDevenvNixData: %v", err)
+			}
+			seen := make(map[string]bool, len(data.Packages))
+			for _, p := range data.Packages {
+				if seen[p] {
+					t.Errorf("data.Packages lists %q more than once: %q", p, data.Packages)
+				}
+				seen[p] = true
+			}
+		})
+	}
+}
+
 // TestBuildDevenvNixData_HookPackageFieldsExclusive verifies a hook may not
 // name both a nixpkgs attribute and a devenv language as its package.
 func TestBuildDevenvNixData_HookPackageFieldsExclusive(t *testing.T) {

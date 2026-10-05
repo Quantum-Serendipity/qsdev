@@ -184,6 +184,11 @@ type CheckContext struct {
 	// the recorded or committed hash, which a change to the guard can
 	// re-hash along with it.
 	GeneratedContent map[string][]byte
+	// GuardSupportFiles are the project-relative paths of files every Python
+	// guard loads at run time (the shared hook library). Whenever a guard is
+	// a .py script they are judged exactly like a guard: a tampered one runs
+	// inside every guard.
+	GuardSupportFiles []string
 	// ExpectedGenerationErr is why the generator's output for the project
 	// (ExpectedClaudeSettings, and the generated files beyond the embedded
 	// hook scripts) is unknown: the answers could not be derived from the

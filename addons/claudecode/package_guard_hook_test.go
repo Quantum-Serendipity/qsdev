@@ -70,7 +70,7 @@ def urlopen(req, timeout=None):
     return Resp(gzip.compress(body) if url in fx.get('gzip', []) else body)
 
 m.urllib.request.urlopen = urlopen
-m.audit_log = lambda e: None
+m.lib.audit_log = lambda e: None
 sys.stdin = io.StringIO(json.dumps({'tool_name': 'Bash', 'tool_input': {'command': os.environ['PG_CMD']}}))
 out = io.StringIO()
 code = None
@@ -250,9 +250,9 @@ func runGuardPython(t *testing.T, python, driver string, env ...string) []byte {
 	cmd := exec.Command(python, "-c", driver)
 	// PYTHONDONTWRITEBYTECODE keeps the import from writing a __pycache__
 	// directory into the embedded templates tree.
-	cmd.Env = append(append(os.Environ(), "PYTHONDONTWRITEBYTECODE=1", "PACKAGE_GUARD_ALLOWLIST=",
+	cmd.Env = hookEnv(t, append([]string{"PACKAGE_GUARD_ALLOWLIST=",
 		"PACKAGE_GUARD_DENYLIST=", "PACKAGE_GUARD_TEAM_ALLOWLIST=", "PACKAGE_GUARD_TEAM_DENYLIST=",
-		"PACKAGE_GUARD_NEW_DEP_GATE=allow", "PACKAGE_GUARD_SOC2_AUDIT="), env...)
+		"PACKAGE_GUARD_NEW_DEP_GATE=allow", "PACKAGE_GUARD_SOC2_AUDIT="}, env...)...)
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		t.Fatalf("driver failed: %v\n%s", err, out)
@@ -955,7 +955,7 @@ func TestPackageGuard_InternalErrorFailsClosed(t *testing.T) {
 	t.Parallel()
 	python, template := guardTemplate(t)
 	cmd := exec.Command(python, template)
-	cmd.Env = append(os.Environ(), "PYTHONDONTWRITEBYTECODE=1", "CLAUDE_PROJECT_DIR="+t.TempDir())
+	cmd.Env = hookEnv(t)
 	// tool_input is not an object: main() raises AttributeError.
 	cmd.Stdin = strings.NewReader(`{"tool_name": "Bash", "tool_input": "npm install x"}`)
 	out, err := cmd.CombinedOutput()
@@ -1020,7 +1020,7 @@ func TestPackageGuard_AuditLogIsRedactedAndPrivate(t *testing.T) {
 				t.Fatal(err)
 			}
 			cmd := exec.Command(python, template)
-			cmd.Env = append(os.Environ(), "PYTHONDONTWRITEBYTECODE=1", "CLAUDE_PROJECT_DIR="+project)
+			cmd.Env = hookEnv(t, "CLAUDE_PROJECT_DIR="+project)
 			cmd.Stdin = strings.NewReader(string(input))
 			out, err := cmd.Output()
 			if err != nil || !strings.Contains(string(out), `"deny"`) {
@@ -1066,7 +1066,7 @@ func TestPackageGuard_AuditLogIsRedactedAndPrivate(t *testing.T) {
 			t.Fatal(err)
 		}
 		cmd := exec.Command(python, template)
-		cmd.Env = append(os.Environ(), "PYTHONDONTWRITEBYTECODE=1", "CLAUDE_PROJECT_DIR="+project)
+		cmd.Env = hookEnv(t, "CLAUDE_PROJECT_DIR="+project)
 		cmd.Stdin = strings.NewReader(`{"tool_name": "Bash", "tool_input": {"command": "nix-env -i hello"}}`)
 		if out, err := cmd.Output(); err != nil || !strings.Contains(string(out), `"deny"`) {
 			t.Fatalf("hook = %v %s, want a deny decision", err, out)

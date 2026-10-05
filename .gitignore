@@ -39,6 +39,8 @@ internal-docs/
 .claude/settings.local.json
 .claude/worktrees/
 .claude/.qsdev-claude-answers.yaml
+# Hook audit logs, wherever a hook (or a hook test) writes them.
+**/.claude/logs/
 
 # Node (not a JS project — ignore test debris)
 node_modules/

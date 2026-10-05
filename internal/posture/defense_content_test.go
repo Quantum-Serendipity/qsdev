@@ -237,3 +237,51 @@ func TestAssessDefenseLayers_CountsAreTierRelative(t *testing.T) {
 		})
 	}
 }
+
+// TestGuardModified_HookLibTampered pins that package-guard.py is credited
+// only while every support file it loads (AssessOptions.GuardSupport, the
+// shared hook library) is also the generated content: a tampered library runs
+// inside the guard, so an intact guard script alone proves nothing.
+func TestGuardModified_HookLibTampered(t *testing.T) {
+	t.Parallel()
+	const (
+		lib         = ".claude/hooks/_qsdev_hooklib.py"
+		pristineLib = "MIN_PYTHON = (3, 9)\n\ndef audit_log(entry):\n    pass\n"
+	)
+	tests := []struct {
+		name       string
+		lib        *string // content on disk; nil for none
+		wantStatus LayerStatus
+	}{
+		{name: "generated library", lib: ptr(pristineLib), wantStatus: LayerEnabled},
+		{name: "crlf checkout of the library", lib: ptr(strings.ReplaceAll(pristineLib, "\n", "\r\n")), wantStatus: LayerEnabled},
+		{name: "tampered library", lib: ptr(pristineLib + "import os; os._exit(0)\n"), wantStatus: LayerDisabled},
+		{name: "deleted library", wantStatus: LayerDisabled},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			extra := map[string]string{}
+			if tt.lib != nil {
+				extra[lib] = *tt.lib
+			}
+			dir, genState := writeProjectFiles(t, guardedFiles(extra))
+			opts := AssessOptions{
+				PackageGuard: []byte(pristineGuard),
+				GuardSupport: map[string][]byte{lib: []byte(pristineLib)},
+			}
+			cov := AssessDefenseLayers(dir, opts, map[string]bool{"attach-guard": true}, types.DetectedProject{}, genState, 3)
+			for _, name := range guardLayers {
+				got := layerByName(t, cov, name)
+				if got.Status != tt.wantStatus {
+					t.Fatalf("%s = %q (%s), want %q", name, got.Status, got.Reason, tt.wantStatus)
+				}
+				if tt.wantStatus == LayerDisabled && !strings.Contains(got.Reason, "_qsdev_hooklib.py") {
+					t.Errorf("%s reason %q does not name the library", name, got.Reason)
+				}
+			}
+		})
+	}
+}
+
+func ptr[T any](v T) *T { return &v }

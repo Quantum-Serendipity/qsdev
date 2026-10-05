@@ -10,12 +10,14 @@ import (
 	"maps"
 	"os"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strings"
 	"time"
 
 	"github.com/spf13/cobra"
 
+	"github.com/Quantum-Serendipity/qsdev/addons/claudecode"
 	"github.com/Quantum-Serendipity/qsdev/internal/claudesettings"
 	"github.com/Quantum-Serendipity/qsdev/internal/cmdutil"
 	qsdevconfig "github.com/Quantum-Serendipity/qsdev/internal/config"
@@ -50,6 +52,7 @@ type toolChange struct {
 // toolChangeResult reports what applying a toolChange did.
 type toolChangeResult struct {
 	written   []types.GeneratedFile
+	removed   []string // no-longer-generated files deleted
 	notices   []string
 	nixResult *update.NixUpdateResult
 }
@@ -174,13 +177,14 @@ func lifecycleAccumulatorMode(answers types.WizardAnswers) generationScope {
 
 // generateToolFiles renders the tool's exclusive files (its GenerateFunc plus
 // any file the generators emit under its exclusive paths) and the current
-// content of every shared file it contributes to, from the given answers.
-func generateToolFiles(tool *toolreg.Tool, toolName string, answers types.WizardAnswers) (exclusive, shared []types.GeneratedFile, err error) {
+// content of every shared file it contributes to, from the given answers, and
+// returns every file the generators emit for them (all).
+func generateToolFiles(tool *toolreg.Tool, toolName string, answers types.WizardAnswers) (exclusive, shared, all []types.GeneratedFile, err error) {
 	have := make(map[string]bool)
 	if tool.GenerateFunc != nil {
 		generated, err := tool.GenerateFunc(answers)
 		if err != nil {
-			return nil, nil, fmt.Errorf("generating files for %q: %w", toolName, err)
+			return nil, nil, nil, fmt.Errorf("generating files for %q: %w", toolName, err)
 		}
 		for _, f := range generated {
 			f.Owner = toolName
@@ -191,7 +195,7 @@ func generateToolFiles(tool *toolreg.Tool, toolName string, answers types.Wizard
 
 	acc, err := runAccumulator(answers, lifecycleAccumulatorMode(answers))
 	if err != nil {
-		return nil, nil, fmt.Errorf("generating files: %w", err)
+		return nil, nil, nil, fmt.Errorf("generating files: %w", err)
 	}
 	sharedPaths := make(map[string]bool)
 	for _, sf := range tool.SharedFiles() {
@@ -207,7 +211,7 @@ func generateToolFiles(tool *toolreg.Tool, toolName string, answers types.Wizard
 			have[f.Path] = true
 		}
 	}
-	return exclusive, shared, nil
+	return exclusive, shared, acc.allFiles, nil
 }
 
 // planToolEnable computes every file an enable writes and refuses — before
@@ -218,7 +222,7 @@ func planToolEnable(
 	tool *toolreg.Tool, toolName, projectRoot string,
 	answers types.WizardAnswers, existingState types.GeneratedState, force bool,
 ) (toolChange, error) {
-	exclusive, shared, err := generateToolFiles(tool, toolName, answers)
+	exclusive, shared, all, err := generateToolFiles(tool, toolName, answers)
 	if err != nil {
 		return toolChange{}, err
 	}
@@ -244,6 +248,7 @@ func planToolEnable(
 	if err != nil {
 		return toolChange{}, err
 	}
+	exclusive = append(exclusive, hookSupportFiles(projectRoot, exclusive, all, existingState)...)
 	if err := checkExclusiveWrites(projectRoot, exclusive, modStatus, force); err != nil {
 		return toolChange{}, err
 	}
@@ -255,6 +260,40 @@ func planToolEnable(
 	}
 	change.notices = append(kept, change.notices...)
 	return change, nil
+}
+
+// hookSupportFiles returns, from the generators' output (all), the support
+// files the hooks among exclusive load at run time (claudecode.HookSupportPaths:
+// the shared Python hook library) that are missing, differ on disk or are not
+// tracked, so an enable writes and records them with the hook. Without its
+// library a hook blocks every call, and the library may be absent: a disable
+// that stopped its last user removed it, or an older qsdev never wrote it.
+// The files keep their generator owner, so the tool's own disable leaves them
+// to the support-file cleanup (supportOrphans).
+func hookSupportFiles(projectRoot string, exclusive, all []types.GeneratedFile, st types.GeneratedState) []types.GeneratedFile {
+	need := make(map[string]bool)
+	for _, f := range exclusive {
+		for _, p := range claudecode.HookSupportPaths(f.Path) {
+			need[p] = true
+		}
+	}
+	for _, f := range exclusive {
+		delete(need, f.Path)
+	}
+	var support []types.GeneratedFile
+	for _, f := range all {
+		if !need[f.Path] {
+			continue
+		}
+		delete(need, f.Path)
+		_, tracked := st.Files[f.Path]
+		onDisk, err := os.ReadFile(filepath.Join(projectRoot, filepath.FromSlash(f.Path)))
+		if tracked && err == nil && bytes.Equal(onDisk, f.Content) {
+			continue
+		}
+		support = append(support, f)
+	}
+	return support
 }
 
 // keepUserOwnedFiles honours the Skip (skip-if-exists) strategy for a tool's
@@ -471,6 +510,15 @@ func applyToolChange(projectRoot string, change toolChange, st types.GeneratedSt
 		}
 	}
 	result.written = append(result.written, sharedWritten...)
+	for _, fp := range change.shared.Files {
+		if !outcome.dropped[fp.Path] {
+			continue
+		}
+		delete(st.Files, fp.Path)
+		if fp.Action == UpdateActionRemove {
+			result.removed = append(result.removed, fp.Path)
+		}
+	}
 
 	recorded := state.RecordFiles(result.written)
 	for _, fp := range change.shared.Files {
@@ -581,7 +629,7 @@ func runDisable(cmd *cobra.Command, toolName string, opts disableOptions) error 
 	}
 	answers.EnabledTools[toolName] = false
 
-	change, err := planToolDisable(tool, toolName, projectRoot, answers, existingState)
+	change, err := planToolDisable(registry, tool, toolName, projectRoot, answers, existingState)
 	if err != nil {
 		return err
 	}
@@ -594,6 +642,7 @@ func runDisable(cmd *cobra.Command, toolName string, opts disableOptions) error 
 	if err != nil {
 		return err
 	}
+	removed = append(removed, result.removed...)
 	result.notices = append(removal.notices, result.notices...)
 	result.notices = append(result.notices, removeStaleSections(tool, projectRoot, change, existingState)...)
 
@@ -640,12 +689,14 @@ func requireCommittedConfig(projectRoot, toolName string) error {
 		toolName, errOptOutNeedsCommittedConfig, b.ConfigFile, b.AppName)
 }
 
-// planToolDisable regenerates the tool's shared files with the tool disabled.
+// planToolDisable regenerates the tool's shared files with the tool disabled,
+// and cleans up the generator support files no longer generated without it
+// (see supportOrphans).
 func planToolDisable(
-	tool *toolreg.Tool, toolName, projectRoot string,
+	registry *toolreg.Registry, tool *toolreg.Tool, toolName, projectRoot string,
 	answers types.WizardAnswers, existingState types.GeneratedState,
 ) (toolChange, error) {
-	_, shared, err := generateToolFiles(tool, toolName, answers)
+	_, shared, all, err := generateToolFiles(tool, toolName, answers)
 	if err != nil {
 		return toolChange{}, err
 	}
@@ -654,7 +705,23 @@ func planToolDisable(
 	if err != nil {
 		return toolChange{}, err
 	}
+	plan.Files = append(plan.Files, supportOrphans(registry, planOrphans(existingState, all, modStatus, answers), existingState)...)
 	return toolChange{shared: plan, notices: notices}, nil
+}
+
+// supportOrphans keeps, of the orphan cleanup plans, those for generator
+// support files: tracked files whose owner is set but is not a registry tool,
+// such as the shared Python hook library, which is generated only while some
+// Python hook is. A disable that stops the last user of one cleans it up as
+// update would (unmodified: removed; otherwise left and untracked), instead
+// of leaving it inert until the next update. Files a tool owns are left to
+// that tool's own disable.
+func supportOrphans(registry *toolreg.Registry, plans []FileUpdatePlan, st types.GeneratedState) []FileUpdatePlan {
+	return slices.DeleteFunc(plans, func(fp FileUpdatePlan) bool {
+		owner := st.Files[fp.Path].Owner
+		_, isTool := registry.ByName(owner)
+		return owner == "" || isTool
+	})
 }
 
 // exclusiveRemoval is the validated set of tool files a disable deletes.

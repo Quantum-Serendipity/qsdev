@@ -50,57 +50,37 @@ def _fail_closed(exc_type, exc, _tb) -> None:
 sys.excepthook = _fail_closed
 
 import hashlib  # noqa: E402
+import importlib.util  # noqa: E402
 import json  # noqa: E402
 import os  # noqa: E402
 import posixpath  # noqa: E402
 import re  # noqa: E402
 import shlex  # noqa: E402
 import subprocess  # noqa: E402
-import threading  # noqa: E402
-from datetime import datetime, timezone  # noqa: E402
-from pathlib import Path  # noqa: E402
 from typing import Optional  # noqa: E402
 
-# U17-WS7: moves to qsdev_hooklib
-# Oldest interpreter the hook supports (Go: types.MinHookPython). Below it,
-# block (exit 2) instead of crashing with exit 1, which Claude Code treats as
-# a non-blocking error.
-_MIN_PYTHON = (3, 9)
-if sys.version_info < _MIN_PYTHON:
-    print(f"destructive-prevention requires Python {'.'.join(map(str, _MIN_PYTHON))}+ "
-          f"(found {sys.version.split()[0]}); blocking to fail closed.", file=sys.stderr)
+# Shared hook library (.claude/hooks/_qsdev_hooklib.py: audit log, deadline
+# watchdog, interpreter floor). It is loaded by explicit path, so this
+# directory never goes back on sys.path, and without bytecode, so no
+# __pycache__ lands in the project. Missing or broken, it blocks the call
+# (fail closed); below the minimum Python, its import exits 2.
+sys.dont_write_bytecode = True
+try:
+    _lib_spec = importlib.util.spec_from_file_location(
+        "_qsdev_hooklib", os.path.join(os.path.dirname(os.path.abspath(__file__)), "_qsdev_hooklib.py"))
+    lib = importlib.util.module_from_spec(_lib_spec)
+    _lib_spec.loader.exec_module(lib)
+    # What this hook uses: an empty or stale library blocks here, not with an
+    # AttributeError (exit 1, which Claude Code lets through) mid-evaluation.
+    lib.arm_deadline, lib.audit_log, lib.unwrap  # noqa: B018
+except Exception as _exc:
+    print(f"destructive-prevention: hook library unavailable ({_exc}); blocking (fail closed)", file=sys.stderr)
     sys.exit(2)
 
-# U17-WS7: moves to qsdev_hooklib
-# Internal deadline: the hook's registered settings.json timeout minus 2s.
-# Claude Code lets the tool call through when a hook times out, so the
-# watchdog blocks first. QSDEV_HOOK_DEADLINE_MS can only shorten it. Known
-# limit: a C-level regex match that holds the GIL cannot be interrupted by
-# any in-process watchdog.
+# Internal deadline (lib.arm_deadline): the hook's registered settings.json
+# timeout minus 2s, so the watchdog blocks before Claude Code's timeout lets
+# the call through.
 _HOOK_DEADLINE_S = 8
-
-
-def _deadline_seconds() -> float:
-    """The effective deadline: _HOOK_DEADLINE_S, or QSDEV_HOOK_DEADLINE_MS
-    when that is shorter."""
-    try:
-        return min(float(_HOOK_DEADLINE_S), int(os.environ.get("QSDEV_HOOK_DEADLINE_MS", "")) / 1000)
-    except ValueError:
-        return float(_HOOK_DEADLINE_S)
-
-
-def _arm_deadline() -> None:
-    """Start a daemon watchdog that blocks (exit 2) once the deadline passes."""
-    seconds = _deadline_seconds()
-
-    def expire() -> None:
-        sys.stderr.write(f"destructive-prevention: evaluation exceeded {seconds:g}s deadline; blocking (fail closed)\n")
-        sys.stderr.flush()
-        os._exit(2)
-
-    timer = threading.Timer(seconds, expire)
-    timer.daemon = True
-    timer.start()
 
 # Tools whose tool_input.command runs in a shell. The hook's settings.json
 # matcher must list exactly these tools (hook_registry.go shellToolMatcher;
@@ -128,31 +108,6 @@ PRODUCTION_HOST_PATTERNS: list[str] = [
 # Environment names that mark a deployment target as production.
 DEPLOY_ENVIRONMENTS: frozenset[str] = frozenset({"prod", "production", "live"})
 
-AUDIT_LOG: Path = Path(
-    os.environ.get("CLAUDE_PROJECT_DIR", ".")
-) / ".claude" / "logs" / "hook-audit.jsonl"
-AUDIT_LOG_MAX_BYTES = 10 * 1024 * 1024
-
-
-def audit_log(entry: dict) -> None:
-    """Append a JSON entry to the audit log. Never raises. The file is created
-    0600 and rotated to <name>.1 once it exceeds AUDIT_LOG_MAX_BYTES; entries
-    carry command fingerprints, never command text (which can hold secrets)."""
-    try:
-        AUDIT_LOG.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
-        try:
-            if AUDIT_LOG.stat().st_size > AUDIT_LOG_MAX_BYTES:
-                os.replace(AUDIT_LOG, AUDIT_LOG.with_name(AUDIT_LOG.name + ".1"))
-        except FileNotFoundError:
-            pass
-        entry["timestamp"] = datetime.now(timezone.utc).isoformat()
-        fd = os.open(AUDIT_LOG, os.O_WRONLY | os.O_APPEND | os.O_CREAT, 0o600)
-        with os.fdopen(fd, "a") as f:
-            f.write(json.dumps(entry) + "\n")
-    except OSError:
-        pass  # Audit logging must not interrupt hook decisions.
-
-
 def command_fingerprint(command: str) -> dict:
     """Identify a command in the audit log without recording its text."""
     return {
@@ -163,7 +118,7 @@ def command_fingerprint(command: str) -> dict:
 
 def deny(category: str, reason: str, remediation: str, command: str) -> None:
     """Output structured deny JSON and exit."""
-    audit_log({
+    lib.audit_log({
         "event": "deny",
         "hook": "destructive-prevention",
         "category": category,
@@ -318,16 +273,47 @@ class _Parser:
                 self.parse(inner, depth + 1, cmd)
 
 
+# A quoted or escaped operator character (`';'`, `\;`, `"|"`) is a word, not
+# an operator: it is hidden as a private-use character while tokenizing.
+_HIDE_PUNCT = {ord(c): 0xE000 + ord(c) for c in _PUNCT}
+_SHOW_PUNCT = {v: k for k, v in _HIDE_PUNCT.items()}
+
+
+def _hide_quoted_punct(text: str) -> str:
+    """Hide the operator characters text quotes or escapes, so `tmux ls \\;
+    new ...` and `find . \\( ... \\)` keep them as arguments."""
+    out: list[str] = []
+    quote = ""
+    i = 0
+    while i < len(text):
+        ch = text[i]
+        if ch == "\\" and quote != "'" and i + 1 < len(text):
+            if text[i + 1] != "\n":  # a line continuation joins the lines
+                out.append(ch + text[i + 1].translate(_HIDE_PUNCT))
+            i += 2
+            continue
+        if quote:
+            if ch == quote:
+                quote = ""
+            else:
+                ch = ch.translate(_HIDE_PUNCT)
+        elif ch in "'\"":
+            quote = ch
+        out.append(ch)
+        i += 1
+    return "".join(out)
+
+
 def _tokenize(text: str) -> list[tuple[str, bool]]:
     """Split text into (token, is_operator) pairs with quotes removed. Input
     that shlex cannot parse (unbalanced quotes) is retried with the quote
     characters blanked, so a dangerous command is still recognised."""
     for candidate in (text, re.sub(r"[\"']", " ", text)):
         try:
-            lex = shlex.shlex(candidate, posix=True, punctuation_chars=_PUNCT)
+            lex = shlex.shlex(_hide_quoted_punct(candidate), posix=True, punctuation_chars=_PUNCT)
             lex.whitespace = " \t\r"
             lex.whitespace_split = True
-            return [(t, bool(t) and all(ch in _PUNCT for ch in t)) for t in lex]
+            return [(t.translate(_SHOW_PUNCT), bool(t) and all(ch in _PUNCT for ch in t)) for t in lex]
         except ValueError:
             continue
     return [(t, False) for t in re.split(r"[\s\"'\\]+", text) if t]
@@ -361,7 +347,8 @@ def _nested_scripts(cmd: Cmd) -> list[str]:
     scripts: list[str] = []
     for tok in cmd.argv:
         scripts.extend(_command_substitutions(tok))
-    argv = effective_argv(cmd.argv)
+    argv, wrapped = lib.unwrap(cmd.argv)
+    scripts.extend(wrapped)  # flock -c, script -c, watch, tmux new ...
     if not argv:
         return scripts
     name = prog(argv[0])
@@ -384,10 +371,6 @@ def _nested_scripts(cmd: Cmd) -> list[str]:
                 scripts.append(args[k + 1])
             elif a.startswith("--command="):
                 scripts.append(a.split("=", 1)[1])
-    elif name in ("watch",):
-        positional = [a for a in args if not a.startswith("-")]
-        if positional:
-            scripts.append(" ".join(positional))
     return scripts
 
 
@@ -402,54 +385,12 @@ def prog(token: str) -> str:
     return posixpath.basename(token.replace("\\", "/")).lower()
 
 
-_ASSIGNMENT = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*=")
-
-# Commands that run their arguments as a new command, with the options of
-# each that consume a separate value.
-_WRAPPERS: dict[str, frozenset[str]] = {
-    "sudo": frozenset({"-u", "-g", "-C", "-D", "-h", "-p", "-r", "-t", "-U", "-T", "--user", "--group"}),
-    "doas": frozenset({"-u", "-C"}),
-    "env": frozenset({"-u", "-C", "--unset", "--chdir"}),
-    "nohup": frozenset(),
-    "time": frozenset({"-f", "-o", "--format", "--output"}),
-    "command": frozenset(),
-    "builtin": frozenset(),
-    "exec": frozenset({"-a"}),
-    "nice": frozenset({"-n", "--adjustment"}),
-    "ionice": frozenset({"-c", "-n", "-p", "--class", "--classdata"}),
-    "timeout": frozenset({"-s", "-k", "--signal", "--kill-after"}),
-    "stdbuf": frozenset({"-i", "-o", "-e"}),
-    "setsid": frozenset(),
-    "unbuffer": frozenset(),
-    "busybox": frozenset(),
-    "xargs": frozenset({"-I", "-n", "-L", "-P", "-d", "-E", "-s", "-a", "--max-args",
-                        "--max-lines", "--max-procs", "--delimiter", "--arg-file"}),
-}
-
-
 def effective_argv(argv: list[str]) -> list[str]:
-    """Strip leading variable assignments and exec-style wrappers (sudo, env,
-    nohup, timeout, xargs, ...) so argv[0] is the program that really runs."""
-    i = 0
-    while i < len(argv):
-        if _ASSIGNMENT.match(argv[i]):
-            i += 1
-            continue
-        name = prog(argv[i])
-        if name not in _WRAPPERS:
-            break
-        value_opts = _WRAPPERS[name]
-        i += 1
-        while i < len(argv) and argv[i].startswith("-") and argv[i] != "-":
-            opt = argv[i]
-            i += 1
-            if opt == "--":
-                break
-            if opt in value_opts:
-                i += 1
-        if name == "timeout" and i < len(argv):
-            i += 1  # the duration
-    return argv[i:]
+    """Strip leading variable assignments and exec wrappers (sudo, env, nohup,
+    timeout, flock, ...; the shared table, lib.WRAPPERS) so argv[0] is the
+    program that really runs. Empty when a wrapper runs no command or only a
+    script of its own, which _nested_scripts parses."""
+    return lib.unwrap(argv)[0]
 
 
 # ---------------------------------------------------------------------------
@@ -542,11 +483,22 @@ _HOMES: frozenset[str] = frozenset(
 )
 
 
+# Top-level system directories (Linux, macOS, Windows; compared without a
+# drive letter and ignoring case, as macOS and Windows do). Deleting one
+# recursively is critical whatever $HOME is: the home of a root container
+# (/root), of macOS (/Users) or of a hook run with HOME elsewhere.
+_SYSTEM_DIRS: frozenset[str] = frozenset(d.lower() for d in (
+    "/home", "/Users", "/root", "/etc", "/usr", "/var", "/bin", "/sbin", "/lib", "/lib64",
+    "/boot", "/opt", "/srv", "/nix", "/System", "/Library", "/Applications", "/private",
+    "/Windows", "/Program Files", "/Program Files (x86)", "/ProgramData",
+))
+
+
 def is_critical_path(resolved: str, project: str, include_project: bool) -> bool:
-    """A recursive delete of resolved would take out the filesystem root, the
-    home directory (or a directory above it), or, when include_project, the
-    project root (or a directory above it)."""
-    if resolved == "/" or any(_covers(resolved, h) for h in _HOMES):
+    """A recursive delete of resolved would take out the filesystem root, a
+    top-level system directory, the home directory (or a directory above it),
+    or, when include_project, the project root (or a directory above it)."""
+    if resolved == "/" or resolved.lower() in _SYSTEM_DIRS or any(_covers(resolved, h) for h in _HOMES):
         return True
     return include_project and bool(project) and _covers(resolved, _anchor(project))
 
@@ -1270,11 +1222,11 @@ def check_infrastructure(cmds: list[Cmd]) -> Optional[tuple[str, str]]:
 # ---------------------------------------------------------------------------
 
 def main() -> None:
-    _arm_deadline()
+    lib.arm_deadline("destructive-prevention", _HOOK_DEADLINE_S)
     try:
         input_data = json.load(sys.stdin)
     except (json.JSONDecodeError, ValueError) as e:
-        audit_log({
+        lib.audit_log({
             "event": "parse_error",
             "hook": "destructive-prevention",
             "error": str(e),
@@ -1313,7 +1265,7 @@ def main() -> None:
             deny(category, result[0], result[1], command)
 
     # All checks passed — allow.
-    audit_log({
+    lib.audit_log({
         "event": "allow",
         "hook": "destructive-prevention",
         **command_fingerprint(command),

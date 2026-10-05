@@ -58,10 +58,12 @@ func runDoctor(cmd *cobra.Command, jsonOutput, checkMode bool) error {
 
 	osInfo := sysinfo.DetectOS()
 
-	// An unknown working directory only disables the project-scoped checks
-	// (NFS, MCP servers, cloud credential isolation, ecosystem module checks).
+	// The project-scoped checks (NFS, MCP servers, cloud credential
+	// isolation, toolchains, ecosystem module checks) run only inside a
+	// project: a directory under a trusted marker that projectctx found.
+	// Elsewhere projectRoot stays "" and each of them is skipped.
 	var projectRoot string
-	if pc, err := cmdutil.Project(cmd); err == nil {
+	if pc, err := cmdutil.Project(cmd); err == nil && pc.Found {
 		projectRoot = pc.Root
 	}
 
@@ -85,6 +87,7 @@ func runDoctor(cmd *cobra.Command, jsonOutput, checkMode bool) error {
 	wg.Wait()
 
 	report := doctor.BuildReport(osInfo, checks, version.Info().Version)
+	report.ProjectRoot = projectRoot
 	report.SetContainerSection(containerSection)
 	report.SetSandboxSection(sandboxSection)
 	report.SetMCPSection(mcpConfigSection(projectRoot, mcpregistry.DefaultRegistry()))

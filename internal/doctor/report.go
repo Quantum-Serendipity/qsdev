@@ -17,11 +17,15 @@ import (
 
 // Report is the top-level output of qsdev doctor.
 type Report struct {
-	QsdevVersion       string              `json:"qsdev_version"`
-	Timestamp          string              `json:"timestamp"`
-	System             SystemInfo          `json:"system"`
-	Shell              ShellInfo           `json:"shell"`
-	PackageMgrs        []PkgMgrInfo        `json:"package_managers"`
+	QsdevVersion string       `json:"qsdev_version"`
+	Timestamp    string       `json:"timestamp"`
+	System       SystemInfo   `json:"system"`
+	Shell        ShellInfo    `json:"shell"`
+	PackageMgrs  []PkgMgrInfo `json:"package_managers"`
+	// ProjectRoot is the project the project-scoped checks ran against, or
+	// "" outside a project, where they are skipped. It is always emitted so
+	// JSON consumers can tell "skipped" from "clean".
+	ProjectRoot        string              `json:"project_root"`
 	ContainerRuntime   *ContainerSection   `json:"container_runtime,omitempty"`
 	SandboxRuntime     *SandboxSection     `json:"sandbox_runtime,omitempty"`
 	MCPServers         *MCPSection         `json:"mcp_servers,omitempty"`
@@ -327,6 +331,9 @@ func FormatReport(w io.Writer, r *Report, useColor bool) {
 		}
 	}
 	fmt.Fprintln(w)
+	if r.ProjectRoot == "" {
+		fmt.Fprintf(w, "Not inside a %s project — project checks skipped.\n\n", branding.Get().AppName)
+	}
 
 	// Container Runtime
 	if r.ContainerRuntime != nil && r.ContainerRuntime.Detected {

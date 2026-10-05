@@ -40,8 +40,10 @@ func statePath() string {
 // overlay cannot crash the binary before any command runs.
 func validServices() []string { return validation.Services() }
 
-// validLanguages returns the canonical core language list for shell completion.
-func validLanguages() []string { return validation.CoreLanguages() }
+// validLanguages returns every supported language. It backs add/remove
+// validation, the "valid languages" error message and shell completion, so
+// all three accept the same set. Resolved on use, like validServices.
+func validLanguages() []string { return validation.Languages() }
 
 func devenvCmd() *cobra.Command {
 	cmd := &cobra.Command{

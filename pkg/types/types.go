@@ -50,9 +50,15 @@ type WizardAnswers struct {
 	// MCPPolicy it is refreshed from .qsdev.yaml by init, join and update.
 	BranchPattern string `yaml:"branch_pattern,omitempty" json:"branch_pattern,omitempty"`
 	// HookPolicy is the committed .qsdev.yaml `hooks` block that configures
-	// the generated hooks. Like MCPPolicy it is refreshed from .qsdev.yaml by
-	// init, join and update, never chosen interactively.
+	// the generated hooks. It is refreshed from .qsdev.yaml by init, join and
+	// update and by every regeneration from saved answers
+	// (config.AdoptCommitted), never chosen interactively.
 	HookPolicy HooksConfig `yaml:"hook_policy,omitempty" json:"hook_policy,omitempty"`
+	// ClaudePermissions is the committed .qsdev.yaml claude_code.permissions
+	// block, the extra rules added to the preset's. Like HookPolicy it is
+	// refreshed from .qsdev.yaml on every load, so the saved value is never a
+	// source of rules of its own.
+	ClaudePermissions ClaudePermissionsConfig `yaml:"claude_permissions,omitempty" json:"claude_permissions,omitempty"`
 	// Java is the committed .qsdev.yaml java block. Like MCPPolicy it is
 	// refreshed from .qsdev.yaml by init, join and update.
 	Java JavaConfig `yaml:"java,omitempty" json:"java,omitempty"`

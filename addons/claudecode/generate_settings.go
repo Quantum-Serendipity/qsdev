@@ -115,6 +115,12 @@ func buildPermissions(preset PermissionPreset, answers types.WizardAnswers, regi
 	ecosystemDeny := collectEcosystemDenyRules(answers, registry)
 	ecosystemDeny = append(ecosystemDeny, readDenyPermissionRules(collectEcosystemReadDenyRules(answers, registry))...)
 
+	// A malformed committed rule is an error rather than being dropped, so a
+	// bad policy is reported instead of silently narrowing or widening access.
+	if errs := validation.CheckClaudePermissions(answers.ClaudePermissions); len(errs) > 0 {
+		return Permissions{}, errs[0]
+	}
+
 	presetName := string(preset)
 	presetDef, ok := cat.PermissionPreset(presetName)
 	if !ok {
@@ -157,28 +163,17 @@ func buildPermissions(preset PermissionPreset, answers types.WizardAnswers, regi
 			}
 		}
 
-	case PermissionPresetSupplyChainOnly:
-		// Supply-chain-only returns early with no defaultMode/disableBypass.
-		return Permissions{
-			Allow: []string{},
-			Deny:  sliceutil.Dedup(deny),
-			Ask:   sliceutil.Dedup(ask),
-		}, nil
-
-	case PermissionPresetCustom:
-		// Custom: allow only what's in ExtraAllowPatterns (not preset sets).
-		allow = cfg.ExtraAllowPatterns
-		deny = append(deny, cfg.ExtraDenyPatterns...)
-		return Permissions{
-			Allow: sliceutil.Dedup(allow),
-			Deny:  sliceutil.Dedup(deny),
-			Ask:   sliceutil.Dedup(ask),
-		}, nil
 	}
 
-	// For non-custom, non-supply-chain-only presets, append extra patterns from config.
+	// Every preset, custom and supply-chain-only included, takes the extras
+	// (addon config, then the committed claude_code.permissions block) and
+	// its catalog modes: custom and supply-chain-only allow nothing of their
+	// own, so custom's allow list is exactly the extras. The preset's ask and
+	// deny rules still take precedence over an extra allow.
 	allow = append(allow, cfg.ExtraAllowPatterns...)
+	allow = append(allow, answers.ClaudePermissions.Allow...)
 	deny = append(deny, cfg.ExtraDenyPatterns...)
+	deny = append(deny, answers.ClaudePermissions.Deny...)
 
 	perms := Permissions{
 		Allow: sliceutil.Dedup(allow),

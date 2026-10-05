@@ -1,6 +1,7 @@
 package config
 
 import (
+	"fmt"
 	"reflect"
 	"slices"
 	"testing"
@@ -261,5 +262,36 @@ func TestConfigToAnswers_HookPolicyRoundTrip(t *testing.T) {
 	back := AnswersToConfig(ConfigToAnswers(cfg, types.DetectedProject{}, "/tmp/myproject"), "")
 	if !reflect.DeepEqual(back.Hooks, cfg.Hooks) {
 		t.Errorf("AnswersToConfig hooks = %+v, want %+v", back.Hooks, cfg.Hooks)
+	}
+}
+
+// TestMapClaudeCode_Permissions covers the committed claude_code.permissions
+// block surviving join (ConfigToAnswers) and re-creation (AnswersToConfig)
+// as a copy, whether or not Claude Code is enabled.
+func TestMapClaudeCode_Permissions(t *testing.T) {
+	t.Parallel()
+	for _, enabled := range []bool{true, false} {
+		t.Run(fmt.Sprintf("enabled=%v", enabled), func(t *testing.T) {
+			t.Parallel()
+			cfg := &types.QsdevConfig{ClaudeCode: types.ClaudeCodeConfig{
+				Enabled: &enabled,
+				Permissions: types.ClaudePermissionsConfig{
+					Allow: []string{"Bash(make *)"},
+					Deny:  []string{"Bash(terraform apply *)"},
+				},
+			}}
+			answers := ConfigToAnswers(cfg, types.DetectedProject{}, "/tmp/myproject")
+			if !reflect.DeepEqual(answers.ClaudePermissions, cfg.ClaudeCode.Permissions) {
+				t.Fatalf("ClaudePermissions = %+v, want %+v", answers.ClaudePermissions, cfg.ClaudeCode.Permissions)
+			}
+			answers.ClaudePermissions.Allow[0] = "Bash(*)"
+			if cfg.ClaudeCode.Permissions.Allow[0] != "Bash(make *)" {
+				t.Fatal("ConfigToAnswers aliased the config's permission lists")
+			}
+			back := AnswersToConfig(ConfigToAnswers(cfg, types.DetectedProject{}, "/tmp/myproject"), "")
+			if !reflect.DeepEqual(back.ClaudeCode.Permissions, cfg.ClaudeCode.Permissions) {
+				t.Errorf("AnswersToConfig claude_code.permissions = %+v, want %+v", back.ClaudeCode.Permissions, cfg.ClaudeCode.Permissions)
+			}
+		})
 	}
 }

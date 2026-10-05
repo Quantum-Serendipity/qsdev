@@ -133,8 +133,13 @@ func TestGenerateSettings_StandardPreset(t *testing.T) {
 	if containsRule(s.Permissions.Allow, "Bash(nix develop *)") {
 		t.Error("standard allow must not contain Bash(nix develop *)")
 	}
-	if !containsRule(s.Permissions.Allow, "Bash(cargo audit *)") {
-		t.Error("standard allow should contain Bash(cargo audit *)")
+	// Audit is allowed only in read-only shapes: `cargo audit *` would
+	// auto-approve `cargo audit fix` (U15-01).
+	if !containsRule(s.Permissions.Allow, "Bash(cargo audit)") {
+		t.Error("standard allow should contain Bash(cargo audit)")
+	}
+	if containsRule(s.Permissions.Allow, "Bash(cargo audit *)") {
+		t.Error("standard allow must not contain Bash(cargo audit *)")
 	}
 
 	// Code-execution commands should be in ask, not allow.
@@ -298,9 +303,9 @@ func TestGenerateSettings_CustomPreset(t *testing.T) {
 		t.Error("custom ask should contain Bash(npm install *)")
 	}
 
-	// DefaultMode should NOT be set for custom.
-	if s.Permissions.DefaultMode != "" {
-		t.Errorf("custom should not set defaultMode, got %q", s.Permissions.DefaultMode)
+	// Custom applies its catalog modes like every other preset.
+	if s.Permissions.DefaultMode != "default" {
+		t.Errorf("custom defaultMode = %q, want default", s.Permissions.DefaultMode)
 	}
 }
 
@@ -784,7 +789,7 @@ func TestGenerateSettings_CriticalDenyRulesPresent(t *testing.T) {
 		`Bash(rm -rf *)`,
 		`Read(./.env)`,
 		`Read(./.env.*)`,
-		`Read(./secrets/**)`,
+		`Read(/secrets/**)`,
 	}
 
 	for _, rule := range criticalDenyRules {
@@ -974,8 +979,9 @@ func TestGenerateSettings_SupplyChainOnlyPreset(t *testing.T) {
 	if s.Permissions.DefaultMode != "" {
 		t.Errorf("supply-chain-only should have no defaultMode, got %q", s.Permissions.DefaultMode)
 	}
-	if s.Permissions.DisableBypassPermissionsMode != "" {
-		t.Errorf("supply-chain-only should have no disableBypass, got %q", s.Permissions.DisableBypassPermissionsMode)
+	// Bypass mode would auto-run the package-install ask rules.
+	if s.Permissions.DisableBypassPermissionsMode != "disable" {
+		t.Errorf("supply-chain-only disableBypassPermissionsMode = %q, want disable", s.Permissions.DisableBypassPermissionsMode)
 	}
 }
 
@@ -1482,5 +1488,104 @@ func TestPackageGuardMinAgeEnvNameInTemplate(t *testing.T) {
 	want := `_int_env("` + claudecode.PackageGuardMinAgeDaysEnv + `"`
 	if !strings.Contains(string(claudecode.PackageGuardContent()), want) {
 		t.Errorf("package-guard.py does not read %s (looked for %s)", claudecode.PackageGuardMinAgeDaysEnv, want)
+	}
+}
+
+// TestCustomPresetDisablesBypass pins U15-V03: custom applies its catalog
+// modes, so bypass mode cannot auto-run its ask rules, and its allow list is
+// exactly the configured extras (addon config and the committed
+// claude_code.permissions block).
+func TestCustomPresetDisablesBypass(t *testing.T) {
+	t.Parallel()
+	answers := types.WizardAnswers{
+		PermissionLevel: "custom",
+		ClaudePermissions: types.ClaudePermissionsConfig{
+			Allow: []string{"Bash(make *)"},
+			Deny:  []string{"Bash(terraform apply *)"},
+		},
+	}
+	gf := mustGenerateSettings(t, answers, ecosystem.NewRegistry(),
+		claudecode.WithExtraAllowPatterns("Bash(my-tool *)"),
+		claudecode.WithExtraDenyPatterns("Bash(forbidden *)"),
+	)
+	s := mustUnmarshalSettings(t, gf)
+
+	if s.Permissions.DefaultMode != "default" {
+		t.Errorf("custom defaultMode = %q, want default", s.Permissions.DefaultMode)
+	}
+	if s.Permissions.DisableBypassPermissionsMode != "disable" {
+		t.Errorf("custom disableBypassPermissionsMode = %q, want disable", s.Permissions.DisableBypassPermissionsMode)
+	}
+	wantAllow := []string{"Bash(my-tool *)", "Bash(make *)"}
+	if !slices.Equal(s.Permissions.Allow, wantAllow) {
+		t.Errorf("custom allow = %v, want exactly %v", s.Permissions.Allow, wantAllow)
+	}
+	for _, rule := range []string{"Bash(forbidden *)", "Bash(terraform apply *)"} {
+		if !containsRule(s.Permissions.Deny, rule) {
+			t.Errorf("custom deny missing extra %s", rule)
+		}
+	}
+}
+
+// TestSupplyChainOnlyKeepsExtrasAndDisablesBypass pins U15-V03 for
+// supply-chain-only: its configured deny extras are no longer dropped, bypass
+// mode is disabled, defaultMode stays unset and the preset allows nothing of
+// its own.
+func TestSupplyChainOnlyKeepsExtrasAndDisablesBypass(t *testing.T) {
+	t.Parallel()
+	answers := types.WizardAnswers{
+		PermissionLevel: "supply-chain-only",
+		ClaudePermissions: types.ClaudePermissionsConfig{
+			Deny: []string{"Bash(terraform apply *)"},
+		},
+	}
+	gf := mustGenerateSettings(t, answers, ecosystem.NewRegistry(),
+		claudecode.WithExtraDenyPatterns("Bash(forbidden *)"),
+	)
+	s := mustUnmarshalSettings(t, gf)
+
+	if s.Permissions.DisableBypassPermissionsMode != "disable" {
+		t.Errorf("supply-chain-only disableBypassPermissionsMode = %q, want disable", s.Permissions.DisableBypassPermissionsMode)
+	}
+	if s.Permissions.DefaultMode != "" {
+		t.Errorf("supply-chain-only defaultMode = %q, want unset", s.Permissions.DefaultMode)
+	}
+	if len(s.Permissions.Allow) != 0 {
+		t.Errorf("supply-chain-only allow = %v, want empty", s.Permissions.Allow)
+	}
+	for _, rule := range []string{"Bash(forbidden *)", "Bash(terraform apply *)"} {
+		if !containsRule(s.Permissions.Deny, rule) {
+			t.Errorf("supply-chain-only deny dropped extra %s", rule)
+		}
+	}
+}
+
+// TestGenerateSettings_CommittedClaudePermissions checks that the committed
+// claude_code.permissions block reaches settings.json under a catalog preset,
+// without displacing the preset's ask rules, and that a malformed entry fails
+// generation instead of being written.
+func TestGenerateSettings_CommittedClaudePermissions(t *testing.T) {
+	t.Parallel()
+	answers := types.WizardAnswers{
+		PermissionLevel: "standard",
+		ClaudePermissions: types.ClaudePermissionsConfig{
+			Allow: []string{"Bash(make *)"},
+			Deny:  []string{"Bash(terraform apply *)"},
+		},
+	}
+	s := mustUnmarshalSettings(t, mustGenerateSettings(t, answers, ecosystem.NewRegistry()))
+	if !containsRule(s.Permissions.Allow, "Bash(make *)") {
+		t.Error("standard allow missing committed Bash(make *)")
+	}
+	if !containsRule(s.Permissions.Deny, "Bash(terraform apply *)") {
+		t.Error("standard deny missing committed Bash(terraform apply *)")
+	}
+	if !containsRule(s.Permissions.Ask, "Bash(npm install *)") {
+		t.Error("committed extras must not displace the preset ask rules")
+	}
+
+	answers.ClaudePermissions.Allow = []string{"Bash(make *"}
+	if _, err := claudecode.GenerateSettings(answers, ecosystem.NewRegistry(), claudecode.NewConfig()); err == nil {
+		t.Error("GenerateSettings accepted a malformed claude_code.permissions entry")
 	}
 }

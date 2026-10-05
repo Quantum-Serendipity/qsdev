@@ -117,6 +117,7 @@ func mapClaudeCode(cfg *types.QsdevConfig, answers *types.WizardAnswers) {
 	}
 	answers.Skills = slices.Clone(cfg.ClaudeCode.Skills)
 	answers.MCPServers = slices.Clone(cfg.ClaudeCode.MCPServers)
+	answers.ClaudePermissions = cfg.ClaudeCode.Permissions.Clone()
 
 	answers.Hooks = securityToHookChoices(cfg)
 	// Self-protection is always on when Claude Code is enabled, matching the

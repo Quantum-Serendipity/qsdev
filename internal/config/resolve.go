@@ -141,6 +141,10 @@ func deepMerge(base, overlay *types.QsdevConfig) *types.QsdevConfig {
 	// ClaudeCode.MCPServers: union.
 	result.ClaudeCode.MCPServers = mergeUnionStrings(base.ClaudeCode.MCPServers, overlay.ClaudeCode.MCPServers)
 
+	// ClaudeCode.Permissions lists: union.
+	result.ClaudeCode.Permissions.Allow = mergeUnionStrings(base.ClaudeCode.Permissions.Allow, overlay.ClaudeCode.Permissions.Allow)
+	result.ClaudeCode.Permissions.Deny = mergeUnionStrings(base.ClaudeCode.Permissions.Deny, overlay.ClaudeCode.Permissions.Deny)
+
 	// MCP.DisabledTools: union, so an MCP tool denied at any layer stays denied.
 	result.MCP.DisabledTools = mergeUnionStrings(base.MCP.DisabledTools, overlay.MCP.DisabledTools)
 	// Hooks.FileBoundary.ExtraReadPaths: union.
@@ -366,6 +370,7 @@ func cloneQsdevConfig(cfg *types.QsdevConfig) *types.QsdevConfig {
 		ClaudeCode: types.ClaudeCodeConfig{
 			Enabled:         cloneBoolPtr(cfg.ClaudeCode.Enabled),
 			PermissionLevel: cfg.ClaudeCode.PermissionLevel,
+			Permissions:     cfg.ClaudeCode.Permissions.Clone(),
 		},
 		Infrastructure: types.InfraConfig{
 			RegistryProxy:     cfg.Infrastructure.RegistryProxy,

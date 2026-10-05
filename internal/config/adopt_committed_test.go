@@ -155,3 +155,44 @@ func TestAdoptCommitted_ClientMCPPolicy(t *testing.T) {
 		})
 	}
 }
+
+// TestAdoptCommitted_PolicyBlocks verifies the hooks block and
+// claude_code.permissions always come from the committed .qsdev.yaml: the
+// agent-writable answers file can neither keep a rule the committed file
+// lacks nor survive the committed file's removal.
+func TestAdoptCommitted_PolicyBlocks(t *testing.T) {
+	t.Parallel()
+	stale := types.WizardAnswers{
+		HookPolicy:        types.HooksConfig{ToolGates: types.ToolGatesConfig{Allowed: []string{"*"}}},
+		ClaudePermissions: types.ClaudePermissionsConfig{Allow: []string{"Bash(curl *)"}},
+	}
+	tests := []struct {
+		name      string
+		config    string // .qsdev.yaml content; empty means no file
+		wantGates []string
+		wantAllow []string
+	}{
+		{"committed blocks adopted",
+			"version: 1\nhooks:\n  tool_gates:\n    denied: [WebFetch]\nclaude_code:\n  permissions:\n    allow: [\"Bash(make lint)\"]\n",
+			nil, []string{"Bash(make lint)"}},
+		{"committed file without blocks clears them", "version: 1\n", nil, nil},
+		{"no committed file clears them", "", nil, nil},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			root := t.TempDir()
+			writeCommittedConfig(t, root, tt.config)
+			a := stale
+			a.HookPolicy = stale.HookPolicy.Clone()
+			a.ClaudePermissions = stale.ClaudePermissions.Clone()
+			AdoptCommitted(root, &a)
+			if !slices.Equal(a.HookPolicy.ToolGates.Allowed, tt.wantGates) {
+				t.Errorf("HookPolicy.ToolGates.Allowed = %v, want %v", a.HookPolicy.ToolGates.Allowed, tt.wantGates)
+			}
+			if !slices.Equal(a.ClaudePermissions.Allow, tt.wantAllow) {
+				t.Errorf("ClaudePermissions.Allow = %v, want %v", a.ClaudePermissions.Allow, tt.wantAllow)
+			}
+		})
+	}
+}

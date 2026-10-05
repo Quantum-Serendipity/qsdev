@@ -305,7 +305,11 @@ func TestJoin_InfraProfileRoundTrips(t *testing.T) {
 				t.Errorf("persisted infrastructure %+v, want %+v", cfg.Infrastructure, created.Infrastructure)
 			}
 			// `qsdev check` validates `profile` against the project-type registry.
-			opts := qsdevconfig.ValidateOptions{ProfileNames: ensureProfileRegistry().Names()}
+			profiles, err := projectProfiles()
+			if err != nil {
+				t.Fatal(err)
+			}
+			opts := qsdevconfig.ValidateOptions{ProfileNames: profiles.Names()}
 			if errs := qsdevconfig.ValidateQsdevConfig(cfg, opts); len(errs) > 0 {
 				t.Errorf("committed config fails validation: %v", errs)
 			}

@@ -174,9 +174,7 @@ func TestValidate_RejectsHostileHookID(t *testing.T) {
 	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	prev := catalog.ProjectRoot()
-	catalog.SetProjectRoot(root)
-	t.Cleanup(func() { catalog.SetProjectRoot(prev) })
+	useProjectRoot(t, root)
 
 	cmd := validateCmd()
 	var stdout, stderr bytes.Buffer
@@ -188,5 +186,16 @@ func TestValidate_RejectsHostileHookID(t *testing.T) {
 	}
 	if !strings.Contains(stderr.String(), "invalid hook id") {
 		t.Errorf("stderr = %q, want it to contain %q", stderr.String(), "invalid hook id")
+	}
+}
+
+// useProjectRoot points a freshly reset catalog at the project root for the
+// duration of the test. Tests using it must not run in parallel.
+func useProjectRoot(t *testing.T, root string) {
+	t.Helper()
+	catalog.ResetDefault()
+	t.Cleanup(catalog.ResetDefault)
+	if err := catalog.SetProjectRoot(root); err != nil {
+		t.Fatalf("SetProjectRoot(%q): %v", root, err)
 	}
 }

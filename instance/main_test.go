@@ -49,6 +49,8 @@ func TestDefaultRuntime(t *testing.T) {
 	prevArgs := os.Args
 	t.Cleanup(func() { os.Args = prevArgs })
 	os.Args = []string{"app", "--debug", "status"}
+	catalog.ResetDefault()
+	t.Cleanup(catalog.ResetDefault)
 
 	rt := DefaultRuntime()
 	if again := DefaultRuntime(); again != rt {
@@ -64,8 +66,10 @@ func TestDefaultRuntime(t *testing.T) {
 	if n := len(spi.DefaultRegistry().All()); n == 0 {
 		t.Error("no framework adapters registered")
 	}
-	if catalog.ProjectRoot() == "" {
-		t.Error("project defaults root not set")
+	// The project defaults layer comes from the executing command's resolved
+	// root (Runtime.initCommand), never from a walk before argv is parsed.
+	if root := catalog.ProjectRoot(); root != "" {
+		t.Errorf("DefaultRuntime set the project defaults root %q before any command was resolved", root)
 	}
 	if rt.logsCmd == nil || rt.logsCmd.Name() != "logs" {
 		t.Errorf("runtime logs command = %v, want logs", rt.logsCmd)

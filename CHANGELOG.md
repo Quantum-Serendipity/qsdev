@@ -277,6 +277,19 @@ All notable changes to qsdev are recorded in this file. The format is based on
   or temporary directory) can no longer capture root resolution, session logs
   or configuration for a git repository created beneath it (U01-01, XS-N5).
   Directories that are not inside a git repository are not yet covered.
+- The project defaults file (`.qsdev/defaults.yaml`) now comes from the
+  project the command acts on (U01-WS1). `qsdev init` and `qsdev devenv init`
+  take it from the directory they run in, so a non-git subdirectory of
+  another project no longer inherits that project's hooks and deny rules;
+  every other command keeps applying the enclosing project's file. `qsdev
+  init` names the file it applies (`Project defaults: <path>`). A defaults
+  file another local user could have written (owned by someone else, or in
+  or under a world-writable directory, such as a `.qsdev/` left `0777` in a
+  shared checkout) is now refused rather than applied: `qsdev init`,
+  `qsdev defaults show` and every command that reads the defaults exit 1
+  with `refusing project defaults <path>` and the fix (`chmod o-w`, or
+  `chown` it to yourself). Group-writable files in a user-owned project
+  (umask 002) are still accepted.
 - A diagnostic no longer starts processes or goes to the network unasked
   (XD-01): default `qsdev mcp status` and `qsdev mcp health` used to start the
   trusted stdio servers and dial trusted remote endpoints, and the generated

@@ -206,11 +206,11 @@ func markFrameworkProfiles(root *cobra.Command) {
 //   - the universal MCP server's framework adapters and the external-log
 //     providers (RegisterFrameworkAdapters)
 //   - the release version stamped into VersionPackage (ApplyBuildVersion)
-//   - the project's .<app>/defaults.yaml catalog layer (UseProjectDefaults)
 //   - the standard commands: self-update, logs and bug-report
 //   - the --debug flag, and a cobra initializer (Runtime.initCommand) that
-//     resolves the executing command's project once and, per its runtime
-//     profile (cmdutil.ProfileOf), opens the redacting session log
+//     resolves the executing command's project once, applies that root's
+//     .<app>/defaults.yaml catalog layer and org overlay pin, and, per its
+//     runtime profile (cmdutil.ProfileOf), opens the redacting session log
 //     (per-project, global or automated) and starts the background
 //     self-update check, whose notice Finish prints
 //   - error logging for every command
@@ -231,7 +231,6 @@ func DefaultRuntime() *Runtime {
 func installDefaultRuntime() *Runtime {
 	RegisterFrameworkAdapters()
 	ApplyBuildVersion()
-	UseProjectDefaults()
 
 	rt := &Runtime{logsCmd: logcmd.Command()}
 	AddCommands(standardCommands(rt.logsCmd)...)

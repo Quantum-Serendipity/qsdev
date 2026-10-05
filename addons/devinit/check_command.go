@@ -111,7 +111,11 @@ func runCheck(cmd *cobra.Command, format check.OutputFormat, auditLevel check.Au
 	ctx.MCPToolNames = mcpserve.MountableToolNames(mcpadapters.All())
 
 	// Profile names from registry.
-	ctx.ProfileNames = ensureProfileRegistry().Names()
+	profiles, err := projectProfiles()
+	if err != nil {
+		return err
+	}
+	ctx.ProfileNames = profiles.Names()
 
 	// Saved answers are the generator's input; they decide which deny rules
 	// .claude/settings.json must contain.

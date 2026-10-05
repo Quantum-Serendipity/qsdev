@@ -29,6 +29,9 @@ import (
 //
 //   - resolves its project once, with the command's root mode
 //     (cmdutil.RootMode), and stores it for cmdutil.Project;
+//   - applies that root's project defaults layer and org overlay pin to the
+//     catalog (useProjectDefaults), so a Here-mode command takes the working
+//     directory's policy and every other command the enclosing project's;
 //   - for a command a person runs, moves the legacy global logs to the
 //     per-user state directory once (migrateLegacyLogs), before the session
 //     log can create the new directory;
@@ -59,6 +62,8 @@ func (r *Runtime) initCommand(root *cobra.Command, args []string, stderr io.Writ
 		}
 		cmd.SetContext(projectctx.WithContext(ctx, pc))
 	}
+	// On a resolution error pc.Root is "": the catalog gets no project layer.
+	useProjectDefaults(pc.Root)
 
 	moved, migrateErr := migrateLegacyLogs(profile)
 	r.logSession = openSessionLog(cmd, profile, pc)

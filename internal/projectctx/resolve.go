@@ -77,7 +77,8 @@ var (
 //     without GIT_DISCOVERY_ACROSS_FILESYSTEM;
 //   - at the volume root, or at a parent that cannot be inspected.
 //
-// A marker that fails the trust check (see considerMarker and trusted) is
+// A marker that fails the trust check (see considerMarker and
+// untrustedReason) is
 // skipped, the walk goes on, and its path is recorded in Ignored. When no
 // trusted marker is found, Root is start and Found is false, so commands that
 // work before a project is initialised still have a directory to act on.
@@ -153,7 +154,7 @@ func (c *Context) examine(dir string, dirInfo fs.FileInfo, b branding.Config) bo
 // passes the trust check. Trust is decided on the marker entry itself, not
 // only on what it points at: the entry is Lstat'ed, and a symlink is
 // followed only when the link itself was placed by the current user or root
-// (trustedLink), since a foreign link to a file the user owns would otherwise
+// (linkUntrustedReason), since a foreign link to a file the user owns would otherwise
 // pass for the user's own marker. A marker of the right kind that fails a
 // check, and any foreign symlink, is appended to Ignored. A path that cannot
 // be inspected is no marker. A regular marker costs one call; a symlink, two.
@@ -163,7 +164,7 @@ func (c *Context) considerMarker(path string, kind func(fs.FileMode) bool, dirIn
 		return false
 	}
 	if info.Mode()&fs.ModeSymlink != 0 {
-		if !trustedLink(info) {
+		if linkUntrustedReason(info) != "" {
 			c.Ignored = append(c.Ignored, path)
 			return false
 		}
@@ -174,11 +175,62 @@ func (c *Context) considerMarker(path string, kind func(fs.FileMode) bool, dirIn
 	if !kind(info.Mode()) {
 		return false
 	}
-	if !trusted(info, dirInfo) {
+	if untrustedReason(info, dirInfo) != "" {
 		c.Ignored = append(c.Ignored, path)
 		return false
 	}
 	return true
+}
+
+// ErrUntrusted is matched (errors.Is) by every *UntrustedError.
+var ErrUntrusted = errors.New("untrusted")
+
+// UntrustedError reports a filesystem entry that fails the trust rule the
+// marker walk applies (see CheckTrusted).
+type UntrustedError struct {
+	// Path is the entry checked.
+	Path string
+	// Reason says which part of the rule failed, such as "world-writable",
+	// "owned by uid 1001" or "parent directory is world-writable".
+	Reason string
+}
+
+func (e *UntrustedError) Error() string { return e.Path + ": " + e.Reason }
+
+// Is reports whether target is ErrUntrusted.
+func (e *UntrustedError) Is(target error) bool { return target == ErrUntrusted }
+
+// CheckTrusted applies to path the trust rule the walk applies to a marker:
+// the entry is Lstat'ed; a symlink must itself be the user's or root's and
+// is then followed; the entry (its target) and its parent directory must be
+// owned by the user or root and not world-writable. Group-writable is
+// accepted. It returns an *UntrustedError (matching ErrUntrusted) when the
+// rule fails, or the stat error when path or its parent cannot be inspected.
+// Off unix it never reports ErrUntrusted: Windows ownership and write access
+// are ACL-based, and evaluating ACLs is out of scope. It costs two filesystem
+// calls, three for a symlink.
+func CheckTrusted(path string) error {
+	path = filepath.Clean(path)
+	info, err := lstat(path)
+	if err != nil {
+		return fmt.Errorf("checking trust of %s: %w", path, err)
+	}
+	if info.Mode()&fs.ModeSymlink != 0 {
+		if r := linkUntrustedReason(info); r != "" {
+			return &UntrustedError{Path: path, Reason: r}
+		}
+		if info, err = stat(path); err != nil {
+			return fmt.Errorf("checking trust of %s: %w", path, err)
+		}
+	}
+	dirInfo, err := stat(filepath.Dir(path))
+	if err != nil {
+		return fmt.Errorf("checking trust of %s: %w", path, err)
+	}
+	if r := untrustedReason(info, dirInfo); r != "" {
+		return &UntrustedError{Path: path, Reason: r}
+	}
+	return nil
 }
 
 type contextKey struct{}

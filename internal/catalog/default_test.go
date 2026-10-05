@@ -29,12 +29,21 @@ func TestDefault_Concurrent(t *testing.T) {
 
 	errs := make(chan error, goroutines)
 
+	// One shared root, set before any load: a process applies one project's
+	// defaults, so a different root after a load is an error
+	// (TestSetProjectRootAfterLoadErrors). Restating it concurrently with
+	// Default keeps the -race check on the shared state.
+	root := t.TempDir()
+	mustSetProjectRoot(t, root)
 	for i := 0; i < goroutines; i++ {
 		go func(n int) {
 			defer wg.Done()
-			// Half the goroutines set a project root, half call Default.
+			// Half the goroutines restate the project root, all call Default.
 			if n%2 == 0 {
-				SetProjectRoot(fmt.Sprintf("/tmp/fake-root-%d", n))
+				if err := SetProjectRoot(root); err != nil {
+					errs <- fmt.Errorf("goroutine %d: SetProjectRoot: %w", n, err)
+					return
+				}
 			}
 			cat, err := Default()
 			if err != nil {
@@ -74,7 +83,7 @@ func TestDefault_ErrorReturn(t *testing.T) {
 		t.Fatalf("writing bad config: %v", err)
 	}
 
-	SetProjectRoot(tmpDir)
+	mustSetProjectRoot(t, tmpDir)
 	cat, err := Default()
 	if err == nil {
 		t.Fatal("Default() should return an error for invalid project config")
@@ -102,7 +111,7 @@ func TestMustDefault_Panics(t *testing.T) {
 		t.Fatalf("writing bad config: %v", err)
 	}
 
-	SetProjectRoot(tmpDir)
+	mustSetProjectRoot(t, tmpDir)
 
 	defer func() {
 		r := recover()
@@ -333,7 +342,7 @@ func TestDefault_AppliesProjectDefaults(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	SetProjectRoot(root)
+	mustSetProjectRoot(t, root)
 	if got := ProjectRoot(); got != root {
 		t.Errorf("ProjectRoot() = %q, want %q", got, root)
 	}
@@ -362,5 +371,71 @@ func TestLoadError(t *testing.T) {
 	}
 	if want := app + " defaults validate"; ValidateCommand() != want {
 		t.Errorf("ValidateCommand() = %q, want %q", ValidateCommand(), want)
+	}
+}
+
+// mustSetProjectRoot sets the catalog's project root, failing the test when
+// SetProjectRoot refuses it.
+func mustSetProjectRoot(t *testing.T, root string) {
+	t.Helper()
+	if err := SetProjectRoot(root); err != nil {
+		t.Fatalf("SetProjectRoot(%q): %v", root, err)
+	}
+}
+
+// TestSetProjectRootAfterLoadErrors: once Default has loaded the catalog for
+// one project, pointing it at another fails, and the cached catalog is
+// poisoned so no later Default serves the first project's policy to the
+// second.
+func TestSetProjectRootAfterLoadErrors(t *testing.T) {
+	ResetDefault()
+	t.Cleanup(ResetDefault)
+
+	first, second := t.TempDir(), t.TempDir()
+	mustSetProjectRoot(t, first)
+	if _, err := Default(); err != nil {
+		t.Fatalf("Default(): %v", err)
+	}
+	err := SetProjectRoot(second)
+	if !errors.Is(err, ErrCatalogAlreadyLoaded) {
+		t.Fatalf("SetProjectRoot(other root) after load = %v, want ErrCatalogAlreadyLoaded", err)
+	}
+	if !strings.Contains(err.Error(), first) || !strings.Contains(err.Error(), second) {
+		t.Errorf("error %q does not name both roots %q and %q", err, first, second)
+	}
+	cat, err := Default()
+	if cat != nil || !errors.Is(err, ErrCatalogAlreadyLoaded) {
+		t.Errorf("Default() after a root change = (%v, %v), want (nil, ErrCatalogAlreadyLoaded)", cat, err)
+	}
+	if _, err := Default(); !errors.Is(err, ErrCatalogAlreadyLoaded) {
+		t.Errorf("second Default() after a root change = %v, want it still poisoned", err)
+	}
+
+	// ResetDefault clears the poison.
+	ResetDefault()
+	mustSetProjectRoot(t, second)
+	if _, err := Default(); err != nil {
+		t.Errorf("Default() after ResetDefault: %v", err)
+	}
+}
+
+// TestSetProjectRootSameRootAfterLoad: restating the root the catalog was
+// loaded for is a no-op.
+func TestSetProjectRootSameRootAfterLoad(t *testing.T) {
+	ResetDefault()
+	t.Cleanup(ResetDefault)
+
+	root := t.TempDir()
+	mustSetProjectRoot(t, root)
+	cat1, err := Default()
+	if err != nil {
+		t.Fatalf("Default(): %v", err)
+	}
+	if err := SetProjectRoot(root); err != nil {
+		t.Fatalf("SetProjectRoot(same root) after load = %v, want nil", err)
+	}
+	cat2, err := Default()
+	if err != nil || cat2 != cat1 {
+		t.Errorf("Default() after restating the root = (%p, %v), want the cached catalog %p", cat2, err, cat1)
 	}
 }

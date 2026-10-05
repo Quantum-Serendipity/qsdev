@@ -25,8 +25,7 @@ var errCatalogLoad = errors.New("loading catalog")
 // "unknown profile" instead of silently producing an empty configuration.
 //
 // A catalog that does not load at all registers nothing and is logged at
-// debug only: the registry is built at addon initialization for every
-// command, and the root catalog gate or check reports that failure to the
+// debug only: the root catalog gate or check reports that failure to the
 // user for the commands that need the catalog.
 func DefaultProjectProfileRegistry() *ProjectProfileRegistry {
 	r, err := loadDefaultProjectProfiles()

@@ -149,13 +149,11 @@ func TestTrustedDefinitions_ExcludesProjectOverlay(t *testing.T) {
 	if err := os.WriteFile(projFile, []byte(projYAML), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	prevRoot := catalog.ProjectRoot()
-	catalog.SetProjectRoot(project)
 	catalog.ResetDefault()
-	t.Cleanup(func() {
-		catalog.SetProjectRoot(prevRoot)
-		catalog.ResetDefault()
-	})
+	t.Cleanup(catalog.ResetDefault)
+	if err := catalog.SetProjectRoot(project); err != nil {
+		t.Fatalf("SetProjectRoot: %v", err)
+	}
 
 	extra := map[string][]LaunchSpec{"bin-srv": {{Command: "bin-srv"}}}
 	trusted := TrustedDefinitions(extra)

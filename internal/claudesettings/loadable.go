@@ -3,17 +3,20 @@ package claudesettings
 import (
 	"fmt"
 	"maps"
+	"math"
 	"net/url"
 	"slices"
 	"strconv"
+	"strings"
 )
 
-// This file models when Claude Code refuses a settings file because of its
-// hooks. A PreToolUse or PermissionRequest hook it cannot load may be the one
-// guarding the permissions declared beside it, so Claude Code (as of 2.1.280)
-// applies nothing from that file, neither its hooks nor its deny rules, until
-// the entry is fixed or removed. Bad entries of other events are dropped one
-// by one and the rest of the file still applies.
+// This file models when Claude Code refuses a whole settings file: over a
+// value its settings schema rejects (see settingsSchemaProblem), or over its
+// hooks. A PreToolUse or PermissionRequest hook it cannot load may be the
+// one guarding the permissions declared beside it, so Claude Code (as of
+// 2.1.280) applies nothing from that file, neither its hooks nor its deny
+// rules, until the entry is fixed or removed. Bad entries of other events
+// are dropped one by one and the rest of the file still applies.
 
 // EventPermissionRequest is the other hook event whose unloadable entries
 // make Claude Code refuse the whole settings file (see guardEvents).
@@ -37,10 +40,12 @@ var hookEvents = []string{
 	"FileChanged", "DirectoryAdded", "MessageDisplay",
 }
 
-// field is one key of a hook type's schema: the check of its value, and
-// whether the key must be present.
+// field is one key of a schema: the check of its value, what that check
+// wants (worded for settingsSchemaProblem), and whether the key must be
+// present.
 type field struct {
 	valid    func(any) bool
+	want     string
 	required bool
 }
 
@@ -96,6 +101,18 @@ func isNonEmptyString(v any) bool { s, ok := v.(string); return ok && s != "" }
 func isBool(v any) bool { _, ok := v.(bool); return ok }
 
 func isPositiveNumber(v any) bool { n, ok := v.(float64); return ok && n > 0 }
+
+// maxSafeInteger is JavaScript's Number.MAX_SAFE_INTEGER, the largest value
+// Claude Code's schema accepts as an integer.
+const maxSafeInteger = 1<<53 - 1
+
+// isPositiveInt reports whether v is a whole number from 1 to maxSafeInteger.
+func isPositiveInt(v any) bool {
+	n, ok := v.(float64)
+	return ok && n >= 1 && n <= maxSafeInteger && n == math.Trunc(n)
+}
+
+func isArray(v any) bool { _, ok := v.([]any); return ok }
 
 func isObject(v any) bool { _, ok := v.(map[string]any); return ok }
 
@@ -363,38 +380,212 @@ func withoutRuleLists(perms map[string]any) map[string]any {
 	return out
 }
 
+// Value schemas of settings keys: what Claude Code's settings schema wants.
+var (
+	aBool        = typed("a boolean", isBool)
+	aString      = typed("a string", isString)
+	anArray      = typed("an array", isArray)
+	aStringArray = typed("an array of strings", isStringArray)
+	anObject     = typed("an object", isObject)
+	aPositiveInt = typed("a positive whole number", isPositiveInt)
+)
+
+// typed is the schema of an optional key whose value valid accepts, as
+// want describes.
+func typed(want string, valid func(any) bool) field { return field{valid: valid, want: want} }
+
+// oneOf is the schema of a key whose value must be one of values.
+func oneOf(values ...string) field {
+	quoted := make([]string, len(values))
+	for i, v := range values {
+		quoted[i] = strconv.Quote(v)
+	}
+	want := quoted[0]
+	if len(values) > 1 {
+		want = "one of " + strings.Join(quoted, ", ")
+	}
+	return typed(want, isOneOf(values...))
+}
+
+// settingsFields and permissionsFields are the top-level and "permissions"
+// keys whose bad value makes Claude Code 2.1.280 refuse the whole settings
+// file (project, local and user files alike). They were read from the
+// settings schema in that release's bundle: run `strings -n 8` on the
+// claude binary, find the object schema beginning `u({$schema:o()` (its
+// permissions schema begins `u({allow:C(`, and keys contributed by feature
+// modules come from the `zt={autoMode:` table, all built unconditionally),
+// and split it into keys at the top nesting level. A key is listed when its
+// schema is a plain boolean (H()), string (o()), array of strings (C(o())),
+// literal enum (V([...])) or positive integer (k().int().positive()) with
+// .optional() and no .catch(), which would drop a bad value instead.
+//
+// Left out, because a bad value does not refuse the file or because modelling
+// it would need more than these checks: keys Claude Code catches (theme,
+// effortLevel, ...); keys it deletes or repairs before validating
+// (managedMcpServers and isolation, which only managed settings honour;
+// extraKnownMarketplaces and its aliases, allowedMcpServers, deniedMcpServers,
+// the marketplace lists, modelPicker, modelPricing, crossSessionInbound,
+// remoteControl); keys behind a feature flag spread in only when it is on;
+// "hooks", which unloadableHooks models; and numeric ranges, records, nested
+// objects and unions. Leaving a key out keeps it loadable, as before; listing
+// a lenient key would refuse a file Claude Code loads, which only withholds
+// credit. Re-extract when the supported Claude Code release changes.
+var settingsFields = map[string]field{
+	KeyEnv:                        anObject,
+	KeyPermissions:                anObject,
+	"autoUpdatesChannel":          oneOf("latest", "stable", "rc"),
+	"daemonColdStart":             oneOf("transient", "ask"),
+	"defaultShell":                oneOf("bash", "powershell"),
+	"defaultView":                 oneOf("chat", "transcript"),
+	"disableAutoMode":             oneOf("disable"),
+	"disableDeepLinkRegistration": oneOf("disable"),
+	"feedbackDrafts":              oneOf("notify", "quiet", "off"),
+	"managedSourcesBehavior":      oneOf("first-wins", "merge"),
+	"parentSettingsBehavior":      oneOf("first-wins", "merge"),
+	"totalTokensReminder":         oneOf("off", "infinite", "fixed", "countdown", "padded-countdown"),
+	"tui":                         oneOf("default", "fullscreen"),
+	"workflowSizeGuideline":       oneOf("unrestricted", "small", "medium", "large"),
+
+	"agentPushNotifEnabled":             aBool,
+	"allowAllClaudeAiMcps":              aBool,
+	"allowManagedHooksOnly":             aBool,
+	"allowManagedMcpServersOnly":        aBool,
+	"allowManagedPermissionRulesOnly":   aBool,
+	"alwaysThinkingEnabled":             aBool,
+	"autoCompactEnabled":                aBool,
+	"autoContinueAtUsageLimit":          aBool,
+	"autoDreamEnabled":                  aBool,
+	"autoMemoryEnabled":                 aBool,
+	"autoScrollEnabled":                 aBool,
+	"autoUploadSessions":                aBool,
+	"awaySummaryEnabled":                aBool,
+	"axScreenReader":                    aBool,
+	"bashEditDiffEnabled":               aBool,
+	"channelsEnabled":                   aBool,
+	"disableAgentView":                  aBool,
+	KeyDisableAllHooks:                  aBool,
+	"disableArtifact":                   aBool,
+	"disableBundledSkills":              aBool,
+	"disableClaudeAiConnectors":         aBool,
+	"disableCommandPluginSources":       aBool,
+	"disableRemoteControl":              aBool,
+	"disableSkillShellExecution":        aBool,
+	"disableWorkflows":                  aBool,
+	"doneMeansMerged":                   aBool,
+	"emojiCompletionEnabled":            aBool,
+	"enableAllProjectMcpServers":        aBool,
+	"enableArtifact":                    aBool,
+	"enableWorkflows":                   aBool,
+	"enforceAvailableModels":            aBool,
+	"fastMode":                          aBool,
+	"fastModePerSessionOptIn":           aBool,
+	"fileCheckpointingEnabled":          aBool,
+	"forceRemoteSettingsRefresh":        aBool,
+	"includeCoAuthoredBy":               aBool,
+	"includeGitInstructions":            aBool,
+	"inputNeededNotifEnabled":           aBool,
+	"isolatePeerMachines":               aBool,
+	"precomputeCompactionEnabled":       aBool,
+	"prefersReducedMotion":              aBool,
+	"promptSuggestionEnabled":           aBool,
+	"remoteControlAtStartup":            aBool,
+	"respectGitignore":                  aBool,
+	"respondToBashCommands":             aBool,
+	"showClearContextOnPlanAccept":      aBool,
+	"showMessageTimestamps":             aBool,
+	"showThinkingSummaries":             aBool,
+	"showTurnDuration":                  aBool,
+	"skipAutoPermissionPrompt":          aBool,
+	"skipDangerousModePermissionPrompt": aBool,
+	"skipWebFetchPreflight":             aBool,
+	"skipWorkflowUsageWarning":          aBool,
+	"spinnerTipsEnabled":                aBool,
+	"switchModelsOnFlag":                aBool,
+	"syncClaudeAiPlugins":               aBool,
+	"syncClaudeAiSkills":                aBool,
+	"syntaxHighlightingDisabled":        aBool,
+	"terminalProgressBarEnabled":        aBool,
+	"terminalTitleFromRename":           aBool,
+	"todoFeatureEnabled":                aBool,
+	"totalTokensReminderAfterUserTurn":  aBool,
+	"useAutoModeDuringPlan":             aBool,
+	"verbose":                           aBool,
+	"voiceEnabled":                      aBool,
+	"wheelScrollAccelerationEnabled":    aBool,
+	"workflowKeywordTriggerEnabled":     aBool,
+	"wslInheritsWindowsSettings":        aBool,
+
+	"$schema":                aString,
+	"advisorModel":           aString,
+	"agent":                  aString,
+	"apiKeyHelper":           aString,
+	"autoMemoryDirectory":    aString,
+	"awsAuthRefresh":         aString,
+	"awsCredentialExport":    aString,
+	"claudeMd":               aString,
+	"gcpAuthRefresh":         aString,
+	"language":               aString,
+	"minimumVersion":         aString,
+	"model":                  aString,
+	"otelHeadersHelper":      aString,
+	"outputStyle":            aString,
+	"plansDirectory":         aString,
+	"pluginTrustMessage":     aString,
+	"prUrlTemplate":          aString,
+	"processWrapper":         aString,
+	"proxyAuthHelper":        aString,
+	"requiredMaximumVersion": aString,
+	"requiredMinimumVersion": aString,
+	"timeZone":               aString,
+
+	"allowedHttpHookUrls":          aStringArray,
+	"availableModels":              aStringArray,
+	"claudeMdExcludes":             aStringArray,
+	"companyAnnouncements":         aStringArray,
+	"disabledMcpjsonServers":       aStringArray,
+	"enabledMcpjsonServers":        aStringArray,
+	"fallbackModel":                aStringArray,
+	"httpHookAllowedEnvVars":       aStringArray,
+	"pluginSuggestionMarketplaces": aStringArray,
+
+	"cleanupPeriodDays":         aPositiveInt,
+	"skillListingMaxDescChars":  aPositiveInt,
+	"totalTokensReminderBudget": aPositiveInt,
+}
+
+// permissionsFields are the "permissions" keys (see settingsFields). The
+// rule lists need only be arrays: Claude Code drops each entry that is not a
+// valid rule before it validates the file. "manual" is accepted as an alias
+// of the "default" mode.
+var permissionsFields = map[string]field{
+	"allow":                               anArray,
+	KeyDeny:                               anArray,
+	"ask":                                 anArray,
+	KeyDefaultMode:                        oneOf("acceptEdits", "auto", ModeBypassPermissions, "default", "dontAsk", "plan", "manual"),
+	KeyDisableBypassPermissionsMode:       oneOf("disable"),
+	"disableAutoMode":                     oneOf("disable"),
+	"blockReadsOutsideWorkingDirectories": aBool,
+	"additionalDirectories":               aStringArray,
+}
+
 // settingsSchemaProblem returns why Claude Code's settings schema rejects
-// root, so that it applies none of the file, or "". Only the keys qsdev reads
-// for posture (see Parse) are modelled: a mistyped one would otherwise read
-// as a policy Claude Code never applies, such as a "disableAllHooks" of
-// "false" read as false. The rest of Claude Code's schema is not.
+// root, so that it applies none of the file, or "". It checks the keys of
+// settingsFields and permissionsFields; any other key is accepted.
 func settingsSchemaProblem(root map[string]any) string {
-	if v, ok := root[KeyDisableAllHooks]; ok && !isBool(v) {
-		return fmt.Sprintf("%q is not a boolean", KeyDisableAllHooks)
+	if p := schemaProblem(root, settingsFields, strconv.Quote); p != "" {
+		return p
 	}
-	if v, ok := root[KeyEnv]; ok && !isObject(v) {
-		return fmt.Sprintf("%q is not an object", KeyEnv)
-	}
-	raw, ok := root[KeyPermissions]
-	if !ok {
-		return ""
-	}
-	perms, ok := raw.(map[string]any)
-	if !ok {
-		return fmt.Sprintf("%q is not an object", KeyPermissions)
-	}
-	for _, k := range permissionRuleKeys {
-		if v, present := perms[k]; present {
-			if _, isList := v.([]any); !isList {
-				return fmt.Sprintf("%s.%s is not an array", KeyPermissions, k)
-			}
+	perms, _ := root[KeyPermissions].(map[string]any)
+	return schemaProblem(perms, permissionsFields, func(k string) string { return KeyPermissions + "." + k })
+}
+
+// schemaProblem returns why the first key of obj, in sorted order, whose
+// value fails its schema in fields does so, naming the key with name, or "".
+func schemaProblem(obj map[string]any, fields map[string]field, name func(string) string) string {
+	for _, key := range slices.Sorted(maps.Keys(fields)) {
+		if v, present := obj[key]; present && !fields[key].valid(v) {
+			return name(key) + " is not " + fields[key].want
 		}
-	}
-	if v, present := perms[KeyDefaultMode]; present && !isString(v) {
-		return fmt.Sprintf("%s.%s is not a string", KeyPermissions, KeyDefaultMode)
-	}
-	if v, present := perms[KeyDisableBypassPermissionsMode]; present && v != "disable" {
-		return fmt.Sprintf(`%s.%s is not "disable"`, KeyPermissions, KeyDisableBypassPermissionsMode)
 	}
 	return ""
 }

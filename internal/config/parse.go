@@ -290,6 +290,12 @@ func ValidateQsdevConfig(cfg *types.QsdevConfig, opts ValidateOptions) []Validat
 	errs = append(errs, validateProfiles(cfg, opts)...)
 	errs = append(errs, validateHooks(cfg.Hooks)...)
 
+	// Infrastructure endpoints are validated whether or not an infra profile
+	// is selected; each message names its exact infrastructure.* key.
+	for _, err := range profile.ValidateInfra(cfg.Infrastructure) {
+		errs = append(errs, ValidationError{Field: "infrastructure", Message: err.Error()})
+	}
+
 	// git.branch_pattern is spliced into the branch-naming pre-push hook.
 	if err := validation.CheckBranchPattern(cfg.Git.BranchPattern); err != nil {
 		errs = append(errs, ValidationError{

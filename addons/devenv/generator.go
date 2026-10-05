@@ -181,20 +181,21 @@ const defaultInfraProfile = "consulting-default"
 // environment is added under the user's own env vars; a missing or
 // placeholder endpoint is an error. The implicit default only contributes
 // its config files (ConfigOnly), so projects that never chose an
-// infrastructure keep exactly the endpoints they configured; a Nix cache they
-// configured is still checked (profile.ResolveProjectInfrastructure). The returned profile is nil when
-// the generator has no profile registry.
+// infrastructure keep exactly the endpoints they configured, after the same
+// endpoint checks (profile.ResolveProjectInfrastructure). Those checks run
+// for every generator, so no configuration writes an unvalidated endpoint.
+// The returned profile is nil when the generator has no profile registry.
 func (g *DevenvGenerator) applyInfraProfile(answers types.WizardAnswers) (types.WizardAnswers, *profile.InfraProfile, error) {
-	if g.profileRegistry == nil {
-		return answers, nil, nil
-	}
 	name := answers.ProfileName
-	if name == "" {
+	if name == "" || g.profileRegistry == nil {
 		infra, err := profile.ResolveProjectInfrastructure(answers.Infrastructure)
 		if err != nil {
 			return answers, nil, err
 		}
 		answers.Infrastructure = infra
+		if g.profileRegistry == nil {
+			return answers, nil, nil
+		}
 		p, ok := g.profileRegistry.Get(defaultInfraProfile)
 		if !ok {
 			return answers, nil, nil

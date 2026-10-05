@@ -285,3 +285,23 @@ func TestCheckConfigIntegrity_MCPDisabledTools(t *testing.T) {
 		})
 	}
 }
+
+func TestCheckConfigIntegrity_InvalidRegistryProxyPath(t *testing.T) {
+	t.Parallel()
+	yaml := "version: 1\ninfrastructure:\n  registry_proxy: https://artifactory.corp.io\n" +
+		"  registry_proxy_paths:\n    npm: \"@attacker.io/npm/\"\n"
+	cfg, err := config.ParseQsdevConfigBytes([]byte(yaml))
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+
+	results := CheckConfigIntegrity(CheckContext{QsdevConfig: cfg})
+
+	for _, r := range results {
+		if r.Name == "config_validation" && r.Status == StatusFail &&
+			strings.Contains(r.Message, "infrastructure.registry_proxy_paths.npm") {
+			return
+		}
+	}
+	t.Errorf("expected a config_validation failure naming infrastructure.registry_proxy_paths.npm, got %+v", results)
+}

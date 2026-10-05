@@ -25,6 +25,7 @@ type Catalog struct {
 	permissionRules PermissionRulesFile
 	mcpServers      map[string]MCPServerDef
 	bootstrapTools  map[string]BootstrapToolDef
+	mcpServe        MCPServeOptIns
 	docsCorpus      DocsCorpusConfig
 
 	// entryNodes holds, for a catalog parsed from a unified defaults file,

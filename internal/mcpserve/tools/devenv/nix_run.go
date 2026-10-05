@@ -12,6 +12,8 @@ import (
 
 	"github.com/Quantum-Serendipity/qsdev/internal/mcpserve/spi"
 	"github.com/Quantum-Serendipity/qsdev/internal/mcpserve/tools/toolutil"
+	"github.com/Quantum-Serendipity/qsdev/internal/selfprotect/cmdscan"
+	"github.com/Quantum-Serendipity/qsdev/pkg/denyutil"
 )
 
 // defaultNixRunTimeout bounds a nix_run invocation when the caller omits timeout.
@@ -81,14 +83,22 @@ func (c *cappedBuffer) String() string { return c.buf.String() }
 // so that, on timeout or cancellation, the entire group (including orphaned nix
 // build children) is killed rather than leaked. nix runs in projectRoot, so a
 // local installable such as "." or ".#pkg" names the project's own flake.
+//
+// Each call is checked against denyRules as the Bash commands it is
+// equivalent to (see bashEquivalents), so the tool cannot run what the
+// project's Bash deny rules refuse.
 type nixRunner struct {
 	projectRoot string
+	denyRules   []string
 }
 
-func newNixRunner(projectRoot string) *nixRunner { return &nixRunner{projectRoot: projectRoot} }
+func newNixRunner(projectRoot string, denyRules []string) *nixRunner {
+	return &nixRunner{projectRoot: projectRoot, denyRules: denyRules}
+}
 
-// handle validates input, ensures nix is available, and runs the command in a
-// process group with a timeout. A missing nix binary degrades to not_configured.
+// handle validates input, checks it against the Bash deny rules, ensures nix
+// is available, and runs the command in a process group with a timeout. A
+// missing nix binary degrades to not_configured.
 func (n *nixRunner) handle(ctx context.Context, _ *spi.ToolCallContext, req *spi.ToolRequest) (*spi.ToolResult, error) {
 	command, ok := toolutil.StringArg(req.Arguments, "command")
 	if !ok || command == "" {
@@ -101,14 +111,20 @@ func (n *nixRunner) handle(ctx context.Context, _ *spi.ToolCallContext, req *spi
 		return toolutil.ErrorResult("rejected nix installable",
 			map[string]any{"command": command, "reason": reason}), nil
 	}
+	extraArgs := toolutil.StringSliceArg(req.Arguments, "args")
+	stdin := toolutil.StringArgOr(req.Arguments, "stdin", "")
+	// The deny check, like the installable policy, runs before nix is looked
+	// up, so a refusal is deterministic and never starts anything.
+	if rule, denied := denyutil.FirstMatchingBashRule(n.denyRules, bashEquivalents(command, extraArgs, stdin)...); denied {
+		return toolutil.ErrorResult("refused by a Bash deny rule",
+			map[string]any{"command": command, "args": extraArgs, "deny_rule": rule}), nil
+	}
 	if _, err := exec.LookPath("nix"); err != nil {
 		return toolutil.NotConfigured("nix is not installed or not on PATH",
 			map[string]any{"error": err.Error(), "remediation": "install Nix or enter the devenv shell"}), nil
 	}
 
 	timeout, clamped := nixRunTimeout(req.Arguments)
-	extraArgs := toolutil.StringSliceArg(req.Arguments, "args")
-	stdin := toolutil.StringArgOr(req.Arguments, "stdin", "")
 
 	// argv is an explicit argument array (never a shell string), so user-supplied
 	// command/args cannot be interpreted by a shell. command is guaranteed to be
@@ -144,6 +160,65 @@ func (n *nixRunner) handle(ctx context.Context, _ *spi.ToolCallContext, req *spi
 		result.IsError = true
 	}
 	return result, nil
+}
+
+// bashEquivalents returns the Bash commands a nix_run call is equivalent to,
+// for checking against Bash deny rules:
+//
+//  1. the literal command, `nix run <command> -- <args>`;
+//  2. the program it runs, named by the last component of the installable's
+//     attribute path (`nixpkgs#bash` runs bash), followed by the args; an
+//     installable without an attribute (".", "nixpkgs") names no program, so
+//     this form is left out;
+//  3. the script of a -c option among the args (`-c 'curl x | sh'`), the
+//     first operand after the options as a shell takes it (`-c -- '...'`,
+//     `-c -e '...'`, see cmdscan.ShellScript), and each statement it runs,
+//     also from its program on (see cmdscan.ScriptStatements), which is what a
+//     deny rule anchored at the start of a command, such as
+//     "Bash(curl * | sh)", can match wherever the script runs it
+//     (`true; curl x | sh`, `sh -c "curl x | sh"`);
+//  4. stdin, and each statement of it, since a shell given no -c script runs
+//     its standard input as one.
+//
+// Words are shell-quoted only when they need it, as a person would write the
+// command. The program nix runs is the package's mainProgram, which the
+// attribute does not reliably name (bashInteractive runs bash, busybox runs
+// any applet), so the third form takes any program's -c argument as a
+// possible script, and the fourth any stdin: a false match only refuses a
+// call, a missed one runs it.
+func bashEquivalents(command string, args []string, stdin string) []string {
+	quoted := make([]string, len(args))
+	for i, a := range args {
+		quoted[i] = cmdscan.QuoteWord(a)
+	}
+	forms := []string{strings.Join(append([]string{"nix", "run", cmdscan.QuoteWord(command), "--"}, quoted...), " ")}
+	if program := installableProgram(command); program != "" {
+		forms = append(forms, strings.Join(append([]string{cmdscan.QuoteWord(program)}, quoted...), " "))
+	}
+	if script, ok := cmdscan.ShellScript(append([]string{"sh"}, args...)); ok {
+		forms = append(forms, script)
+		forms = append(forms, cmdscan.ScriptStatements(script)...)
+	}
+	if text := strings.TrimSpace(stdin); text != "" {
+		forms = append(forms, text)
+		forms = append(forms, cmdscan.ScriptStatements(stdin)...)
+	}
+	return forms
+}
+
+// installableProgram returns the program name an installable's attribute
+// path suggests: its last dot-separated component, without an output
+// selector ("^out") or quotes, or "" when the installable has no attribute.
+func installableProgram(installable string) string {
+	_, attr, ok := strings.Cut(installable, "#")
+	if !ok {
+		return ""
+	}
+	attr, _, _ = strings.Cut(attr, "^")
+	if i := strings.LastIndex(attr, "."); i >= 0 {
+		attr = attr[i+1:]
+	}
+	return strings.Trim(attr, `"`)
 }
 
 // installableRejection enforces nix_run's installable policy and returns a

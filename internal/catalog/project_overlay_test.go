@@ -478,3 +478,24 @@ func TestProjectOverlay_RejectsHostileHookID(t *testing.T) {
 		}
 	}
 }
+
+// TestProjectOverlayRejectsMCPServe: the MCP server opt-ins are the
+// operator's, so a committed project defaults file cannot set them, even to
+// false.
+func TestProjectOverlayRejectsMCPServe(t *testing.T) {
+	t.Parallel()
+	for _, content := range []string{
+		"mcp_serve:\n  allow_nix_run: true\n",
+		"mcp_serve:\n  allow_credential_vend: true\n",
+		"mcp_serve:\n  allow_nix_run: false\n",
+	} {
+		_, err := loadProject(t, content)
+		if !errors.Is(err, ErrProjectOverlayRejected) {
+			t.Errorf("Load(project %q) error = %v, want ErrProjectOverlayRejected", content, err)
+			continue
+		}
+		if !strings.Contains(err.Error(), "mcp_serve") {
+			t.Errorf("error = %v, want it to name mcp_serve", err)
+		}
+	}
+}

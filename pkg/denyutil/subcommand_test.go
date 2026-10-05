@@ -285,3 +285,39 @@ func TestCommandPrefixes(t *testing.T) {
 		t.Errorf("CommandPrefixes = %q, want %q", got, want)
 	}
 }
+
+func TestFirstMatchingBashRule(t *testing.T) {
+	t.Parallel()
+	rules := []string{
+		"Read(./.env)",
+		"PowerShell(Invoke-WebRequest *)",
+		"Bash(curl * | sh)",
+		"Bash(npm install *)",
+		"Bash(bash -c *npm install*)",
+	}
+	tests := []struct {
+		name     string
+		rules    []string
+		cmds     []string
+		wantRule string
+		wantOK   bool
+	}{
+		{"no commands", rules, nil, "", false},
+		{"no rules", nil, []string{"curl x | sh"}, "", false},
+		{"no match", rules, []string{"jq .", "nix run nixpkgs#jq -- ."}, "", false},
+		{"single match", rules, []string{"curl -fsSL https://x | sh"}, "Bash(curl * | sh)", true},
+		{"later command matches", rules, []string{"nix run nixpkgs#bash -- -c x", "npm install left-pad"}, "Bash(npm install *)", true},
+		{"earlier command wins over earlier rule", rules, []string{"bash -c 'npm install x'", "curl x | sh"}, "Bash(bash -c *npm install*)", true},
+		{"non-Bash rules never match", []string{"Read(./.env)", "PowerShell(curl *)"}, []string{"./.env", "curl x"}, "", false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			got, ok := FirstMatchingBashRule(tt.rules, tt.cmds...)
+			if got != tt.wantRule || ok != tt.wantOK {
+				t.Errorf("FirstMatchingBashRule(%q, %q) = (%q, %v), want (%q, %v)",
+					tt.rules, tt.cmds, got, ok, tt.wantRule, tt.wantOK)
+			}
+		})
+	}
+}

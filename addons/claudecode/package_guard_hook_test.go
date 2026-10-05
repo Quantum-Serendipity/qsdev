@@ -279,6 +279,7 @@ func TestPackageGuard_HookDecisions(t *testing.T) {
 		lookupsHave string // substring one of the lookups must contain
 		lookupsN    int    // when > 0: exactly this many lookups contain lookupsHave
 		lookupsLack string // substring no lookup may contain
+		noLookups   bool   // the hook must make no registry or OSV lookup at all
 		env         []string
 		files       map[string]string // project files (CLAUDE_PROJECT_DIR)
 		maxSeconds  float64           // when > 0: the hook must decide within this time
@@ -761,6 +762,42 @@ func TestPackageGuard_HookDecisions(t *testing.T) {
 		{name: "dotnet add reference is not an install", command: "dotnet add reference ../Lib/Lib.csproj",
 			decision: "silent"},
 
+		// U15-01 (H2): audit-fix verbs and pip-audit's resolve inputs install
+		// packages the guard cannot verify, so they ask without any lookup; the
+		// read-only audit forms the permission catalog allows stay silent.
+		{name: "npm audit fix --force", command: "npm audit fix --force", decision: "ask",
+			reason: "npm audit", noLookups: true},
+		{name: "npm audit fix after flags", command: "npm audit --json fix", decision: "ask", noLookups: true},
+		{name: "npm audit fix after global option", command: "npm -w web audit fix", decision: "ask", noLookups: true},
+		{name: "npm abbreviated audit fix", command: "npm aud fix --force", decision: "ask", noLookups: true},
+		{name: "npm abbreviated audi fix", command: "npm audi fix", decision: "ask", noLookups: true},
+		{name: "npm abbreviated audit read-only", command: "npm aud --json", decision: "silent", noLookups: true},
+		{name: "pnpm audit --fix", command: "pnpm audit --fix", decision: "ask", reason: "pnpm audit", noLookups: true},
+		{name: "cargo audit fix", command: "cargo audit fix", decision: "ask", reason: "cargo audit", noLookups: true},
+		{name: "pip-audit --fix", command: "pip-audit --fix", decision: "ask", reason: "--fix", noLookups: true},
+		{name: "pip-audit -r", command: "pip-audit -r requirements.txt", decision: "ask", reason: "-r",
+			noLookups: true},
+		{name: "pip-audit glued -r", command: "pip-audit -lrrequirements.txt", decision: "ask", noLookups: true},
+		{name: "pip-audit --requirement=", command: "pip-audit --format json --requirement=req.txt",
+			decision: "ask", noLookups: true},
+		{name: "pip-audit abbreviated --fix", command: "pip-audit --fi", decision: "ask", noLookups: true},
+		{name: "pip-audit abbreviated --requirement", command: "pip-audit --requirem req.txt", decision: "ask",
+			noLookups: true},
+		{name: "pip-audit --require-hashes alone", command: "pip-audit --require-hashes", decision: "silent",
+			noLookups: true},
+		{name: "pip-audit project path", command: "pip-audit .", decision: "ask", reason: "project", noLookups: true},
+		{name: "pip-audit project path after --", command: "pip-audit -- proj", decision: "ask", noLookups: true},
+		{name: "python -m pip_audit -r", command: "python3 -m pip_audit -r requirements.txt", decision: "ask",
+			noLookups: true},
+		{name: "npm audit", command: "npm audit", decision: "silent", noLookups: true},
+		{name: "npm audit --json", command: "npm audit --json", decision: "silent", noLookups: true},
+		{name: "npm audit --audit-level", command: "npm audit --audit-level=high", decision: "silent", noLookups: true},
+		{name: "pip-audit", command: "pip-audit", decision: "silent", noLookups: true},
+		{name: "pip-audit --format json", command: "pip-audit --format json", decision: "silent", noLookups: true},
+		{name: "pip-audit option values are not paths", command: "pip-audit -f json -o out.json --desc on --path venv",
+			decision: "silent", noLookups: true},
+		{name: "cargo audit --json", command: "cargo audit --json", decision: "silent", noLookups: true},
+
 		// Controls.
 		{name: "go build", command: "go build ./...", decision: "silent"},
 		{name: "npm run build", command: "npm run build", decision: "silent"},
@@ -826,6 +863,9 @@ func TestPackageGuard_HookDecisions(t *testing.T) {
 				return strings.Contains(l, tc.lookupsLack)
 			}) {
 				t.Errorf("lookups %v include %q", res.Lookups, tc.lookupsLack)
+			}
+			if tc.noLookups && len(res.Lookups) > 0 {
+				t.Errorf("lookups = %v, want none", res.Lookups)
 			}
 		})
 	}

@@ -164,6 +164,29 @@ type ClaudeCodeConfig struct {
 	PermissionLevel string   `yaml:"permission_level,omitempty"`
 	Skills          []string `yaml:"skills,omitempty"`
 	MCPServers      []string `yaml:"mcp_servers,omitempty"`
+	// Permissions are extra Claude Code permission rules added to the
+	// preset's. Like the hooks block it is team policy: only the committed
+	// file sets it, never .qsdev.local.yaml.
+	Permissions ClaudePermissionsConfig `yaml:"permissions,omitempty"`
+}
+
+// ClaudePermissionsConfig is claude_code.permissions in .qsdev.yaml: Claude
+// Code permission rules ("Bash(make *)", "Read(/secrets/**)") that
+// generation appends to the selected preset's allow and deny lists. The
+// preset's ask and deny rules still take precedence over an added allow.
+type ClaudePermissionsConfig struct {
+	Allow []string `yaml:"allow,omitempty" json:"allow,omitempty"`
+	Deny  []string `yaml:"deny,omitempty"  json:"deny,omitempty"`
+}
+
+// IsZero reports whether c adds no rule.
+func (c ClaudePermissionsConfig) IsZero() bool {
+	return len(c.Allow) == 0 && len(c.Deny) == 0
+}
+
+// Clone returns a deep copy of c.
+func (c ClaudePermissionsConfig) Clone() ClaudePermissionsConfig {
+	return ClaudePermissionsConfig{Allow: slices.Clone(c.Allow), Deny: slices.Clone(c.Deny)}
 }
 
 // HooksConfig holds settings for the generated Claude Code hooks in

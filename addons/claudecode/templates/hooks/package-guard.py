@@ -2590,6 +2590,29 @@ def _unverified(reason: str) -> Install:
     return Install("", _UNVERIFIED_MANAGER, [], [reason], 0, [])
 
 
+_AUDIT_FIX_MANAGERS = frozenset({"npm", "pnpm", "cargo"})
+
+
+def _is_audit_verb(exe: str, tok: str) -> bool:
+    if exe == "npm":
+        return len(tok) >= 2 and "audit".startswith(tok)
+    return tok == "audit"
+
+
+def _audit_resolve(exe: str, sub: list) -> Optional[Install]:
+    """`npm audit fix`, `npm audit --json fix`, `pnpm audit --fix`, `cargo audit fix`:
+    the manager picks and installs new versions itself, so the guard cannot check
+    them. npm's `fix` is a positional that may follow flags, so any argument counts.
+    npm also runs an unambiguous prefix of a command (`npm aud fix`); a prefix that
+    npm rejects as ambiguous only makes the guard ask on a command that fails anyway."""
+    if exe not in _AUDIT_FIX_MANAGERS or not sub or not _is_audit_verb(exe, sub[0]):
+        return None
+    if any(t in ("fix", "--fix") or t.startswith("--fix=") for t in sub[1:]):
+        return _unverified(f"`{exe} audit ... fix` upgrades dependencies to versions the manager "
+                           f"chooses, which the guard cannot verify against the registry")
+    return None
+
+
 def _parse_manager(exe: str, rest: list, dyn: list, runtime: bool) -> Optional[Install]:
     manager = MANAGERS[exe]
     if manager.verbs[0].tokens == ():
@@ -2620,6 +2643,9 @@ def _parse_manager(exe: str, rest: list, dyn: list, runtime: bool) -> Optional[I
         if verb.kind == "unverifiable" and not issues:
             return None
         return Install(verb.ecosystem, verb.manager, packages, issues, i + k, scripts)
+    audit_fix = _audit_resolve(exe, rest[i:])
+    if audit_fix is not None:
+        return audit_fix
     if _registry_config_change(exe, rest[i:]):
         return _unverified(f"`{exe} {' '.join(rest[i:i + 2])} ...` changes which package registry/index "
                            f"(or TLS verification) later installs use; the guard only checks the public registry")
@@ -3206,12 +3232,62 @@ def _parse_cmd(rest: list, dyn: list) -> Optional[Install]:
     return None
 
 
+# pip-audit options that take a value (`-f json`, `--format=json`); -r/--requirement is
+# handled apart because it installs. --desc and --aliases take an optional on|off|auto.
+_PIP_AUDIT_VALUE_SHORT = frozenset("fso")
+_PIP_AUDIT_VALUE_LONG = frozenset({"--format", "--vulnerability-service", "--osv-url", "--cache-dir",
+                                   "--progress-spinner", "--timeout", "--path", "--index-url",
+                                   "--extra-index-url", "--output", "--ignore-vuln"})
+_PIP_AUDIT_OPTIONAL_LONG = frozenset({"--desc", "--aliases"})
+
+
+def _pip_audit_install(reason: str) -> Install:
+    return _unverified(f"`pip-audit {reason}` pip-installs packages (building sdists) that the guard "
+                       f"cannot verify; audit the installed environment with plain `pip-audit` instead")
+
+
+def _parse_pip_audit(rest: list, dyn: list) -> Optional[Install]:
+    """pip-audit audits the current environment unless given -r/--requirement or a
+    project path, which it pip-installs into a temporary venv, or --fix, which
+    upgrades the environment. Unknown options are treated as flags, so a value
+    after one reads as a project path and asks (fail closed)."""
+    i, n = 0, len(rest)
+    while i < n:
+        tok = rest[i]
+        i += 1
+        if tok == "--":
+            return _pip_audit_install(f"-- {rest[i]}") if i < n else None
+        if not tok.startswith("-") or tok == "-":
+            return _pip_audit_install(f"{_show(tok)} (a project path)")
+        base, eq, _ = tok.partition("=")
+        # argparse accepts unambiguous long-option prefixes (`--fi`, `--requirem`).
+        if base == "-r" or (len(base) > 2 and any(o.startswith(base) for o in ("--fix", "--requirement"))):
+            return _pip_audit_install(base)
+        if tok.startswith("--"):
+            if eq:
+                continue
+            if base in _PIP_AUDIT_VALUE_LONG:
+                i += 1
+            elif base in _PIP_AUDIT_OPTIONAL_LONG and i < n and rest[i] in ("on", "off", "auto"):
+                i += 1
+            continue
+        for k, c in enumerate(tok[1:]):  # short cluster: -lr req, -fjson, -lrreq.txt
+            if c == "r":
+                return _pip_audit_install("-r")
+            if c in _PIP_AUDIT_VALUE_SHORT:
+                if not tok[k + 2:]:
+                    i += 1
+                break
+    return None
+
+
 _SPECIAL_PARSERS: dict = {
     "nix": _parse_nix, "nix-env": _parse_nix_env, "nix-shell": _parse_nix_shell,
     "helm": _parse_helm, "mvn": _parse_mvn, "deno": _parse_deno,
     "pwsh": _parse_pwsh, "powershell": _parse_pwsh, "clojure": _parse_clojure, "clj": _parse_clojure,
     "cmd": _parse_cmd, "mvnw": _parse_mvn, "cs": _parse_coursier, "coursier": _parse_coursier,
     "scala-cli": _parse_scala_cli, "scala": _parse_scala_cli, "jbang": _parse_jbang,
+    "pip-audit": _parse_pip_audit, "pip_audit": _parse_pip_audit,
 }
 
 

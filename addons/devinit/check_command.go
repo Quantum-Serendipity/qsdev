@@ -119,12 +119,14 @@ func runCheck(cmd *cobra.Command, format check.OutputFormat, auditLevel check.Au
 			answersErr = fmt.Errorf("deriving answers from %s: %w", cfgFile, answersErr)
 		}
 	}
-	// The committed hooks block is authoritative for the hook policy (init,
-	// join and update refresh it from .qsdev.yaml), so a policy committed
+	// The committed hooks block and claude_code.permissions are
+	// authoritative for the hook policy and the extra permission rules (init,
+	// join and update refresh them from .qsdev.yaml), so a policy committed
 	// after the answers were saved is what settings.json must enforce, and
 	// a checkout that has not run 'qsdev init --update' since fails.
 	if ctx.QsdevConfig != nil {
 		answers.HookPolicy = ctx.QsdevConfig.Hooks.Clone()
+		answers.ClaudePermissions = ctx.QsdevConfig.ClaudeCode.Permissions.Clone()
 	}
 
 	// Settle the answers against the committed config, as every generation

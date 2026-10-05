@@ -106,6 +106,9 @@ claude_code:
   permission_level: standard
   skills: [deploy, review-pr, security-review-owasp]
   mcp_servers: [context7, github, socket, semble]
+  permissions:                 # extra rules added to the preset's; see Permission Presets
+    allow: ["Bash(terraform plan *)"]
+    deny: ["Bash(terraform apply *)"]
 hooks:
   file_boundary:
     extra_read_paths: [/opt/android-sdk]   # read-only; see Hook settings
@@ -530,7 +533,7 @@ client:
   | `claude_code.skills`, `claude_code.mcp_servers` | Added (servers still subject to the client MCP policy) |
   | `claude_code.permission_level` | Applied only when stricter than the committed level (or, when none is committed, the tier's preset): `minimal` is stricter than `standard`, which is stricter than `permissive`. `custom` and `supply-chain-only` are not comparable, so a local override can neither switch to them nor away from them |
   | `security.level`, `security.*` | Can raise the floor, never lower it |
-  | `tools.disabled`, `tools.config`, `claude_code.enabled` | Ignored: only `.qsdev.yaml` sets them |
+  | `tools.disabled`, `tools.config`, `claude_code.enabled`, `claude_code.permissions` | Ignored: only `.qsdev.yaml` sets them |
   | `hooks` | Not accepted: the local file fails to parse, since only `.qsdev.yaml` sets hook policy |
 
   Every ignored or raised setting is reported as a warning (for example
@@ -889,8 +892,13 @@ you changed it, and keeps your own variables.
 | **minimal** | Read-only by default. Only `Read(*)` and basic build/test commands are allowed. Every write or edit requires approval. |
 | **standard** | Productive development. `Read`, `Edit`, `Write`, `git`, build/test/lint, and Nix dev commands are allowed. Package installs are ask-gated. Bypass mode is disabled. |
 | **permissive** | Standard plus `make` and `docker` commands. For teams that use Makefiles or Docker-based workflows. |
-| **supply-chain-only** | Minimal permissions focused on supply chain defense. Deny rules and package-guard hook without broader development tooling permissions. |
-| **custom** | Only explicitly configured allow/deny patterns. Full manual control for advanced use cases. |
+| **supply-chain-only** | Minimal permissions focused on supply chain defense. Deny rules and package-guard hook without broader development tooling permissions. Bypass mode is disabled; `defaultMode` is left unset. |
+| **custom** | Allows only the `claude_code.permissions.allow` rules; denies the base rules plus `claude_code.permissions.deny`. Bypass mode is disabled and `defaultMode` is `default`. Full manual control for advanced use cases. |
+
+`claude_code.permissions.allow` and `claude_code.permissions.deny` in the
+committed `.qsdev.yaml` add Claude Code permission rules (`Read`,
+`Bash(make *)`) to every preset's allow and deny lists. The preset's ask and
+deny rules still take precedence over an added allow.
 
 ### `.claude/hooks/package-guard.py`
 

@@ -284,7 +284,7 @@ func TestBuildDevenvNixData_ModulePackageExprsCollected(t *testing.T) {
 }
 
 func TestBuildEnterShellScript_ContainsGdevVars(t *testing.T) {
-	script := buildEnterShellScript(defaultUnsetEnvVars())
+	script := buildEnterShellScript(catalog.MustDefault().UnsetVars())
 
 	for _, want := range []string{"QSDEV_PROJECT_NAME", "QSDEV_SECURITY_PROFILE", "QSDEV_TOOL_COUNT"} {
 		if !strings.Contains(script, want) {

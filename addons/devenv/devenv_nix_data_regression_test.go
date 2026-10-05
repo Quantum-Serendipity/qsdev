@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/Quantum-Serendipity/qsdev/internal/catalog"
 	"github.com/Quantum-Serendipity/qsdev/pkg/ecosystem"
 	"github.com/Quantum-Serendipity/qsdev/pkg/types"
 )
@@ -15,11 +16,12 @@ func TestCollectToolPackages_Deterministic(t *testing.T) {
 	t.Parallel()
 	// Enable every catalog tool that contributes a package or expression so
 	// map iteration order has room to reshuffle the output.
+	cat := catalog.MustDefault()
 	enabled := map[string]bool{}
-	for name := range defaultToolNixPackages() {
+	for name := range cat.ToolNixPackages() {
 		enabled[name] = true
 	}
-	for name := range defaultToolNixExprs() {
+	for name := range cat.ToolNixExprs() {
 		enabled[name] = true
 	}
 	if len(enabled) < 2 {
@@ -27,9 +29,9 @@ func TestCollectToolPackages_Deterministic(t *testing.T) {
 	}
 	answers := types.WizardAnswers{EnabledTools: enabled}
 
-	wantPkgs, wantExprs := collectToolPackages(answers)
+	wantPkgs, wantExprs := collectToolPackages(cat, answers)
 	for i := range 50 {
-		gotPkgs, gotExprs := collectToolPackages(answers)
+		gotPkgs, gotExprs := collectToolPackages(cat, answers)
 		if !slices.Equal(gotPkgs, wantPkgs) || !slices.Equal(gotExprs, wantExprs) {
 			t.Fatalf("run %d produced a different order:\n pkgs %v vs %v\n exprs %v vs %v",
 				i, gotPkgs, wantPkgs, gotExprs, wantExprs)
@@ -37,7 +39,7 @@ func TestCollectToolPackages_Deterministic(t *testing.T) {
 	}
 
 	// The order is the sorted tool-name order, not merely stable by chance.
-	nixPkgs := defaultToolNixPackages()
+	nixPkgs := cat.ToolNixPackages()
 	var sortedPkgs []string
 	for _, name := range slices.Sorted(maps.Keys(enabled)) {
 		if p, ok := nixPkgs[name]; ok {

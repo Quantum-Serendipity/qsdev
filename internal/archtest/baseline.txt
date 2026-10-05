@@ -163,7 +163,6 @@ test-os-chdir	addons/claudecode	16
 test-os-chdir	addons/devenv	2
 test-os-chdir	addons/devinit	18
 toolreg-defaultregistry	addons/claudecode	2
-toolreg-defaultregistry	addons/devenv	1
 toolreg-defaultregistry	addons/devinit	10
 toolreg-defaultregistry	internal/posture	2
 toolreg-defaultregistry	internal/posture/drift	1

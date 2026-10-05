@@ -622,20 +622,17 @@ func TestMultipleEcosystemInputs(t *testing.T) {
 	}
 }
 
-func TestUnknownLanguageInRegistrySkipped(t *testing.T) {
+// TestUnknownLanguageInRegistryErrors checks that devenv.yaml generation,
+// like Generate, fails closed on a language the registry has no module for
+// instead of silently generating without it.
+func TestUnknownLanguageInRegistryErrors(t *testing.T) {
 	reg := ecosystem.NewRegistry()
 	// Registry has no "go" module registered.
 	answers := types.WizardAnswers{
 		Languages: []types.LanguageChoice{goLanguage()},
 	}
-	gf, err := devenv.GenerateDevenvYaml(answers, reg)
-	if err != nil {
-		t.Fatalf("unknown language should not cause error: %v", err)
-	}
-	m := mustUnmarshal(t, gf)
-
-	// Should still produce valid YAML with hardened defaults.
-	if m["impure"] != false {
-		t.Errorf("impure should be false")
+	_, err := devenv.GenerateDevenvYaml(answers, reg)
+	if err == nil || !strings.Contains(err.Error(), `unknown language module: "go"`) {
+		t.Fatalf("GenerateDevenvYaml() error = %v; want unknown language module", err)
 	}
 }

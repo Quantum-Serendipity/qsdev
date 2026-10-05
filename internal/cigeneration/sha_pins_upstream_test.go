@@ -9,8 +9,9 @@ import (
 	"time"
 )
 
-// allPins is the set verified against upstream. Keep it in step with the
-// catalog; TestActionPinsResolveUpstream_CoversCatalog fails if it drifts.
+// allPins is the action catalog every pin test walks: upstream resolution,
+// shape, and parity with this repository's workflows. Keep it in step with
+// the catalog; TestActionPinsResolveUpstream_CoversCatalog fails if it drifts.
 func allPins() map[string]ActionRef {
 	return map[string]ActionRef{
 		"ActionCheckout":         ActionCheckout,

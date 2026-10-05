@@ -158,18 +158,25 @@ jobs:
           VERIFY_ACTION_PINS: "1"
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-  # Runs the OpenGrep rule library through the engine: every shipped rule must
-  # parse (an unparsable rule is dropped with only a warning) and the
-  # annotated fixtures under rules/core/testdata must match, with zero
-  # findings on the safe fixtures. The unit-test job skips these checks
-  # because it has no scanner installed.
-  rules:
-    runs-on: ubuntu-latest
-    env:
-      OPENGREP_VERSION: "1.21.0"
-      # Release asset digest of opengrep_manylinux_x86 for OPENGREP_VERSION
-      # (also pinned in nix/opengrep/default.nix).
-      OPENGREP_SHA256: 9ed0ceee4a3a406d27d40894bcce85ea151be21e6d4b180689689224faff2a3e
+  # Builds the OpenGrep derivation (nix/opengrep) on every platform it
+  # advertises, smoke-tests the binary, and runs the rule library through it:
+  # every shipped rule must parse (an unparsable rule is dropped with only a
+  # warning) and the annotated fixtures under rules/core/testdata must match,
+  # with zero findings on the safe fixtures. The unit-test job skips these
+  # checks because it has no scanner installed. qsdev embeds this derivation
+  # into user projects, so a broken unpack, patchelf or hash fails here first.
+  # One leg also verifies the pinned release hash of every platform.
+  opengrep-nix:
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        os:
+          - ubuntu-latest
+          - ubuntu-24.04-arm
+          - macos-latest
+          - macos-15-intel
+    runs-on: ${{ matrix.os }}
     steps:
       - name: Harden Runner
         uses: step-security/harden-runner@9af89fc71515a100421586dfdb3dc9c984fbf411 # v2.19.4
@@ -186,19 +193,17 @@ jobs:
         with:
           go-version-file: go.mod
 
-      - name: Install OpenGrep (pinned, checksum-verified)
-        run: |
-          mkdir -p "$RUNNER_TEMP/opengrep"
-          curl -fsSL -o "$RUNNER_TEMP/opengrep/opengrep" \
-            "https://github.com/opengrep/opengrep/releases/download/v${OPENGREP_VERSION}/opengrep_manylinux_x86"
-          echo "${OPENGREP_SHA256}  $RUNNER_TEMP/opengrep/opengrep" | sha256sum --check --strict
-          chmod 0755 "$RUNNER_TEMP/opengrep/opengrep"
-          echo "$RUNNER_TEMP/opengrep" >> "$GITHUB_PATH"
+      - name: Install Nix
+        uses: cachix/install-nix-action@13d8dd58da0234aa297dedd986986ccb8e7f3e24 # v31.11.1
 
-      - name: Validate rules and fixtures
-        run: go test -count=1 -run 'TestCoreRules_' -v ./rules/
-        env:
-          QSDEV_REQUIRE_RULE_SCANNER: "1"
+      - name: Build OpenGrep and validate rules and fixtures
+        run: nix/opengrep/test-packaging.sh
+
+      # Runs even when the build above failed, so a version bump reports every
+      # platform's hash result at once instead of hiding three behind one.
+      - name: Verify every platform's release hash
+        if: ${{ !cancelled() && matrix.os == 'ubuntu-latest' }}
+        run: nix/opengrep/test-packaging.sh --hashes-only
 
   # Builds the MCP gateway image from build/docker/Dockerfile and runs the
   # container suite against it (size, version stamping, startup, auth). A stale

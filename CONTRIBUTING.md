@@ -40,6 +40,23 @@ scanning. Run `go vet ./...` and `golangci-lint run` before submitting.
 
 Without direnv: `devenv shell` for manual activation.
 
+### Bumping OpenGrep
+
+The prebuilt OpenGrep CLI is packaged in `nix/opengrep/default.nix` (qsdev
+embeds that file into projects that enable opengrep). To bump it, update
+`version` and the per-platform `hash` values there, then run:
+
+```bash
+nix/opengrep/test-packaging.sh                # build, smoke-test, run the rule library
+nix/opengrep/test-packaging.sh --hashes-only  # verify every platform's release hash
+```
+
+Both work from any directory and use the flake-pinned nixpkgs. CI runs the
+same script in the `opengrep-nix` job on Linux and macOS (x86_64 and arm64),
+plus `--hashes-only` once, so a wrong hash or a broken install path marks the
+PR red. `nix/opengrep_ci_test.go` fails `go test` if that job loses a platform,
+a step, or is made conditional or non-blocking.
+
 ## Guidelines
 
 - Keep changes focused. One PR, one concern.

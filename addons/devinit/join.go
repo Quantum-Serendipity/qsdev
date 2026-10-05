@@ -2,9 +2,8 @@ package devinit
 
 import (
 	"fmt"
+	"io"
 	"maps"
-	"os"
-	"path/filepath"
 	"slices"
 	"strings"
 
@@ -21,7 +20,6 @@ import (
 	"github.com/Quantum-Serendipity/qsdev/internal/version"
 	"github.com/Quantum-Serendipity/qsdev/pkg/branding"
 	_ "github.com/Quantum-Serendipity/qsdev/pkg/ecosystem/modules"
-	"github.com/Quantum-Serendipity/qsdev/pkg/fileutil"
 	"github.com/Quantum-Serendipity/qsdev/pkg/generate"
 	"github.com/Quantum-Serendipity/qsdev/pkg/types"
 )
@@ -53,36 +51,33 @@ func runJoin(cmd *cobra.Command, opts InitOptions, projectRoot string) error {
 	}
 	allFiles := accResult.allFiles
 
-	// 4. Generate local config template (only if it doesn't exist).
-	localCfg := branding.Get().LocalConfig
-	localConfigPath := filepath.Join(projectRoot, localCfg)
-	if _, err := os.Stat(localConfigPath); os.IsNotExist(err) {
-		localContent := GenerateLocalConfigTemplate(answers, answers.Detected)
-		allFiles = append(allFiles, types.GeneratedFile{
-			Path:    localCfg,
-			Content: localContent,
-			Mode:    fileutil.ModeReadWrite,
-		})
-	}
-
-	// 5. Dry-run: preview and return before touching the working tree.
+	// 4. Dry-run: preview and return before touching the working tree.
 	if opts.DryRun {
 		preview := generate.PreviewFiles(allFiles, nil, projectRoot)
 		_, _ = fmt.Fprint(cmd.OutOrStdout(), preview)
-		return nil
+		return writeLocalConfigTemplate(projectRoot, answers, true, cmd.OutOrStdout())
 	}
 
-	// 6. Ensure local config is in .gitignore.
+	// 5. Gitignore the local config, then create it from the template if the
+	// developer has none. It is human-owned, so it is never tracked in state.
+	localCfg := branding.Get().LocalConfig
 	if err := EnsureGitignoreEntry(projectRoot, localCfg); err != nil {
 		return fmt.Errorf("updating .gitignore: %w", err)
 	}
+	localOut := cmd.OutOrStdout()
+	if opts.Quiet {
+		localOut = io.Discard
+	}
+	if err := writeLocalConfigTemplate(projectRoot, answers, false, localOut); err != nil {
+		return err
+	}
 
-	// 7. Write files and record results.
+	// 6. Write files and record results.
 	if err := writeJoinResults(cmd, opts, projectRoot, answers, accResult, allFiles); err != nil {
 		return err
 	}
 
-	// 8. Print join-specific summary.
+	// 7. Print join-specific summary.
 	if !opts.Quiet {
 		if hasMissingPrereqs {
 			_, _ = fmt.Fprintf(cmd.OutOrStdout(), "\nNext: run '%s devenv setup --yes' to install missing prerequisites (nix, devenv, direnv).\n", branding.Get().AppName)

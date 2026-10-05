@@ -288,15 +288,14 @@ func TestPlanOrphans(t *testing.T) {
 	t.Parallel()
 
 	stored := types.GeneratedState{Files: map[string]types.FileState{
-		"kept.md":                  {},
-		"stale.md":                 {},
-		"edited.md":                {},
-		"gone.md":                  {},
-		"tool.yml":                 {Owner: "semgrep"},
-		"retired-tool.yml":         {Owner: "opengrep"},
-		"disabled-tool.yml":        {Owner: "old-tool"},
-		"../outside.md":            {},
-		branding.Get().LocalConfig: {},
+		"kept.md":           {},
+		"stale.md":          {},
+		"edited.md":         {},
+		"gone.md":           {},
+		"tool.yml":          {Owner: "semgrep"},
+		"retired-tool.yml":  {Owner: "opengrep"},
+		"disabled-tool.yml": {Owner: "old-tool"},
+		"../outside.md":     {},
 		// Claude Code switched off: the settings file is no longer generated.
 		claudesettings.ProjectRelPath: {},
 	}}
@@ -309,7 +308,6 @@ func TestPlanOrphans(t *testing.T) {
 		"retired-tool.yml":            {Status: types.Unmodified},
 		"disabled-tool.yml":           {Status: types.Unmodified},
 		"../outside.md":               {Status: types.Unmodified},
-		branding.Get().LocalConfig:    {Status: types.Unmodified},
 		claudesettings.ProjectRelPath: {Status: types.Unmodified},
 	}
 	// semgrep is enabled but its generator did not run (no semgrep-owned file
@@ -345,6 +343,37 @@ func TestPlanOrphans(t *testing.T) {
 		if got[path] != action {
 			t.Errorf("%s: action = %s, want %s", path, updateActionString(got[path]), updateActionString(action))
 		}
+	}
+}
+
+// TestIntegration_Update_LegacyLocalConfigEntryKeptOnDisk verifies an update
+// over state from an earlier join, which tracked the developer's local config
+// as an unmodified generated file, neither removes nor rewrites that file,
+// and saves state without the entry.
+func TestIntegration_Update_LegacyLocalConfigEntryKeptOnDisk(t *testing.T) {
+	dir := t.TempDir()
+	if _, err := executeInitCmd(t, dir, "--lang", "go", "--yes"); err != nil {
+		t.Fatalf("init failed: %v", err)
+	}
+
+	localCfg := branding.Get().LocalConfig
+	const content = "# my overrides\nextra_packages:\n  - jq\n"
+	st := loadProjectState(t, dir)
+	writeTrackedFile(t, &st, dir, localCfg, content, "")
+	saveProjectState(t, dir, st)
+	if _, tracked := rawStateFiles(t, dir)[localCfg]; !tracked {
+		t.Fatalf("fixture did not record the legacy %s entry", localCfg)
+	}
+
+	out, err := executeInitCmd(t, dir, "--update")
+	if err != nil {
+		t.Fatalf("update failed: %v\n%s", err, out)
+	}
+	if got := readFileContent(t, dir, localCfg); got != content {
+		t.Errorf("update changed %s:\n%s", localCfg, got)
+	}
+	if _, tracked := rawStateFiles(t, dir)[localCfg]; tracked {
+		t.Errorf("saved state still records %s", localCfg)
 	}
 }
 

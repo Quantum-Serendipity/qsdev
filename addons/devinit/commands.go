@@ -432,17 +432,16 @@ func stampTemplateVersions(st *types.GeneratedState, claudeGenerated bool) {
 }
 
 // projectGitignoreEntries are the local-state paths every initialized project
-// ignores: qsdev's state directories, the machine-specific local overrides file
-// (join also ignores it, so init must too or every teammate's first join
-// dirties .gitignore), the devenv/direnv caches, and the audit logs Claude Code
-// hooks write under .claude/ (tool inputs and commands that can hold secrets,
-// and must never be committed with the rest of .claude/).
+// ignores: the per-checkout paths of state.LocalOnlyEntries (qsdev's state
+// directories, the machine-specific local overrides file, which join also
+// ignores so init must too or every teammate's first join dirties .gitignore,
+// and the devenv/direnv caches), plus the audit logs Claude Code hooks write
+// under .claude/ (tool inputs and commands that can hold secrets, and must
+// never be committed with the rest of .claude/). Sharing LocalOnlyEntries
+// keeps this list and the committed-manifest filter from drifting apart.
 func projectGitignoreEntries() []string {
-	b := branding.Get()
-	return []string{
-		b.StateDir + "/", "." + b.AppName + "/", b.LocalConfig, ".direnv/", ".devenv/",
-		claudecode.AddonDir + "/logs/", claudecode.AddonDir + "/hook-audit.log*",
-	}
+	return append(state.LocalOnlyEntries(),
+		claudecode.AddonDir+"/logs/", claudecode.AddonDir+"/hook-audit.log*")
 }
 
 func finalizeProject(cmd *cobra.Command, opts InitOptions, answers types.WizardAnswers, projectRoot string, accResult accumulatorResult) error {

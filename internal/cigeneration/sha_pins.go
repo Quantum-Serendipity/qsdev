@@ -87,7 +87,9 @@ var (
 		Tag:   "v6",
 	}
 	// Installs Nix for the generated ecosystem-ci job, which runs each
-	// ecosystem's CI commands inside the project's devenv shell.
+	// ecosystem's CI commands inside the project's devenv shell, and for this
+	// repository's own opengrep-nix CI job, which builds the OpenGrep
+	// derivation (TestActionPinsMatchWorkflows keeps the two in step).
 	ActionInstallNix = ActionRef{
 		Owner: "cachix",
 		Repo:  "install-nix-action",

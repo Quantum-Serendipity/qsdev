@@ -60,27 +60,18 @@ func workflowPins(t *testing.T) map[string]workflowPin {
 // ActionUploadArtifact sat at v4.6.2 while the workflows had moved to v7.0.1,
 // and the emitted team workflow would have paired mismatched artifact majors.
 //
-// Only actions this repository actually uses are compared. Entries emitted
-// solely into generated projects (Grype, download-artifact) have no local
-// counterpart to check against.
+// The whole catalog (allPins, whose completeness
+// TestActionPinsResolveUpstream_CoversCatalog enforces) is walked, so a new
+// ActionRef is compared as soon as a workflow here uses it. Only actions this
+// repository actually uses are compared: entries emitted solely into
+// generated projects (download-artifact) have no local counterpart.
 func TestActionPinsMatchWorkflows(t *testing.T) {
 	t.Parallel()
 
 	pins := workflowPins(t)
 
-	catalog := map[string]ActionRef{
-		"ActionCheckout":       ActionCheckout,
-		"ActionHardenRunner":   ActionHardenRunner,
-		"ActionUploadArtifact": ActionUploadArtifact,
-		"ActionOSVScanner":     ActionOSVScanner,
-		"ActionGrype":          ActionGrype,
-		"ActionLabeler":        ActionLabeler,
-		// ActionDownloadArtifact is emitted only into generated team
-		// workflows, so it has no counterpart here.
-	}
-
 	compared := 0
-	for name, ref := range catalog {
+	for name, ref := range allPins() {
 		path := ref.Owner + "/" + ref.Repo
 		pin, used := pins[path]
 		if !used {
@@ -119,16 +110,7 @@ func TestActionRefsAreWellFormed(t *testing.T) {
 
 	sha40 := regexp.MustCompile(`^[0-9a-f]{40}$`)
 
-	for name, ref := range map[string]ActionRef{
-		"ActionCheckout":         ActionCheckout,
-		"ActionHardenRunner":     ActionHardenRunner,
-		"ActionUploadArtifact":   ActionUploadArtifact,
-		"ActionDownloadArtifact": ActionDownloadArtifact,
-		"ActionOSVScanner":       ActionOSVScanner,
-		"ActionGrype":            ActionGrype,
-		"ActionInstallNix":       ActionInstallNix,
-		"ActionLabeler":          ActionLabeler,
-	} {
+	for name, ref := range allPins() {
 		t.Run(name, func(t *testing.T) {
 			if ref.Owner == "" || ref.Repo == "" {
 				t.Errorf("%s has an empty Owner or Repo", name)

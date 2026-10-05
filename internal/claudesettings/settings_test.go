@@ -2,7 +2,6 @@ package claudesettings
 
 import (
 	"encoding/json"
-	"maps"
 	"slices"
 	"strings"
 	"testing"
@@ -76,14 +75,45 @@ func TestParse_DuplicateKeyLastWins(t *testing.T) {
 	}
 }
 
-func TestParse_EnvNonStringDropped(t *testing.T) {
+// TestParse_EnvCoercedLikeClaudeCode pins that env values are read as
+// Claude Code's z.coerce.string() reads them (JavaScript String(v)): a
+// non-string value is converted, not ignored, so {"X": 1} sets X to "1".
+func TestParse_EnvCoercedLikeClaudeCode(t *testing.T) {
 	t.Parallel()
-	s, err := Parse([]byte(`{"env": {"A": "x", "B": ["y"], "C": 1, "D": ""}}`))
-	if err != nil {
-		t.Fatal(err)
+	tests := []struct {
+		raw  string
+		want string
+	}{
+		{`"x"`, "x"},
+		{`""`, ""},
+		{`1`, "1"},
+		{`7.0`, "7"},
+		{`-0`, "0"},
+		{`1.5`, "1.5"},
+		{`1e21`, "1e+21"},
+		{`123456789012345678901`, "123456789012345680000"},
+		{`0.000001`, "0.000001"},
+		{`1.5e-7`, "1.5e-7"},
+		{`true`, "true"},
+		{`false`, "false"},
+		{`null`, "null"},
+		{`[1]`, "1"},
+		{`[1, "a", [2, 3], null, true]`, "1,a,2,3,,true"},
+		{`[]`, ""},
+		{`{"a": 1}`, "[object Object]"},
+		{`[{}]`, "[object Object]"},
 	}
-	if want := map[string]string{"A": "x", "D": ""}; !maps.Equal(s.Env, want) {
-		t.Errorf("Env = %v, want %v", s.Env, want)
+	for _, tt := range tests {
+		t.Run(tt.raw, func(t *testing.T) {
+			t.Parallel()
+			s, err := Parse([]byte(`{"env": {"X": ` + tt.raw + `}}`))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got, ok := s.Env["X"]; !ok || got != tt.want {
+				t.Errorf("Env[X] = %q (present %v), want %q", got, ok, tt.want)
+			}
+		})
 	}
 }
 

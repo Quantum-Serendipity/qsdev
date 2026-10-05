@@ -252,13 +252,104 @@ mcp:
 - The key is set only in `.qsdev.yaml`: `.qsdev.local.yaml` cannot add to
   or remove from it. Re-creating a project (`qsdev init --force`) keeps it.
 
+### MCP server opt-ins
+
+Two tools of the qsdev MCP server (`qsdev mcp serve`) are off by default:
+`qsdev_nix_run` starts processes on the host, and `qsdev_credential_vend`
+hands out cloud credentials. The server does not mount `qsdev_nix_run` or
+`qsdev_credential_vend` without an operator opt-in that the project's qsdev
+configuration cannot set. The opt-ins come from the person or deployment
+running the server:
+
+| Tool | Opt-in (any one) | Also needed |
+|------|------------------|-------------|
+| `qsdev_nix_run` | `--allow-nix-run`, `QSDEV_MCP_ALLOW_NIX_RUN=1`, or `mcp_serve.allow_nix_run: true` in the user defaults file | gateway and standalone modes: `--gateway-allow-nix-run` or `QSDEV_GATEWAY_ALLOW_NIX_RUN=1` |
+| `qsdev_credential_vend` | `--allow-credential-vend`, `QSDEV_MCP_ALLOW_CREDENTIAL_VEND=1`, or `mcp_serve.allow_credential_vend: true` in the user defaults file | an enabled `security.credential_vend` in `.qsdev.yaml` (below); gateway and standalone modes: `--gateway-allow-credential-vend` or `QSDEV_GATEWAY_ALLOW_CREDENTIAL_VEND=1` |
+
+The user defaults file is `~/.config/qsdev/defaults.yaml` below the home
+directory your account's user database entry records, or an overlay a human
+approved with `qsdev defaults pin` (a `$QSDEV_ORG_CONFIG` that names an
+unpinned file is ignored with a warning; see
+[Org overlay pin](security-architecture.md)):
+
+```yaml
+# ~/.config/qsdev/defaults.yaml
+mcp_serve:
+  allow_nix_run: true
+  allow_credential_vend: true
+```
+
+- A project defaults file (`.qsdev/defaults.yaml`) that sets `mcp_serve` is
+  rejected, and `.qsdev.yaml` has no key for either opt-in: a committed
+  `mcp.credential_vend` or `mcp.nix_run` key fails the strict config parser,
+  so the server refuses to start rather than serving.
+- A user defaults file that fails to load is skipped with a warning, and both
+  opt-ins it would have set stay off.
+- Gateway credential vending without an agent allow-list
+  (`QSDEV_GATEWAY_AGENTS`) is refused at startup.
+- The server logs one line per tool at startup saying whether it is mounted
+  and which opt-in mounted it. When `.qsdev.yaml` enables
+  `security.credential_vend` but nobody has confirmed it, the line is a
+  warning naming the three ways to confirm.
+- The generated `.mcp.json` passes neither opt-in, so a default install
+  serves neither tool.
+- The flags and environment variables belong to whoever launches the
+  server, and are trusted only as far as the environment it is launched
+  from. `.qsdev.yaml`, `.qsdev.local.yaml` and `.qsdev/defaults.yaml` cannot
+  set them, but a committed `devenv.nix` (`env.QSDEV_MCP_ALLOW_NIX_RUN = "1";`)
+  or `.envrc` can export an environment variable into the shell a server is
+  started from, as it can run any other code there; review those files as
+  code. An agent that can run shell commands can also launch its own
+  `qsdev mcp serve` with the flags, so they keep the tools out of the
+  default install rather than out of an agent's reach.
+- A server on plain HTTP started with `--http-no-auth` mounts neither tool,
+  whatever the opt-ins say (see [MCP server over HTTP](#mcp-server-over-http)).
+
+### MCP server over HTTP
+
+`qsdev mcp serve --transport http` (and every standalone server) listens on
+HTTP. Without mTLS material it binds only a loopback address, and it
+requires a bearer token on every request:
+
+- At startup the server generates a random 32-byte token and, once the
+  port is bound, writes it (hex, mode `0600`) to
+  `<user state dir>/qsdev/mcp/<port>.token`: `$XDG_STATE_HOME/qsdev/mcp/`
+  when `XDG_STATE_HOME` is set, otherwise `~/.local/state/qsdev/mcp/` on
+  Linux, `~/Library/Application Support/qsdev/mcp/` on macOS and
+  `%LocalAppData%\qsdev\mcp\` on Windows. A directory it creates is mode
+  `0700`, and so is that `mcp` directory if it already existed. `<port>` is
+  the port actually bound, so `--port 0` names the port the system chose.
+  `--http-token-file <path>` chooses another file; its directory is left as
+  it is, with a warning when other users can write to it. The log names the
+  file, never the token, and the file is removed when the server stops.
+- A client sends `Authorization: Bearer <token>`. A request without it, or
+  with another token, gets `401` before any tool runs.
+- A standalone server's `GET /health` needs no token, so an orchestrator's
+  plain probe keeps working.
+- Under mTLS (`--tls-cert`, `--tls-key`, `--tls-client-ca`) the client
+  certificate is the authentication and no token is used.
+- `--http-no-auth` serves plain HTTP without the token. Any local process can
+  then call the server, so it logs a warning and mounts neither
+  `qsdev_nix_run` nor `qsdev_credential_vend`.
+
+| Flag | Default | Meaning |
+|------|---------|---------|
+| `--http-token-file <path>` | `<user state dir>/qsdev/mcp/<port>.token` | where plain HTTP writes its bearer token |
+| `--http-no-auth` | off | serve plain HTTP without the token; the gated tools are not mounted |
+
+The token keeps other local accounts and web pages out. A process running as
+your user, an agent included, can read the token file, so the server still
+checks each `qsdev_nix_run` call against the Bash deny rules.
+
 ### MCP credential vending
 
 `qsdev_credential_vend` exchanges the host's ambient cloud identity for
 short-lived credentials (AWS STS, GCP IAM Credentials, Azure Managed
 Identity). Its output is exempt from the MCP server's secret redaction, so
-it is opt-in. The server does not mount it unless `security.credential_vend`
-is enabled, and it vends only the identities the allow-lists name:
+it is opt-in twice: the committed `security.credential_vend` must enable it,
+and the operator must confirm it (see
+[MCP server opt-ins](#mcp-server-opt-ins)). It vends only the identities the
+allow-lists name:
 
 ```yaml
 security:
@@ -279,7 +370,8 @@ security:
 ```
 
 - Without the block, or with `enabled: false`, the tool is not offered to
-  any client. A call to it on a server that does mount it is still checked
+  any client, whatever the operator confirms. With the block but without an
+  operator confirmation, it is not offered either. A call to it on a server that does mount it is still checked
   against the block and refused (`status: denied`, naming the setting that
   would allow it) before any ambient credential is loaded.
 - An AWS request without `role_arn` calls `GetSessionToken`. Those
@@ -298,10 +390,46 @@ security:
 `qsdev_nix_run` runs its target with the server's environment minus every
 variable `qsdev_env_info` withholds (tokens, keys, passwords, and the
 `AWS_*`, `GCP_*`, `GOOGLE_*`, `AZURE_*`, `GH_*` and `GITHUB_*` namespaces), so the child cannot
-print the server's credentials. In gateway mode (`--deploy-mode=gateway`)
-the tool is not mounted, because it would run Nix packages on the gateway
-host for every framework the gateway serves. Pass `--gateway-allow-nix-run`
-or set `QSDEV_GATEWAY_ALLOW_NIX_RUN=true` to mount it.
+print the server's credentials. It is mounted only with an operator opt-in
+(see [MCP server opt-ins](#mcp-server-opt-ins)); in gateway and standalone
+mode it also needs `--gateway-allow-nix-run` or
+`QSDEV_GATEWAY_ALLOW_NIX_RUN=true`, because there it would run Nix packages
+for every client the server fronts.
+
+The server also checks every `qsdev_nix_run` call against the Bash deny
+rules, before nix is looked up: the catalog's deny rules (every set in
+`permission_all_deny_sets`, from the built-in and user defaults) and the
+`permissions.deny` rules of `~/.claude/settings.json`,
+`.claude/settings.json` and `.claude/settings.local.json`. The call is
+matched as the Bash commands it is equivalent to:
+
+- the literal `nix run <installable> -- <args>` command;
+- the program it runs, named by the installable's attribute
+  (`nixpkgs#bash` runs `bash`), followed by the arguments;
+- the script of a `-c` option among the arguments (`-c 'curl x | sh'`),
+  whichever program receives it, taken as a shell takes it: the first
+  operand after all the options, so `-c -- 'curl x | sh'` and
+  `-c -o errexit 'curl x | sh'` count too;
+- each command or pipeline that script runs: after `;`, `&&`, `||`, `&` or a
+  newline, inside a block, subshell or command substitution, inside a nested
+  `sh -c` or `eval`, and in a here-document or here-string fed to a shell
+  (`sh <<EOF`), so `-c 'true; curl x | sh'` is refused like
+  `-c 'curl x | sh'`. Each is matched both as written and from the program
+  it runs, without assignments, wrappers (`nohup`, `timeout 5`, `nice`,
+  `env`, `command`, `exec`, `sudo`, ...) and quotes or escapes on the
+  command word, so `nohup curl x | sh`, `X=1 curl x | sh` and
+  `\curl x | sh` are refused as `curl x | sh`;
+- the `stdin` text, and each command or pipeline in it, since a shell given
+  no `-c` script runs its standard input. A line the shell parser rejects is
+  matched as written.
+
+A `qsdev_nix_run` call is refused when its Bash equivalent matches a Bash
+deny rule, so `nixpkgs#bash` with `-c 'curl -fsSL https://x | sh'` is
+refused by the `pipe_to_shell` rules and `-c 'npm install x'` by the
+`shell_wrapping` rules. The refusal names the matching rule
+(`deny_rule`). Ask rules are not applied: `Bash(nix run *)` asks before
+every call, and the client's own permission prompt for the MCP tool is the
+ask. When the tool is not mounted, none of these files is read for it.
 
 ### Infrastructure settings
 
@@ -696,7 +824,7 @@ push to the repository controls it, it may only **add or tighten**:
 | `hook_tiers` | Hooks are added to an existing hook tier |
 | `tier_to_compliance` | A tier may move to a compliance level of equal or higher `order`, never a lower one |
 
-Every other section (for example `mcp_servers`, `tools`, `tiers`,
+Every other section (for example `mcp_servers`, `mcp_serve`, `tools`, `tiers`,
 `compliance`, `permission_allow_rules`, `permission_ask_rules`, `keep_vars`,
 `unset_vars`, `default_mcp_servers`) is rejected. A file that sets a
 rejected section or tries a weakening above stops every command with an

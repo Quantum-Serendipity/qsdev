@@ -275,19 +275,41 @@ A relative path is taken relative to that directory, symlinks are resolved
 before the check, and the directory walk does not follow symlinks. The
 version-sentinel tools read only inside the project root.
 
-**Credential vending is opt-in and allow-listed.** `qsdev_credential_vend`
-is the only MCP tool whose output skips secret redaction, because its whole
-purpose is to return short-lived cloud credentials. The server mounts it only
-when the committed `.qsdev.yaml` enables `security.credential_vend`, and then
-vends only the AWS roles, GCP service accounts, Azure scopes and managed
-identities its allow-lists name. AWS `GetSessionToken`, which returns
-credentials carrying the ambient IAM user's full permissions, needs its own
-`aws.allow_session_token`. `.qsdev.local.yaml` cannot set the block, and
-self-protection (GD-001) blocks an agent edit that widens it. `qsdev_nix_run`
-starts its children with the server's credential-bearing variables removed,
-so `env` inside a Nix package cannot print them, and is not mounted in gateway
-mode unless the operator passes `--gateway-allow-nix-run`. See
-[MCP credential vending](configuration-reference.md#mcp-credential-vending).
+**Credential vending is opt-in and allow-listed.** `qsdev_credential_vend` is
+the only MCP tool whose output skips secret redaction, because its whole
+purpose is to return short-lived cloud credentials. The server does not mount
+`qsdev_nix_run` or `qsdev_credential_vend` without an operator opt-in that the
+project's qsdev configuration cannot set: a flag, an environment variable, or
+the `mcp_serve` section of the user defaults file, which a project defaults
+file is rejected for setting. An environment variable is trusted only as far
+as the shell the server starts from: a committed `devenv.nix` or `.envrc` can
+export one, as it can run any other code in that shell. Credential vending
+also needs the committed `.qsdev.yaml` to enable `security.credential_vend`,
+whose allow-lists then limit it to the AWS roles, GCP service accounts, Azure
+scopes and managed identities they name; the committed block alone only logs a
+warning. AWS `GetSessionToken`, which returns credentials carrying the ambient
+IAM user's full permissions, needs its own `aws.allow_session_token`.
+`.qsdev.local.yaml` cannot set the block, and self-protection (GD-001) blocks
+an agent edit that widens it. `qsdev_nix_run` starts its children with the
+server's credential-bearing variables removed, so `env` inside a Nix package
+cannot print them. In gateway and standalone mode each tool also needs its
+`--gateway-allow-*` flag, and gateway credential vending without an agent
+allow-list (`QSDEV_GATEWAY_AGENTS`) is refused at startup. See [MCP server
+opt-ins](configuration-reference.md#mcp-server-opt-ins).
+
+**Plain loopback HTTP needs a bearer token.** An MCP server on HTTP without
+mTLS binds only loopback, where any local process, another account's
+included, can connect. It therefore generates a random token per launch,
+writes it to a `0600` file in a `0700` directory under the user state
+directory (removed on shutdown), and answers `401` to every request that
+does not send it as `Authorization: Bearer <token>`, comparing in constant
+time. Only a standalone server's `/health` is exempt. The loopback Host and
+Origin check against DNS rebinding still runs in front of it. Under mTLS
+the client certificate is the authentication instead. `--http-no-auth`
+drops the token, and the server then mounts neither `qsdev_nix_run` nor
+`qsdev_credential_vend`. The token does not keep out a process running as
+the same user, which can read the file; see
+[MCP server over HTTP](configuration-reference.md#mcp-server-over-http).
 
 **No guardrail writes through MCP.** `qsdev_cc_config_render` only previews
 the `.claude/settings.json` and `.mcp.json` that qsdev would generate. It

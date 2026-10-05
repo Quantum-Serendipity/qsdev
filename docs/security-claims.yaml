@@ -203,6 +203,73 @@ claims:
     tests: [TestVersionSentinelClaudeMdSection, TestManifestCoverage_AgreesWithClaudeMdSection]
     tiers: [standard, full]
 
+  - id: mcp-gated-tools-operator-opt-in
+    text: >-
+      The server does not mount `qsdev_nix_run` or `qsdev_credential_vend`
+      without an operator opt-in that the project's qsdev configuration cannot
+      set
+    files: [docs/configuration-reference.md, docs/security-architecture.md]
+    tests:
+      - TestMountOptions_NixRunOffByDefault
+      - TestMountOptions_CredentialVendNeedsOperatorConfirm
+      - TestMountOptions_StandaloneNeedsDeploymentFlag
+      - TestLoadProjectConfig_CommittedOptInKeysFailClosed
+      - TestProjectOverlayRejectsMCPServe
+      - TestLoadUserScope_BrokenOrgOverlayFailsClosed
+    tiers: []
+
+  - id: mcp-gateway-vend-needs-agents
+    text: >-
+      credential vending without an agent allow-list (`QSDEV_GATEWAY_AGENTS`)
+      is refused at startup.
+    files: [docs/configuration-reference.md, docs/security-architecture.md]
+    tests: [TestMountOptions_GatewayCredentialVendNeedsFlagAndAgents]
+    tiers: []
+
+  - id: mcp-nix-run-bash-deny
+    text: >-
+      A `qsdev_nix_run` call is refused when its Bash equivalent matches a
+      Bash deny rule
+    files: [docs/configuration-reference.md]
+    tests:
+      - TestNixRun_BashEquivalentDenied
+      - TestBashEquivalents
+      - TestFirstMatchingBashRule
+      - TestNixRunDenyRules
+      - TestServeBuildsNixRunDenyRulesOnlyWhenMounted
+    tiers: []
+
+  - id: mcp-http-bearer-token
+    text: >-
+      answers `401` to every request that does not send it as
+      `Authorization: Bearer <token>`, comparing in constant time
+    files: [docs/security-architecture.md]
+    tests:
+      - TestHTTPLoopback_RequiresToken
+      - TestHTTPToken_RemovedOnShutdown
+      - TestBearerAuth_HealthExemptStandalone
+      - TestResolveHTTPToken
+    tiers: []
+
+  - id: mcp-http-token-file
+    text: >-
+      A request without it, or with another token, gets `401` before any tool
+      runs.
+    files: [docs/configuration-reference.md]
+    tests:
+      - TestHTTPLoopback_RequiresToken
+      - TestHTTPToken_DefaultPathUnderUserState
+      - TestHTTPHandlerMTLSPathNoBearer
+    tiers: []
+
+  - id: mcp-http-no-auth-drops-gated-tools
+    text: >-
+      `--http-no-auth` drops the token, and the server then mounts neither
+      `qsdev_nix_run` nor `qsdev_credential_vend`
+    files: [docs/security-architecture.md]
+    tests: [TestMountOptions_HTTPNoAuthRefusesGatedTools]
+    tiers: []
+
 # Overclaims withdrawn by H0-1. The claims test fails if any comes back.
 # No entry may match this file's own text, so the retracted wording appears
 # verbatim nowhere in the repository: write a pattern, where a bracketed

@@ -154,6 +154,21 @@ func MatchesBashRule(rule, command string) bool {
 	return tool == "Bash" && matchesCommandPattern(pattern, command)
 }
 
+// FirstMatchingBashRule returns the first of rules that matches any of cmds
+// as a Bash call (FirstMatch), trying each command in turn against every
+// rule, and true; or "", false when none matches. Rules for other tools never
+// match. A caller that checks one action in several equivalent spellings
+// passes the spellings in order of preference, so the rule reported is the
+// one that matched the earliest spelling.
+func FirstMatchingBashRule(rules []string, cmds ...string) (string, bool) {
+	for _, cmd := range cmds {
+		if rule, ok := FirstMatch(rules, "Bash("+cmd+")"); ok {
+			return rule, true
+		}
+	}
+	return "", false
+}
+
 // MatchesPowerShellRule is MatchesBashRule for Claude Code's PowerShell tool:
 // it reports whether a "PowerShell(...)" rule matches command under the same
 // wildcard semantics, and never matches a Bash rule. As the docs state

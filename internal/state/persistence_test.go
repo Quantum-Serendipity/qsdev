@@ -3,10 +3,12 @@ package state
 import (
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/Quantum-Serendipity/qsdev/pkg/branding"
 	"github.com/Quantum-Serendipity/qsdev/pkg/types"
 	"gopkg.in/yaml.v3"
 )
@@ -167,5 +169,37 @@ func TestSavedYAMLStructure(t *testing.T) {
 	}
 	if _, ok := raw2["files"]; !ok {
 		t.Error("expected top-level 'files' key in YAML")
+	}
+}
+
+// TestLoadInitState_DropsLegacyLocalConfigEntry pins the migration for state
+// that earlier joins wrote: the human-owned local config was recorded as a
+// generated file, so every edit to it read as drift. Loading drops that
+// entry and keeps the rest; the next save rewrites state without it.
+func TestLoadInitState_DropsLegacyLocalConfigEntry(t *testing.T) {
+	t.Parallel()
+	path := filepath.Join(t.TempDir(), InitStateFile())
+	seeded := RecordFiles([]types.GeneratedFile{
+		{Path: branding.Get().LocalConfig, Content: []byte("# local"), Strategy: types.Overwrite},
+		{Path: ".envrc", Content: []byte("use devenv"), Strategy: types.Overwrite},
+		{Path: "." + branding.Get().AppName + "/composer/config.json", Content: []byte("{}"), Strategy: types.Overwrite},
+	})
+	if err := SaveStateToFile(path, seeded); err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := LoadStateFromFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := got.Files[branding.Get().LocalConfig]; ok {
+		t.Errorf("LoadStateFromFile() kept %s", branding.Get().LocalConfig)
+	}
+	// Machine-owned local-only files stay tracked: each checkout regenerates
+	// them, so local drift and repair still apply.
+	for _, keep := range []string{".envrc", "." + branding.Get().AppName + "/composer/config.json"} {
+		if !reflect.DeepEqual(got.Files[keep], seeded.Files[keep]) {
+			t.Errorf("LoadStateFromFile() entry %s = %+v, want %+v", keep, got.Files[keep], seeded.Files[keep])
+		}
 	}
 }

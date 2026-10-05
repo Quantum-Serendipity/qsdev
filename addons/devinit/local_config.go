@@ -1,10 +1,16 @@
 package devinit
 
 import (
+	"errors"
 	"fmt"
+	"io"
+	"io/fs"
+	"os"
+	"path/filepath"
 	"strings"
 
 	"github.com/Quantum-Serendipity/qsdev/pkg/branding"
+	"github.com/Quantum-Serendipity/qsdev/pkg/fileutil"
 	"github.com/Quantum-Serendipity/qsdev/pkg/types"
 )
 
@@ -79,4 +85,65 @@ func exampleVersionForLanguage(name, currentVersion string) string {
 	default:
 		return ""
 	}
+}
+
+// writeLocalConfigTemplate creates the developer's local config from the
+// template unless they already have one. The file is human-owned and
+// gitignored, so it is written outside the generated-file pipeline and never
+// recorded in state: editing it is not drift and teardown never removes it.
+// The caller gitignores it first, so it is ignored before it exists. A
+// symlink that resolves (for example into a dotfiles repository) is the
+// developer's config and is kept; a dangling one is reported as an error. A
+// created file, or on a dry run one that would be created, is announced on w.
+func writeLocalConfigTemplate(projectRoot string, answers types.WizardAnswers, dryRun bool, w io.Writer) error {
+	localCfg := branding.Get().LocalConfig
+	if dryRun {
+		exists, err := localConfigExists(projectRoot, localCfg)
+		if err != nil || exists {
+			return err
+		}
+		return announceLocalConfig(w, localCfg)
+	}
+	content := GenerateLocalConfigTemplate(answers, answers.Detected)
+	err := fileutil.WriteNewFileInRoot(projectRoot, localCfg, content, fileutil.ModeReadWrite)
+	switch {
+	case err == nil:
+		return announceLocalConfig(w, localCfg)
+	case errors.Is(err, fs.ErrExist):
+		return nil
+	case errors.Is(err, fileutil.ErrSymlink):
+		// Keep a link that resolves; localConfigExists reports a dangling one.
+		_, err = localConfigExists(projectRoot, localCfg)
+		return err
+	default:
+		return fmt.Errorf("writing %s template: %w", localCfg, err)
+	}
+}
+
+// localConfigExists reports whether the developer already has a local config
+// at rel under projectRoot, following a symlink as ParseLocalConfig does. A
+// dangling symlink, or any error other than the path being absent, is
+// returned so neither a dry run nor a real run treats it as fine.
+func localConfigExists(projectRoot, rel string) (bool, error) {
+	path := filepath.Join(projectRoot, rel)
+	info, err := os.Lstat(path)
+	if errors.Is(err, fs.ErrNotExist) {
+		return false, nil
+	}
+	if err != nil {
+		return false, fmt.Errorf("checking %s: %w", rel, err)
+	}
+	if info.Mode()&fs.ModeSymlink == 0 {
+		return true, nil
+	}
+	if _, err := os.Stat(path); err != nil {
+		return false, fmt.Errorf("checking %s: symlink target unreadable: %w", rel, err)
+	}
+	return true, nil
+}
+
+// announceLocalConfig tells the developer about the untracked local config.
+func announceLocalConfig(w io.Writer, rel string) error {
+	_, err := fmt.Fprintf(w, "+ %s (local, untracked)\n", rel)
+	return err
 }

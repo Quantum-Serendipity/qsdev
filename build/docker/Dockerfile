@@ -20,7 +20,7 @@
 # stale pin fails there. Pinned by digest for reproducible, supply-chain-
 # resistant builds (the tag is kept for readability; dependabot bumps both).
 # Re-resolve with: docker buildx imagetools inspect golang:<version>-alpine
-FROM golang:1.26.8-alpine@sha256:8ac98ca534ac3f51e1f420a1dd2c15e74c75cfa0f23f3ad27eb5d7236c349a0c AS builder
+FROM golang:1.27.1-alpine@sha256:8a5910f31396cd4d89662f56c68b3ae31d374308270a1c3bd96672ee5ed43414 AS builder
 
 WORKDIR /src
 
@@ -52,7 +52,7 @@ RUN go build -trimpath -o /qsdev \
 # :nonroot variant runs as an unprivileged user (uid 65532) by default. Pinned by
 # digest (tag kept for readability); re-resolve with:
 #   docker buildx imagetools inspect gcr.io/distroless/static-debian12:nonroot
-FROM gcr.io/distroless/static-debian12:nonroot@sha256:d093aa3e30dbadd3efe1310db061a14da60299baff8450a17fe0ccc514a16639
+FROM gcr.io/distroless/static-debian12:nonroot@sha256:afa5c872c891853ca7fcf1f12c3edb23f7eeef36189728842dd51042ff57f7ab
 
 COPY --from=builder /qsdev /qsdev
 

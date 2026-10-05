@@ -2,8 +2,14 @@ package denyutil
 
 import "strings"
 
-// MatchesDenyRule checks whether a deny rule pattern would block a tool operation.
-func MatchesDenyRule(denyRule, operation string) bool {
+// Shadows reports whether denyRule covers operation, where operation is itself
+// a rule-shaped tool pattern such as a skill's allowed-tools entry
+// ("Bash(npm test *)"). It answers rule-versus-rule subsumption for the skill
+// deny-conflict checks, not what Claude Code would match: its semantics are
+// deliberately wider (see GlobMatchArgs), so a conflict is reported whenever
+// the deny rule could block what the skill needs. Tests that ask what a rule
+// blocks or allows must use MatchesBashRule instead.
+func Shadows(denyRule, operation string) bool {
 	denyTool, denyArgs := ParseToolPattern(denyRule)
 	opTool, opArgs := ParseToolPattern(operation)
 

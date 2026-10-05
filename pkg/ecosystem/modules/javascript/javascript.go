@@ -390,6 +390,10 @@ func subprojectHook(hook ecosystem.HookConfig, dir, src, pathPattern, args strin
 // executes it immediately, bypassing lockfiles and the package-guard age
 // gate, so denying only npx would leave the same capability open through the
 // others. These mirror the catalog's npx and remote_package_exec deny sets.
+// The deno npm:/jsr: rules end in "**", not ":*": Claude Code reads a
+// trailing ":*" as the legacy spelling of " *" ("only recognized at the end
+// of a pattern", code.claude.com/docs/en/permissions), which would match
+// "npm <args>" but never "npm:pkg".
 var remotePackageExecDenyRules = []string{
 	"Bash(npx *)",
 	"Bash(pnpm dlx *)",
@@ -400,16 +404,16 @@ var remotePackageExecDenyRules = []string{
 	"Bash(npm exec *)",
 	"Bash(npm x *)",
 	"Bash(deno x *)",
-	"Bash(deno run *npm:*)",
-	"Bash(deno run *jsr:*)",
-	"Bash(deno serve *npm:*)",
-	"Bash(deno serve *jsr:*)",
-	"Bash(deno npm:*)",
-	"Bash(deno jsr:*)",
-	"Bash(deno watch *npm:*)",
-	"Bash(deno watch *jsr:*)",
-	"Bash(deno -* npm:*)",
-	"Bash(deno -* jsr:*)",
+	"Bash(deno run *npm:**)",
+	"Bash(deno run *jsr:**)",
+	"Bash(deno serve *npm:**)",
+	"Bash(deno serve *jsr:**)",
+	"Bash(deno npm:**)",
+	"Bash(deno jsr:**)",
+	"Bash(deno watch *npm:**)",
+	"Bash(deno watch *jsr:**)",
+	"Bash(deno -* npm:**)",
+	"Bash(deno -* jsr:**)",
 	"Bash(deno -* x *)",
 }
 

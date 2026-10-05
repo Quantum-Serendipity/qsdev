@@ -103,7 +103,7 @@ func TestGlobMatchArgs(t *testing.T) {
 	}
 }
 
-func TestMatchesDenyRule(t *testing.T) {
+func TestShadows(t *testing.T) {
 	t.Parallel()
 
 	tests := []struct {
@@ -139,9 +139,9 @@ func TestMatchesDenyRule(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
-			got := MatchesDenyRule(tt.denyRule, tt.operation)
+			got := Shadows(tt.denyRule, tt.operation)
 			if got != tt.want {
-				t.Errorf("MatchesDenyRule(%q, %q) = %v, want %v", tt.denyRule, tt.operation, got, tt.want)
+				t.Errorf("Shadows(%q, %q) = %v, want %v", tt.denyRule, tt.operation, got, tt.want)
 			}
 		})
 	}

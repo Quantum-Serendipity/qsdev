@@ -7,6 +7,7 @@ import (
 	"slices"
 	"strings"
 
+	"github.com/Quantum-Serendipity/qsdev/internal/pathmatch"
 	"github.com/Quantum-Serendipity/qsdev/internal/selfprotect/canon"
 	"github.com/Quantum-Serendipity/qsdev/internal/selfprotect/cmdscan"
 )
@@ -195,7 +196,7 @@ func isProtectedAncestor(fs *canon.Resolver, p string) bool {
 		return true // the table could not be built: fail closed
 	}
 	for _, s := range pathSpellings(fs, p) {
-		prefix := strings.TrimSuffix(canon.PathKey(s), "/") + "/"
+		prefix := strings.TrimSuffix(pathmatch.Key(s), "/") + "/"
 		for _, key := range locKeys {
 			if strings.HasPrefix(key, prefix) || strings.TrimSuffix(key, "/")+"/" == prefix {
 				return true
@@ -212,7 +213,7 @@ func globReachesAncestor(pattern string) bool {
 	if !isRooted(pattern) {
 		return false
 	}
-	segs := strings.Split(canon.PathKey(pattern), "/")
+	segs := strings.Split(pathmatch.Key(pattern), "/")
 	for _, key := range canon.ProtectedLocationKeys() {
 		locSegs := strings.Split(strings.TrimSuffix(key, "/"), "/")
 		if len(segs) > len(locSegs) {
@@ -254,12 +255,12 @@ func tailReachesAncestor(text string) bool {
 	if locKeys == nil || homes == nil {
 		return true // the table could not be built: fail closed
 	}
-	segs := strings.Split(canon.PathKey(filepath.Clean(text)), "/")
+	segs := strings.Split(pathmatch.Key(filepath.Clean(text)), "/")
 	for _, home := range homes {
 		if !isRooted(home) {
 			continue
 		}
-		homeKey := strings.TrimSuffix(canon.PathKey(home), "/") + "/"
+		homeKey := strings.TrimSuffix(pathmatch.Key(home), "/") + "/"
 		for _, key := range locKeys {
 			rel, ok := strings.CutPrefix(key, homeKey)
 			if !ok {

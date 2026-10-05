@@ -159,13 +159,16 @@ func (m *Module) PreCommitHooks(_ ecosystem.ModuleConfig) []ecosystem.HookConfig
 // expression installs (install.packages, remotes::install_github,
 // renv::install, pak::pkg_install, BiocManager::install, pak::pak,
 // update.packages) is denied; the lockfile restore (renv::restore) stays open.
+// The pak rule ends in "**", not "::*": Claude Code reads a trailing ":*" as
+// the legacy spelling of " *" (code.claude.com/docs/en/permissions), which
+// would never match "pak::pak(...)".
 func (m *Module) DenyRules(_ ecosystem.ModuleConfig) []string {
 	var rules []string
 	for _, exe := range []string{"Rscript", "R"} {
 		rules = append(rules,
 			"Bash("+exe+" *install*)",
 			"Bash("+exe+" *update.packages*)",
-			"Bash("+exe+" *pak::*)",
+			"Bash("+exe+" *pak::**)",
 		)
 	}
 	return rules

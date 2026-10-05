@@ -19,18 +19,18 @@ func TestDenyRules_CoverCredentialPrintingCommands(t *testing.T) {
 		{
 			provider: AWS,
 			denied: []string{
-				"Bash(aws configure get aws_secret_access_key)",
-				"Bash(aws configure get aws_access_key_id --profile prod)",
-				"Bash(aws sso get-role-credentials --role-name r --account-id 1 --access-token t)",
-				"Bash(aws ecr get-login-password --region us-east-1)",
-				"Bash(aws codeartifact get-authorization-token --domain d)",
+				"aws configure get aws_secret_access_key",
+				"aws configure get aws_access_key_id --profile prod",
+				"aws sso get-role-credentials --role-name r --account-id 1 --access-token t",
+				"aws ecr get-login-password --region us-east-1",
+				"aws codeartifact get-authorization-token --domain d",
 			},
-			allowed: []string{"Bash(aws configure list)", "Bash(aws sso login)"},
+			allowed: []string{"aws configure list", "aws sso login"},
 		},
 		{
 			provider: GCP,
-			denied:   []string{"Bash(gcloud config config-helper --format=json)"},
-			allowed:  []string{"Bash(gcloud config list)"},
+			denied:   []string{"gcloud config config-helper --format=json"},
+			allowed:  []string{"gcloud config list"},
 		},
 	}
 	for _, tt := range tests {
@@ -39,7 +39,7 @@ func TestDenyRules_CoverCredentialPrintingCommands(t *testing.T) {
 			rules := BashDenyRules(tt.provider)
 			matches := func(op string) bool {
 				for _, r := range rules {
-					if denyutil.MatchesDenyRule(r, op) {
+					if denyutil.MatchesBashRule(r, op) {
 						return true
 					}
 				}

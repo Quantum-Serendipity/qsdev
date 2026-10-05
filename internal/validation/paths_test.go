@@ -3,6 +3,8 @@ package validation
 import (
 	"strings"
 	"testing"
+
+	"github.com/Quantum-Serendipity/qsdev/internal/pathmatch"
 )
 
 // TestCheckBoundaryReadPath checks each rule against a fixed home directory,
@@ -52,7 +54,53 @@ func TestCheckBoundaryReadPath(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			err := checkBoundaryReadPath(tc.path, "/home/u")
+			err := checkBoundaryReadPath(tc.path, "/home/u", pathmatch.Options{})
+			if tc.wantErr == "" {
+				if err != nil {
+					t.Fatalf("checkBoundaryReadPath(%q) = %v, want nil", tc.path, err)
+				}
+				return
+			}
+			if err == nil || !strings.Contains(err.Error(), tc.wantErr) {
+				t.Fatalf("checkBoundaryReadPath(%q) = %v, want error containing %q", tc.path, err, tc.wantErr)
+			}
+		})
+	}
+}
+
+// TestCheckBoundaryReadPath_FilesystemAliases checks that on a case-folding
+// filesystem (macOS, Windows), and one that ignores Windows name aliases,
+// other spellings of the home directory or a credential store are rejected
+// too, while an exact-name filesystem still allows them.
+func TestCheckBoundaryReadPath_FilesystemAliases(t *testing.T) {
+	t.Parallel()
+	fold := pathmatch.Options{FoldCase: true}
+	windows := pathmatch.Options{FoldCase: true, WindowsAliases: true}
+	cases := []struct {
+		name    string
+		path    string
+		opts    pathmatch.Options
+		wantErr string
+	}{
+		{"case-folded home ancestor", "/USERS/me", fold, "home directory"},
+		{"case-folded home", "/Users/ME", fold, "home directory"},
+		{"case-folded absolute store", "/Users/Me/.ssh", fold, "credential store"},
+		{"case-folded relative store", "~/.SSH", fold, "credential store"},
+		{"case-folded store file", "~/.Ssh/config", fold, "credential store"},
+		{"trailing-dot store", "~/.ssh./", windows, "credential store"},
+		{"stream-suffixed store", "~/.ssh::$DATA", windows, "credential store"},
+		{"windows home ancestor", `C:\USERS`, windows, "home directory"},
+		{"exact-name filesystem", "~/.SSH", pathmatch.Options{}, ""},
+		{"case-folded lookalike", "~/.SSHfoo", fold, ""},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			home := "/Users/me"
+			if strings.HasPrefix(tc.path, "C:") {
+				home = "C:/Users/me"
+			}
+			err := checkBoundaryReadPath(tc.path, home, tc.opts)
 			if tc.wantErr == "" {
 				if err != nil {
 					t.Fatalf("checkBoundaryReadPath(%q) = %v, want nil", tc.path, err)

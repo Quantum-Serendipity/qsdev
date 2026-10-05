@@ -9,6 +9,7 @@ import (
 	"slices"
 	"strings"
 
+	"github.com/Quantum-Serendipity/qsdev/internal/pathmatch"
 	"github.com/Quantum-Serendipity/qsdev/internal/projectctx"
 	"github.com/Quantum-Serendipity/qsdev/internal/selfprotect/canon"
 	"github.com/Quantum-Serendipity/qsdev/internal/selfprotect/cmdscan"
@@ -64,7 +65,7 @@ func hookEnvFromProcess(cwd string) hookEnv {
 }
 
 // hookTargets is the set of files the registered hook commands execute, keyed
-// by canon.PathKey, with the directories that hold them for copy-into-directory
+// by pathmatch.Key, with the directories that hold them for copy-into-directory
 // checks.
 type hookTargets struct {
 	files map[string]bool
@@ -180,7 +181,7 @@ func (e hookEnv) addPathLookup(t *hookTargets, name string, followShebang bool) 
 			if info, err := t.fs.Stat(p); err == nil && !info.IsDir() && found == "" {
 				found = p
 				if resolved, err := t.fs.Canonicalize(p); err == nil {
-					t.files[canon.PathKey(resolved)] = true // the file a symlinked program runs
+					t.files[pathmatch.Key(resolved)] = true // the file a symlinked program runs
 				}
 			}
 		}
@@ -198,7 +199,7 @@ func (e hookEnv) addPathLookup(t *hookTargets, name string, followShebang bool) 
 // add records file p under its written and symlink-resolved spellings.
 func (t *hookTargets) add(p string) {
 	for _, s := range pathSpellings(t.fs, p) {
-		t.files[canon.PathKey(s)] = true
+		t.files[pathmatch.Key(s)] = true
 	}
 	t.addForms(p)
 }
@@ -209,12 +210,12 @@ func (t *hookTargets) addInDir(dir, name string) {
 	keys, ok := t.dirKeys[dir]
 	if !ok {
 		for _, d := range pathSpellings(t.fs, dir) {
-			keys = append(keys, canon.PathKey(d))
+			keys = append(keys, pathmatch.Key(d))
 		}
 		t.dirKeys[dir] = keys
 	}
 	for _, key := range keys {
-		t.files[path.Join(key, canon.PathKey(name))] = true
+		t.files[path.Join(key, pathmatch.Key(name))] = true
 		if !slices.Contains(t.names[key], name) {
 			t.names[key] = append(t.names[key], name)
 		}
@@ -238,7 +239,7 @@ func (t *hookTargets) addForms(p string) {
 // has reports whether path p (absolute) is a hook target.
 func (t *hookTargets) has(p string) bool {
 	for _, s := range pathSpellings(t.fs, p) {
-		if t.files[canon.PathKey(s)] {
+		if t.files[pathmatch.Key(s)] {
 			return true
 		}
 	}
@@ -445,7 +446,7 @@ func (t *hookTargets) copyIntoDir(sc scannedCommand) string {
 	}
 	var names []string
 	for _, d := range pathSpellings(t.fs, dest) {
-		names = append(names, t.names[canon.PathKey(d)]...)
+		names = append(names, t.names[pathmatch.Key(d)]...)
 	}
 	for _, src := range sources {
 		if base := path.Base(filepath.ToSlash(src)); slices.Contains(names, base) {
@@ -488,7 +489,7 @@ func targetDirOperands(args []string) (sources []string, dest string) {
 
 // globMatch returns a hook target that glob pattern p can expand to, or "".
 func (t *hookTargets) globMatch(p string) string {
-	pattern := canon.PathKey(p)
+	pattern := pathmatch.Key(p)
 	for f := range t.files {
 		if ok, _ := path.Match(pattern, f); ok {
 			return f

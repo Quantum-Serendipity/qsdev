@@ -857,8 +857,7 @@ func TestDenyRules(t *testing.T) {
 		"mono nuget.exe install Evil",
 	}
 	for _, cmd := range denied {
-		op := "Bash(" + cmd + ")"
-		if !slices.ContainsFunc(rules, func(rule string) bool { return denyutil.MatchesDenyRule(rule, op) }) {
+		if !slices.ContainsFunc(rules, func(rule string) bool { return denyutil.MatchesBashRule(rule, cmd) }) {
 			t.Errorf("%q is not denied by %v", cmd, rules)
 		}
 	}
@@ -880,8 +879,7 @@ func TestDenyRules(t *testing.T) {
 		"dotnet package add Evil --project src/App/App.csproj",
 	}
 	for _, cmd := range allowed {
-		op := "Bash(" + cmd + ")"
-		if slices.ContainsFunc(rules, func(rule string) bool { return denyutil.MatchesDenyRule(rule, op) }) {
+		if slices.ContainsFunc(rules, func(rule string) bool { return denyutil.MatchesBashRule(rule, cmd) }) {
 			t.Errorf("%q should not be denied", cmd)
 		}
 	}

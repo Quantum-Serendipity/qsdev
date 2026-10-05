@@ -1,6 +1,10 @@
 package check
 
-import "testing"
+import (
+	"testing"
+
+	"github.com/Quantum-Serendipity/qsdev/pkg/denyutil"
+)
 
 func TestCheckDenyRuleConflicts_NoConflicts(t *testing.T) {
 	ctx := CheckContext{
@@ -138,8 +142,8 @@ func TestCheckDenyRuleConflicts_MixedExpectedAndUnexpected(t *testing.T) {
 	}
 }
 
-func TestCheckMatchesDenyRule_SameAsCoreLogic(t *testing.T) {
-	// Verify the check-local copy of matching logic behaves correctly.
+func TestDenyRuleConflicts_Shadows(t *testing.T) {
+	// The conflict check reports a deny rule that shadows a skill operation.
 	tests := []struct {
 		deny   string
 		op     string
@@ -154,9 +158,9 @@ func TestCheckMatchesDenyRule_SameAsCoreLogic(t *testing.T) {
 	}
 
 	for _, tc := range tests {
-		got := checkMatchesDenyRule(tc.deny, tc.op)
+		got := denyutil.Shadows(tc.deny, tc.op)
 		if got != tc.expect {
-			t.Errorf("checkMatchesDenyRule(%q, %q) = %v, want %v",
+			t.Errorf("denyutil.Shadows(%q, %q) = %v, want %v",
 				tc.deny, tc.op, got, tc.expect)
 		}
 	}

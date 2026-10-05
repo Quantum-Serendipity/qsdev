@@ -9,6 +9,7 @@ import (
 
 	"github.com/Quantum-Serendipity/qsdev/internal/sandbox"
 	"github.com/Quantum-Serendipity/qsdev/internal/sandbox/denylist"
+	"github.com/Quantum-Serendipity/qsdev/internal/sandbox/shim"
 )
 
 // BuildArgs constructs the bwrap command-line arguments for the given sandbox
@@ -20,6 +21,10 @@ func BuildArgs(cfg *sandbox.SandboxConfig, _ sandbox.DegradationTier) ([]string,
 		if err := ValidateMountPath(cfg.ProjectDir); err != nil {
 			return nil, fmt.Errorf("validating project dir: %w", err)
 		}
+	}
+
+	if err := rejectReservedTargets(cfg); err != nil {
+		return nil, err
 	}
 
 	deny, err := normalizeDenyPaths(cfg.Deny)
@@ -112,6 +117,23 @@ func BuildArgs(cfg *sandbox.SandboxConfig, _ sandbox.DegradationTier) ([]string,
 	}
 
 	return args, nil
+}
+
+// rejectReservedTargets refuses a project dir or mount target on or under
+// shim.SandboxRoot(): RunHook mounts qsdev itself there, as the trusted shim,
+// and a configured bind must never replace or shadow it.
+func rejectReservedTargets(cfg *sandbox.SandboxConfig) error {
+	root := shim.SandboxRoot()
+	targets := []string{cfg.ProjectDir}
+	for _, m := range cfg.Mounts {
+		targets = append(targets, m.Target)
+	}
+	for _, t := range targets {
+		if t != "" && denylist.Overlaps(filepath.Clean(t), root) {
+			return fmt.Errorf("sandbox path %q overlaps %s, which is reserved for qsdev's own mounts", t, root)
+		}
+	}
+	return nil
 }
 
 // normalizeDenyPaths validates the configured deny entries and returns them

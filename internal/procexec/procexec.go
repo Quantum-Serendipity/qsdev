@@ -66,6 +66,17 @@ func CommandContext(ctx context.Context, name string, args ...string) *exec.Cmd 
 	return exec.CommandContext(ctx, name, args...) //nolint:gosec // argv is an explicit array; no shell interpolation
 }
 
+// LookPath is exec.LookPath: it resolves a bare name through PATH and checks
+// a name containing a path separator directly. It starts nothing, so the
+// forbid-exec guard does not apply.
+func LookPath(file string) (string, error) {
+	path, err := exec.LookPath(file)
+	if err != nil {
+		return "", fmt.Errorf("procexec: %w", err)
+	}
+	return path, nil
+}
+
 // versionFlags are the arguments VersionProbe accepts.
 var versionFlags = []string{"--version", "version", "-v"}
 

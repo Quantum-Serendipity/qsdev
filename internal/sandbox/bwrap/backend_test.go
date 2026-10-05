@@ -5,10 +5,12 @@ package bwrap
 import (
 	"bytes"
 	"context"
+	"errors"
 	"log/slog"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"testing"
@@ -361,5 +363,119 @@ func TestBubblewrapBackend_E3_NestedUserNamespaceBlocked(t *testing.T) {
 	}
 	if res.ExitCode == 0 {
 		t.Errorf("nested user namespace was created inside the sandbox (stdout=%q)", res.Stdout)
+	}
+}
+
+// TestRunHook_ReadyFDNumbering: the ready fd follows the optional seccomp
+// file in ExtraFiles, so the shim is told fd 4 when a filter is passed and fd
+// 3 when none is; the hook runs through the shim mounted at /.qsdev/bin/qsdev.
+func TestRunHook_ReadyFDNumbering(t *testing.T) {
+	t.Parallel()
+	seccomp, err := os.Open(os.DevNull)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = seccomp.Close() })
+
+	tests := []struct {
+		name   string
+		before []*os.File
+		wantFD string
+	}{
+		{name: "with seccomp file", before: []*os.File{seccomp}, wantFD: "4"},
+		{name: "without seccomp file", before: nil, wantFD: "3"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			guard, err := sandbox.NewLaunchGuard()
+			if err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(func() { _ = guard.Close() })
+			cfg := &sandbox.SandboxConfig{HookCategory: sandbox.CategoryLinter, HookCommand: []string{"hook", "arg"}}
+
+			files, argv, landlock := launchHook(cfg, sandbox.TierBwrapOnly, tt.before, guard)
+			if landlock {
+				t.Error("Landlock applied at a tier that does not claim it")
+			}
+
+			if len(files) != len(tt.before)+1 || files[len(files)-1] != guard.ChildFile() {
+				t.Errorf("ExtraFiles = %v, want %v then the guard's child file", files, tt.before)
+			}
+			want := []string{"/.qsdev/bin/qsdev", "sandbox", "shim", "--ready-fd", tt.wantFD, "--", "hook", "arg"}
+			if !slices.Equal(argv, want) {
+				t.Errorf("hook argv = %v, want %v", argv, want)
+			}
+		})
+	}
+}
+
+// TestRunHook_SetupFailureIsErrSetupFailed is the live regression for
+// U19-01/XS-WS1 A4: when bwrap itself cannot set up the sandbox (a strict
+// bind whose source does not exist), its exit status must never pass as the
+// hook's: RunHook returns ErrSetupFailed, which blocks.
+func TestRunHook_SetupFailureIsErrSetupFailed(t *testing.T) {
+	t.Parallel()
+	backend, shPath, mounts := e3Backend(t)
+
+	tests := []struct {
+		name   string
+		mutate func(cfg *sandbox.SandboxConfig)
+	}{
+		{name: "missing project dir", mutate: func(cfg *sandbox.SandboxConfig) { cfg.ProjectDir = "/nonexistent-u19" }},
+		{name: "policy mount with a missing source", mutate: func(cfg *sandbox.SandboxConfig) {
+			cfg.Mounts = append(cfg.Mounts, sandbox.MountSpec{Source: "/nonexistent-u19-src", Target: "/opt/u19", ReadOnly: true})
+		}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			cfg := &sandbox.SandboxConfig{
+				HookCategory: sandbox.CategoryLinter,
+				Mounts:       slices.Clone(mounts),
+				Environment:  map[string]string{"PATH": "/nonexistent", "HOME": t.TempDir()},
+				HookCommand:  []string{shPath, "-c", "printf HOOKRAN"},
+			}
+			tt.mutate(cfg)
+
+			res, err := backend.RunHook(context.Background(), cfg)
+			if !errors.Is(err, sandbox.ErrSetupFailed) {
+				t.Fatalf("RunHook = (exit %v, err %v), want ErrSetupFailed", exitCodeOf(res), err)
+			}
+			if !strings.Contains(err.Error(), "nonexistent-u19") {
+				t.Errorf("error %q does not carry bwrap's diagnostic", err)
+			}
+		})
+	}
+}
+
+// TestRunHook_HookExitCodePreserved: once the sandbox reached the hook, the
+// hook's own status is the result, including 127, the shim's own not-started
+// code, and the hook does not inherit the ready fd.
+func TestRunHook_HookExitCodePreserved(t *testing.T) {
+	t.Parallel()
+	backend, shPath, mounts := e3Backend(t)
+
+	for _, code := range []int{0, 1, 7, 127} {
+		t.Run(strconv.Itoa(code), func(t *testing.T) {
+			t.Parallel()
+			cfg := &sandbox.SandboxConfig{
+				HookCategory: sandbox.CategoryLinter,
+				Mounts:       mounts,
+				Environment:  map[string]string{"PATH": "/nonexistent", "HOME": t.TempDir()},
+				HookCommand:  []string{shPath, "-c", "[ -e /proc/self/fd/3 ] && printf LEAKED; exit " + strconv.Itoa(code)},
+			}
+			res, err := backend.RunHook(context.Background(), cfg)
+			if err != nil {
+				t.Fatalf("RunHook error: %v", err)
+			}
+			if res.ExitCode != code {
+				t.Errorf("exit code = %d, want %d (stderr=%q)", res.ExitCode, code, res.Stderr)
+			}
+			if strings.Contains(string(res.Stdout), "LEAKED") {
+				t.Error("the hook inherited the ready fd")
+			}
+		})
 	}
 }

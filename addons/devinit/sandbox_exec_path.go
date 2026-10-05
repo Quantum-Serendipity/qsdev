@@ -10,11 +10,12 @@ import (
 
 	"github.com/Quantum-Serendipity/qsdev/internal/sandbox"
 	"github.com/Quantum-Serendipity/qsdev/internal/sandbox/bwrap"
+	"github.com/Quantum-Serendipity/qsdev/internal/sandbox/shim"
 	"github.com/Quantum-Serendipity/qsdev/internal/shebang"
 )
 
 // sandboxStoreDir is mounted read-only into every bubblewrap sandbox.
-const sandboxStoreDir = "/nix/store"
+const sandboxStoreDir = sandbox.NixStoreDir
 
 // maxSymlinkHops bounds symlink-chain resolution, matching the kernel's limit.
 const maxSymlinkHops = 40
@@ -29,6 +30,10 @@ const maxSymlinkHops = 40
 //     component is kept, so multi-call binaries still see their own name.
 //   - A script whose interpreter is not visible (typically
 //     `#!/usr/bin/env python3`) is started through its interpreter explicitly.
+//   - qsdev itself (the same file as the running binary, however the hook
+//     names it) is replaced by shim.SandboxPath(), where the backend mounts
+//     the running binary, so a self-invoked guard runs wherever qsdev is
+//     installed.
 //
 // A command that cannot be made reachable is an error: bwrap would otherwise
 // fail with a non-blocking exit status and the wrapped guard would fail open.
@@ -38,6 +43,9 @@ func namespaceHookCommand(cfg *sandbox.SandboxConfig) ([]string, error) {
 	exe, err := hostExecutable(cfg.HookCommand[0])
 	if err != nil {
 		return nil, err
+	}
+	if isSelf(exe) {
+		return append([]string{shim.SandboxPath()}, cfg.HookCommand[1:]...), nil
 	}
 	exe, err = visiblePath(exe, visible)
 	if err != nil {
@@ -54,6 +62,22 @@ func namespaceHookCommand(cfg *sandbox.SandboxConfig) ([]string, error) {
 	argv = append(argv, exe)
 	argv = append(argv, cfg.HookCommand[1:]...)
 	return argv, nil
+}
+
+// isSelf reports whether exe is the running qsdev binary, the file the
+// bubblewrap backend mounts at shim.SandboxPath(). Comparing files rather
+// than paths covers PATH names, symlinks and hard links alike.
+func isSelf(exe string) bool {
+	self, err := shim.HostExecutable()
+	if err != nil {
+		return false
+	}
+	selfInfo, err := os.Stat(self)
+	if err != nil {
+		return false
+	}
+	exeInfo, err := os.Stat(exe)
+	return err == nil && os.SameFile(selfInfo, exeInfo)
 }
 
 // sandboxVisibility reports whether a host path is visible at the same path

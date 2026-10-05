@@ -74,3 +74,17 @@ func TestPrepareLandlockFlags_Grants(t *testing.T) {
 		})
 	}
 }
+
+// TestLandlockFlags_GrantsShimDir: ll-restrict execs the shim at
+// /.qsdev/bin/qsdev, and it denies EXECUTE on every path it is not given, so
+// without this grant every hook at a Landlock tier would fail closed.
+func TestLandlockFlags_GrantsShimDir(t *testing.T) {
+	t.Parallel()
+
+	for _, category := range []sandbox.HookCategory{sandbox.CategoryLinter, sandbox.CategoryFormatter} {
+		flags := landlockFlags(&sandbox.SandboxConfig{HookCategory: category, ProjectDir: "/work/p"})
+		if got := landlockGrant(flags, "/.qsdev/bin"); got != "--ro" {
+			t.Errorf("%s: grant for /.qsdev/bin = %q, want --ro; flags: %v", category, got, flags)
+		}
+	}
+}

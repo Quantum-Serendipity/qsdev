@@ -69,15 +69,6 @@ func TestAWSDenyRules_CoverCredentialExfilCommands(t *testing.T) {
 	t.Parallel()
 	rules := BashDenyRules(AWS)
 
-	anyRuleMatches := func(op string) bool {
-		for _, r := range rules {
-			if denyutil.MatchesBashRule(r, op) {
-				return true
-			}
-		}
-		return false
-	}
-
 	denied := []string{
 		"aws sts get-session-token",
 		"aws sts get-session-token --duration-seconds 3600",
@@ -89,7 +80,7 @@ func TestAWSDenyRules_CoverCredentialExfilCommands(t *testing.T) {
 		"aws configure export-credentials --format env",
 	}
 	for _, op := range denied {
-		if !anyRuleMatches(op) {
+		if _, ok := denyutil.FirstMatch(rules, "Bash("+op+")"); !ok {
 			t.Errorf("no AWS deny rule blocks %q — a credential-exfil command reaches the agent", op)
 		}
 	}
@@ -100,8 +91,8 @@ func TestAWSDenyRules_CoverCredentialExfilCommands(t *testing.T) {
 		"aws configure list",
 	}
 	for _, op := range allowed {
-		if anyRuleMatches(op) {
-			t.Errorf("AWS deny rule over-blocks benign command %q", op)
+		if rule, ok := denyutil.FirstMatch(rules, "Bash("+op+")"); ok {
+			t.Errorf("AWS deny rule %q over-blocks benign command %q", rule, op)
 		}
 	}
 }

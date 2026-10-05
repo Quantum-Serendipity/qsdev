@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/Quantum-Serendipity/qsdev/pkg/denyutil"
 	"github.com/Quantum-Serendipity/qsdev/pkg/ecosystem"
 	"github.com/Quantum-Serendipity/qsdev/pkg/ecosystem/modules/bazel"
 	"github.com/Quantum-Serendipity/qsdev/pkg/types"
@@ -221,5 +222,65 @@ func TestSecurityConfigs_PreservesUserBazelrc(t *testing.T) {
 	}
 	if !strings.Contains(string(user.Content), "try-import %workspace%/.bazelrc.qsdev\n") {
 		t.Errorf(".bazelrc does not import .bazelrc.qsdev:\n%s", user.Content)
+	}
+}
+
+// --- DenyRules tests ---
+
+// TestDenyRules covers U11-18 with Claude Code's own matching semantics:
+// running an external repository target (code fetched from the registry or
+// an archive URL) and rewriting MODULE.bazel.lock are denied for bazel and
+// bazelisk however the flags are spelled, while building, testing and
+// running workspace targets stay allowed.
+func TestDenyRules(t *testing.T) {
+	t.Parallel()
+	rules := newModule().DenyRules(ecosystem.ModuleConfig{})
+	denied := []string{
+		"bazel run @foo//:bar",
+		"bazel run --config=ci @foo//:bar",
+		"bazel run -- @foo//:bar",
+		"bazelisk run @foo//:bar",
+		"bazel --output_base=/tmp/ob run @foo//:bar",
+		"env USE_BAZEL_VERSION=7.4.0 bazelisk run @foo//:bar",
+		"bazel mod deps --lockfile_mode=update",
+		"bazel build --lockfile_mode=refresh //...",
+		"bazel build --lockfile_mode update //...",
+		"bazel test --lockfile_mode refresh //...",
+		"bazelisk build --lockfile_mode=update //...",
+		"bazel build --lockfile_mode=off //...",
+		"bazel build --lockfile_mode off //...",
+		`bazel build --lockfile_mode="update" //...`,
+		"bazel build --lockfile_mode='refresh' //...",
+		"bazel build --lockfile_mode=UPDATE //...",
+		"bazel build --lockfile_mode Refresh //...",
+		"bazel build --lockfile_mode=Off //...",
+		`bazel build --lockfile_mode=\update //...`,
+		"bazel build --lockfile_mode=$'update' //...",
+		`bazel build --lockfile_mode \refresh //...`,
+		"bazel test @foo//:bar",
+		"bazel test --config=ci @foo//:bar",
+		"bazelisk coverage @foo//:bar",
+		"env X=1 bazel test @foo//:bar",
+	}
+	allowed := []string{
+		"bazel run //app:main",
+		"bazel build //...",
+		"bazel test //...",
+		"bazel build --lockfile_mode=error //...",
+		"bazelisk test //...",
+		"bazel build --lockfile_mode error //...",
+		"bazel build --lockfile_mode=ERROR //...",
+		"bazel test --@rules_python//python/config_settings:python_version=3.12 //...",
+		"bazel coverage //...",
+	}
+	for _, cmd := range denied {
+		if _, ok := denyutil.FirstMatch(rules, "Bash("+cmd+")"); !ok {
+			t.Errorf("no deny rule blocks %q", cmd)
+		}
+	}
+	for _, cmd := range allowed {
+		if rule, ok := denyutil.FirstMatch(rules, "Bash("+cmd+")"); ok {
+			t.Errorf("deny rule %q over-blocks %q", rule, cmd)
+		}
 	}
 }

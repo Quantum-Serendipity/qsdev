@@ -3,7 +3,6 @@ package azure_test
 import (
 	"os"
 	"path/filepath"
-	"slices"
 	"strings"
 	"testing"
 
@@ -165,7 +164,7 @@ func TestDenyRules_AllPresent(t *testing.T) {
 		"az login --service-principal -u id -p x --tenant t",
 	}
 	for _, cmd := range denied {
-		if !slices.ContainsFunc(rules, func(r string) bool { return denyutil.MatchesBashRule(r, cmd) }) {
+		if _, ok := denyutil.FirstMatch(rules, "Bash("+cmd+")"); !ok {
 			t.Errorf("no deny rule blocks %q, got %v", cmd, rules)
 		}
 	}

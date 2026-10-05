@@ -56,7 +56,7 @@ func TestCLIConfigIsolation(t *testing.T) {
 			}
 			rules := BashDenyRules(tt.provider)
 			for _, cmd := range []string{"cat " + tt.dir + "/credentials.db", "cat ./" + tt.dir + "/credentials.db"} {
-				if !slices.ContainsFunc(rules, func(r string) bool { return denyutil.MatchesBashRule(r, cmd) }) {
+				if _, ok := denyutil.FirstMatch(rules, "Bash("+cmd+")"); !ok {
 					t.Errorf("no BashDenyRules(%s) rule blocks %q: %v", tt.provider, cmd, rules)
 				}
 			}

@@ -175,9 +175,6 @@ func TestDevenvNixFragment(t *testing.T) {
 func TestDenyRules(t *testing.T) {
 	t.Parallel()
 	rules := (&helm.Module{}).DenyRules(ecosystem.ModuleConfig{})
-	matches := func(cmd string) bool {
-		return slices.ContainsFunc(rules, func(r string) bool { return denyutil.MatchesBashRule(r, cmd) })
-	}
 	denied := []string{
 		"helm install api ./charts/api",
 		"helm --kube-context prod install api ./charts/api",
@@ -219,13 +216,13 @@ func TestDenyRules(t *testing.T) {
 		"kubectl get pods",
 	}
 	for _, cmd := range denied {
-		if !matches(cmd) {
+		if _, ok := denyutil.FirstMatch(rules, "Bash("+cmd+")"); !ok {
 			t.Errorf("no deny rule blocks %q", cmd)
 		}
 	}
 	for _, cmd := range allowed {
-		if matches(cmd) {
-			t.Errorf("deny rules over-block %q", cmd)
+		if rule, ok := denyutil.FirstMatch(rules, "Bash("+cmd+")"); ok {
+			t.Errorf("deny rule %q over-blocks %q", rule, cmd)
 		}
 	}
 }

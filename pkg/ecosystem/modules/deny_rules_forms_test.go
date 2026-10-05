@@ -70,6 +70,10 @@ func TestDenyRules_InstallForms(t *testing.T) {
 				"PowerShell(Install-Script Evil)", "PowerShell(Install-Package Evil)",
 				"Bash(pwsh -c Install-PSResource Evil)", "Bash(pwsh -NoProfile -Command Save-Module Evil)",
 				"PowerShell(Update-Module Pester)", "Bash(pwsh -c Update-PSResource Pester)",
+				"PowerShell(Get-Date; Install-Module Evil)", "PowerShell(INSTALL-MODULE Evil)",
+				"PowerShell(Find-Module Evil | Install-Module)", "PowerShell(Get-Date && Install-Module Evil)",
+				"PowerShell(Get-Date\nInstall-Module Evil)", "PowerShell(isres Evil)",
+				"Bash(env X=1 pwsh -c Install-Module Evil)",
 			},
 			allowed: []string{"PowerShell(Invoke-ScriptAnalyzer -Path .)", "Bash(pwsh -Command Invoke-Pester)"},
 		},
@@ -108,27 +112,14 @@ func TestDenyRules_InstallForms(t *testing.T) {
 				t.Fatalf("module %q provides no deny rules", tt.module)
 			}
 			rules := drp.DenyRules(ecosystem.ModuleConfig{})
-			denied := func(op string) bool {
-				tool, cmd := denyutil.ParseToolPattern(op)
-				match := denyutil.MatchesBashRule
-				if tool == "PowerShell" {
-					match = denyutil.MatchesPowerShellRule
-				}
-				for _, r := range rules {
-					if match(r, cmd) {
-						return true
-					}
-				}
-				return false
-			}
 			for _, op := range tt.denied {
-				if !denied(op) {
+				if _, ok := denyutil.FirstMatch(rules, op); !ok {
 					t.Errorf("%s is not denied by %v", op, rules)
 				}
 			}
 			for _, op := range tt.allowed {
-				if denied(op) {
-					t.Errorf("%s is unexpectedly denied by %v", op, rules)
+				if rule, ok := denyutil.FirstMatch(rules, op); ok {
+					t.Errorf("%s is unexpectedly denied by %q", op, rule)
 				}
 			}
 		})

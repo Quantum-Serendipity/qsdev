@@ -14,21 +14,12 @@ func TestDenyRules_CommandForms(t *testing.T) {
 	t.Parallel()
 
 	rules := (&lua.Module{}).DenyRules(ecosystem.ModuleConfig{})
-	denied := func(cmd string) bool {
-		for _, r := range rules {
-			if denyutil.MatchesBashRule(r, cmd) {
-				return true
-			}
-		}
-		return false
-	}
-
 	for _, cmd := range []string{
 		"luarocks install foo",
 		"luarocks --local install foo",
 		"luarocks install",
 	} {
-		if !denied(cmd) {
+		if _, ok := denyutil.FirstMatch(rules, "Bash("+cmd+")"); !ok {
 			t.Errorf("%q is not denied by %v", cmd, rules)
 		}
 	}
@@ -37,8 +28,8 @@ func TestDenyRules_CommandForms(t *testing.T) {
 		"busted",
 		"luacheck .",
 	} {
-		if denied(cmd) {
-			t.Errorf("%q is unexpectedly denied by %v", cmd, rules)
+		if rule, ok := denyutil.FirstMatch(rules, "Bash("+cmd+")"); ok {
+			t.Errorf("%q is unexpectedly denied by %q", cmd, rule)
 		}
 	}
 }

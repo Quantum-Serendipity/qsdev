@@ -258,10 +258,10 @@ func pathSpellings(fs *canon.Resolver, p string) []string {
 }
 
 // hookCommands returns the command strings of the hooks a settings file
-// registers. A missing or unreadable file registers none (SP-001 protects the
-// file itself).
+// registers. A missing, unreadable, non-regular or oversized file registers
+// none (SP-001 protects the file itself).
 func hookCommands(settingsFile string) []string {
-	data, err := os.ReadFile(settingsFile)
+	data, err := ReadGuardedFile(settingsFile)
 	if err != nil {
 		return nil
 	}

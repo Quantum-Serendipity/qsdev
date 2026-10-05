@@ -3,7 +3,6 @@ package devinit
 import (
 	"errors"
 	"io/fs"
-	"os"
 	"path"
 
 	"github.com/Quantum-Serendipity/qsdev/internal/selfprotect/canon"
@@ -37,7 +36,7 @@ func detectResultGateDodge(toolName string, input hookio.ToolInput, canonicalPat
 		return false, "", ""
 	}
 
-	current, err := os.ReadFile(target)
+	current, err := rules.ReadGuardedFile(target)
 	if err != nil && !errors.Is(err, fs.ErrNotExist) {
 		return true, rule.ID, "cannot read the current file to check what this change removes: " + err.Error()
 	}

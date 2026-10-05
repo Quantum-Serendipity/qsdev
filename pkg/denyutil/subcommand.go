@@ -18,12 +18,40 @@ import (
 // is a whole word sequence that matches bare or followed by arguments. For a
 // whole-word sub the rules keep a space on both sides, so an argument that
 // merely starts with the word (`-var initial_count=1` for "init") is not
-// matched.
+// matched. A sub starting with "*" (an argument anywhere on the command line,
+// such as "*--privileged*") already matches after global options, so it gets
+// no separate global-option rule.
 func SubcommandRules(cli string, subs ...string) []string {
+	return subcommandRules(cli, " * ", subs)
+}
+
+// DashedOptionSubcommandRules is SubcommandRules for a CLI whose global
+// options all start with "-" (docker, podman): the global-option form is
+// anchored on that dash (`docker -* pull`), so a later word equal to the sub
+// (`docker exec web git pull`) is not matched, while `docker --context prod
+// pull` and `docker -H tcp://x pull` still are. A global option followed by
+// another subcommand whose arguments contain the sub (`docker --context prod
+// exec web git pull`) is still matched.
+func DashedOptionSubcommandRules(cli string, subs ...string) []string {
+	return subcommandRules(cli, " -* ", subs)
+}
+
+// subcommandRules builds SubcommandRules with gap, the pattern between the
+// CLI and a whole-word or prefix sub in the global-option form.
+func subcommandRules(cli, gap string, subs []string) []string {
 	var rules []string
-	for _, prefix := range []string{cli, "env *" + cli} {
+	for _, prefix := range CommandPrefixes(cli) {
 		for _, sub := range subs {
-			plain, global := prefix+" "+sub, prefix+" * "+sub
+			plain, global := prefix+" "+sub, prefix+gap+sub
+			if strings.HasPrefix(sub, "*") {
+				// "<cli> *x" strictly subsumes "<cli> * *x", bare or with
+				// arguments.
+				rules = append(rules, "Bash("+plain+")")
+				if !strings.HasSuffix(sub, "*") {
+					rules = append(rules, "Bash("+plain+" *)")
+				}
+				continue
+			}
 			if strings.HasSuffix(sub, "*") {
 				rules = append(rules, "Bash("+plain+")", "Bash("+global+")")
 				continue
@@ -42,6 +70,14 @@ func SubcommandRules(cli string, subs ...string) []string {
 		}
 	}
 	return rules
+}
+
+// CommandPrefixes returns the spellings that start a cli invocation in a
+// Bash deny rule: the plain name and the `env` prefix (`env X=1 <cli>`),
+// which Claude Code does not strip before matching. Rule builders outside
+// this package use it rather than repeating the list.
+func CommandPrefixes(cli string) []string {
+	return []string{cli, "env *" + cli}
 }
 
 // InterspersedOptionRules returns Bash deny rules for CLIs that accept global
@@ -128,6 +164,31 @@ func MatchesBashRule(rule, command string) bool {
 func MatchesPowerShellRule(rule, command string) bool {
 	tool, pattern := ParseToolPattern(rule)
 	return tool == "PowerShell" && matchesCommandPattern(strings.ToLower(pattern), strings.ToLower(command))
+}
+
+// FirstMatch returns the first of rules that matches op, a tool call written
+// as "Bash(<command>)" or "PowerShell(<command>)", using MatchesBashRule or
+// MatchesPowerShellRule for the op's tool. A Bash op never matches a
+// PowerShell rule and the other way round; any other tool reports no match.
+// Tests use the returned rule to name what blocked an operation that should
+// have been allowed.
+func FirstMatch(rules []string, op string) (rule string, ok bool) {
+	tool, command := ParseToolPattern(op)
+	var match func(rule, command string) bool
+	switch tool {
+	case "Bash":
+		match = MatchesBashRule
+	case "PowerShell":
+		match = MatchesPowerShellRule
+	default:
+		return "", false
+	}
+	for _, r := range rules {
+		if match(r, command) {
+			return r, true
+		}
+	}
+	return "", false
 }
 
 // matchesCommandPattern applies the documented wildcard semantics to one

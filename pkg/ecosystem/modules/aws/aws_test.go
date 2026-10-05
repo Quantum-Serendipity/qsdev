@@ -3,7 +3,6 @@ package aws_test
 import (
 	"os"
 	"path/filepath"
-	"slices"
 	"strings"
 	"testing"
 
@@ -267,7 +266,7 @@ func TestDenyRules_AllPresent(t *testing.T) {
 		"cat ~/.aws/config",
 	}
 	for _, cmd := range denied {
-		if !slices.ContainsFunc(rules, func(r string) bool { return denyutil.MatchesBashRule(r, cmd) }) {
+		if _, ok := denyutil.FirstMatch(rules, "Bash("+cmd+")"); !ok {
 			t.Errorf("no deny rule blocks %q, got %v", cmd, rules)
 		}
 	}
@@ -282,22 +281,13 @@ func TestDenyRules_GetSessionTokenArgless(t *testing.T) {
 
 	rules := newModule().DenyRules(ecosystem.ModuleConfig{})
 
-	denied := func(op string) bool {
-		for _, rule := range rules {
-			if denyutil.MatchesBashRule(rule, op) {
-				return true
-			}
-		}
-		return false
-	}
-
 	mustDeny := []string{
 		"aws sts get-session-token",
 		"aws sts get-session-token --duration-seconds 900",
 		"aws sts get-session-token --serial-number arn:aws:iam::123:mfa/u --token-code 123456",
 	}
 	for _, op := range mustDeny {
-		if !denied(op) {
+		if _, ok := denyutil.FirstMatch(rules, "Bash("+op+")"); !ok {
 			t.Errorf("expected %q to be denied by AWS deny rules %v", op, rules)
 		}
 	}
@@ -307,8 +297,8 @@ func TestDenyRules_GetSessionTokenArgless(t *testing.T) {
 		"aws sts get-caller-identity",
 	}
 	for _, op := range mustAllow {
-		if denied(op) {
-			t.Errorf("expected %q to be allowed (not denied) by AWS deny rules %v", op, rules)
+		if rule, ok := denyutil.FirstMatch(rules, "Bash("+op+")"); ok {
+			t.Errorf("expected %q to be allowed (not denied), but AWS deny rule %q matches", op, rule)
 		}
 	}
 }

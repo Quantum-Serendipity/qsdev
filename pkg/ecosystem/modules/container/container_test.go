@@ -587,14 +587,91 @@ func TestDenyRules_BlocksEscapesForEveryRuntime(t *testing.T) {
 				Extras: map[string]string{"container_runtime": rt},
 			})
 			for _, cmd := range denied {
-				if !deniedBy(rules, cmd) {
+				if _, ok := denyutil.FirstMatch(rules, "Bash("+cmd+")"); !ok {
 					t.Errorf("%q is not denied", cmd)
 				}
 			}
 			for _, cmd := range allowed {
-				if deniedBy(rules, cmd) {
-					t.Errorf("%q is unexpectedly denied", cmd)
+				if rule, ok := denyutil.FirstMatch(rules, "Bash("+cmd+")"); ok {
+					t.Errorf("%q is unexpectedly denied by %q", cmd, rule)
 				}
+			}
+		})
+	}
+}
+
+// TestDenyRules covers U11-10: explicit pulls however they are spelled
+// (image pull, compose pull, global options, env prefix), escape arguments
+// behind an env prefix, a source-last host-root bind mount, and the
+// capability, seccomp/AppArmor and user-namespace escapes are all denied,
+// while ordinary local mounts and builds stay allowed.
+func TestDenyRules(t *testing.T) {
+	t.Parallel()
+	rules := newModule().DenyRules(ecosystem.ModuleConfig{})
+
+	tests := []struct {
+		cmd     string
+		blocked bool
+	}{
+		{"docker run -v /:/host alpine", true},
+		{"podman run --volume=/:/h:ro alpine", true},
+		{"docker run -v / alpine", true},
+		{"docker run --mount type=bind,target=/h,source=/ alpine", true},
+		{"podman run --mount type=bind,dst=/h,src=/ alpine", true},
+		{"docker image pull alpine", true},
+		{"podman image pull alpine", true},
+		{"docker --context prod pull alpine", true},
+		{"docker -H tcp://x:2375 pull alpine", true},
+		{"env DOCKER_HOST=x docker pull alpine", true},
+		{"docker compose pull", true},
+		{"docker compose pull web", true},
+		{"docker run --cap-add=SYS_ADMIN alpine", true},
+		{"docker run --cap-add SYS_ADMIN alpine", true},
+		{"docker run --security-opt seccomp=unconfined alpine", true},
+		{"podman run --security-opt apparmor=unconfined alpine", true},
+		{"docker run --userns=host alpine", true},
+		{"docker run --userns host alpine", true},
+		{"env X=1 docker run --privileged alpine", true},
+		{"env X=1 podman run -v /:/host alpine", true},
+		{`docker run --mount "type=bind,target=/h,source=/" alpine`, true},
+		{"docker run --mount 'type=bind,target=/h,source=/' alpine", true},
+		{`podman run --mount "type=bind,dst=/h,src=/" alpine`, true},
+		{"podman run --mount 'type=bind,dst=/h,src=/' alpine", true},
+		{"docker run --security-opt systempaths=unconfined alpine", true},
+		{"docker run --security-opt label=disable alpine", true},
+		{"podman run --security-opt label:disable alpine", true},
+		{"docker run --security-opt seccomp:unconfined alpine", true},
+		{"docker run --security-opt apparmor:unconfined alpine", true},
+		{"docker --context prod run --privileged alpine", true},
+		{`docker run --mount "type=bind,source=/srv,target=/srv" alpine`, false},
+		{"docker run --security-opt label=type:container_t alpine", false},
+		{"docker run -v ./data:/data alpine", false},
+		{"docker build .", false},
+		{"docker run --mount type=bind,source=/srv,target=/srv alpine", false},
+		{"docker compose up", false},
+		{"docker run --security-opt no-new-privileges alpine", false},
+		{`docker run -v "/:/host" alpine`, true},
+		{"docker run -v '/:/host' alpine", true},
+		{`docker run --volume "/:/host" alpine`, true},
+		{"podman run --volume '/:/host' alpine", true},
+		{`docker run --volume="/:/host" alpine`, true},
+		{"docker run -v='/:/host' alpine", true},
+		{"env X=1 docker --context prod pull alpine", true},
+		{"docker exec web git pull origin main", false},
+		{"docker compose exec app git pull", false},
+		{"docker run --rm -v ./repo:/repo alpine/git pull", false},
+		{"podman exec web git pull", false},
+		{`docker run -v "./data:/data" alpine`, false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.cmd, func(t *testing.T) {
+			t.Parallel()
+			rule, ok := denyutil.FirstMatch(rules, "Bash("+tt.cmd+")")
+			switch {
+			case tt.blocked && !ok:
+				t.Errorf("%q is not denied", tt.cmd)
+			case !tt.blocked && ok:
+				t.Errorf("%q is unexpectedly denied by %q", tt.cmd, rule)
 			}
 		})
 	}
@@ -613,7 +690,7 @@ func TestRegistryCredentialsProtected(t *testing.T) {
 	}
 	rules := m.DenyRules(ecosystem.ModuleConfig{})
 	for _, cmd := range []string{"cat ~/.docker/config.json", "cat ~/.config/containers/auth.json"} {
-		if !slices.ContainsFunc(rules, func(r string) bool { return denyutil.MatchesBashRule(r, cmd) }) {
+		if _, ok := denyutil.FirstMatch(rules, "Bash("+cmd+")"); !ok {
 			t.Errorf("%q is not denied", cmd)
 		}
 	}
@@ -629,15 +706,6 @@ func TestHadolintConfigIsCreateOnly(t *testing.T) {
 			t.Errorf(".hadolint.yaml Strategy = %v, want types.Skip", f.Strategy)
 		}
 	}
-}
-
-func deniedBy(rules []string, cmd string) bool {
-	for _, r := range rules {
-		if denyutil.MatchesBashRule(r, cmd) {
-			return true
-		}
-	}
-	return false
 }
 
 // ---------- helpers ----------

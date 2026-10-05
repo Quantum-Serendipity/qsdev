@@ -118,21 +118,74 @@ func (m *Module) PreCommitHooks(_ ecosystem.ModuleConfig) []ecosystem.HookConfig
 // DenyRules returns Claude Code deny-rule patterns for the PowerShell ecosystem.
 // These prevent direct PSGallery module installation outside of controlled workflows.
 func (m *Module) DenyRules(_ ecosystem.ModuleConfig) []string {
-	// Cover both installer cmdlets (PowerShellGet's Install-Module and
-	// PSResourceGet's Install-PSResource), bare or inside any pwsh/powershell
-	// invocation (-c, -Command, -NoProfile -Command, pwsh.exe, ...). Cmdlet
-	// names are case-insensitive, so the all-lowercase spelling is covered too.
-	// The PowerShell(...) rules cover Claude Code's PowerShell tool (the
-	// default shell on Windows), which Bash(...) rules never match.
-	var rules []string
+	// In Claude Code's PowerShell tool (the default shell on Windows, which
+	// Bash(...) rules never match) each installer cmdlet is denied as a whole
+	// word wherever it appears: at the start, after `;`, `|` (`Find-Module X
+	// | Install-Module`), `&&` or a newline, inside a scriptblock or
+	// Invoke-Expression string, or module-qualified
+	// (`PowerShellGet\Install-Module`). Whole word means a longer local-only
+	// cmdlet that starts with an installer's name (Update-ModuleManifest,
+	// Update-ScriptFileInfo) stays allowed. The aliases are denied the same
+	// way (see psWordRules). These rules are the only layer for the
+	// PowerShell tool; the package-guard hook inspects only scripts passed to
+	// pwsh/powershell. A command that merely names a cmdlet (`Get-Help
+	// Install-Module`) is over-blocked; run it yourself in a terminal.
+	//
+	// In the Bash tool the cmdlet is denied bare or inside any
+	// pwsh/powershell invocation, including behind an env prefix (-c,
+	// -Command, -NoProfile -Command, pwsh.exe, `-c 'a; Install-Module'`,
+	// `env X=1 pwsh -c ...`). Those rules match a substring, so they also
+	// over-block any Bash command that mentions both words (`git commit -m
+	// 'powershell: document Install-Module'`, `grep -rn pwsh docs | grep
+	// Install-Module`) and a longer cmdlet under pwsh (`pwsh -c
+	// Update-ModuleManifest`); run such a command yourself in a terminal.
+	//
+	// PowerShell(...) rules match case-insensitively, so one spelling covers
+	// every casing. Bash(...) rules cannot be made case-insensitive: they
+	// carry the documented and the all-lowercase spelling, and any other
+	// casing under pwsh (INSTALL-MODULE) is left to the package-guard hook,
+	// which matches case-insensitively.
+	rules := psWordRules(psInstallCmdlets, []string{"*"})
 	for _, cmdlet := range psInstallCmdlets {
 		for _, spelling := range []string{cmdlet, strings.ToLower(cmdlet)} {
 			rules = append(rules,
-				"PowerShell("+spelling+" *)",
 				"Bash("+spelling+"*)",
-				"Bash(pwsh*"+spelling+"*)",
-				"Bash(powershell*"+spelling+"*)",
+				"Bash(*pwsh*"+spelling+"*)",
+				"Bash(*powershell*"+spelling+"*)",
 			)
+		}
+	}
+	return append(rules, psWordRules(psInstallAliases, psAliasBefore)...)
+}
+
+// psInstallAliases are PSResourceGet's aliases for Install-PSResource and
+// Update-PSResource.
+var psInstallAliases = []string{"isres", "udres"}
+
+// psAliasBefore is what may precede an alias in a PowerShell tool call: the
+// start of the command, or a space, `;`, `|`, newline, `{`, `(` or `&`
+// (`&&` without spaces). Unlike the cmdlet names, the short aliases are
+// not matched at the end of another word (`thisresult.txt`).
+var psAliasBefore = []string{"", "* ", "*;", "*|", "*\n", "*{", "*(", "*&"}
+
+// psWordAfter is what may follow a denied word: arguments, the end of the
+// command, a statement or pipeline separator, the end of a scriptblock,
+// subexpression or string, or a newline.
+var psWordAfter = []string{" *", "", ";*", "|*", "}*", ")*", "'*", `"*`, "\n*"}
+
+// psWordRules returns PowerShell tool deny rules that match each of words as
+// a whole word: preceded by one of before and followed by one of
+// psWordAfter, so a longer name that starts with the word is not matched.
+func psWordRules(words, before []string) []string {
+	var rules []string
+	for _, word := range words {
+		for _, b := range before {
+			for _, a := range psWordAfter {
+				if b == "" && a == "" {
+					continue // "<word> *" already matches the bare word.
+				}
+				rules = append(rules, "PowerShell("+b+word+a+")")
+			}
 		}
 	}
 	return rules

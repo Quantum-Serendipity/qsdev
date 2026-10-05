@@ -28,6 +28,49 @@ All notable changes to qsdev are recorded in this file. The format is based on
   hook now logs to `.claude/logs/semble-searches.jsonl` (was
   `.qsdev/analytics/`), next to the audit log, and both logging hooks
   refuse to append through a symlink planted in the log directory.
+- Module deny rules now block the spellings they used to miss (U11-WS1),
+  including after global options and behind an `env VAR=x` prefix. Newly
+  denied for the agent:
+  - Containers (docker, podman): `image pull` and `compose pull` alongside
+    `pull` (a global option before the subcommand, such as `--context` or
+    `-H`, is covered; `docker exec web git pull` stays allowed); `--cap-add`, `--security-opt seccomp=unconfined` /
+    `apparmor=unconfined` / `systempaths=unconfined` / `label=disable` (also
+    in the legacy `:` spelling), `--userns=host`, a host-root mount written
+    source-last, quoted or not (`--mount type=bind,target=/h,source=/`), and
+    a quoted host-root volume (`-v "/:/host"`).
+  - Terraform/OpenTofu: `test`, `refresh`, `taint`, `untaint`, `console`,
+    `login`, `logout`, `state replace-provider` and `workspace delete`
+    (`workspace new` and `workspace select` stay allowed).
+  - Bazel and bazelisk: `run` of any `@repo//...` target wherever the label
+    appears (after flags or `--`), `test` or `coverage` of an `@repo//...`
+    target, and every `--lockfile_mode` other than `error` (`update`,
+    `refresh`, `off`, in any case, quoted, escaped or `$'...'`, or
+    space-separated) on any command. A Starlark flag naming an external label
+    before the run target (`bazel run --@rules_python//...=3.12 //app:main`)
+    and an `@` in run arguments after `--` are over-blocked.
+  - Ansible: `ansible` and `ansible-playbook` given a vault password
+    (`--vault-password-file`, `--vault-pass-file`, `--ask-vault-pass`, `-J`,
+    `--vault-id`); ad-hoc `ansible` runs given module arguments (`-a`,
+    `--args`, which includes the default `command` module); ad-hoc runs of
+    `debug`, `shell`, `command`, `raw`, `script` and `expect` (also
+    `win_shell`, `win_command`, `-mshell` and any collection-qualified name
+    such as `ansible.legacy.shell`), matched as the module option's value so
+    `--limit webshell` stays allowed; and `ansible-pull`. Playbook runs against
+    a local or dev inventory and argument-free ad-hoc runs such as
+    `ansible all -m ping` stay allowed.
+  - PowerShell: the installer cmdlets and PSResourceGet's `isres`/`udres`
+    aliases as whole words anywhere in a PowerShell tool call (after `;`,
+    `|`, `&&` or a newline, in a scriptblock, module-qualified), so
+    `Update-ModuleManifest` and `Update-ScriptFileInfo` stay allowed; and
+    `pwsh`/`powershell` behind an `env` prefix in Bash. In the Bash tool a
+    command that mentions both `pwsh` (or `powershell`) and a cmdlet name,
+    such as `git commit -m 'powershell: document Install-Module'`, is
+    over-blocked. The redundant lowercase `PowerShell(...)` copies are
+    dropped, since that tool matches rules case-insensitively.
+
+  When you need one of these operations, run it yourself in a terminal. Deny
+  rules from an earlier `qsdev init` (such as `Bash(bazel run @*)`) stay valid
+  until `qsdev init --update` replaces them.
 
 - Infrastructure endpoints in `.qsdev.yaml` are now validated whether or not
   an `infra_profile` is selected. A project whose `registry_proxy`,

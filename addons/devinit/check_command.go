@@ -65,7 +65,10 @@ dependencies.totals can pass (without one they fail as inconclusive).`,
 	cmd.Flags().BoolVar(&scan, "scan", false,
 		"Run a fresh dependency vulnerability scan for custom conformance requirements")
 
-	return cmdutil.MarkReadOnly(cmd, "", "auto-fix", "scan")
+	// check reports a catalog that does not load as a config_catalog result
+	// (so --format json still writes a report) instead of the root gate's
+	// bare error.
+	return cmdutil.MarkCatalogOptional(cmdutil.MarkReadOnly(cmd, "", "auto-fix", "scan"))
 }
 
 func runCheck(cmd *cobra.Command, format check.OutputFormat, auditLevel check.AuditLevel, autoFix, scan bool) error {
@@ -93,8 +96,14 @@ func runCheck(cmd *cobra.Command, format check.OutputFormat, auditLevel check.Au
 	cfgFile := branding.Get().ConfigFile
 	ctx.QsdevConfig, ctx.ConfigErr = qsdevconfig.ParseQsdevConfig(filepath.Join(projectRoot, cfgFile))
 
-	// Tool names from registry for config validation.
-	toolRegistry := toolreg.DefaultRegistry()
+	// Tool names from registry for config validation. Without the catalog
+	// nothing else can be checked honestly, so its failure is the report.
+	toolRegistry, failure := loadCheckRegistry()
+	if failure != nil {
+		report := check.BuildReport([]check.CheckResult{*failure},
+			ctx.BinaryVersion, filepath.Base(projectRoot))
+		return emitCheckReport(cmd, report, format, auditLevel)
+	}
 	ctx.ToolNames = toolRegistry.Names()
 
 	// mcp.disabled_tools names MCP tools, a namespace separate from the
@@ -217,6 +226,32 @@ func runCheck(cmd *cobra.Command, format check.OutputFormat, auditLevel check.Au
 		report = check.BuildReport(report.Checks, report.Version, report.Project)
 	}
 
+	return emitCheckReport(cmd, report, format, auditLevel)
+}
+
+// loadCheckRegistry returns the tool registry check validates against, or the
+// result that reports why it is unavailable. A catalog that does not load is
+// reported with the catalog's own error, worded as the root catalog gate
+// words it (not toolreg's re-wrap); a registry that cannot be built from a
+// catalog that loaded is reported separately, so its cause is not blamed on
+// the defaults file.
+func loadCheckRegistry() (*toolreg.Registry, *check.CheckResult) {
+	if _, err := catalog.Default(); err != nil {
+		r := check.CatalogLoadFailure(err)
+		return nil, &r
+	}
+	reg, err := toolreg.Default()
+	if err != nil {
+		r := check.ToolRegistryFailure(err)
+		return nil, &r
+	}
+	return reg, nil
+}
+
+// emitCheckReport writes report to cmd's output in format, emits GitHub
+// Actions annotations when running there, and returns the error that makes
+// check exit 1 when a result fails at or above auditLevel.
+func emitCheckReport(cmd *cobra.Command, report *check.CheckReport, format check.OutputFormat, auditLevel check.AuditLevel) error {
 	// Detect color support.
 	useColor := false
 	if f, ok := cmd.OutOrStdout().(*os.File); ok {

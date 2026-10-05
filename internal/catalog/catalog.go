@@ -107,10 +107,23 @@ func Default() (*Catalog, error) {
 		mu.Unlock()
 		slog.Warn("ignoring invalid user defaults file; using built-in defaults",
 			"path", orgFile, "error", err,
-			"fix", fmt.Sprintf("run '%s defaults validate', then edit or reset the file", branding.Get().AppName))
+			"fix", fmt.Sprintf("run '%s', then edit or reset the file", ValidateCommand()))
 		defaultCat = fallback
 	})
 	return defaultCat, defaultErr
+}
+
+// LoadError wraps an error from Default in the wording every command uses to
+// tell a person the defaults catalog did not load, so the root gate and
+// `check` report the failure identically.
+func LoadError(err error) error {
+	return fmt.Errorf("loading %s defaults: %w", branding.Get().AppName, err)
+}
+
+// ValidateCommand returns the command line that diagnoses a defaults file
+// that does not load, for repair hints.
+func ValidateCommand() string {
+	return branding.Get().AppName + " defaults validate"
 }
 
 // OrgOverlayError returns the error that made Default skip the user-level

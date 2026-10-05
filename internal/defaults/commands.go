@@ -37,7 +37,9 @@ func Command() *cobra.Command {
 		pinCmd(),
 	)
 
-	return cmd
+	// The defaults commands exist to diagnose and repair a defaults file
+	// that does not load, so the root catalog gate must not stop them.
+	return cmdutil.MarkCatalogOptional(cmd)
 }
 
 func initCmd() *cobra.Command {

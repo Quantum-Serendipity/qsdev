@@ -3,6 +3,7 @@ package claudecode_test
 import (
 	"bufio"
 	"encoding/json"
+	"io/fs"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -234,13 +235,15 @@ func TestHookTemplates_LogUnderHookLogDir(t *testing.T) {
 
 	shellLogDir := regexp.MustCompile(`(?m)^LOG_DIR="\$\{CLAUDE_PROJECT_DIR:-\.\}/([^"]+)"`)
 	pyParts := `"` + strings.Join(strings.Split(canon.HookLogDir, "/"), `", "`) + `"`
-	files, err := filepath.Glob(filepath.Join("templates", "hooks", "*"))
+	// The shipped templates, not the source tree: the hook tests leave a
+	// __pycache__ directory there that is never embedded.
+	files, err := fs.Glob(claudecode.ExportTemplateFS, "templates/hooks/*")
 	if err != nil {
 		t.Fatal(err)
 	}
 	var shellLogs int
 	for _, f := range files {
-		data, err := os.ReadFile(f)
+		data, err := fs.ReadFile(claudecode.ExportTemplateFS, f)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -254,7 +257,7 @@ func TestHookTemplates_LogUnderHookLogDir(t *testing.T) {
 	if shellLogs < 2 {
 		t.Errorf("found %d shell LOG_DIR assignments, want the audit-log and semble-analytics ones", shellLogs)
 	}
-	lib, err := os.ReadFile(filepath.Join("templates", "hooks", "_qsdev_hooklib.py"))
+	lib, err := fs.ReadFile(claudecode.ExportTemplateFS, "templates/hooks/_qsdev_hooklib.py")
 	if err != nil {
 		t.Fatal(err)
 	}

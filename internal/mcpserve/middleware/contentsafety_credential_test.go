@@ -84,3 +84,29 @@ func TestContentSafetyExemptsCredentialVendTool(t *testing.T) {
 		t.Errorf("credential-vend structured value was redacted: %v", got)
 	}
 }
+
+// TestContentSafetyRedactsPaddedBasicAuth confirms a tool result carrying a
+// padded Basic credential (whose trailing '==' once looked like a new NAME= key
+// and cut the redaction short) is fully redacted on the tool-result path, while
+// a benign {"pass":3,"fail":0} check/posture summary passes through unchanged.
+func TestContentSafetyRedactsPaddedBasicAuth(t *testing.T) {
+	t.Parallel()
+	const cred = "dXNlcjpwYXNzd29yZA"
+	summary := `{"pass":3,"fail":0}`
+	out := runContentSafetyWithTool(t, "qsdev_check", CategorySecurity,
+		&spi.ToolResult{
+			Text:       "request failed\nAuthorization: Basic " + cred + "==\n" + summary,
+			Structured: map[string]any{"pass": 3, "fail": 0},
+		})
+
+	if strings.Contains(out.Text, cred) {
+		t.Errorf("padded Basic credential survived redaction: %q", out.Text)
+	}
+	if !strings.Contains(out.Text, summary) {
+		t.Errorf("benign pass/fail summary was altered: %q", out.Text)
+	}
+	got := out.Structured.(map[string]any)
+	if got["pass"] != 3 || got["fail"] != 0 {
+		t.Errorf("benign structured pass/fail was altered: %v", got)
+	}
+}

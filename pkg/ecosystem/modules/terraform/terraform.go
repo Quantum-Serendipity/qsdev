@@ -23,6 +23,7 @@ import (
 
 // Compile-time interface compliance checks.
 var _ ecosystem.EcosystemModule = (*Module)(nil)
+var _ ecosystem.PackageProvider = (*Module)(nil)
 var _ ecosystem.SecretDeclarer = (*Module)(nil)
 var _ ecosystem.DenyRuleProvider = (*Module)(nil)
 var _ ecosystem.ReadDenyRuleProvider = (*Module)(nil)
@@ -194,6 +195,13 @@ func (m *Module) DevenvNixFragment(config ecosystem.ModuleConfig) (string, error
 	}
 	b.WriteString("  };\n")
 	return b.String(), nil
+}
+
+// DevenvPackages provisions tflint and tfsec, which the CI scan runs for
+// both variants: the matching pre-commit hooks add them only at the tiers
+// those hooks run at.
+func (m *Module) DevenvPackages(_ ecosystem.ModuleConfig) []string {
+	return []string{"tflint", "tfsec"}
 }
 
 // DevenvYamlInputs contributes the nixpkgs-terraform flake input when the

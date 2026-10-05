@@ -3,6 +3,7 @@ package cpp_test
 import (
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
@@ -159,77 +160,31 @@ func TestDevenvNixFragment(t *testing.T) {
 
 // --- DevenvPackages tests ---
 
-func TestDevenvPackages_CMake(t *testing.T) {
+func TestDevenvPackages(t *testing.T) {
 	t.Parallel()
-	m := &cpp.Module{}
-	pkgs := m.DevenvPackages(ecosystem.ModuleConfig{
-		Extras: map[string]string{"build_system": "cmake"},
-	})
-	want := []string{"cmake", "gnumake"}
-	if len(pkgs) != len(want) {
-		t.Fatalf("DevenvPackages(cmake) = %v, want %v", pkgs, want)
+	tests := []struct {
+		name string
+		cfg  ecosystem.ModuleConfig
+		want []string
+	}{
+		// cppcheck backs the CI scan, so it is provisioned for every
+		// configuration, not only at the hook tiers its hook runs at.
+		{name: "no build system", want: []string{"cppcheck"}},
+		{name: "cmake", cfg: ecosystem.ModuleConfig{Extras: map[string]string{"build_system": "cmake"}}, want: []string{"cppcheck", "cmake", "gnumake"}},
+		{name: "meson", cfg: ecosystem.ModuleConfig{Extras: map[string]string{"build_system": "meson"}}, want: []string{"cppcheck", "meson", "ninja"}},
+		{name: "make", cfg: ecosystem.ModuleConfig{Extras: map[string]string{"build_system": "make"}}, want: []string{"cppcheck", "gnumake"}},
+		{name: "cmake with sccache", cfg: ecosystem.ModuleConfig{Extras: map[string]string{"build_system": "cmake", "build_cache": "sccache"}}, want: []string{"cppcheck", "cmake", "gnumake", "sccache"}},
+		{name: "conan wizard answer", cfg: ecosystem.ModuleConfig{PackageManager: "conan"}, want: []string{"cppcheck", "conan"}},
+		{name: "conan detected", cfg: ecosystem.ModuleConfig{Extras: map[string]string{"package_manager": "conan", "build_system": "cmake"}}, want: []string{"cppcheck", "cmake", "gnumake", "conan"}},
+		{name: "vcpkg", cfg: ecosystem.ModuleConfig{PackageManager: "vcpkg"}, want: []string{"cppcheck"}},
 	}
-	for i, w := range want {
-		if pkgs[i] != w {
-			t.Errorf("DevenvPackages(cmake)[%d] = %q, want %q", i, pkgs[i], w)
-		}
-	}
-}
-
-func TestDevenvPackages_Meson(t *testing.T) {
-	t.Parallel()
-	m := &cpp.Module{}
-	pkgs := m.DevenvPackages(ecosystem.ModuleConfig{
-		Extras: map[string]string{"build_system": "meson"},
-	})
-	want := []string{"meson", "ninja"}
-	if len(pkgs) != len(want) {
-		t.Fatalf("DevenvPackages(meson) = %v, want %v", pkgs, want)
-	}
-	for i, w := range want {
-		if pkgs[i] != w {
-			t.Errorf("DevenvPackages(meson)[%d] = %q, want %q", i, pkgs[i], w)
-		}
-	}
-}
-
-func TestDevenvPackages_Make(t *testing.T) {
-	t.Parallel()
-	m := &cpp.Module{}
-	pkgs := m.DevenvPackages(ecosystem.ModuleConfig{
-		Extras: map[string]string{"build_system": "make"},
-	})
-	if len(pkgs) != 1 || pkgs[0] != "gnumake" {
-		t.Errorf("DevenvPackages(make) = %v, want [gnumake]", pkgs)
-	}
-}
-
-func TestDevenvPackages_WithSccache(t *testing.T) {
-	t.Parallel()
-	m := &cpp.Module{}
-	pkgs := m.DevenvPackages(ecosystem.ModuleConfig{
-		Extras: map[string]string{
-			"build_system": "cmake",
-			"build_cache":  "sccache",
-		},
-	})
-	want := []string{"cmake", "gnumake", "sccache"}
-	if len(pkgs) != len(want) {
-		t.Fatalf("DevenvPackages(cmake+sccache) = %v, want %v", pkgs, want)
-	}
-	for i, w := range want {
-		if pkgs[i] != w {
-			t.Errorf("DevenvPackages(cmake+sccache)[%d] = %q, want %q", i, pkgs[i], w)
-		}
-	}
-}
-
-func TestDevenvPackages_NoBuildSystem(t *testing.T) {
-	t.Parallel()
-	m := &cpp.Module{}
-	pkgs := m.DevenvPackages(ecosystem.ModuleConfig{})
-	if pkgs != nil {
-		t.Errorf("DevenvPackages(no build system) = %v, want nil", pkgs)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			if got := (&cpp.Module{}).DevenvPackages(tt.cfg); !slices.Equal(got, tt.want) {
+				t.Errorf("DevenvPackages(%+v) = %q, want %q", tt.cfg, got, tt.want)
+			}
+		})
 	}
 }
 
@@ -289,5 +244,31 @@ func TestRegistration(t *testing.T) {
 	}
 	if mod.Name() != "cpp" {
 		t.Errorf("registered module Name() = %q, want %q", mod.Name(), "cpp")
+	}
+}
+
+// TestCICommands_ConanDetectsProfile checks the Conan lockfile check first
+// creates the default profile a clean CI runner lacks, so `conan lock create`
+// does not fail on the missing profile (U10-05).
+func TestCICommands_ConanDetectsProfile(t *testing.T) {
+	t.Parallel()
+
+	const want = "conan profile detect --exist-ok && conan lock create . --lockfile=conan.lock --lockfile-out=/dev/null"
+	for _, cfg := range []ecosystem.ModuleConfig{
+		{PackageManager: "conan"},
+		{Extras: map[string]string{"package_manager": "conan"}},
+	} {
+		var found bool
+		for _, c := range (&cpp.Module{}).CICommands(cfg) {
+			if c.Name == "conan-lock-verify" {
+				found = true
+				if c.Command != want || c.Phase != ecosystem.CIPhaseInstall {
+					t.Errorf("conan-lock-verify = %q (phase %v), want install step %q", c.Command, c.Phase, want)
+				}
+			}
+		}
+		if !found {
+			t.Errorf("CICommands(%+v) has no conan-lock-verify step", cfg)
+		}
 	}
 }

@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"strings"
 	"syscall"
 	"testing"
 
@@ -336,5 +337,145 @@ func TestProbeBoundary_CrossesDeviceToToplevel(t *testing.T) {
 	wd := filepath.Join(repo, "mnt", "sub")
 	if got := probeBoundary(wd, filepath.Join(root, "home")); got != repo {
 		t.Errorf("probeBoundary across a mount = %q, want the toplevel %q", got, repo)
+	}
+}
+
+// TestCheckTrusted pins the one trust rule CheckTrusted shares with the marker
+// walk: an entry and its parent directory must be owned by the user or root
+// and not world-writable; a symlink must itself be the user's. Group-writable
+// is accepted (user-private-group umask 002).
+func TestCheckTrusted(t *testing.T) {
+	foreign := uint32(os.Geteuid()) + 1 // never the euid, never 0
+	tests := []struct {
+		name string
+		// setup plants the entry below root and returns its path.
+		setup      func(t *testing.T, root string) string
+		wantReason string // "" means trusted
+	}{
+		{
+			name: "own-file-trusted",
+			setup: func(t *testing.T, root string) string {
+				touch(t, root, "proj/f")
+				return filepath.Join(root, "proj", "f")
+			},
+		},
+		{
+			name: "own-dir-trusted",
+			setup: func(t *testing.T, root string) string {
+				mkdirs(t, root, "proj/d")
+				return filepath.Join(root, "proj", "d")
+			},
+		},
+		{
+			name: "group-writable-trusted",
+			setup: func(t *testing.T, root string) string {
+				touch(t, root, "proj/f")
+				chmod(t, filepath.Join(root, "proj"), 0o775)
+				chmod(t, filepath.Join(root, "proj", "f"), 0o664)
+				return filepath.Join(root, "proj", "f")
+			},
+		},
+		{
+			name: "world-writable-file-untrusted",
+			setup: func(t *testing.T, root string) string {
+				touch(t, root, "proj/f")
+				chmod(t, filepath.Join(root, "proj", "f"), 0o666)
+				return filepath.Join(root, "proj", "f")
+			},
+			wantReason: "world-writable",
+		},
+		{
+			name: "world-writable-parent-untrusted",
+			setup: func(t *testing.T, root string) string {
+				touch(t, root, "proj/f")
+				chmod(t, filepath.Join(root, "proj"), 0o777|fs.ModeSticky)
+				return filepath.Join(root, "proj", "f")
+			},
+			wantReason: "parent directory is world-writable",
+		},
+		{
+			name: "foreign-owner-untrusted",
+			setup: func(t *testing.T, root string) string {
+				touch(t, root, "proj/f")
+				p := filepath.Join(root, "proj", "f")
+				withStatOverride(t, p, func(st *syscall.Stat_t) { st.Uid = foreign })
+				return p
+			},
+			wantReason: "owned by uid",
+		},
+		{
+			name: "foreign-owned-parent-untrusted",
+			setup: func(t *testing.T, root string) string {
+				touch(t, root, "proj/f")
+				withStatOverride(t, filepath.Join(root, "proj"), func(st *syscall.Stat_t) { st.Uid = foreign })
+				return filepath.Join(root, "proj", "f")
+			},
+			wantReason: "parent directory owned by uid",
+		},
+		{
+			name: "foreign-symlink-untrusted",
+			setup: func(t *testing.T, root string) string {
+				touch(t, root, "mine")
+				mkdirs(t, root, "proj")
+				link := filepath.Join(root, "proj", "f")
+				symlink(t, filepath.Join(root, "mine"), link)
+				withLstatOverride(t, link, func(st *syscall.Stat_t) { st.Uid = foreign })
+				return link
+			},
+			wantReason: "symlink owned by uid",
+		},
+		{
+			name: "own-symlink-trusted",
+			setup: func(t *testing.T, root string) string {
+				touch(t, root, "mine")
+				mkdirs(t, root, "proj")
+				link := filepath.Join(root, "proj", "f")
+				symlink(t, filepath.Join(root, "mine"), link)
+				return link
+			},
+		},
+		{
+			name: "own-symlink-to-world-writable-target-untrusted",
+			setup: func(t *testing.T, root string) string {
+				touch(t, root, "mine")
+				chmod(t, filepath.Join(root, "mine"), 0o666)
+				mkdirs(t, root, "proj")
+				link := filepath.Join(root, "proj", "f")
+				symlink(t, filepath.Join(root, "mine"), link)
+				return link
+			},
+			wantReason: "world-writable",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			path := tt.setup(t, t.TempDir())
+			err := CheckTrusted(path)
+			if tt.wantReason == "" {
+				if err != nil {
+					t.Fatalf("CheckTrusted(%s) = %v, want nil", path, err)
+				}
+				return
+			}
+			if !errors.Is(err, ErrUntrusted) {
+				t.Fatalf("CheckTrusted(%s) = %v, want ErrUntrusted", path, err)
+			}
+			var ue *UntrustedError
+			if !errors.As(err, &ue) {
+				t.Fatalf("CheckTrusted(%s) = %T, want *UntrustedError", path, err)
+			}
+			if ue.Path != path || !strings.HasPrefix(ue.Reason, tt.wantReason) {
+				t.Errorf("UntrustedError = {Path:%q Reason:%q}, want {Path:%q Reason:%q...}", ue.Path, ue.Reason, path, tt.wantReason)
+			}
+		})
+	}
+}
+
+// TestCheckTrusted_MissingEntry: an entry that cannot be inspected is an
+// error, never trusted, and not reported as ErrUntrusted.
+func TestCheckTrusted_MissingEntry(t *testing.T) {
+	err := CheckTrusted(filepath.Join(t.TempDir(), "absent"))
+	if err == nil || !errors.Is(err, fs.ErrNotExist) || errors.Is(err, ErrUntrusted) {
+		t.Errorf("CheckTrusted(absent) = %v, want a not-exist error", err)
 	}
 }

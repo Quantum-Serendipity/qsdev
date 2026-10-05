@@ -905,7 +905,9 @@ func invalidDefaultsProject(t *testing.T) string {
 		t.Fatal(err)
 	}
 	catalog.ResetDefault()
-	catalog.SetProjectRoot(dir)
+	if err := catalog.SetProjectRoot(dir); err != nil {
+		t.Fatal(err)
+	}
 	toolreg.ResetDefaultRegistry()
 	t.Cleanup(func() {
 		catalog.ResetDefault()

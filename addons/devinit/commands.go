@@ -3,6 +3,7 @@ package devinit
 import (
 	"errors"
 	"fmt"
+	"io"
 	"io/fs"
 	"log/slog"
 	"os"
@@ -54,6 +55,7 @@ project-type profiles, and writes all files atomically.`,
 	}
 
 	RegisterInitFlags(cmd, &opts)
+	describeTierOnHelp(cmd)
 
 	return cmdutil.MarkRootHere(cmdutil.MarkReadOnly(cmd, "dry-run"))
 }
@@ -117,8 +119,9 @@ func runInitWithModeDetection(cmd *cobra.Command, opts InitOptions) error {
 
 	slog.Info("onboarding mode detected", "mode", result.Mode)
 
-	// d. Print explanation.
+	// d. Print explanation, and the project defaults file the plan applies.
 	_, _ = fmt.Fprintf(cmd.OutOrStdout(), "[%s] %s\n", result.Mode, result.Explanation)
+	printProjectDefaults(cmd.OutOrStdout())
 
 	// e. Dispatch to appropriate handler.
 	switch result.Mode {
@@ -137,6 +140,15 @@ func runInitWithModeDetection(cmd *cobra.Command, opts InitOptions) error {
 		return runRepair(cmd, opts)
 	default:
 		return fmt.Errorf("unexpected onboarding mode: %s", result.Mode)
+	}
+}
+
+// printProjectDefaults names the project defaults file the catalog applies
+// (the layer of the root the runtime set for this command), if any. A file
+// the trust rule refuses is not named: loading the catalog reports it.
+func printProjectDefaults(w io.Writer) {
+	if p, err := catalog.ProjectConfigFile(catalog.ProjectRoot()); err == nil && p != "" {
+		_, _ = fmt.Fprintf(w, "Project defaults: %s\n", p)
 	}
 }
 
@@ -253,7 +265,11 @@ func buildAnswersFromInputs(cmd *cobra.Command, opts InitOptions, projectRoot st
 	}
 
 	if opts.ProfileName != "" {
-		p, ok := ensureProfileRegistry().Get(opts.ProfileName)
+		reg, err := projectProfiles()
+		if err != nil {
+			return types.WizardAnswers{}, err
+		}
+		p, ok := reg.Get(opts.ProfileName)
 		if !ok {
 			return types.WizardAnswers{}, fmt.Errorf("unknown profile %q; use --list-profiles to see available profiles", opts.ProfileName)
 		}
@@ -498,7 +514,11 @@ func runRepair(cmd *cobra.Command, opts InitOptions) error {
 
 // listProfiles prints all available project-type profiles and returns.
 func listProfiles(cmd *cobra.Command) error {
-	profiles := ensureProfileRegistry().List()
+	reg, err := projectProfiles()
+	if err != nil {
+		return err
+	}
+	profiles := reg.List()
 	if len(profiles) == 0 {
 		_, _ = fmt.Fprintln(cmd.OutOrStdout(), "No profiles available.")
 		return nil

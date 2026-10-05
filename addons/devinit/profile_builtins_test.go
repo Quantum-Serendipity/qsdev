@@ -2,9 +2,12 @@ package devinit_test
 
 import (
 	"context"
+	"errors"
 	"log/slog"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
 
@@ -245,7 +248,9 @@ func TestDefaultProjectProfileRegistry_CatalogErrorNotLoggedAsError(t *testing.T
 		t.Fatal(err)
 	}
 	catalog.ResetDefault()
-	catalog.SetProjectRoot(dir)
+	if err := catalog.SetProjectRoot(dir); err != nil {
+		t.Fatal(err)
+	}
 	prev := slog.Default()
 	h := &recordingHandler{}
 	slog.SetDefault(slog.New(h))
@@ -270,5 +275,69 @@ func TestDefaultProjectProfileRegistry_CatalogErrorNotLoggedAsError(t *testing.T
 	}
 	if debug == 0 {
 		t.Error("catalog failure not logged at debug")
+	}
+}
+
+// TestProjectProfilesEmbedderCollisionReported verifies an embedder profile
+// whose name collides with a built-in is returned as an error (not logged and
+// skipped), while non-colliding embedder profiles register next to the
+// built-ins.
+func TestProjectProfilesEmbedderCollisionReported(t *testing.T) {
+	t.Parallel()
+	custom := devinit.ExportProfile{Description: "custom"}
+
+	reg, err := devinit.ExportNewProjectProfiles(map[string]devinit.ExportProfile{"my-team": custom})
+	if err != nil {
+		t.Fatalf("non-colliding embedder profile: %v", err)
+	}
+	if p, ok := reg.Get("my-team"); !ok || p.Description != "custom" {
+		t.Errorf("embedder profile my-team = %+v, %v; want registered", p, ok)
+	}
+	if _, ok := reg.Get("go-web"); !ok {
+		t.Error("built-in go-web missing next to an embedder profile")
+	}
+
+	_, err = devinit.ExportNewProjectProfiles(map[string]devinit.ExportProfile{"go-web": custom, "my-team": custom})
+	if err == nil || !strings.Contains(err.Error(), `registering profile "go-web"`) {
+		t.Fatalf("colliding embedder profile: err = %v, want a go-web registration error", err)
+	}
+}
+
+const lazyProfilesHelperEnv = "QSDEV_DEVINIT_LAZY_PROFILES_HELPER"
+
+// TestProjectProfilesLazyHelper is not a real test: TestProjectProfilesLazy
+// runs it in a fresh process, where nothing has loaded the catalog yet.
+func TestProjectProfilesLazyHelper(t *testing.T) {
+	if os.Getenv(lazyProfilesHelperEnv) != "1" {
+		t.Skip("helper process for TestProjectProfilesLazy")
+	}
+	if err := devinit.ExportInitialize(); err != nil {
+		t.Fatalf("initialize: %v", err)
+	}
+	root := t.TempDir()
+	if err := catalog.SetProjectRoot(root); err != nil {
+		t.Fatalf("initialize loaded the catalog: SetProjectRoot = %v", err)
+	}
+	if _, err := devinit.ExportProjectProfiles(); err != nil {
+		t.Fatalf("projectProfiles: %v", err)
+	}
+	if err := catalog.SetProjectRoot(t.TempDir()); !errors.Is(err, catalog.ErrCatalogAlreadyLoaded) {
+		t.Fatalf("projectProfiles did not load the catalog: SetProjectRoot = %v", err)
+	}
+}
+
+// TestProjectProfilesLazy verifies building the devinit commands does not
+// load the catalog: the project-type profiles load on first use, after the
+// command's project root is known.
+func TestProjectProfilesLazy(t *testing.T) {
+	t.Parallel()
+	cmd := exec.Command(os.Args[0], "-test.run=^TestProjectProfilesLazyHelper$", "-test.v")
+	cmd.Env = append(os.Environ(), lazyProfilesHelperEnv+"=1")
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("helper failed: %v\n%s", err, out)
+	}
+	if !strings.Contains(string(out), "--- PASS: TestProjectProfilesLazyHelper") {
+		t.Fatalf("helper did not run:\n%s", out)
 	}
 }

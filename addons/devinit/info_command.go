@@ -35,10 +35,11 @@ Instant response — reads cached state only, no evaluation.`,
 }
 
 func runInfo(cmd *cobra.Command, oneline, jsonOutput bool) error {
-	projectRoot, err := cmdutil.ProjectRoot()
+	pc, err := cmdutil.Project(cmd)
 	if err != nil {
 		return err
 	}
+	projectRoot := pc.Root
 
 	projectInfo, err := info.CollectInfo(projectRoot)
 	if err != nil {

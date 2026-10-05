@@ -1,189 +1,52 @@
 package logging
 
 import (
-	"os"
 	"path/filepath"
+	"strings"
 	"testing"
+
+	"github.com/Quantum-Serendipity/qsdev/internal/projectctx"
+	"github.com/Quantum-Serendipity/qsdev/pkg/branding"
 )
 
-// TestWalkUp exercises the shared project-root traversal primitive directly:
-// it must match in an ancestor, in the start dir itself, and report
-// ("", false) when no ancestor matches.
-func TestWalkUp(t *testing.T) {
-	t.Parallel()
+// TestGlobalLogDir_UsesXDGState pins that the global log tier lives in the
+// per-user state directory: $XDG_STATE_HOME/<app>/logs when that is set, the
+// OS default state directory otherwise, and never the legacy ~/.<app>.
+func TestGlobalLogDir_UsesXDGState(t *testing.T) {
+	b := branding.Get()
+	base := t.TempDir()
+	home := filepath.Join(base, "home")
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
+	t.Setenv("LocalAppData", filepath.Join(base, "LocalAppData"))
+	t.Setenv(b.EnvLogDirVar, "")
 
-	root := t.TempDir()
-	nested := filepath.Join(root, "a", "b", "c")
-	if err := os.MkdirAll(nested, 0o755); err != nil {
-		t.Fatalf("mkdir: %v", err)
-	}
-	marker := filepath.Join(root, "MARK")
-	if err := os.WriteFile(marker, []byte("x"), 0o644); err != nil {
-		t.Fatalf("write marker: %v", err)
-	}
-
-	match := func(d string) bool {
-		_, err := os.Stat(filepath.Join(d, "MARK"))
-		return err == nil
-	}
-
-	t.Run("found in ancestor", func(t *testing.T) {
-		t.Parallel()
-		got, ok := WalkUp(nested, match)
-		if !ok || got != root {
-			t.Errorf("WalkUp = (%q,%v), want (%q,true)", got, ok, root)
+	t.Run("xdg-set", func(t *testing.T) {
+		state := filepath.Join(base, "xdg-state")
+		t.Setenv("XDG_STATE_HOME", state)
+		if got, want := GlobalLogDir(), filepath.Join(state, b.AppName, "logs"); got != want {
+			t.Errorf("GlobalLogDir() = %q, want %q", got, want)
 		}
 	})
-
-	t.Run("found in start dir", func(t *testing.T) {
-		t.Parallel()
-		got, ok := WalkUp(root, match)
-		if !ok || got != root {
-			t.Errorf("WalkUp = (%q,%v), want (%q,true)", got, ok, root)
+	t.Run("xdg-unset", func(t *testing.T) {
+		t.Setenv("XDG_STATE_HOME", "")
+		dirs, err := projectctx.UserDirs()
+		if err != nil {
+			t.Fatalf("UserDirs: %v", err)
+		}
+		got := GlobalLogDir()
+		if want := filepath.Join(dirs.State, "logs"); got != want {
+			t.Errorf("GlobalLogDir() = %q, want %q", got, want)
+		}
+		if strings.HasPrefix(got, dirs.Legacy+string(filepath.Separator)) {
+			t.Errorf("GlobalLogDir() = %q lies under the legacy %s", got, dirs.Legacy)
 		}
 	})
-
-	t.Run("not found", func(t *testing.T) {
-		t.Parallel()
-		_, ok := WalkUp(nested, func(string) bool { return false })
-		if ok {
-			t.Error("WalkUp reported a match where none exists")
+	t.Run("override-wins", func(t *testing.T) {
+		override := filepath.Join(base, "override")
+		t.Setenv(b.EnvLogDirVar, override)
+		if got := GlobalLogDir(); got != override {
+			t.Errorf("GlobalLogDir() = %q, want the override %q", got, override)
 		}
 	})
-}
-
-// TestWalkUpUntil pins the ceiling order: match is checked before stop, so a
-// match in the ceiling directory itself is found, while nothing above it is.
-func TestWalkUpUntil(t *testing.T) {
-	t.Parallel()
-
-	root := t.TempDir()
-	ceiling := filepath.Join(root, "ceil")
-	start := filepath.Join(ceiling, "a")
-	is := func(want string) func(string) bool {
-		return func(d string) bool { return d == want }
-	}
-	tests := []struct {
-		name   string
-		match  func(string) bool
-		want   string
-		wantOK bool
-	}{
-		{name: "match below ceiling", match: is(start), want: start, wantOK: true},
-		{name: "match at ceiling", match: is(ceiling), want: ceiling, wantOK: true},
-		{name: "match above ceiling not visited", match: is(root)},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			t.Parallel()
-			got, ok := walkUpUntil(start, tt.match, is(ceiling))
-			if got != tt.want || ok != tt.wantOK {
-				t.Errorf("walkUpUntil = (%q,%v), want (%q,%v)", got, ok, tt.want, tt.wantOK)
-			}
-		})
-	}
-}
-
-// TestWalkUpMarkerSetsStayDistinct proves the shared traversal is parameterised
-// by the caller's marker predicate: the logging marker set (a .qsdev/ directory
-// counts as a root) and the resolve marker set (only a .qsdev.yaml *file* counts
-// as the strong marker) resolve the SAME tree differently, exactly as before the
-// traversal was unified. A directory holding only ".qsdev/" is a root for the
-// logging predicate but not for the resolve file predicate, and vice-versa for a
-// directory holding only "go.mod".
-func TestWalkUpMarkerSetsStayDistinct(t *testing.T) {
-	t.Parallel()
-
-	// logging-style predicate: .qsdev/ directory present (mirrors DetectProjectRoot).
-	loggingMatch := func(d string) bool {
-		info, err := os.Stat(filepath.Join(d, ".qsdev"))
-		return err == nil && info.IsDir()
-	}
-	// resolve-style strong predicate: .qsdev.yaml regular file present.
-	resolveFileMatch := func(d string) bool {
-		info, err := os.Stat(filepath.Join(d, ".qsdev.yaml"))
-		return err == nil && !info.IsDir()
-	}
-
-	t.Run("dot-qsdev dir is a logging root but not a resolve root", func(t *testing.T) {
-		t.Parallel()
-		root := t.TempDir()
-		nested := filepath.Join(root, "sub")
-		if err := os.MkdirAll(filepath.Join(root, ".qsdev"), 0o755); err != nil {
-			t.Fatalf("mkdir .qsdev: %v", err)
-		}
-		if err := os.MkdirAll(nested, 0o755); err != nil {
-			t.Fatalf("mkdir nested: %v", err)
-		}
-
-		if got, ok := WalkUp(nested, loggingMatch); !ok || got != root {
-			t.Errorf("logging predicate: WalkUp = (%q,%v), want (%q,true)", got, ok, root)
-		}
-		if _, ok := WalkUp(nested, resolveFileMatch); ok {
-			t.Error("resolve file predicate unexpectedly matched a .qsdev directory")
-		}
-	})
-
-	t.Run("qsdev yaml file is a resolve root and also a logging root", func(t *testing.T) {
-		t.Parallel()
-		root := t.TempDir()
-		nested := filepath.Join(root, "sub")
-		if err := os.MkdirAll(nested, 0o755); err != nil {
-			t.Fatalf("mkdir nested: %v", err)
-		}
-		if err := os.WriteFile(filepath.Join(root, ".qsdev.yaml"), []byte("qsdev_version: 1\n"), 0o644); err != nil {
-			t.Fatalf("write config: %v", err)
-		}
-
-		if got, ok := WalkUp(nested, resolveFileMatch); !ok || got != root {
-			t.Errorf("resolve file predicate: WalkUp = (%q,%v), want (%q,true)", got, ok, root)
-		}
-	})
-}
-
-// TestClassifyInvocation covers the log-scope classification: shell completion,
-// help and log browsing must not create sessions (each TAB press used to create
-// one and evict real command logs), hooks are automated, and classification is
-// by command-path prefix so subcommands inherit their parent's class.
-func TestClassifyInvocation(t *testing.T) {
-	t.Parallel()
-
-	tests := []struct {
-		name string
-		args []string
-		want CommandClass
-	}{
-		{"shell completion request", []string{"__complete", "lo"}, ClassUnlogged},
-		{"shell completion without descriptions", []string{"__completeNoDesc", "in"}, ClassUnlogged},
-		{"completion script", []string{"completion", "bash"}, ClassUnlogged},
-		{"help command", []string{"help", "init"}, ClassUnlogged},
-		{"help flag", []string{"init", "--help"}, ClassUnlogged},
-		{"short help flag", []string{"enable", "-h"}, ClassUnlogged},
-		{"bare root", nil, ClassUnlogged},
-		{"root version flag", []string{"--version"}, ClassUnlogged},
-		{"logs subcommand", []string{"logs", "list"}, ClassUnlogged},
-		{"report subcommand", []string{"report", "bug"}, ClassGlobal},
-		{"self-update with version flag", []string{"self-update", "--version", "v1.2.3"}, ClassGlobal},
-		{"version", []string{"version"}, ClassGlobal},
-		{"selfprotect hook", []string{"selfprotect", "--hook"}, ClassAutomated},
-		{"enforce hook", []string{"enforce", "--hook", "pre-tool-use"}, ClassAutomated},
-		{"sandbox exec", []string{"sandbox", "exec", "--", "ls"}, ClassAutomated},
-		{"sandbox status", []string{"sandbox", "status"}, ClassProject},
-		// The MCP servers the agent launches are all the universal server, which
-		// opens its own automated session.
-		{"universal mcp server", []string{"mcp", "serve"}, ClassUnlogged},
-		{"single-module mcp server", []string{"mcp", "serve", "--module", "agent-postmortem"}, ClassUnlogged},
-		{"mcp management command", []string{"mcp", "install", "github"}, ClassProject},
-		{"help after terminator is an argument", []string{"sandbox", "exec", "--", "tool", "--help"}, ClassAutomated},
-		{"init", []string{"init", "--mode", "join"}, ClassProject},
-		{"unknown command", []string{"doctor"}, ClassProject},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			t.Parallel()
-			if got := ClassifyInvocation(tt.args); got != tt.want {
-				t.Errorf("ClassifyInvocation(%q) = %v, want %v", tt.args, got, tt.want)
-			}
-		})
-	}
 }

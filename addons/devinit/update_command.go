@@ -243,7 +243,7 @@ func runProjectStages(
 	// A plain `update` is also how the binary is upgraded from any directory.
 	// Outside a qsdev project the project stages do not apply, so skip them
 	// instead of failing. An explicit --configs-only/--deps-only still runs.
-	notProject := !opts.ConfigsOnly && !opts.DepsOnly && !inQsdevProject()
+	notProject := !opts.ConfigsOnly && !opts.DepsOnly && !inQsdevProject(cmd)
 	skipNotProject := func(name string) StageResult {
 		return StageResult{Name: name, Status: StageSkipped, Message: fmt.Sprintf("not a %s project", branding.Get().AppName)}
 	}
@@ -252,7 +252,7 @@ func runProjectStages(
 	// both stages fail with the join hint instead.
 	var joinErr error
 	if !notProject {
-		joinErr = projectJoinError()
+		joinErr = projectJoinError(cmd)
 	}
 	failNotJoined := func(name string) StageResult {
 		return StageResult{Name: name, Status: StageFailed, Message: joinErr.Error(), Err: joinErr}
@@ -292,12 +292,12 @@ func runProjectStages(
 // projectJoinError returns the join refusal when the working directory is an
 // un-joined clone. An unresolvable project root yields nil so the stages run
 // and report that error themselves.
-func projectJoinError() error {
-	projectRoot, err := cmdutil.ProjectRoot()
+func projectJoinError(cmd *cobra.Command) error {
+	pc, err := cmdutil.Project(cmd)
 	if err != nil {
 		return nil
 	}
-	return requireJoined(projectRoot)
+	return requireJoined(pc.Root)
 }
 
 // stagesFailedError reports failed update stages with the exit code of the
@@ -364,11 +364,12 @@ func stageExitCode(err error) int {
 // the project up instead of claiming it is not a project. When the project
 // root cannot be determined it returns true so the project stages run and
 // report the underlying error.
-func inQsdevProject() bool {
-	projectRoot, err := cmdutil.ProjectRoot()
+func inQsdevProject(cmd *cobra.Command) bool {
+	pc, err := cmdutil.Project(cmd)
 	if err != nil {
 		return true
 	}
+	projectRoot := pc.Root
 	for _, p := range []string{filepath.Join(projectRoot, branding.Get().ConfigFile), answersPath(projectRoot)} {
 		if _, err := os.Stat(p); !errors.Is(err, os.ErrNotExist) {
 			return true
@@ -575,7 +576,7 @@ func runDevenvInputStage(cmd *cobra.Command, opts FullUpdateOptions) StageResult
 		}
 	}
 
-	projectRoot, err := cmdutil.ProjectRoot()
+	pc, err := cmdutil.Project(cmd)
 	if err != nil {
 		return StageResult{
 			Name:    stageDevenvInputs,
@@ -584,6 +585,7 @@ func runDevenvInputStage(cmd *cobra.Command, opts FullUpdateOptions) StageResult
 			Err:     err,
 		}
 	}
+	projectRoot := pc.Root
 
 	// A claude-only project owns its devenv environment; qsdev must not bump
 	// its lock file.

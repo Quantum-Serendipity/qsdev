@@ -271,7 +271,7 @@ func runPolicyShow(cmd *cobra.Command, ruleID string) error {
 func loadPolicyEngine() (*policy.PolicyEngine, error) {
 	policyFiles := discoverPolicyFiles()
 	if len(policyFiles) == 0 {
-		return nil, fmt.Errorf("no policy files found; create .qsdev/policy.yaml or ~/.qsdev/policy.yaml")
+		return nil, fmt.Errorf("no policy files found; create %s", policyLocations())
 	}
 
 	sessionPath, err := sessionStatePath()

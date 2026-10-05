@@ -15,6 +15,7 @@ import (
 	"unicode"
 	"unicode/utf8"
 
+	"github.com/Quantum-Serendipity/qsdev/internal/projectctx"
 	"github.com/Quantum-Serendipity/qsdev/internal/userhome"
 	"github.com/Quantum-Serendipity/qsdev/pkg/branding"
 )
@@ -33,9 +34,9 @@ var (
 	initErr    error
 
 	// userHomeDir resolves the current user's home directory. It is a package
-	// variable (defaulting to os.UserHomeDir) so tests can simulate a
+	// variable (defaulting to projectctx.HomeDir) so tests can simulate a
 	// home-resolution failure and verify the fail-closed behavior of IsProtected.
-	userHomeDir = os.UserHomeDir
+	userHomeDir = projectctx.HomeDir
 
 	// accountHomeDir resolves the home directory the user database records
 	// for the account, where the CLI reads the org overlay from (a variable
@@ -45,6 +46,10 @@ var (
 	// namedHomeDir resolves the home directory of a named account, which
 	// `~name` expands to (a variable for tests).
 	namedHomeDir = userhome.Named
+
+	// userDirs resolves the per-user state and cache directories (a variable
+	// for tests).
+	userDirs = projectctx.UserDirs
 
 	// executablePath resolves the running qsdev binary (a variable for tests).
 	executablePath = os.Executable
@@ -79,6 +84,9 @@ func ensureInit() error {
 			protectedPrefixes = append(protectedPrefixes, protectedEntry{dir + string(filepath.Separator), "system-config"})
 		}
 		protectedPrefixes = append(protectedPrefixes, claudeConfigDirEntries(os.Getenv(ClaudeConfigDirEnv))...)
+		if dirs, err := userDirs(); err == nil {
+			protectedPrefixes = append(protectedPrefixes, userDirEntries(dirs)...)
+		}
 		// The CLI reads the overlay below the account's home directory
 		// (catalog.OrgConfigPath); the one below HOME is protected too.
 		protectedHomes = []string{home}
@@ -133,6 +141,31 @@ func claudeConfigDirEntries(dir string) []protectedEntry {
 			entries = append(entries, protectedEntry{p, "claude-settings"})
 		}
 	}
+	return entries
+}
+
+// userDirEntries returns the protected entries for the per-user state and
+// cache directories (projectctx.UserDirs), which live outside the legacy
+// ~/.<app> the segment tables guard: the global session logs (State/logs,
+// including the automated sub-tier that records hook invocations) as audit,
+// and the rest of both directories (bug-report drafts, the update-check
+// cache) as config. Each is protected under its written and symlink-resolved
+// spellings, since rules compare canonical paths. When the directories cannot
+// be resolved the caller adds nothing: no qsdev process can then write there
+// either.
+func userDirEntries(d projectctx.Dirs) []protectedEntry {
+	sep := string(filepath.Separator)
+	var entries []protectedEntry
+	add := func(dir, category string) {
+		for _, p := range spellings(dir) {
+			entries = append(entries, protectedEntry{p + sep, category})
+		}
+	}
+	// The logs entry precedes the State entry it lies below: the first
+	// matching prefix decides the category.
+	add(d.Logs(), "audit")
+	add(d.State, "config")
+	add(d.Cache, "config")
 	return entries
 }
 
@@ -550,9 +583,9 @@ func absWithoutClean(p string) (string, error) {
 		// working directory.
 		return filepath.Abs(p)
 	}
-	cwd, err := os.Getwd()
+	cwd, err := projectctx.WorkingDir()
 	if err != nil {
-		return "", fmt.Errorf("getting working directory: %w", err)
+		return "", err
 	}
 	if isRooted(p) {
 		return filepath.VolumeName(cwd) + p, nil
@@ -624,7 +657,7 @@ func isProtected(canonicalPath string, opts matchOptions) (bool, string) {
 		// protection because of an environment error (the phase-28 fail-closed
 		// mandate), so treat every path as protected and let the rules deny the
 		// operation. This is deliberately conservative and only triggers when
-		// os.UserHomeDir fails (e.g. HOME/USERPROFILE unset), which is rare. The
+		// projectctx.HomeDir fails (e.g. HOME/USERPROFILE unset), which is rare. The
 		// "config" category makes SP-001 — and, via deny-overrides, the whole
 		// Tier-1 rule set — block the operation.
 		return true, "config"

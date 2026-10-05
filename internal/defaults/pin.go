@@ -38,10 +38,11 @@ func pinCmd() *cobra.Command {
 func runPin(cmd *cobra.Command, global bool) error {
 	root := ""
 	if !global {
-		var err error
-		if root, err = cmdutil.ProjectRoot(); err != nil {
+		pc, err := cmdutil.Project(cmd)
+		if err != nil {
 			return err
 		}
+		root = pc.Root
 	}
 	path, err := catalog.RecordOrgConfigPin(root)
 	if err != nil {

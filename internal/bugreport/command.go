@@ -3,7 +3,7 @@ package bugreport
 import (
 	"github.com/spf13/cobra"
 
-	"github.com/Quantum-Serendipity/qsdev/internal/logging"
+	"github.com/Quantum-Serendipity/qsdev/internal/cmdutil"
 )
 
 // commandName is the name of the "report" command.
@@ -27,11 +27,14 @@ and submits via GitHub CLI, browser, or saves to file.
 Logs are scrubbed for secrets, tokens, and credentials before inclusion.
 No data is sent without your explicit approval.`,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			projectRoot := logging.DetectProjectRoot()
+			projectRoot := ""
+			if pc, err := cmdutil.Project(cmd); err == nil && pc.Found {
+				projectRoot = pc.Root
+			}
 			return RunWizard(projectRoot)
 		},
 	}
 
 	cmd.AddCommand(bug)
-	return cmd
+	return cmdutil.MarkProfile(cmd, cmdutil.ProfileGlobal)
 }

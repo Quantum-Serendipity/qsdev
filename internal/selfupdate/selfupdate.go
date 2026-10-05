@@ -4,10 +4,9 @@
 package selfupdate
 
 import (
-	"os"
-	"path/filepath"
 	"time"
 
+	"github.com/Quantum-Serendipity/qsdev/internal/projectctx"
 	"github.com/Quantum-Serendipity/qsdev/pkg/branding"
 )
 
@@ -43,25 +42,30 @@ type Config struct {
 }
 
 // testConfigOverride, when non-nil, is used by DefaultConfig instead of
-// the real config. This prevents tests from polluting ~/.qsdev/.
+// the real config. This prevents tests from polluting the user's cache
+// directory.
 var testConfigOverride *Config
 
-// DefaultConfig returns the default self-update configuration.
+// DefaultConfig returns the default self-update configuration. The update
+// check is cached in the per-user cache directory (projectctx.UserDirs); when
+// that cannot be determined CacheDir is empty and nothing is cached, rather
+// than a predictable path under the shared temp directory or one relative to
+// the working directory.
 func DefaultConfig() Config {
 	if testConfigOverride != nil {
 		return *testConfigOverride
 	}
 	b := branding.Get()
-	home, err := os.UserHomeDir()
-	if err != nil {
-		home = os.TempDir()
+	cacheDir := ""
+	if dirs, err := projectctx.UserDirs(); err == nil {
+		cacheDir = dirs.Cache
 	}
 	return Config{
 		GitHubOwner:   b.GitHubOwner,
 		GitHubRepo:    b.GitHubRepo,
 		BinaryName:    b.AppName,
 		CheckInterval: 7 * 24 * time.Hour,
-		CacheDir:      filepath.Join(home, "."+b.AppName),
+		CacheDir:      cacheDir,
 		Strict:        true,
 	}
 }

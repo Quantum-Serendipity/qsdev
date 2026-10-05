@@ -57,10 +57,11 @@ type toolChangeResult struct {
 // runEnable enables a tool: validates prerequisites, generates files, and
 // updates persisted answers and state.
 func runEnable(cmd *cobra.Command, toolName string, opts enableOptions) error {
-	projectRoot, err := cmdutil.ProjectRoot()
+	pc, err := cmdutil.Project(cmd)
 	if err != nil {
 		return err
 	}
+	projectRoot := pc.Root
 	if err := requireJoined(projectRoot); err != nil {
 		return err
 	}
@@ -523,10 +524,11 @@ func saveToolState(projectRoot string, st types.GeneratedState, toolName string,
 // runDisable disables a tool: validates dependents, removes files, and
 // updates persisted answers and state.
 func runDisable(cmd *cobra.Command, toolName string, opts disableOptions) error {
-	projectRoot, err := cmdutil.ProjectRoot()
+	pc, err := cmdutil.Project(cmd)
 	if err != nil {
 		return err
 	}
+	projectRoot := pc.Root
 	if err := requireJoined(projectRoot); err != nil {
 		return err
 	}
@@ -891,7 +893,10 @@ func runList(cmd *cobra.Command, opts listOptions) error {
 	registry := toolreg.DefaultRegistry()
 
 	// Load project state for enabled/disabled display.
-	projectRoot, _ := cmdutil.ProjectRoot()
+	var projectRoot string
+	if pc, err := cmdutil.Project(cmd); err == nil {
+		projectRoot = pc.Root
+	}
 	var enabledTools map[string]bool
 	if projectRoot != "" {
 		if ans, err := loadAnswersOrEmpty(projectRoot); err == nil {

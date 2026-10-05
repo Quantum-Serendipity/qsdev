@@ -72,10 +72,11 @@ hook script present and unmodified. A hook configured without the policy it
 enforces (tool-gates with no .qsdev.yaml hooks.tool_gates lists) is shown as
 "yes (no policy)": it runs but restricts nothing.`,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			projectRoot, err := cmdutil.ProjectRoot()
+			pc, err := cmdutil.Project(cmd)
 			if err != nil {
 				return err
 			}
+			projectRoot := pc.Root
 
 			answers, err := loadHookAnswers(projectRoot)
 			if err != nil {

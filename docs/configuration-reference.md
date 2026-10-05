@@ -69,7 +69,16 @@ A tracked file that the generators no longer produce is cleaned up by `qsdev upd
 
 This is the source-of-truth file that teammates use to reproduce the same environment. When committed to version control, running `qsdev init --mode join` reads this file to produce an identical setup without re-running the wizard.
 
-**Project root.** qsdev commands (`check`, `status`, `enable`, `update`, the `devenv` and `claudecode` commands, logs and bug reports) can be run from any subdirectory: they walk up from the working directory to the nearest directory holding `.qsdev.yaml` (a regular file), the `.devinit/` state directory, or a `.qsdev/` project data directory — except in your home directory, where `~/.qsdev/` is the per-user data directory (logs, cache, docs), not a project. Outside any project the working directory is used. `qsdev init` is the exception: it always initializes the directory it is run in.
+**Project root.** qsdev commands (`check`, `status`, `enable`, `update`, the `devenv` and `claudecode` commands, logs and bug reports) can be run from any subdirectory: they walk up from the working directory to the nearest directory holding `.qsdev.yaml` (a regular file) or the `.devinit/` state directory. A `.qsdev/` data directory alone does not mark a project. The walk never leaves the enclosing git repository (it stops at the first directory with a `.git` entry) or the filesystem it started on. A marker owned by another user (other than root) or writable by everyone, or one in a directory writable by everyone such as `/tmp`, is ignored, and an interactive command run outside any project says so on stderr. Outside any project the working directory is used. `qsdev init` and `qsdev devenv init` are the exception: they always act on the directory they are run in.
+
+**Per-user directories.** qsdev keeps the files it writes routinely in the XDG base directories:
+
+| Contents | Location |
+|---|---|
+| Global session logs in `logs/` (commands run outside a project, and `version`, `self-update` and `report`), external-tool captures in `logs/capture/`, bug-report drafts | `$XDG_STATE_HOME/qsdev/`, else `~/.local/state/qsdev/` on Linux and the BSDs, `~/Library/Application Support/qsdev/` on macOS, `%LocalAppData%\qsdev\` on Windows |
+| Self-update check cache (`update-check.json`) | `$XDG_CACHE_HOME/qsdev/`, else `~/.cache/qsdev/` on Linux and the BSDs, `~/Library/Caches/qsdev/` on macOS, `%LocalAppData%\qsdev\` on Windows |
+
+`QSDEV_LOG_DIR` overrides the global log directory. A relative `XDG_STATE_HOME` or `XDG_CACHE_HOME` is ignored. Logs from a release that wrote them to `~/.qsdev/logs/` are moved into the state directory the first time you run a command yourself (hooks and MCP servers never move them). If that directory already exists they are merged into it entry by entry, and `~/.qsdev/logs/` is removed once it is empty; nothing is copied or overwritten. Security state (`policy.yaml`, `trust.yaml`, `session-state.json`, `sandbox-policy-approvals.json`, `keys/`), the installed binaries and the documentation corpus (`docs/`) stay in `~/.qsdev/`, where qsdev's self-protection guards them. Project session logs stay in the project's `.qsdev/logs/`.
 
 Structure:
 

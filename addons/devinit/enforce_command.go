@@ -8,29 +8,27 @@ import (
 	"io"
 	"io/fs"
 	"os"
+	"path"
 	"path/filepath"
 	"strings"
 
 	"github.com/spf13/cobra"
 	"gopkg.in/yaml.v3"
 
+	"github.com/Quantum-Serendipity/qsdev/internal/cmdutil"
 	"github.com/Quantum-Serendipity/qsdev/internal/exitcode"
-	"github.com/Quantum-Serendipity/qsdev/internal/logging"
 	"github.com/Quantum-Serendipity/qsdev/internal/mcpregistry"
 	"github.com/Quantum-Serendipity/qsdev/internal/policyengine"
 	"github.com/Quantum-Serendipity/qsdev/internal/policyengine/policy"
 	"github.com/Quantum-Serendipity/qsdev/internal/policyengine/risk"
 	"github.com/Quantum-Serendipity/qsdev/internal/policyengine/trust"
+	"github.com/Quantum-Serendipity/qsdev/internal/projectctx"
 	"github.com/Quantum-Serendipity/qsdev/pkg/branding"
 )
 
 const (
 	hookEventPreToolUse  = "PreToolUse"
 	hookEventPostToolUse = "PostToolUse"
-
-	// policyDirName is the directory, in the project root and in the user's
-	// home, that holds policy.yaml and the session state.
-	policyDirName = ".qsdev"
 
 	// envClaudeProjectDir is set by Claude Code for every hook to the root of
 	// the project the session was started in. Unlike the process working
@@ -73,7 +71,7 @@ func enforceCmd() *cobra.Command {
 	cmd.SilenceUsage = true
 	cmd.Flags().StringVar(&hookEvent, "hook", "", "Hook event type (PreToolUse or PostToolUse)")
 	_ = cmd.MarkFlagRequired("hook")
-	return cmd
+	return cmdutil.MarkProfile(cmd, cmdutil.ProfileAutomatedHook)
 }
 
 // runEnforce evaluates the security policy for one hook invocation.
@@ -264,7 +262,7 @@ func buildEvalContext(input *hookInput, projectRoot string) *policy.EvalContext 
 	}
 
 	if ctx.CWD == "" {
-		if cwd, err := os.Getwd(); err == nil {
+		if cwd, err := projectctx.WorkingDir(); err == nil {
 			ctx.CWD = cwd
 		}
 	}
@@ -290,17 +288,15 @@ func extractStringField(fields map[string]json.RawMessage, keys ...string) strin
 // hook call. Claude Code runs hooks in the session's current directory, which
 // follows a Bash `cd`, so the process working directory alone is not enough.
 // The search starts from $CLAUDE_PROJECT_DIR when set, otherwise from the
-// payload's cwd (falling back to the process working directory), and walks up
-// to the nearest directory carrying a qsdev project marker. The home
-// directory's .qsdev/ holds the user-level policy and is not a project marker.
-// When no marker is found the start directory is returned.
+// payload's cwd (falling back to the process working directory); see
+// projectRootFrom for the walk.
 func policyProjectRoot(payloadCWD string) string {
 	start := os.Getenv(envClaudeProjectDir)
 	if start == "" || !filepath.IsAbs(start) {
 		start = payloadCWD
 	}
 	if start == "" || !filepath.IsAbs(start) {
-		wd, err := os.Getwd()
+		wd, err := projectctx.WorkingDir()
 		if err != nil {
 			return ""
 		}
@@ -309,32 +305,18 @@ func policyProjectRoot(payloadCWD string) string {
 	return projectRootFrom(start)
 }
 
-// projectRootFrom walks up from the absolute directory start to the nearest
-// directory carrying a qsdev project marker (see policyProjectRoot), returning
-// start itself when none is found.
+// projectRootFrom returns the root of the project enclosing the absolute
+// directory start, as every qsdev command resolves it (projectctx.Resolve in
+// Enclosing mode): the nearest trusted project marker, bounded by the git
+// toplevel and the device. The user-level ~/.qsdev/ policy directory is no
+// project marker. When no project is found, or start cannot be inspected,
+// the cleaned start directory is returned.
 func projectRootFrom(start string) string {
-	start = filepath.Clean(start)
-
-	// Home is recognised by file identity, not spelling: on Windows the walk
-	// can reach it as C:\Users\RUNNER~1 (8.3 name) or in another case, and on
-	// any OS through a symlinked $HOME, and a string comparison would then
-	// take the user-level ~/.qsdev for a project marker.
-	isHome := logging.HomeDirMatcher()
-	configFile := branding.Get().ConfigFile
-	root, ok := logging.WalkUp(start, func(dir string) bool {
-		if _, err := os.Stat(filepath.Join(dir, configFile)); err == nil {
-			return true
-		}
-		if isHome(dir) {
-			return false
-		}
-		info, err := os.Stat(filepath.Join(dir, policyDirName))
-		return err == nil && info.IsDir()
-	})
-	if !ok {
-		return start
+	pc, err := projectctx.Resolve(start, projectctx.Enclosing)
+	if err != nil {
+		return filepath.Clean(start)
 	}
-	return root
+	return pc.Root
 }
 
 // canonicalProjectRoot returns the form of a project root that bypass grants
@@ -361,8 +343,9 @@ func discoverPolicyFiles() []string {
 	return policyFilesFor(policyProjectRoot(""))
 }
 
-// policyFilesFor returns the project policy under projectRoot (when present)
-// followed by the user-level ~/.qsdev/policy.yaml. A path that exists but
+// policyFilesFor returns the project policy, policy.yaml in the project data
+// directory (projectctx.DataDirName) under projectRoot, when present, followed
+// by the user-level policy.yaml in userPolicyDir. A path that exists but
 // cannot be stat'ed (for example, permission denied) is still returned so the
 // load fails and the caller applies its fail mode instead of silently skipping
 // the policy. The user policy is not listed twice when projectRoot is the home
@@ -372,7 +355,7 @@ func policyFilesFor(projectRoot string) []string {
 
 	var projectInfo os.FileInfo
 	if projectRoot != "" {
-		projectFile := filepath.Join(projectRoot, policyDirName, "policy.yaml")
+		projectFile := filepath.Join(projectRoot, projectctx.DataDirName(), "policy.yaml")
 		info, err := os.Stat(projectFile)
 		if policyFilePresent(err) {
 			files = append(files, projectFile)
@@ -380,9 +363,8 @@ func policyFilesFor(projectRoot string) []string {
 		}
 	}
 
-	home, err := os.UserHomeDir()
-	if err == nil {
-		userFile := filepath.Join(home, policyDirName, "policy.yaml")
+	if dir, err := userPolicyDir(); err == nil {
+		userFile := filepath.Join(dir, "policy.yaml")
 		info, err := os.Stat(userFile)
 		if policyFilePresent(err) && (projectInfo == nil || info == nil || !os.SameFile(projectInfo, info)) {
 			files = append(files, userFile)
@@ -396,12 +378,34 @@ func policyFilePresent(statErr error) bool {
 	return statErr == nil || !errors.Is(statErr, fs.ErrNotExist)
 }
 
-func sessionStatePath() (string, error) {
-	home, err := os.UserHomeDir()
+// policyLocations names both policy files for messages that tell the user
+// where to put one.
+func policyLocations() string {
+	name := path.Join(projectctx.DataDirName(), "policy.yaml")
+	return name + " or ~/" + name
+}
+
+// userPolicyDir returns the per-user directory holding the user's
+// policy.yaml, the session grants (session-state.json) and the MCP trust
+// overrides (trust.yaml): the legacy ~/.<app> (projectctx.LegacyDir).
+//
+// They are security state and stay there, where the self-protection canon
+// guards them by the .<app>/ path element, until XA-WS8 extends the canon to
+// the per-user state directory.
+func userPolicyDir() (string, error) {
+	legacy, err := projectctx.LegacyDir()
 	if err != nil {
-		return "", fmt.Errorf("determining home directory: %w", err)
+		return "", fmt.Errorf("determining the user policy directory: %w", err)
 	}
-	return filepath.Join(home, policyDirName, "session-state.json"), nil
+	return legacy, nil
+}
+
+func sessionStatePath() (string, error) {
+	dir, err := userPolicyDir()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(dir, "session-state.json"), nil
 }
 
 // trustConfigPath returns the path to the user's MCP trust configuration.
@@ -409,11 +413,11 @@ func sessionStatePath() (string, error) {
 // overrides", so an empty path when the home directory cannot be resolved is
 // acceptable.
 func trustConfigPath() string {
-	home, err := os.UserHomeDir()
+	dir, err := userPolicyDir()
 	if err != nil {
 		return ""
 	}
-	return filepath.Join(home, policyDirName, "trust.yaml")
+	return filepath.Join(dir, "trust.yaml")
 }
 
 // newProductionOrchestrator wires the SecurityOrchestrator with the real risk

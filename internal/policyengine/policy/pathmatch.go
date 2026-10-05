@@ -4,7 +4,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"os"
 	"path/filepath"
 	"runtime"
 	"slices"
@@ -12,6 +11,7 @@ import (
 
 	"github.com/gobwas/glob"
 
+	"github.com/Quantum-Serendipity/qsdev/internal/projectctx"
 	"github.com/Quantum-Serendipity/qsdev/internal/selfprotect/canon"
 )
 
@@ -101,7 +101,7 @@ func PathForms(path, cwd string) []string {
 	}
 
 	if cwd == "" {
-		if wd, err := os.Getwd(); err == nil {
+		if wd, err := projectctx.WorkingDir(); err == nil {
 			cwd = wd
 		}
 	}

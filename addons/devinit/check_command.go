@@ -69,10 +69,11 @@ dependencies.totals can pass (without one they fail as inconclusive).`,
 }
 
 func runCheck(cmd *cobra.Command, format check.OutputFormat, auditLevel check.AuditLevel, autoFix, scan bool) error {
-	projectRoot, err := cmdutil.ProjectRoot()
+	pc, err := cmdutil.Project(cmd)
 	if err != nil {
 		return err
 	}
+	projectRoot := pc.Root
 
 	// Build CheckContext.
 	ctx := check.CheckContext{

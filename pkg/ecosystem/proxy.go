@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"net/url"
 	"strings"
+
+	"github.com/Quantum-Serendipity/qsdev/pkg/types"
 )
 
 // DefaultProxyPaths returns the built-in Nexus-style repository path suffixes
@@ -89,28 +91,29 @@ func joinOrEmpty(base, path string) string {
 	return joined
 }
 
-// ProxyKeyForLanguage maps a language name and package manager to the proxy
-// key used in DefaultProxyPaths.
-func ProxyKeyForLanguage(langName, packageManager string) string {
-	switch langName {
-	case NameJavaScript:
-		return "npm"
-	case NamePython:
-		return "pypi"
-	case NameGo:
-		return "go"
-	case NameJava:
-		if packageManager == "gradle" {
-			return "gradle"
-		}
-		return "maven"
-	case NameRust:
-		return "cargo"
-	case NameDotnet:
-		return "nuget"
-	case NamePHP:
-		return "composer"
-	default:
+// ProxyKeyForLanguage returns the registry proxy key (see ProxyKeyProvider)
+// that the DefaultRegistry module for lang routes through with lang's
+// configuration, or "" when the language has no module or is not routed.
+func ProxyKeyForLanguage(lang types.LanguageChoice) string {
+	return DefaultRegistry().proxyKeyFor(lang.Name, ToModuleConfig(lang))
+}
+
+// proxyKeyFor returns the registry proxy key of the module registered as name
+// for config, or "" when there is no such module or it is not routed.
+func (r *Registry) proxyKeyFor(name string, config ModuleConfig) string {
+	m, ok := r.ByName(name)
+	if !ok {
 		return ""
 	}
+	return moduleProxyKey(m, config)
+}
+
+// moduleProxyKey returns m's registry proxy key for config, or "" when m does
+// not implement ProxyKeyProvider.
+func moduleProxyKey(m EcosystemModule, config ModuleConfig) string {
+	p, ok := m.(ProxyKeyProvider)
+	if !ok {
+		return ""
+	}
+	return p.ProxyKey(config)
 }

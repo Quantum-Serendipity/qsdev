@@ -65,31 +65,6 @@ func TestResolveProxyURL_OverrideOnlyNoBase(t *testing.T) {
 	}
 }
 
-func TestProxyKeyForLanguage(t *testing.T) {
-	tests := []struct {
-		lang, pm, want string
-	}{
-		{"javascript", "npm", "npm"},
-		{"javascript", "pnpm", "npm"},
-		{"python", "pip", "pypi"},
-		{"go", "", "go"},
-		{"java", "maven", "maven"},
-		{"java", "gradle", "gradle"},
-		{"rust", "", "cargo"},
-		{"dotnet", "", "nuget"},
-		{"php", "", "composer"},
-		{"unknown", "", ""},
-	}
-	for _, tt := range tests {
-		t.Run(tt.lang+"/"+tt.pm, func(t *testing.T) {
-			got := ProxyKeyForLanguage(tt.lang, tt.pm)
-			if got != tt.want {
-				t.Errorf("ProxyKeyForLanguage(%q, %q) = %q, want %q", tt.lang, tt.pm, got, tt.want)
-			}
-		})
-	}
-}
-
 func TestJoinProxyURL_HostPreserved(t *testing.T) {
 	t.Parallel()
 	tests := []struct {

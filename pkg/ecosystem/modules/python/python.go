@@ -20,6 +20,7 @@ import (
 
 // Compile-time interface compliance checks.
 var _ ecosystem.EcosystemModule = (*Module)(nil)
+var _ ecosystem.ProxyKeyProvider = (*Module)(nil)
 var _ ecosystem.WizardFieldProvider = (*Module)(nil)
 var _ ecosystem.ManifestFileProvider = (*Module)(nil)
 var _ ecosystem.SASTModule = (*Module)(nil)
@@ -622,6 +623,16 @@ func (m *Module) CICommands(config ecosystem.ModuleConfig) []ecosystem.CICommand
 // in the devenv shell for every package manager.
 func (m *Module) DevenvPackages(_ ecosystem.ModuleConfig) []string {
 	return []string{"pip-audit"}
+}
+
+// ProxyKey returns "pypi" for pip, whose generated pip.conf points the
+// package index at the registry proxy. uv and Poetry read no qsdev-generated
+// index setting, so they are not routed and the project is warned instead.
+func (m *Module) ProxyKey(config ecosystem.ModuleConfig) string {
+	if config.PM("pip") == "pip" {
+		return "pypi"
+	}
+	return ""
 }
 
 // PackageManagers returns metadata about Python's package managers.

@@ -644,7 +644,7 @@ vulnerability scanner or CI runner protection. It has two jobs:
   and `npm install` never fail on audit results — so the `npm audit` step is
   what makes moderate-or-higher advisories fail CI for npm projects.
   The modules add these audit tools (`cargo-audit`, `pip-audit`,
-  `bundler-audit`, `syft`, `grype`, `govulncheck`) to the
+  `bundler-audit`, `syft`, `grype`, `govulncheck`, `osv-scanner`) to the
   `devenv.nix` packages, so they are on the shell's PATH locally and in CI.
   A drifted or missing lock entry therefore fails CI before anything builds.
   Other lock-enforcing installs include `stack build --lock-file=error-on-write`,
@@ -656,9 +656,11 @@ vulnerability scanner or CI runner protection. It has two jobs:
   `pipefail` (`helm template | kubeconform`), loops fail when any item fails
   (`bash -n` on each `*.sh` file, `luarocks install --only-deps` on each
   rockspec), and scanners that only report are made to fail (PSScriptAnalyzer
-  error findings and parse errors; sbt-dependency-check at CVSS 7 and above).
-  Tools that are not nixpkgs packages are provisioned by the job itself: the sbt security
-  plugins through `sbt --addPluginSbtFile`, and a pinned PSScriptAnalyzer from
+  error findings and parse errors). sbt projects are scanned by
+  osv-scanner over their `build.sbt.lock` files, converted with `jq` to
+  osv-scanner's custom lockfile format, which fails on any known vulnerability.
+  Tools that are not nixpkgs packages are provisioned by the job itself: the
+  sbt-dependency-lock plugin through `sbt --addPluginSbtFile`, and a pinned PSScriptAnalyzer from
   PSGallery. Commands that only apply to one package manager or project shape
   are emitted only for it: the sbt tasks for sbt builds (not Mill), the renv
   steps for renv projects (`renv.lock`), the LuaRocks install for rockspec

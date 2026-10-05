@@ -11,6 +11,8 @@ import (
 
 	"github.com/Quantum-Serendipity/qsdev/pkg/ecosystem"
 	"github.com/Quantum-Serendipity/qsdev/pkg/ecosystem/modules/java"
+	"github.com/Quantum-Serendipity/qsdev/pkg/fileutil"
+	"github.com/Quantum-Serendipity/qsdev/pkg/types"
 )
 
 // TestDevenvNixFragment_JDKVersion checks that the requested Java version is
@@ -237,6 +239,225 @@ func TestManifestFiles_ReportsDetectedGradleFiles(t *testing.T) {
 			}
 			if !slices.Equal(got, tt.want) {
 				t.Errorf("ManifestFiles = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
+// gradleProxyScript is where the generated Gradle proxy init script lives,
+// and gradleProxyFlag how the qsdev tasks and CI load it.
+const (
+	gradleProxyScript = "gradle/qsdev-proxy.init.gradle"
+	gradleProxyFlag   = `-I "$DEVENV_ROOT/` + gradleProxyScript + `"`
+)
+
+// gradleProxyFile returns the generated proxy init script for cfg, if any.
+func gradleProxyFile(t *testing.T, cfg ecosystem.ModuleConfig) (types.GeneratedFile, bool) {
+	t.Helper()
+	for _, f := range (&java.Module{}).SecurityConfigs(cfg) {
+		if f.Path == gradleProxyScript {
+			return f, true
+		}
+	}
+	return types.GeneratedFile{}, false
+}
+
+// TestGradleProxyScriptLocation checks that the proxy init script is a
+// committed, qsdev-owned file (always rewritten, so a changed proxy URL takes
+// effect) and that the root init.gradle, which nothing loaded, is gone: an
+// update then removes an unmodified legacy one as an orphan.
+func TestGradleProxyScriptLocation(t *testing.T) {
+	t.Parallel()
+	for _, bt := range []string{"maven", "gradle", "both"} {
+		for _, proxy := range []string{"", "https://proxy.example.com/maven/"} {
+			t.Run(bt+"/proxy="+proxy, func(t *testing.T) {
+				t.Parallel()
+				cfg := ecosystem.ModuleConfig{RegistryProxy: proxy, Extras: map[string]string{"build_tool": bt}}
+				for _, f := range (&java.Module{}).SecurityConfigs(cfg) {
+					if f.Path == "init.gradle" {
+						t.Errorf("SecurityConfigs still generates the root init.gradle")
+					}
+					if strings.HasPrefix(f.Path, ".qsdev/") {
+						t.Errorf("%s is under the gitignored .qsdev/, so CI checkouts lack it", f.Path)
+					}
+				}
+				f, ok := gradleProxyFile(t, cfg)
+				if want := proxy != "" && bt != "maven"; ok != want {
+					t.Fatalf("%s generated = %v, want %v", gradleProxyScript, ok, want)
+				}
+				if !ok {
+					return
+				}
+				if f.Strategy != types.Overwrite {
+					t.Errorf("%s Strategy = %v, want Overwrite", gradleProxyScript, f.Strategy)
+				}
+				if f.Mode != fileutil.ModeReadWrite {
+					t.Errorf("%s Mode = %v, want %v", gradleProxyScript, f.Mode, fileutil.ModeReadWrite)
+				}
+			})
+		}
+	}
+}
+
+// TestGradleProxyScriptContent checks the init script routes every Maven
+// repository, settings-level ones included, to the proxy without removing
+// the proxy itself, and leaves builds that forbid project repositories alone.
+func TestGradleProxyScriptContent(t *testing.T) {
+	t.Parallel()
+	const proxy = `https://proxy.example.com/it's\maven/`
+	f, ok := gradleProxyFile(t, ecosystem.ModuleConfig{
+		RegistryProxy: proxy,
+		Extras:        map[string]string{"build_tool": "gradle"},
+	})
+	if !ok {
+		t.Fatalf("no %s generated", gradleProxyScript)
+	}
+	script := string(f.Content)
+	for _, want := range []string{
+		// Groovy single-quoted, escaped.
+		`'https://proxy.example.com/it\'s\\maven/'`,
+		// Removal compares the URL, so the proxy repository survives.
+		"repo instanceof MavenArtifactRepository && qsdevNorm(repo.url) != qsdevNorm(qsdevProxy)",
+		"remove repo",
+		"url = qsdevProxy",
+		// Settings-level repositories.
+		"beforeSettings",
+		"settings.pluginManagement.repositories",
+		"settings.dependencyResolutionManagement.repositories",
+		// Builds that fail on (or ignore) project repositories.
+		"repositoriesMode",
+		"FAIL_ON_PROJECT_REPOS",
+		"allprojects",
+		// Plugin-portal caveat.
+		"plugins.gradle.org",
+	} {
+		assertContains(t, script, want)
+	}
+	assertNotContains(t, script, proxy) // only the escaped form
+	if strings.Contains(script, "if (repo instanceof MavenArtifactRepository) {") {
+		t.Error("init script removes every Maven repository, the proxy included")
+	}
+}
+
+// TestGradleCommandsUseInitScript checks that, with a proxy, every Gradle
+// command qsdev runs (CI steps and the build/test tasks) loads the proxy init
+// script, and that without one no command passes -I.
+func TestGradleCommandsUseInitScript(t *testing.T) {
+	t.Parallel()
+	m := &java.Module{}
+	for _, bt := range []string{"gradle", "both"} {
+		for _, proxy := range []string{"", "https://proxy.example.com/maven/"} {
+			t.Run(bt+"/proxy="+proxy, func(t *testing.T) {
+				t.Parallel()
+				cfg := ecosystem.ModuleConfig{RegistryProxy: proxy, Extras: map[string]string{"build_tool": bt}}
+				cmds := m.VerificationCommands(cfg).All()
+				for _, c := range m.CICommands(cfg) {
+					cmds = append(cmds, c.Command)
+				}
+				var gradleCmds int
+				for _, c := range cmds {
+					isGradle := strings.Contains(c, "gradle build") || strings.Contains(c, "gradle test") ||
+						strings.Contains(c, "gradle -I")
+					if !isGradle {
+						if strings.Contains(c, "-I ") {
+							t.Errorf("non-Gradle command %q passes -I", c)
+						}
+						continue
+					}
+					gradleCmds++
+					if proxy == "" && strings.Contains(c, "-I ") {
+						t.Errorf("command %q passes -I without a proxy", c)
+					}
+					if proxy != "" && !strings.Contains(c, gradleProxyFlag) {
+						t.Errorf("command %q does not load %s", c, gradleProxyScript)
+					}
+				}
+				if gradleCmds < 3 {
+					t.Errorf("found %d Gradle commands in %q, want the build, test and CI ones", gradleCmds, cmds)
+				}
+			})
+		}
+	}
+}
+
+// TestGradleVerificationMetadataPrecondition checks that the strict CI build
+// fails, naming the bootstrap command, when gradle/verification-metadata.xml
+// is missing (Gradle otherwise verifies nothing and passes), and that
+// gradle.properties documents the same command.
+func TestGradleVerificationMetadataPrecondition(t *testing.T) {
+	t.Parallel()
+	m := &java.Module{}
+	for _, bt := range []string{"gradle", "both"} {
+		cfg := ecosystem.ModuleConfig{Extras: map[string]string{"build_tool": bt}}
+		var build string
+		for _, c := range m.CICommands(cfg) {
+			if c.Name == "gradle-build" {
+				build = c.Command
+			}
+		}
+		if build == "" {
+			t.Fatalf("%s: no gradle-build CI step", bt)
+		}
+		guard := "test -f gradle/verification-metadata.xml ||"
+		if !strings.HasPrefix(build, guard) {
+			t.Errorf("%s: gradle-build %q does not start with %q", bt, build, guard)
+		}
+		assertContains(t, build, java.GradleVerificationBootstrap)
+		assertContains(t, build, "exit 1")
+		if strings.Index(build, guard) > strings.Index(build, "--dependency-verification strict") {
+			t.Errorf("%s: the precondition runs after the build in %q", bt, build)
+		}
+		for _, f := range m.SecurityConfigs(cfg) {
+			if f.Path == "gradle.properties" {
+				assertContains(t, string(f.Content), "#   "+java.GradleVerificationBootstrap+"\n")
+			}
+		}
+	}
+	if !strings.Contains(java.GradleVerificationBootstrap, "--write-verification-metadata") {
+		t.Errorf("bootstrap command %q does not write verification metadata", java.GradleVerificationBootstrap)
+	}
+}
+
+// TestGradleVerificationMetadataWarning checks the init warning for a Gradle
+// project without verification metadata, and the plugin-portal caveat when a
+// proxy routes Gradle.
+func TestGradleVerificationMetadataWarning(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name     string
+		bt       string
+		metadata bool
+		proxy    string
+		want     []string // substrings, each in some warning
+		wantNone bool
+	}{
+		{name: "gradle without metadata", bt: "gradle", want: []string{"gradle/verification-metadata.xml", java.GradleVerificationBootstrap}},
+		{name: "both without metadata", bt: "both", want: []string{"gradle/verification-metadata.xml"}},
+		{name: "gradle with metadata", bt: "gradle", metadata: true, wantNone: true},
+		{name: "maven only", bt: "maven", wantNone: true},
+		{name: "gradle with proxy", bt: "gradle", metadata: true, proxy: "https://proxy.example.com/maven/",
+			want: []string{"Gradle Plugin Portal", "https://proxy.example.com/maven/", gradleProxyScript}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			dir := t.TempDir()
+			if tt.metadata {
+				writeProjectFile(t, dir, "gradle/verification-metadata.xml", "<verification-metadata/>")
+			}
+			got := (&java.Module{}).SetupWarnings(dir, ecosystem.ModuleConfig{
+				RegistryProxy: tt.proxy,
+				Extras:        map[string]string{"build_tool": tt.bt},
+			})
+			if tt.wantNone {
+				if len(got) != 0 {
+					t.Fatalf("SetupWarnings() = %q, want none", got)
+				}
+				return
+			}
+			all := strings.Join(got, "\n")
+			for _, w := range tt.want {
+				assertContains(t, all, w)
 			}
 		})
 	}

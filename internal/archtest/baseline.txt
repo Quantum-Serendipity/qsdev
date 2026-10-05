@@ -76,7 +76,7 @@ exec-lookpath	internal/outdated	1
 exec-lookpath	internal/pkgmanager	1
 exec-lookpath	internal/posture/drift	1
 exec-lookpath	internal/privilege	3
-exec-lookpath	internal/sandbox	2
+exec-lookpath	internal/sandbox	1
 exec-lookpath	internal/shelltest	1
 exec-lookpath	internal/sysinfo	6
 exec-lookpath	internal/toolcheck	1

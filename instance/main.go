@@ -20,6 +20,7 @@ import (
 	"github.com/Quantum-Serendipity/qsdev/internal/cmdutil"
 	"github.com/Quantum-Serendipity/qsdev/internal/logcmd"
 	"github.com/Quantum-Serendipity/qsdev/internal/logging"
+	"github.com/Quantum-Serendipity/qsdev/internal/sandbox/shim"
 	"github.com/Quantum-Serendipity/qsdev/internal/selfupdate"
 )
 
@@ -57,7 +58,14 @@ var (
 // ExitCode() when it implements gdev's cmd.ExitCodeErr, and 1 otherwise. The
 // runtime's Finish runs after the command finishes and before the process
 // exits, whether or not it failed.
+//
+// An argv of `sandbox shim …` is a sandbox backend starting a hook: it runs
+// the shim before any runtime, addon or config work, none of which the shim
+// may do.
 func Main() {
+	if shim.Invoked(os.Args) {
+		os.Exit(shim.Main(os.Args, os.Stderr))
+	}
 	rt := DefaultRuntime()
 	gdevaddons.Initialize()
 	// gdev exposes its customization lockdown only through instance.TestMain,

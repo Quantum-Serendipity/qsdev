@@ -4,10 +4,12 @@ package cgroup
 
 import (
 	"context"
+	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"slices"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -145,5 +147,59 @@ func TestSystemdRunBackend_RunHook_ForwardsStdin(t *testing.T) {
 	}
 	if got := string(res.Stdout); got != payload {
 		t.Errorf("hook stdout = %q, want the stdin payload %q", got, payload)
+	}
+}
+
+// TestSystemdRun_BusFailureIsErrSetupFailed is the live regression for
+// U19-01 (systemd-run): when systemd-run cannot reach the user bus it never
+// starts the hook, and its exit status must not pass as the hook's. It uses
+// t.Setenv, so it is not parallel.
+func TestSystemdRun_BusFailureIsErrSetupFailed(t *testing.T) {
+	bin, err := exec.LookPath("systemd-run")
+	if err != nil {
+		t.Skip("systemd-run not installed")
+	}
+	t.Setenv("DBUS_SESSION_BUS_ADDRESS", "unix:path=/nonexistent")
+	t.Setenv("XDG_RUNTIME_DIR", t.TempDir())
+
+	cfg := &sandbox.SandboxConfig{
+		HookCategory: sandbox.CategoryLinter,
+		HookCommand:  []string{"true"},
+		Resources:    sandbox.DefaultResourceLimits(),
+	}
+	res, err := NewSystemdRunBackend(bin).RunHook(context.Background(), cfg)
+	if !errors.Is(err, sandbox.ErrSetupFailed) {
+		var code any
+		if res != nil {
+			code = res.ExitCode
+		}
+		t.Fatalf("RunHook = (exit %v, err %v), want ErrSetupFailed", code, err)
+	}
+}
+
+// TestSystemdRun_HookExitCodePreserved runs a real transient scope and pins
+// that the hook's own status, including 127, is the result once it started.
+func TestSystemdRun_HookExitCodePreserved(t *testing.T) {
+	t.Parallel()
+	bin, err := exec.LookPath("systemd-run")
+	if err != nil {
+		t.Skip("systemd-run not installed")
+	}
+	if err := sandbox.UserScopeUsable(bin); err != nil {
+		t.Skipf("no systemd user session: %v", err)
+	}
+	for _, code := range []int{0, 7, 127} {
+		cfg := &sandbox.SandboxConfig{
+			HookCategory: sandbox.CategoryLinter,
+			HookCommand:  []string{"sh", "-c", "exit " + strconv.Itoa(code)},
+			Resources:    sandbox.DefaultResourceLimits(),
+		}
+		res, err := NewSystemdRunBackend(bin).RunHook(context.Background(), cfg)
+		if err != nil {
+			t.Fatalf("exit %d: RunHook: %v", code, err)
+		}
+		if res.ExitCode != code {
+			t.Errorf("exit code = %d, want %d (stderr %q)", res.ExitCode, code, res.Stderr)
+		}
 	}
 }

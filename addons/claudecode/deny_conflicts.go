@@ -7,6 +7,7 @@ import (
 	"io/fs"
 	"log/slog"
 	"path"
+	"slices"
 	"sort"
 	"strings"
 
@@ -17,8 +18,14 @@ import (
 
 // SkillDefinition describes a skill and the tool operations it requires.
 type SkillDefinition struct {
-	Name         string
+	Name string
+	// AllowedTools is every tool the template declares: a skill's
+	// allowed-tools plus a subagent's tools.
 	AllowedTools []string
+	// PreApproved is a skill's allowed-tools only, the tools Claude Code runs
+	// without a prompt while the skill is active. A subagent's tools list is
+	// an availability allowlist, not a grant, so it is never included.
+	PreApproved []string
 }
 
 // ExpectedConflicts returns the map of known expected conflicts.
@@ -148,18 +155,19 @@ func skillDefinitionFromTemplate(p string) (SkillDefinition, bool, error) {
 		name = meta.Name
 	}
 
-	var tools []string
-	for _, field := range []any{meta.AllowedTools, meta.Tools} {
-		parsed, err := toolListValue(field)
-		if err != nil {
-			return SkillDefinition{}, false, fmt.Errorf("%s: %w", p, err)
-		}
-		tools = append(tools, parsed...)
+	preApproved, err := toolListValue(meta.AllowedTools)
+	if err != nil {
+		return SkillDefinition{}, false, fmt.Errorf("%s: %w", p, err)
 	}
+	available, err := toolListValue(meta.Tools)
+	if err != nil {
+		return SkillDefinition{}, false, fmt.Errorf("%s: %w", p, err)
+	}
+	tools := slices.Concat(preApproved, available)
 	if len(tools) == 0 {
 		return SkillDefinition{}, false, nil
 	}
-	return SkillDefinition{Name: name, AllowedTools: tools}, true, nil
+	return SkillDefinition{Name: name, AllowedTools: tools, PreApproved: preApproved}, true, nil
 }
 
 // frontmatterBlock returns the YAML between a leading "---" line and the next

@@ -148,3 +148,23 @@ func matchesCommandPattern(pattern, command string) bool {
 	}
 	return regexp.MustCompile(`(?s)^` + strings.Join(parts, `.*`) + `$`).MatchString(command)
 }
+
+// sampleToken stands in for each wildcard in a SampleCommand.
+const sampleToken = "x"
+
+// SampleCommand returns a concrete command that the Bash permission rule
+// matches, with each `*` (and a trailing ":*") replaced by a sample argument:
+// "Bash(npm -* install *)" yields "npm -x install x". It reports false for a
+// non-Bash rule or a Bash rule without a command. Checking another rule with
+// MatchesBashRule against the sample tells whether that rule also covers
+// commands the first one gates.
+func SampleCommand(rule string) (string, bool) {
+	tool, pattern := ParseToolPattern(rule)
+	if tool != "Bash" || pattern == "" {
+		return "", false
+	}
+	if base, ok := strings.CutSuffix(pattern, ":*"); ok {
+		pattern = base + " *"
+	}
+	return strings.ReplaceAll(pattern, "*", sampleToken), true
+}

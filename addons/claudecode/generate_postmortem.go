@@ -40,7 +40,10 @@ func generatePostmortemSkill(answers types.WizardAnswers, registry *ecosystem.Re
 	// it (idempotent — a no-op should the template ever grow its own). Without
 	// this the postmortem skill deploys to the right path but silently fails to
 	// load (BL-P1-10 / DEFECT-8 class).
-	content, err = prependSkillFrontMatter("agent-postmortem", postmortemSkillDescription(), content)
+	content, err = prependSkillFrontMatter(skillHeader{
+		Name:        "agent-postmortem",
+		Description: postmortemSkillDescription(),
+	}, content)
 	if err != nil {
 		return nil, err
 	}

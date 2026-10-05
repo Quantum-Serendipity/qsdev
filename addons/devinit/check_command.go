@@ -153,12 +153,14 @@ func runCheck(cmd *cobra.Command, format check.OutputFormat, auditLevel check.Au
 
 	// Deny rule conflict validation.
 	ctx.DenyRules = claudecode.AllBaseDenyRules()
+	ctx.AskRules = claudecode.AllBaseAskRules()
 	builtinSkills := claudecode.BuiltinSkillDefinitions()
 	ctx.SkillOps = make([]check.SkillOps, len(builtinSkills))
 	for i, s := range builtinSkills {
 		ctx.SkillOps[i] = check.SkillOps{
 			Name:         s.Name,
 			AllowedTools: s.AllowedTools,
+			PreApproved:  s.PreApproved,
 		}
 	}
 	ctx.ExpectedConflictKeys = claudecode.ExpectedConflicts()

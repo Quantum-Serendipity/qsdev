@@ -2,7 +2,7 @@
 name: upgrade-dep
 description: Upgrade a dependency with changelog research, breaking change analysis, and verification.
 disable-model-invocation: true
-allowed-tools: Bash(*) Read Write Edit Grep Glob
+allowed-tools: Bash(git log *) Bash(git diff *) Bash(git show *) Bash(git status *) Read Write Edit Grep Glob
 arguments: [package, target-version]
 argument-hint: "lodash 4.18.0"
 ---

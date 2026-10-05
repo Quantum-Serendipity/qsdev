@@ -19,6 +19,7 @@ func RunAllChecks(ctx CheckContext) *CheckReport {
 	results = append(results, CheckClaudeSettingsPosture(ctx)...)
 	results = append(results, CheckCloudIsolation(ctx)...)
 	results = append(results, CheckDenyRuleConflicts(ctx)...)
+	results = append(results, CheckSkillPreApprovals(ctx)...)
 	results = append(results, CheckCustomConformance(ctx)...)
 
 	return BuildReport(results, ctx.BinaryVersion, projectName(ctx))

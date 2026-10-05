@@ -1,8 +1,11 @@
 package claudecode_test
 
 import (
+	"slices"
 	"strings"
 	"testing"
+
+	"gopkg.in/yaml.v3"
 
 	"github.com/Quantum-Serendipity/qsdev/addons/claudecode"
 	"github.com/Quantum-Serendipity/qsdev/pkg/types"
@@ -352,4 +355,60 @@ func TestAgentManifest_ReadOnlyMatchesTemplates(t *testing.T) {
 			t.Errorf("agent %q: manifest read_only=%v but template disallowedTools=%q", a.Name, a.ReadOnly, strings.TrimSpace(disallowed))
 		}
 	}
+}
+
+// editTools are the Claude Code tools that modify files. A read_only agent's
+// tools allowlist must name none of them.
+var editTools = []string{"Write", "Edit", "MultiEdit", "NotebookEdit"}
+
+// TestReadOnlyAgentsHaveNoEditTools pins the read_only contract: every
+// read_only agent declares an explicit tools allowlist (an omitted list
+// inherits every tool) and that list names no file-edit tool.
+func TestReadOnlyAgentsHaveNoEditTools(t *testing.T) {
+	t.Parallel()
+	manifest, err := claudecode.ExportLoadAgentManifest()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, a := range manifest.Agents {
+		if !a.ReadOnly {
+			continue
+		}
+		t.Run(a.Name, func(t *testing.T) {
+			t.Parallel()
+			tools := agentTools(t, a.Name)
+			if len(tools) == 0 {
+				t.Fatalf("read_only agent %q has no tools allowlist, so it inherits every tool", a.Name)
+			}
+			for _, tool := range tools {
+				if slices.Contains(editTools, tool) {
+					t.Errorf("read_only agent %q lists edit tool %q in tools %v", a.Name, tool, tools)
+				}
+			}
+		})
+	}
+}
+
+// agentTools parses the tools allowlist from an agent template's frontmatter.
+func agentTools(t *testing.T, name string) []string {
+	t.Helper()
+	content, err := claudecode.ExportTemplateFS.ReadFile("templates/agents/" + name + ".md")
+	if err != nil {
+		t.Fatalf("reading agent %q: %v", name, err)
+	}
+	fm, ok := claudecode.ExportFrontmatterBlock(content)
+	if !ok {
+		t.Fatalf("agent %q has no frontmatter", name)
+	}
+	var meta struct {
+		Tools any `yaml:"tools"`
+	}
+	if err := yaml.Unmarshal(fm, &meta); err != nil {
+		t.Fatalf("parsing frontmatter of agent %q: %v", name, err)
+	}
+	tools, err := claudecode.ExportToolListValue(meta.Tools)
+	if err != nil {
+		t.Fatalf("agent %q tools: %v", name, err)
+	}
+	return tools
 }

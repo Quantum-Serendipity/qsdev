@@ -68,6 +68,13 @@ var ExportContains = slices.Contains[[]string, string]
 var ExportLoadQsdevOpsManifest = loadQsdevOpsManifest
 var ExportDeployOperationSkills = deployOperationSkills
 var ExportLoadAgentManifest = loadAgentManifest
+
+// ExportFrontmatterBlock and ExportToolListValue expose the template
+// frontmatter helpers for external tests.
+var (
+	ExportFrontmatterBlock = frontmatterBlock
+	ExportToolListValue    = toolListValue
+)
 var ExportDeployAgents = deployAgents
 var ExportLoadConsultingSkillManifest = loadConsultingSkillManifest
 var ExportDeployWorkflowSkills = deployWorkflowSkills

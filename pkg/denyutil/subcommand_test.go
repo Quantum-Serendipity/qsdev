@@ -157,3 +157,35 @@ func TestSubcommandRules(t *testing.T) {
 		})
 	}
 }
+
+func TestSampleCommand(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		rule   string
+		want   string
+		wantOK bool
+	}{
+		{"Bash(npm install *)", "npm install x", true},
+		{"Bash(npm -* install *)", "npm -x install x", true},
+		{"Bash(deno outdated *-u*)", "deno outdated x-ux", true},
+		{"Bash(npm install)", "npm install", true},
+		{"Bash(ls:*)", "ls x", true},
+		{"Bash(*)", "x", true},
+		{"Read(./.env)", "", false},
+		{"Bash", "", false},
+		{"Bash()", "", false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.rule, func(t *testing.T) {
+			t.Parallel()
+			got, ok := SampleCommand(tt.rule)
+			if got != tt.want || ok != tt.wantOK {
+				t.Fatalf("SampleCommand(%q) = (%q, %v), want (%q, %v)", tt.rule, got, ok, tt.want, tt.wantOK)
+			}
+			// A sample must be matched by the rule it came from.
+			if ok && !MatchesBashRule(tt.rule, got) {
+				t.Errorf("MatchesBashRule(%q, %q) = false; the sample must match its own rule", tt.rule, got)
+			}
+		})
+	}
+}

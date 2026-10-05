@@ -172,6 +172,7 @@ type CheckContext struct {
 	RequiredDenyRules    []string
 	StateFile            string
 	DenyRules            []string
+	AskRules             []string // every catalog ask rule, which no skill may pre-approve
 	SkillOps             []SkillOps
 	ExpectedConflictKeys map[string]string
 	// ExpectedClaudeSettings is the .claude/settings.json the generator

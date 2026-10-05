@@ -1,7 +1,9 @@
 package devinit
 
 import (
+	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -150,6 +152,9 @@ func hostExecutable(name string) (string, error) {
 // .../coreutils).
 func visiblePath(p string, visible func(string) bool) (string, error) {
 	for range maxSymlinkHops {
+		if _, err := os.Lstat(p); errors.Is(err, fs.ErrNotExist) {
+			return "", fmt.Errorf("%s does not exist (interpreter garbage-collected?)", p)
+		}
 		if resolvesInside(p, visible) {
 			return p, nil
 		}
@@ -185,6 +190,9 @@ func resolvesInside(p string, visible func(string) bool) bool {
 		}
 		target, err := os.Readlink(p)
 		if err != nil {
+			if _, statErr := os.Lstat(p); errors.Is(statErr, fs.ErrNotExist) {
+				return false // a dangling chain resolves nowhere
+			}
 			return true // not a symlink: the chain ends inside the sandbox
 		}
 		if !filepath.IsAbs(target) {

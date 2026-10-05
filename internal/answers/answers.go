@@ -116,7 +116,7 @@ func PrimaryFilename() string {
 // DevenvCopyFile returns the project-relative path of the devenv addon's
 // mirror of the answers.
 func DevenvCopyFile() string {
-	return path.Join(".devenv", "."+branding.Get().AppName+"-answers.yaml")
+	return branding.Get().DevenvAnswersCopy()
 }
 
 // LegacyClaudeCopyFile returns the project-relative path of the per-addon

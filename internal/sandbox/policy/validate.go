@@ -4,9 +4,12 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
+	"maps"
 	"os"
 	"path/filepath"
+	"slices"
 
+	"github.com/Quantum-Serendipity/qsdev/internal/sandbox"
 	"github.com/Quantum-Serendipity/qsdev/internal/sandbox/denylist"
 )
 
@@ -25,7 +28,8 @@ var runtimeDirs = []string{"/run", "/var/run"}
 // allowlisted: both the source and the target must lie inside projectDir or
 // under /nix/store (an empty projectDir allows only /nix/store). It also
 // rejects non-absolute paths, the root filesystem, anything under /run or
-// /var/run, deny-list paths, and a source that is a socket, pipe or device.
+// /var/run, deny-list paths, a writable mount on a project guardrail path,
+// and a source that is a socket, pipe or device.
 // Both the cleaned and symlink-resolved forms of each path are checked, so a
 // symlink cannot lead a mount outside the allowlist.
 func ValidateMountDecl(m MountDecl, projectDir string) error {
@@ -50,8 +54,32 @@ func ValidateMountDecl(m MountDecl, projectDir string) error {
 		if err := checkDenyList(p.path, p.role); err != nil {
 			return err
 		}
+		if !m.ReadOnly {
+			if err := checkGuardrails(p.path, p.role, projectDir); err != nil {
+				return err
+			}
+		}
 	}
 	return checkSourceType(m.Source)
+}
+
+// checkGuardrails rejects a writable mount whose path (either candidate form)
+// is a project guardrail path or lies under one (sandbox.GuardrailPaths). The
+// backend overlays guardrails read-only after every policy mount, so such a
+// mount would silently come out read-only; rejecting it tells the policy
+// author instead. A writable mount of an ancestor stays allowed: the overlays
+// cover the guardrails beneath it.
+func checkGuardrails(path, role, projectDir string) error {
+	for _, g := range sandbox.GuardrailPaths(projectDir) {
+		for _, guard := range denylist.CandidatePaths(g) {
+			for _, candidate := range denylist.CandidatePaths(path) {
+				if denylist.Overlaps(candidate, guard) {
+					return fmt.Errorf("writable mount %s %q overlaps project guardrail %q, which hooks may only read", role, path, g)
+				}
+			}
+		}
+	}
+	return nil
 }
 
 // allowedMountRoots returns the directories policy mounts may lie in: the
@@ -123,5 +151,27 @@ func checkDenyList(path, role string) error {
 		}
 	}
 
+	return nil
+}
+
+// validateCategories checks that every category the policy names is a known
+// one: each hookCategories key and each hookOverrides[*].category. Without it
+// a typo would be silently ignored (a key) or read as some other category (an
+// override). It reports the first problem, in sorted field order.
+func validateCategories(spec *PolicySpec) error {
+	for _, name := range slices.Sorted(maps.Keys(spec.HookCategories)) {
+		if _, err := sandbox.ParseHookCategoryStrict(name); err != nil {
+			return fmt.Errorf("hookCategories: %w", err)
+		}
+	}
+	for _, name := range slices.Sorted(maps.Keys(spec.HookOverrides)) {
+		category := spec.HookOverrides[name].Category
+		if category == "" {
+			continue
+		}
+		if _, err := sandbox.ParseHookCategoryStrict(category); err != nil {
+			return fmt.Errorf("%s.category: %w", overrideField(name), err)
+		}
+	}
 	return nil
 }

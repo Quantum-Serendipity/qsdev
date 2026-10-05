@@ -1,6 +1,9 @@
 package sandbox
 
-import "testing"
+import (
+	"slices"
+	"testing"
+)
 
 func TestDegradationTier_String(t *testing.T) {
 	t.Parallel()
@@ -49,27 +52,59 @@ func TestHookCategory_String(t *testing.T) {
 	}
 }
 
-func TestParseHookCategory(t *testing.T) {
+func TestParseHookCategoryStrict(t *testing.T) {
 	t.Parallel()
+	const valid = "(valid: linter, formatter, network-linter, generator, test-runner)"
 	tests := []struct {
-		input string
-		want  HookCategory
+		input   string
+		want    HookCategory
+		wantErr string
 	}{
-		{"linter", CategoryLinter},
-		{"formatter", CategoryFormatter},
-		{"network-linter", CategoryNetworkLinter},
-		{"generator", CategoryGenerator},
-		{"test-runner", CategoryTestRunner},
-		{"unknown", CategoryLinter},
-		{"", CategoryLinter},
+		{input: "linter", want: CategoryLinter},
+		{input: "formatter", want: CategoryFormatter},
+		{input: "network-linter", want: CategoryNetworkLinter},
+		{input: "generator", want: CategoryGenerator},
+		{input: "test-runner", want: CategoryTestRunner},
+		{input: "test-runer", wantErr: `unknown category "test-runer" ` + valid},
+		{input: "unknown", wantErr: `unknown category "unknown" ` + valid},
+		{input: "Linter", wantErr: `unknown category "Linter" ` + valid},
+		{input: " linter", wantErr: `unknown category " linter" ` + valid},
+		{input: "", wantErr: `unknown category "" ` + valid},
 	}
 	for _, tt := range tests {
 		t.Run(tt.input, func(t *testing.T) {
 			t.Parallel()
-			if got := ParseHookCategory(tt.input); got != tt.want {
-				t.Errorf("ParseHookCategory(%q) = %v, want %v", tt.input, got, tt.want)
+			got, err := ParseHookCategoryStrict(tt.input)
+			if tt.wantErr != "" {
+				if err == nil || err.Error() != tt.wantErr {
+					t.Fatalf("ParseHookCategoryStrict(%q) = %v, %v; want error %q", tt.input, got, err, tt.wantErr)
+				}
+				return
+			}
+			if err != nil || got != tt.want {
+				t.Errorf("ParseHookCategoryStrict(%q) = %v, %v; want %v", tt.input, got, err, tt.want)
 			}
 		})
+	}
+}
+
+// TestParseHookCategoryStrict_RoundTrip pins that every name HookCategoryNames
+// lists parses back to the category whose String() it is.
+func TestParseHookCategoryStrict_RoundTrip(t *testing.T) {
+	t.Parallel()
+	names := HookCategoryNames()
+	if want := []string{"linter", "formatter", "network-linter", "generator", "test-runner"}; !slices.Equal(names, want) {
+		t.Fatalf("HookCategoryNames() = %v, want %v", names, want)
+	}
+	for _, name := range names {
+		cat, err := ParseHookCategoryStrict(name)
+		if err != nil {
+			t.Errorf("ParseHookCategoryStrict(%q): %v", name, err)
+			continue
+		}
+		if cat.String() != name {
+			t.Errorf("ParseHookCategoryStrict(%q) = %v, which does not round-trip", name, cat)
+		}
 	}
 }
 
@@ -128,22 +163,5 @@ func TestDefaultResourceLimits(t *testing.T) {
 	}
 	if limits.CPUQuotaPercent != 200 {
 		t.Errorf("CPUQuotaPercent = %d, want 200", limits.CPUQuotaPercent)
-	}
-}
-
-func TestParseHookCategory_RoundTrip(t *testing.T) {
-	t.Parallel()
-	categories := []HookCategory{
-		CategoryLinter, CategoryFormatter, CategoryNetworkLinter,
-		CategoryGenerator, CategoryTestRunner,
-	}
-	for _, cat := range categories {
-		t.Run(cat.String(), func(t *testing.T) {
-			t.Parallel()
-			parsed := ParseHookCategory(cat.String())
-			if parsed != cat {
-				t.Errorf("ParseHookCategory(%q) = %v, want %v", cat.String(), parsed, cat)
-			}
-		})
 	}
 }

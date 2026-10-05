@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"os/signal"
 	"sync"
@@ -94,10 +95,20 @@ func run() int {
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer cancel()
 	if err := NewRootCommand().ExecuteContext(ctx); err != nil {
-		fmt.Fprintln(os.Stderr, err.Error())
+		reportError(os.Stderr, err)
 		return exitCode(err)
 	}
 	return 0
+}
+
+// reportError prints a command's error on w. An error with an empty message
+// prints nothing: a command returns one when it has already explained the
+// failure itself, as `sandbox exec` does when a blocking hook wrote the reason
+// on stderr.
+func reportError(w io.Writer, err error) {
+	if msg := err.Error(); msg != "" {
+		fmt.Fprintln(w, msg)
+	}
 }
 
 // exitCode maps a command error to a process exit code: the code an error in

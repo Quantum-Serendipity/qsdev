@@ -6,6 +6,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"slices"
 
 	"github.com/Quantum-Serendipity/qsdev/internal/sandbox"
 	"github.com/Quantum-Serendipity/qsdev/internal/sandbox/denylist"
@@ -74,12 +75,13 @@ func BuildArgs(cfg *sandbox.SandboxConfig, _ sandbox.DegradationTier) ([]string,
 	// 5. Project directory. Only bind it when one is configured; binding an
 	// empty path emits `--ro-bind "" ""`, which bwrap rejects with "Can't find
 	// source path" and would break `sandbox exec` (which sets no ProjectDir).
+	// Then pin the directories holding the project's control plane
+	// (guardrailPins), with the same access, before any other mount can
+	// change what that location shows.
+	guardrails := sandbox.GuardrailPaths(cfg.ProjectDir)
 	if cfg.ProjectDir != "" {
-		if cfg.WorktreeReadOnly() {
-			args = append(args, "--ro-bind", cfg.ProjectDir, cfg.ProjectDir)
-		} else {
-			args = append(args, "--bind", cfg.ProjectDir, cfg.ProjectDir)
-		}
+		args = append(args, projectBind(cfg), cfg.ProjectDir, cfg.ProjectDir)
+		args = append(args, guardrailPins(cfg, guardrails)...)
 	}
 
 	// 6. System files (always read-only).
@@ -106,7 +108,15 @@ func BuildArgs(cfg *sandbox.SandboxConfig, _ sandbox.DegradationTier) ([]string,
 		args = append(args, "--ro-bind", p, p)
 	}
 
-	// 9. Mask every deny entry. Emitted LAST so the mask always wins over any
+	// 9. Guardrail overlays: re-bind the project's control plane read-only
+	// over every writable view of it. Emitted after the project bind and the
+	// policy mounts, so no mount can re-widen it, and before the deny masks,
+	// which still win. Then the directories hooks legitimately write inside
+	// them (the hook logs, devenv's state) are made writable again.
+	args = append(args, guardrailOverlays(cfg, guardrails)...)
+	args = append(args, writableDirBinds(cfg, guardrails)...)
+
+	// 10. Mask every deny entry. Emitted LAST so the mask always wins over any
 	// earlier bind: even if a broader mount above exposed an ancestor directory
 	// (e.g. $HOME or a policy extra mount), the denied path underneath is
 	// replaced with an empty tmpfs (directories) or a read-only /dev/null
@@ -165,37 +175,224 @@ type denyMask struct {
 }
 
 // denyMasks returns every masking directive for the deny entries: each entry
-// at its own location, plus its image under any extra mount whose Source is an
-// ancestor of it (a mount of /opt at /mnt/opt re-exposes /opt/secret at
-// /mnt/opt/secret). An entry that does not exist on the host has nothing to
-// expose and is skipped: masking it would make bwrap create a mount point,
-// which fails beneath a read-only bind and would break every hook.
+// at every location it appears in the sandbox (mountImages). An entry that
+// does not exist on the host has nothing to expose and is skipped: masking it
+// would make bwrap create a mount point, which fails beneath a read-only bind
+// and would break every hook.
 func denyMasks(deny []string, mounts []sandbox.MountSpec) []denyMask {
 	var out []denyMask
 	seen := make(map[string]bool)
-	add := func(host, target string) {
-		if !seen[target] {
-			seen[target] = true
-			out = append(out, denyMask{host: host, target: target})
-		}
-	}
 	for _, d := range deny {
 		if _, err := os.Lstat(d); errors.Is(err, fs.ErrNotExist) {
 			continue
 		}
-		add(d, d)
-		for _, m := range mounts {
-			for _, src := range denylist.CandidatePaths(m.Source) {
-				if !denylist.IsStrictAncestor(src, d) {
+		for _, target := range mountImages(d, mounts) {
+			if !seen[target] {
+				seen[target] = true
+				out = append(out, denyMask{host: d, target: target})
+			}
+		}
+	}
+	return out
+}
+
+// mountImages returns every in-sandbox location where host path p appears:
+// p itself, plus its image under each mount whose Source is a strict
+// ancestor of it (a mount of /opt at /mnt/opt re-exposes /opt/secret at
+// /mnt/opt/secret).
+//
+// Both paths are compared in every spelling (denylist.CandidatePaths), so a
+// mount of the symlink-resolved directory still re-exposes a p spelled
+// through the link. The result may repeat a location; callers deduplicate.
+func mountImages(p string, mounts []sandbox.MountSpec) []string {
+	out := []string{p}
+	spellings := denylist.CandidatePaths(p)
+	for _, m := range mounts {
+		for _, src := range denylist.CandidatePaths(m.Source) {
+			for _, hp := range spellings {
+				if !denylist.IsStrictAncestor(src, hp) {
 					continue
 				}
-				if rel, err := filepath.Rel(src, d); err == nil {
-					add(d, filepath.Join(m.Target, rel))
+				if rel, err := filepath.Rel(src, hp); err == nil {
+					out = append(out, filepath.Join(m.Target, rel))
 				}
 			}
 		}
 	}
 	return out
+}
+
+// guardrailsExposed reports whether the sandbox gives the hook a writable
+// view of the project, through the worktree bind or a writable policy mount,
+// so the project's guardrail paths (sandbox.GuardrailPaths) need protecting.
+func guardrailsExposed(cfg *sandbox.SandboxConfig) bool {
+	if cfg.ProjectDir == "" {
+		return false
+	}
+	return !cfg.WorktreeReadOnly() || slices.ContainsFunc(cfg.Mounts, func(m sandbox.MountSpec) bool { return !m.ReadOnly })
+}
+
+// projectBind returns the bwrap bind option for the project directory: its
+// access is the category's worktree access.
+func projectBind(cfg *sandbox.SandboxConfig) string {
+	if cfg.WorktreeReadOnly() {
+		return "--ro-bind"
+	}
+	return "--bind"
+}
+
+// guardrailPins returns the bwrap arguments that bind every in-project
+// directory holding a guardrail (.git for .git/hooks) onto itself, with the
+// project bind's access, when the hook gets a writable view of the project.
+// A mount point cannot be renamed or removed: rename(2) and rmdir(2) fail
+// with EBUSY for a dentry mounted on anywhere in the namespace, so through
+// every view of it, a policy mount's included. A hook therefore cannot move
+// the directory aside and plant a writable replacement beside the read-only
+// overlays. They are emitted straight after the project bind, so each pin
+// shows exactly what the project bind did there (a bind does not keep its
+// source's read-only flag, so a later pin could widen access), and the
+// overlays mount on top of them.
+func guardrailPins(cfg *sandbox.SandboxConfig, guardrails []string) []string {
+	if !guardrailsExposed(cfg) {
+		return nil
+	}
+	var dirs []string
+	for _, g := range guardrails {
+		host, ok := projectLocation(cfg.ProjectDir, g)
+		if !ok {
+			continue
+		}
+		for d := filepath.Dir(host); denylist.IsStrictAncestor(cfg.ProjectDir, d); d = filepath.Dir(d) {
+			dirs = append(dirs, d)
+		}
+	}
+	slices.Sort(dirs) // a parent sorts before its children, so is pinned first
+	var args []string
+	for _, d := range slices.Compact(dirs) {
+		args = append(args, projectBind(cfg), d, d)
+	}
+	return args
+}
+
+// guardrailOverlays returns the bwrap arguments that bind every existing
+// guardrail path (guardrails, sandbox.GuardrailPaths) read-only at each
+// location it appears in the sandbox. A guardrail absent on the host is
+// skipped (binding it would create it on the host through the writable
+// project bind); RunHook detects its creation instead. Like the deny masks
+// they are trusted directives and bypass ValidateMountPath.
+func guardrailOverlays(cfg *sandbox.SandboxConfig, guardrails []string) []string {
+	if !guardrailsExposed(cfg) {
+		return nil
+	}
+	var args []string
+	seen := make(map[string]bool)
+	for _, g := range guardrails {
+		host, ok := projectLocation(cfg.ProjectDir, g)
+		if !ok {
+			continue
+		}
+		for _, target := range mountImages(host, cfg.Mounts) {
+			if !seen[target] {
+				seen[target] = true
+				args = append(args, "--ro-bind", host, target)
+			}
+		}
+	}
+	return args
+}
+
+// writableDirBinds returns the bwrap arguments that keep the directories
+// inside the guardrails that hooks legitimately write
+// (sandbox.WritableGuardrailDirs) writable under the read-only overlays when
+// the worktree is writable: the hook log directory inside .claude, where the
+// generated audit and analytics hooks append, and devenv's state directory
+// inside .devenv, which holds GOPATH and the venv a test runner fills.
+// Bwrap cannot tell hooks apart, so each is writable for every hook with a
+// writable worktree: any of them can rewrite the logs or plant a symlink
+// there, and the logging hooks refuse to append through a symlink for that
+// reason. Each is bound only as a real directory (not a symlink) inside the
+// project that is no guardrail and holds none, so it can never re-widen the
+// control plane. RunHook creates them beforehand (prepareWritableDirs), as a
+// hook could not under the overlay.
+func writableDirBinds(cfg *sandbox.SandboxConfig, guardrails []string) []string {
+	if cfg.ProjectDir == "" || cfg.WorktreeReadOnly() {
+		return nil
+	}
+	var args []string
+	for _, dir := range sandbox.WritableGuardrailDirs(cfg.ProjectDir) {
+		if host, ok := writableDir(cfg.ProjectDir, dir, guardrails); ok {
+			args = append(args, "--bind", host, host)
+		}
+	}
+	return args
+}
+
+// writableDir returns where dir lives in the project when it may be bound
+// writable (see writableDirBinds).
+func writableDir(projectDir, dir string, guardrails []string) (string, bool) {
+	if fi, err := os.Lstat(dir); err != nil || !fi.IsDir() {
+		return "", false
+	}
+	host, ok := projectLocation(projectDir, dir)
+	if !ok {
+		return "", false
+	}
+	for _, g := range guardrails {
+		if loc, ok := projectLocation(projectDir, g); ok && denylist.Overlaps(loc, host) {
+			return "", false
+		}
+	}
+	return host, true
+}
+
+// prepareWritableDirs creates, for a writable worktree, the directories
+// writableDirBinds keeps writable, so a hook can write them under the
+// overlays: the hooks' log directory when .claude is a directory inside the
+// project, and devenv's state directory (with .devenv) when the project uses
+// devenv (sandbox.UsesDevenv) and .devenv, if present, lies inside the
+// project. Best effort: without them a write there fails as it does under a
+// read-only worktree, and the hook itself still runs.
+func prepareWritableDirs(cfg *sandbox.SandboxConfig) {
+	if cfg.ProjectDir == "" || cfg.WorktreeReadOnly() {
+		return
+	}
+	logs := sandbox.HookLogDir(cfg.ProjectDir)
+	if _, ok := projectLocation(cfg.ProjectDir, filepath.Dir(logs)); ok {
+		_ = os.Mkdir(logs, 0o700)
+	}
+	if !sandbox.UsesDevenv(cfg.ProjectDir) {
+		return
+	}
+	state := sandbox.DevenvStateDir(cfg.ProjectDir)
+	dotDir := filepath.Dir(state)
+	if _, err := os.Lstat(dotDir); err == nil {
+		if _, ok := projectLocation(cfg.ProjectDir, dotDir); !ok {
+			return
+		}
+	}
+	_ = os.MkdirAll(state, 0o755)
+}
+
+// projectLocation returns where p's content lives inside projectDir, spelled
+// under projectDir as the sandbox sees it: p itself, or the in-project file a
+// symlink at p resolves to. It reports false when p does not exist or
+// resolves outside the project, where the project bind does not expose it
+// (binding it would make bwrap fail, as its target is missing in the
+// sandbox); a symlink's own replacement is caught by RunHook's snapshot.
+func projectLocation(projectDir, p string) (string, bool) {
+	real, err := filepath.EvalSymlinks(p)
+	if err != nil {
+		return "", false
+	}
+	root, err := filepath.EvalSymlinks(projectDir)
+	if err != nil {
+		return "", false
+	}
+	rel, err := filepath.Rel(root, real)
+	if err != nil || !filepath.IsLocal(rel) {
+		return "", false
+	}
+	return filepath.Join(projectDir, rel), true
 }
 
 // args returns the bwrap arguments that mask one deny path so its contents can

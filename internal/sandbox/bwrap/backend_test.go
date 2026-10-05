@@ -16,6 +16,7 @@ import (
 	"testing"
 
 	"github.com/Quantum-Serendipity/qsdev/internal/sandbox"
+	"github.com/Quantum-Serendipity/qsdev/pkg/branding"
 )
 
 // TestBubblewrapBackend_WarnsWhenLayersUnapplied verifies the tier-honesty
@@ -477,5 +478,387 @@ func TestRunHook_HookExitCodePreserved(t *testing.T) {
 				t.Error("the hook inherited the ready fd")
 			}
 		})
+	}
+}
+
+// guardrailRun runs script under sh in a real sandbox of category cat with
+// project as the project directory; "$P" in script is replaced with it (the
+// hook environment allowlist would strip a variable).
+func guardrailRun(t *testing.T, cat sandbox.HookCategory, project, script string) (*sandbox.SandboxResult, error) {
+	t.Helper()
+	backend, shPath, mounts := e3Backend(t)
+	cfg := &sandbox.SandboxConfig{
+		ProjectDir:   project,
+		HookCategory: cat,
+		Mounts:       mounts,
+		Environment:  map[string]string{"PATH": "/nonexistent", "HOME": t.TempDir()},
+		HookCommand:  []string{shPath, "-c", strings.ReplaceAll(script, "$P", project)},
+	}
+	return backend.RunHook(context.Background(), cfg)
+}
+
+// TestRunHook_GuardrailWriteBlocked is the live U05-05 regression: a
+// read-write category can no longer plant a git hook.
+func TestRunHook_GuardrailWriteBlocked(t *testing.T) {
+	t.Parallel()
+	project := t.TempDir()
+	hooks := filepath.Join(project, ".git", "hooks")
+	if err := os.MkdirAll(hooks, 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	res, err := guardrailRun(t, sandbox.CategoryGenerator, project, `echo x > "$P/.git/hooks/post-checkout"`)
+	if err != nil {
+		t.Fatalf("RunHook: %v", err)
+	}
+	if res.ExitCode == 0 {
+		t.Errorf("write to .git/hooks succeeded inside the sandbox")
+	}
+	if !strings.Contains(stderrOf(res), "Read-only file system") {
+		t.Errorf("stderr = %q, want Read-only file system", stderrOf(res))
+	}
+	if _, err := os.Lstat(filepath.Join(hooks, "post-checkout")); err == nil {
+		t.Error("post-checkout was created on the host")
+	}
+}
+
+// TestRunHook_GuardrailCreationFailsClosed: a guardrail absent at launch
+// cannot be overlaid, so creating it is detected after the hook and fails
+// closed with ErrGuardrailModified naming the path.
+func TestRunHook_GuardrailCreationFailsClosed(t *testing.T) {
+	t.Parallel()
+	project := t.TempDir()
+
+	res, err := guardrailRun(t, sandbox.CategoryTestRunner, project, `echo x > "$P/.envrc"`)
+	if !errors.Is(err, sandbox.ErrGuardrailModified) {
+		t.Fatalf("RunHook = (exit %v, err %v), want ErrGuardrailModified", exitCodeOf(res), err)
+	}
+	if !strings.Contains(err.Error(), ".envrc") {
+		t.Errorf("error %q does not name .envrc", err)
+	}
+	// The created file is moved aside, so direnv does not run it next time.
+	if _, err := os.Lstat(filepath.Join(project, ".envrc")); !errors.Is(err, os.ErrNotExist) {
+		t.Errorf(".envrc still in place on the host after the run (err %v)", err)
+	}
+	if q, _ := filepath.Glob(sandbox.QuarantineName(filepath.Join(project, ".envrc"), "*")); len(q) != 1 {
+		t.Errorf("quarantined .envrc = %v, want one copy", q)
+	}
+}
+
+// TestRunHook_GuardrailDirectoryCannotBeSwapped: the directory holding a
+// read-only guardrail is pinned, so a hook cannot rename .git away and plant
+// a fresh .git/hooks beside it; the rest of .git stays writable.
+func TestRunHook_GuardrailDirectoryCannotBeSwapped(t *testing.T) {
+	t.Parallel()
+	project := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(project, ".git", "hooks"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	res, err := guardrailRun(t, sandbox.CategoryGenerator, project,
+		hostCommand(t, "mv")+` "$P/.git" "$P/.git2" && exit 3; echo x > "$P/.git/objects-ok" || exit 4; exit 0`)
+	if err != nil {
+		t.Fatalf("RunHook: %v", err)
+	}
+	if res.ExitCode != 0 {
+		t.Fatalf("exit %d, stderr %q: want the rename refused and .git itself still writable", res.ExitCode, stderrOf(res))
+	}
+	if !strings.Contains(stderrOf(res), "busy") {
+		t.Errorf("stderr = %q, want the rename refused with EBUSY", stderrOf(res))
+	}
+	if _, err := os.Lstat(filepath.Join(project, ".git2")); err == nil {
+		t.Error(".git was renamed on the host")
+	}
+	if _, err := os.Stat(filepath.Join(project, ".git", "objects-ok")); err != nil {
+		t.Errorf("write inside .git did not reach the host: %v", err)
+	}
+}
+
+// TestRunHook_GuardrailPinNeverWidens: with a read-only worktree exposed by a
+// writable mount elsewhere, the pins still bind .git, and must keep it as
+// read-only as the worktree.
+func TestRunHook_GuardrailPinNeverWidens(t *testing.T) {
+	t.Parallel()
+	backend, shPath, mounts := e3Backend(t)
+	project := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(project, ".git", "hooks"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	cache := t.TempDir()
+	cfg := &sandbox.SandboxConfig{
+		ProjectDir:   project,
+		HookCategory: sandbox.CategoryLinter,
+		Mounts:       append(slices.Clone(mounts), sandbox.MountSpec{Source: cache, Target: cache}),
+		Environment:  map[string]string{"PATH": "/nonexistent", "HOME": t.TempDir()},
+		HookCommand:  []string{shPath, "-c", `echo x > "` + project + `/.git/obj"`},
+	}
+	if args, err := BuildArgs(cfg, sandbox.TierFull); err != nil || !slices.Contains(args, filepath.Join(project, ".git")) {
+		t.Fatalf("expected a pin of .git in %v (err %v)", args, err)
+	}
+	res, err := backend.RunHook(context.Background(), cfg)
+	if err != nil {
+		t.Fatalf("RunHook: %v", err)
+	}
+	if res.ExitCode == 0 || !strings.Contains(stderrOf(res), "Read-only file system") {
+		t.Errorf("exit %d, stderr %q: the pin made a read-only worktree writable", res.ExitCode, stderrOf(res))
+	}
+}
+
+// TestRunHook_SymlinkedGuardrailRestored is the regression for a symlinked
+// guardrail (the default .pre-commit-config.yaml links into the Nix store),
+// which no overlay can pin: replacing it fails closed, and the host is left
+// with the original symlink and the hook's file moved aside, not in use.
+func TestRunHook_SymlinkedGuardrailRestored(t *testing.T) {
+	t.Parallel()
+	rm := hostCommand(t, "rm")
+	project, store := t.TempDir(), t.TempDir()
+	dest := filepath.Join(store, "pc.json")
+	if err := os.WriteFile(dest, []byte("repos: []\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	cfgPath := filepath.Join(project, ".pre-commit-config.yaml")
+	if err := os.Symlink(dest, cfgPath); err != nil {
+		t.Fatal(err)
+	}
+	const evil = "repos: [{repo: local, hooks: [{id: x, entry: evil, language: system}]}]"
+
+	res, err := guardrailRun(t, sandbox.CategoryTestRunner, project,
+		rm+` -f "$P/.pre-commit-config.yaml" && echo "`+evil+`" > "$P/.pre-commit-config.yaml"`)
+	if !errors.Is(err, sandbox.ErrGuardrailModified) {
+		t.Fatalf("RunHook = (exit %v, err %v, stderr %q), want ErrGuardrailModified", exitCodeOf(res), err, stderrOf(res))
+	}
+	if got, err := os.Readlink(cfgPath); err != nil || got != dest {
+		t.Errorf("%s -> %q (err %v), want the symlink to %s restored", cfgPath, got, err, dest)
+	}
+	q, _ := filepath.Glob(sandbox.QuarantineName(cfgPath, "*"))
+	if len(q) != 1 {
+		t.Fatalf("quarantined config = %v, want the hook's file kept aside", q)
+	}
+	if data, err := os.ReadFile(q[0]); err != nil || !strings.Contains(string(data), "evil") {
+		t.Errorf("quarantined config = %q (err %v)", data, err)
+	}
+	if !strings.Contains(err.Error(), q[0]) {
+		t.Errorf("error %q does not name the quarantined file %s", err, q[0])
+	}
+}
+
+// TestRunHook_DevenvStateWritable is the live regression for devenv's state
+// directory: with GOPATH under .devenv/state, a test runner or generator can
+// still fill the module cache and sync a venv, even when .devenv did not exist
+// yet in a devenv project, while the rest of .devenv (the shell scripts devenv
+// runs on entry) stays read-only.
+func TestRunHook_DevenvStateWritable(t *testing.T) {
+	t.Parallel()
+	for _, cat := range []sandbox.HookCategory{sandbox.CategoryGenerator, sandbox.CategoryTestRunner} {
+		t.Run(cat.String(), func(t *testing.T) {
+			t.Parallel()
+			mkdir := hostCommand(t, "mkdir")
+			project := t.TempDir()
+			if err := os.WriteFile(filepath.Join(project, "devenv.nix"), []byte("{ }\n"), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			state := sandbox.DevenvStateDir(project)
+			rel, err := filepath.Rel(project, state)
+			if err != nil {
+				t.Fatal(err)
+			}
+			script := mkdir + ` -p "$P/` + rel + `/go/pkg/mod/cache/download" && echo x > "$P/` + rel + `/venv-marker"`
+			res, err := guardrailRun(t, cat, project, script)
+			if err != nil {
+				t.Fatalf("RunHook: %v", err)
+			}
+			if res.ExitCode != 0 {
+				t.Fatalf("exit %d, stderr %q", res.ExitCode, stderrOf(res))
+			}
+			for _, p := range []string{filepath.Join(state, "go", "pkg", "mod", "cache", "download"), filepath.Join(state, "venv-marker")} {
+				if _, err := os.Stat(p); err != nil {
+					t.Errorf("devenv state write did not reach the host: %v", err)
+				}
+			}
+
+			entry := filepath.Join(filepath.Dir(state), "entry.sh")
+			res, err = guardrailRun(t, cat, project, `echo x > "`+entry+`"`)
+			if err != nil {
+				t.Fatalf("RunHook: %v", err)
+			}
+			if res.ExitCode == 0 || !strings.Contains(stderrOf(res), "Read-only file system") {
+				t.Errorf("exit %d, stderr %q: .devenv outside its state dir must stay read-only", res.ExitCode, stderrOf(res))
+			}
+		})
+	}
+}
+
+// TestRunHook_ProjectStillWritable: the overlays protect only the control
+// plane; the rest of the project stays writable for read-write categories.
+func TestRunHook_ProjectStillWritable(t *testing.T) {
+	t.Parallel()
+	for _, cat := range []sandbox.HookCategory{sandbox.CategoryGenerator, sandbox.CategoryTestRunner} {
+		t.Run(cat.String(), func(t *testing.T) {
+			t.Parallel()
+			project := t.TempDir()
+			if err := os.MkdirAll(filepath.Join(project, ".git", "hooks"), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			res, err := guardrailRun(t, cat, project, `echo x > "$P/generated.txt"`)
+			if err != nil {
+				t.Fatalf("RunHook: %v", err)
+			}
+			if res.ExitCode != 0 {
+				t.Fatalf("exit %d, stderr %q", res.ExitCode, stderrOf(res))
+			}
+			if _, err := os.Stat(filepath.Join(project, "generated.txt")); err != nil {
+				t.Errorf("project write did not reach the host: %v", err)
+			}
+		})
+	}
+}
+
+// hostTool returns the symlink-resolved path of a host binary for a live
+// sandbox test, skipping the test when it is not installed.
+func hostTool(t *testing.T, name string) string {
+	t.Helper()
+	p, err := exec.LookPath(name)
+	if err != nil {
+		t.Skipf("%s not available: %v", name, err)
+	}
+	if r, err := filepath.EvalSymlinks(p); err == nil {
+		p = r
+	}
+	return p
+}
+
+// hostCommand returns a shell command word running host tool name inside the
+// sandbox (see hostTool). A multi-call binary (Nix's coreutils), which the
+// resolved path names instead of the tool, is told which tool to be.
+func hostCommand(t *testing.T, name string) string {
+	t.Helper()
+	p := hostTool(t, name)
+	if filepath.Base(p) == "coreutils" {
+		return p + " --coreutils-prog=" + name
+	}
+	return p
+}
+
+// TestRunHook_GitControlReadOnlyGitAddWorks: only git's code-executing
+// control files are read-only, so a formatter can still stage its output
+// while planting a hook or rewriting the config fails.
+func TestRunHook_GitControlReadOnlyGitAddWorks(t *testing.T) {
+	t.Parallel()
+	git := hostTool(t, "git")
+	project := t.TempDir()
+	initCmd := exec.CommandContext(context.Background(), git, "init", "-q", project) //nolint:gosec // fixed test command
+	if out, err := initCmd.CombinedOutput(); err != nil {
+		t.Fatalf("git init: %v: %s", err, out)
+	}
+
+	tests := []struct {
+		name, script string
+		wantOK       bool
+	}{
+		{"git add", `echo x > "$P/gen.txt" && ` + git + ` -C "$P" add gen.txt`, true},
+		{"plant a git hook", `echo x > "$P/.git/hooks/post-checkout"`, false},
+		{"rewrite git config", `echo '[core]' >> "$P/.git/config"`, false},
+		{"rewrite git attributes", `echo '* filter=x' >> "$P/.git/info/attributes"`, false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			res, err := guardrailRun(t, sandbox.CategoryFormatter, project, tt.script)
+			if err != nil {
+				t.Fatalf("RunHook: %v", err)
+			}
+			if ok := res.ExitCode == 0; ok != tt.wantOK {
+				t.Fatalf("exit %d (stderr %q), want success=%v", res.ExitCode, stderrOf(res), tt.wantOK)
+			}
+			if !tt.wantOK && !strings.Contains(stderrOf(res), "Read-only file system") {
+				t.Errorf("stderr = %q, want Read-only file system", stderrOf(res))
+			}
+		})
+	}
+	if _, err := os.Lstat(filepath.Join(project, ".git", "hooks", "post-checkout")); err == nil {
+		t.Error("post-checkout was created on the host")
+	}
+}
+
+// TestRunHook_ControlFilesProtected covers the control files beyond git and
+// .claude: an existing one is read-only, and creating an absent one fails
+// closed with ErrGuardrailModified naming it.
+func TestRunHook_ControlFilesProtected(t *testing.T) {
+	t.Parallel()
+	for _, name := range []string{"devenv.local.nix", "devenv.local.yaml", ".npmrc", branding.Get().ConfigFile} {
+		t.Run("create "+name, func(t *testing.T) {
+			t.Parallel()
+			project := t.TempDir()
+			res, err := guardrailRun(t, sandbox.CategoryTestRunner, project, `echo x > "$P/`+name+`"`)
+			if !errors.Is(err, sandbox.ErrGuardrailModified) {
+				t.Fatalf("RunHook = (exit %v, err %v), want ErrGuardrailModified", exitCodeOf(res), err)
+			}
+			if !strings.Contains(err.Error(), name) {
+				t.Errorf("error %q does not name %s", err, name)
+			}
+		})
+		t.Run("rewrite "+name, func(t *testing.T) {
+			t.Parallel()
+			project := t.TempDir()
+			if err := os.WriteFile(filepath.Join(project, name), nil, 0o644); err != nil {
+				t.Fatal(err)
+			}
+			res, err := guardrailRun(t, sandbox.CategoryTestRunner, project, `echo x >> "$P/`+name+`"`)
+			if err != nil {
+				t.Fatalf("RunHook: %v", err)
+			}
+			if res.ExitCode == 0 || !strings.Contains(stderrOf(res), "Read-only file system") {
+				t.Errorf("exit %d, stderr %q: want a Read-only file system failure", res.ExitCode, stderrOf(res))
+			}
+		})
+	}
+}
+
+// TestRunHook_AuditLogTemplateWrites runs the shipped audit-log hook in the
+// generator category it is registered with: its log under the read-only
+// .claude must still reach the host.
+func TestRunHook_AuditLogTemplateWrites(t *testing.T) {
+	t.Parallel()
+	backend, shPath, mounts := e3Backend(t)
+	var path []string
+	for _, tool := range []string{"bash", "python3", "date", "mkdir"} {
+		path = append(path, filepath.Dir(hostTool(t, tool)))
+	}
+
+	project := t.TempDir()
+	template, err := os.ReadFile(filepath.Join("..", "..", "..", "addons", "claudecode", "templates", "hooks", "audit-log.sh"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	script := filepath.Join(project, ".claude", "hooks", "audit-log.sh")
+	if err := os.MkdirAll(filepath.Dir(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(script, template, 0o755); err != nil { //nolint:gosec // a hook script must be executable
+		t.Fatal(err)
+	}
+
+	cfg := &sandbox.SandboxConfig{
+		ProjectDir:   project,
+		HookCategory: sandbox.CategoryGenerator,
+		Mounts:       mounts,
+		Environment: map[string]string{
+			"PATH": strings.Join(path, ":"), "HOME": t.TempDir(), "CLAUDE_PROJECT_DIR": project,
+		},
+		HookCommand: []string{shPath, "-c", `printf '%s' '{"tool_name":"Bash","tool_input":{"command":"ls"}}' | bash "` + script + `"`},
+	}
+	res, err := backend.RunHook(context.Background(), cfg)
+	if err != nil || res.ExitCode != 0 {
+		t.Fatalf("RunHook = (exit %v, err %v), stderr %q", exitCodeOf(res), err, stderrOf(res))
+	}
+	logs, err := filepath.Glob(filepath.Join(sandbox.HookLogDir(project), "audit-*.jsonl"))
+	if err != nil || len(logs) != 1 {
+		t.Fatalf("audit log files = %v (err %v), want one", logs, err)
+	}
+	data, err := os.ReadFile(logs[0])
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(data), `"Bash"`) {
+		t.Errorf("audit log %q does not record the tool call", data)
 	}
 }

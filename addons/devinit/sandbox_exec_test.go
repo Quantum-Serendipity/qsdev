@@ -7,6 +7,7 @@ import (
 	"errors"
 	"io"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"runtime"
 	"slices"
@@ -135,6 +136,83 @@ func TestSandboxExec_ReportsDegradationOnStderr(t *testing.T) {
 	}
 	if !strings.Contains(stderr, "degraded isolation") || !strings.Contains(stderr, "unsandboxed") {
 		t.Errorf("stderr does not report the unsandboxed tier: %q", stderr)
+	}
+}
+
+// TestSandboxExec_UnknownCategoryExits2 pins that a mistyped --category
+// blocks (exit 2) with a message listing the valid names, instead of running
+// the hook as a linter.
+func TestSandboxExec_UnknownCategoryExits2(t *testing.T) {
+	project := t.TempDir()
+	t.Setenv("CLAUDE_PROJECT_DIR", project)
+	marker := filepath.Join(project, "hook-ran")
+
+	_, _, err := runSandboxExec(t, noSandboxProbe, "", "--category", "test-runer", "--", "touch", marker)
+	if got := requireExitCode(t, err); got != hookBlockExitCode {
+		t.Fatalf("exit code = %d, want %d (err: %v)", got, hookBlockExitCode, err)
+	}
+	const want = `unknown category "test-runer" (valid: linter, formatter, network-linter, generator, test-runner)`
+	if !strings.Contains(err.Error(), want) {
+		t.Errorf("error = %q, want it to contain %q", err, want)
+	}
+	if _, statErr := os.Stat(marker); statErr == nil {
+		t.Error("hook ran despite the unknown category")
+	}
+}
+
+// TestSandboxExec_CategoryFlagHelpListsNames pins that the --category help is
+// built from the category list rather than written out separately.
+func TestSandboxExec_CategoryFlagHelpListsNames(t *testing.T) {
+	t.Parallel()
+	usage := newSandboxExecCmd(noSandboxProbe).Flags().Lookup("category").Usage
+	for _, name := range sandbox.HookCategoryNames() {
+		if !strings.Contains(usage, name) {
+			t.Errorf("--category help %q does not list %q", usage, name)
+		}
+	}
+}
+
+// TestSandboxExec_UnknownPolicyCategoryFailsClosed pins that an approved
+// policy naming an unknown category stops `sandbox exec` with the blocking
+// exit code instead of running the hook under a misread category.
+func TestSandboxExec_UnknownPolicyCategoryFailsClosed(t *testing.T) {
+	if _, err := exec.LookPath("nix"); err != nil {
+		t.Skip("nix is not installed")
+	}
+	isolateApprovals(t)
+	project := t.TempDir()
+	t.Setenv("CLAUDE_PROJECT_DIR", project)
+	policyPath := writeProjectPolicy(t, project, `{ hookOverrides.touch.category = "test-runer"; }`)
+	recordApproval(t, policyPath)
+	marker := filepath.Join(project, "hook-ran")
+
+	_, _, err := runSandboxExec(t, noSandboxProbe, "", "--", "touch", marker)
+	if got := requireExitCode(t, err); got != hookBlockExitCode {
+		t.Fatalf("exit code = %d, want %d (err: %v)", got, hookBlockExitCode, err)
+	}
+	if !strings.Contains(err.Error(), `unknown category "test-runer"`) {
+		t.Errorf("error = %q, want it to name the unknown category", err)
+	}
+	if _, statErr := os.Stat(marker); statErr == nil {
+		t.Error("hook ran despite the invalid policy")
+	}
+}
+
+// TestSandboxExec_DenyStderrIsHookOnly pins that a blocking hook's stderr,
+// which Claude Code shows the agent as the reason, carries only what the hook
+// wrote: no degradation notice and no trailing exit-status line.
+func TestSandboxExec_DenyStderrIsHookOnly(t *testing.T) {
+	t.Setenv("CLAUDE_PROJECT_DIR", t.TempDir())
+
+	_, stderr, err := runSandboxExec(t, noSandboxProbe, "", "--", "sh", "-c", "echo X >&2; exit 2")
+	if got := requireExitCode(t, err); got != 2 {
+		t.Fatalf("exit code = %d, want 2 (err: %v)", got, err)
+	}
+	if err.Error() != "" {
+		t.Errorf("error message = %q, want empty so nothing is appended to the hook's stderr", err.Error())
+	}
+	if stderr != "X\n" {
+		t.Errorf("stderr = %q, want exactly the hook's %q", stderr, "X\n")
 	}
 }
 
@@ -312,6 +390,31 @@ func TestNamespaceHookCommand(t *testing.T) {
 				t.Errorf("got %v, want %v", got, tt.want)
 			}
 		})
+	}
+}
+
+// TestNamespaceHookCommand_DanglingStoreShebang pins that a script whose
+// interpreter has been removed from the store (garbage-collected) is reported
+// before launch, naming the missing interpreter, instead of being left to the
+// kernel's opaque "no such file or directory" for the script itself.
+func TestNamespaceHookCommand_DanglingStoreShebang(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("bubblewrap is Linux-only; the fixture relies on shebang scripts")
+	}
+	project := t.TempDir()
+	gone := sandboxStoreDir + "/00000000000000000000000000000000-gone/bin/python3"
+	script := filepath.Join(project, "h.py")
+	if err := os.WriteFile(script, []byte("#!"+gone+"\nprint()\n"), 0o755); err != nil { //nolint:gosec // test executable
+		t.Fatal(err)
+	}
+
+	cfg := &sandbox.SandboxConfig{ProjectDir: project, HookCommand: []string{script}}
+	got, err := namespaceHookCommand(cfg)
+	if err == nil {
+		t.Fatalf("namespaceHookCommand = %v, want an error for the missing interpreter", got)
+	}
+	if !strings.Contains(err.Error(), "does not exist") || !strings.Contains(err.Error(), gone) {
+		t.Errorf("error = %q, want it to say %s does not exist", err, gone)
 	}
 }
 
@@ -578,5 +681,36 @@ func TestRunSandboxed_UnavailablePolicyBackendIsSetupFailure(t *testing.T) {
 	}
 	if _, statErr := os.Stat(marker); statErr == nil {
 		t.Error("hook ran under a backend the policy did not ask for")
+	}
+}
+
+// TestSandboxExec_GuardrailCreationExits2: a read-write hook that creates a
+// guardrail file absent at launch (.envrc, which direnv runs on the next
+// shell entry) blocks with exit 2 and names the file.
+func TestSandboxExec_GuardrailCreationExits2(t *testing.T) {
+	caps := sandbox.ProbeCapabilitiesDefault(context.Background())
+	if backend, _ := backendselect.ResolveBackend(*caps); backend.Name() != "bubblewrap" {
+		t.Skip("bubblewrap backend not available on this host")
+	}
+	sh, err := hostExecutable("sh")
+	if err != nil {
+		t.Skipf("sh not found: %v", err)
+	}
+	if real, err := filepath.EvalSymlinks(sh); err != nil || !pathWithin(real, sandboxStoreDir) {
+		t.Skip("host shell is not in the Nix store")
+	}
+
+	project := t.TempDir()
+	t.Setenv("CLAUDE_PROJECT_DIR", project)
+	envrc := filepath.Join(project, ".envrc")
+	realProbe := func(context.Context) *sandbox.SystemCapabilities { return caps }
+
+	_, stderr, err := runSandboxExec(t, realProbe, "", "--category", "test-runner", "--",
+		"sh", "-c", "echo x > "+envrc)
+	if got := requireExitCode(t, err); got != 2 {
+		t.Fatalf("exit code = %d, want 2 (err: %v, stderr: %s)", got, err, stderr)
+	}
+	if !strings.Contains(err.Error(), ".envrc") {
+		t.Errorf("error %q does not name .envrc", err)
 	}
 }

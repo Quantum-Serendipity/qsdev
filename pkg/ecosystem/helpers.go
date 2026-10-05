@@ -60,10 +60,10 @@ func ToModuleConfigWithInfra(lang types.LanguageChoice, infra types.InfraConfig)
 			cfg.Extras[ExtraBuildCache] = infra.BuildCache
 		}
 	}
-	// Some ecosystems (e.g. Java) record their build tool in
-	// Extras["build_tool"] when it was detected rather than set explicitly;
-	// an explicit PackageManager still wins.
-	proxyKey := ProxyKeyForLanguage(lang.Name, cfg.PM(cfg.Extra("build_tool", "")))
+	// The module sees the full configuration, so a key that depends on the
+	// build tool (Java's maven or gradle, Scala's sbt or Mill) follows it
+	// wherever it is recorded.
+	proxyKey := DefaultRegistry().proxyKeyFor(lang.Name, cfg)
 	if proxyKey != "" {
 		cfg.RegistryProxy = ResolveProxyURL(infra.RegistryProxyBase(), infra.RegistryProxyOverrides, proxyKey, infra.RegistryProxyPaths)
 	}

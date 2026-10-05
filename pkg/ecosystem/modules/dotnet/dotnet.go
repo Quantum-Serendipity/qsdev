@@ -25,6 +25,7 @@ import (
 
 // Compile-time interface compliance checks.
 var _ ecosystem.EcosystemModule = (*Module)(nil)
+var _ ecosystem.ProxyKeyProvider = (*Module)(nil)
 var _ ecosystem.SASTModule = (*Module)(nil)
 var _ ecosystem.ReadDenyRuleProvider = (*Module)(nil)
 
@@ -263,6 +264,10 @@ func (m *Module) CICommands(_ ecosystem.ModuleConfig) []ecosystem.CICommand {
 		},
 	}
 }
+
+// ProxyKey returns "nuget": the generated nuget.config pins the package
+// source to the registry proxy.
+func (m *Module) ProxyKey(_ ecosystem.ModuleConfig) string { return "nuget" }
 
 // PackageManagers returns metadata about NuGet.
 func (m *Module) PackageManagers() []ecosystem.PackageManagerInfo {

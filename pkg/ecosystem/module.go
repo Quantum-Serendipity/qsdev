@@ -138,6 +138,18 @@ type ToolchainRequirementProvider interface {
 	ToolchainRequirements(config ModuleConfig) []ToolchainRequirement
 }
 
+// ProxyKeyProvider is an optional interface for modules whose package
+// managers resolve through infrastructure.registry_proxy. ProxyKey returns the
+// DefaultProxyPaths key the module's generated configuration routes through
+// for config (for example "maven" or "gradle" for Java, by build tool), or ""
+// when this configuration is not routed. Generation resolves the proxy URL
+// for that key into ModuleConfig.RegistryProxy, and the security overview
+// reports the ecosystem as routed. A module that installs packages without
+// implementing it gets a "no proxy support" setup warning when a proxy is set.
+type ProxyKeyProvider interface {
+	ProxyKey(config ModuleConfig) string
+}
+
 // SetupWarner is an optional interface for modules that can tell when a
 // project lacks files its configuration depends on, such as a package
 // manager chosen for a project that has no manifest for it yet. The warnings

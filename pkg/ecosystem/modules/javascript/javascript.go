@@ -14,6 +14,7 @@ import (
 
 // Compile-time interface compliance checks.
 var _ ecosystem.EcosystemModule = (*Module)(nil)
+var _ ecosystem.ProxyKeyProvider = (*Module)(nil)
 var _ ecosystem.DenyRuleProvider = (*Module)(nil)
 var _ ecosystem.WizardFieldProvider = (*Module)(nil)
 var _ ecosystem.ManifestFileProvider = (*Module)(nil)
@@ -475,6 +476,10 @@ func (m *Module) CICommands(config ecosystem.ModuleConfig) []ecosystem.CICommand
 	}
 	return cmds
 }
+
+// ProxyKey returns "npm": every JavaScript package manager reads the
+// registry proxy from the generated .npmrc or Yarn configuration.
+func (m *Module) ProxyKey(_ ecosystem.ModuleConfig) string { return "npm" }
 
 // PackageManagers returns metadata about all JavaScript package managers.
 func (m *Module) PackageManagers() []ecosystem.PackageManagerInfo {

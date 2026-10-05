@@ -23,6 +23,7 @@ import (
 
 // Compile-time interface compliance checks.
 var _ ecosystem.EcosystemModule = (*Module)(nil)
+var _ ecosystem.ProxyKeyProvider = (*Module)(nil)
 var _ ecosystem.PackageProvider = (*Module)(nil)
 var _ ecosystem.WizardFieldProvider = (*Module)(nil)
 var _ ecosystem.ManifestFileProvider = (*Module)(nil)
@@ -249,6 +250,10 @@ func (m *Module) CICommands(_ ecosystem.ModuleConfig) []ecosystem.CICommand {
 		},
 	}
 }
+
+// ProxyKey returns "go": the generated devenv.nix points GOPROXY at the
+// registry proxy.
+func (m *Module) ProxyKey(_ ecosystem.ModuleConfig) string { return "go" }
 
 // PackageManagers returns metadata about Go's module system.
 func (m *Module) PackageManagers() []ecosystem.PackageManagerInfo {

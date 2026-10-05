@@ -343,6 +343,47 @@ update tooling without that component. Credentials (`NEXUS_TOKEN`,
 `docs/security-overview.md` lists the ones the profile expects and describes
 the proxy and caches actually applied.
 
+#### Registry proxy coverage
+
+`registry_proxy` only reaches the package managers whose generated
+configuration routes them through it. For every other module that installs
+packages, `qsdev init` (including `--update` and `--mode join`) warns
+`registry_proxy is set but <module> has no proxy support; <package managers>
+will fetch directly from the public registries`, and the security overview
+does not list that ecosystem as routed. The matrix below has one row per
+module with package managers; a test keeps it in step with the module
+catalog.
+
+<!-- registry-proxy-coverage:start -->
+| Module | Package managers | Proxy support | How it is routed |
+|---|---|---|---|
+| Ansible | ansible-galaxy | No | |
+| Bazel | bzlmod | No | |
+| C#/.NET | nuget | Yes | `nuget.config` pins the package source to the proxy (key `nuget`) |
+| C/C++ | conan, vcpkg | No | |
+| Clojure | tools-deps, leiningen | No | Not wired. To route by hand, override the default repositories in `deps.edn` with `:mvn/repos {"central" {:url "<maven proxy URL>"} "clojars" {:url "<clojars proxy URL>"}}` (or a Leiningen `:mirrors` entry) |
+| Dart/Flutter | pub | No | |
+| Elixir | mix | No | |
+| Go | go modules | Yes | `GOPROXY` in `devenv.nix`, with no direct fallback (key `go`) |
+| Haskell | cabal, stack | No | |
+| Helm | helm | No | |
+| Java/Kotlin (JVM) | maven, gradle | Yes | Maven: the `.mvn/settings.xml` mirror (key `maven`). Gradle: `gradle/qsdev-proxy.init.gradle` (key `gradle`) |
+| JavaScript/TypeScript | npm, pnpm, yarn, bun | Yes | The registry in `.npmrc`, `.yarnrc.yml`, `.yarnrc` or `bunfig.toml` (key `npm`) |
+| Lua | luarocks, lux | No | |
+| Nix | nix-flake | No | Use `nix_cache` for Nix substitutes |
+| PHP | composer | Yes | The Composer config adds the proxy and disables `packagist.org` (key `composer`) |
+| Perl | carton | No | |
+| PowerShell | psgallery | No | |
+| Python | pip, uv, poetry | Yes | pip only: `index-url` in the generated `pip.conf` (key `pypi`). uv and Poetry projects are not routed and get the warning |
+| R | renv | No | |
+| Ruby | bundler | No | |
+| Rust | cargo | Yes | `.cargo/config.toml` replaces crates.io with the proxy (key `cargo`) |
+| Scala | sbt | Yes | sbt only: `project/qsdev.repositories`, loaded through `SBT_OPTS` (key `maven`; see [Scala](#scala)). Mill projects are not routed and get the warning |
+| Swift | spm | No | |
+| Terraform/OpenTofu | terraform-registry | No | |
+| Zig | zig-build | No | |
+<!-- registry-proxy-coverage:end -->
+
 Schema version 1 used a single `profile` key, which `qsdev init` filled with
 the infrastructure profile. Version 1 files still load: an infrastructure
 profile name under `profile` is read as `infra_profile`, and any other value
@@ -518,14 +559,29 @@ one.
 
 ### Java repository allowlist
 
-For Maven projects qsdev generates `.mvn/settings.xml` with a single mirror
-that sends every repository to Maven Central (mirror id `central-only`), or
-to the registry proxy when `infrastructure.registry_proxy` is set (mirror id
-`corporate-proxy`). Maven uses the file when run with
-`mvn -s .mvn/settings.xml`. A repository a `pom.xml` declares, such as a
-company Nexus, Spring milestones, JitPack or Confluent, is then never
-contacted: artifacts only it hosts fail to resolve with an error that names
-the mirror, not the repository.
+For Maven projects qsdev generates `.mvn/settings.xml` with a mirror that
+sends every repository to Maven Central (mirror id `central-only`), or to the
+registry proxy when `infrastructure.registry_proxy` is set (mirror id
+`corporate-proxy`). A repository a `pom.xml` declares, such as a company
+Nexus, Spring milestones, JitPack or Confluent, is then never contacted:
+artifacts only it hosts fail to resolve with an error that names the mirror,
+not the repository.
+
+Maven reads no settings file from the project, so the devenv shell sets
+`MAVEN_ARGS="-gs $DEVENV_ROOT/.mvn/settings.xml"` and every `mvn` run in it,
+including the generated CI steps, loads the file as Maven's global settings.
+Your `~/.m2/settings.xml` still applies on top of it, so private-repository
+credentials keep working. This needs Maven 3.9.0 or later, the first release
+that reads `MAVEN_ARGS`: `qsdev check` fails when the `mvn` on `PATH` is older,
+and init and update warn when `.mvn/wrapper/maven-wrapper.properties` pins an
+older Maven, since `./mvnw` would then run without the file. Maven's `bin/mvn`
+splits `MAVEN_ARGS` on spaces, so the project path must not contain a space.
+
+Because `-gs` replaces Maven's own `conf/settings.xml`, the generated file also
+carries the HTTP-blocking mirror Maven 3.8.1 and later define there
+(`maven-default-http-blocker`, `mirrorOf` `external:http:*`). It comes after
+the qsdev mirror, so a plain-`http://` repository that is not allowlisted is
+still redirected and an allowlisted one is refused.
 
 List the ids of the repositories Maven should resolve from their own URL
 under `java.repository_allowlist`:
@@ -542,9 +598,8 @@ through the mirror. Ids are the `<id>` of a `<repository>` or
 or `-` (`qsdev check` reports anything else, since `,`, `!` and `*` are
 `mirrorOf` syntax; init, join and update stop on an invalid id). Checksums of
 artifacts from an allowlisted repository are still verified strictly by the
-`--strict-checksums` in `.mvn/maven.config`, and Maven 3.8.1 and later still
-refuse a plain-`http://` repository through the HTTP-blocking mirror in their
-global settings. A POM that redeclares the `central` id with another URL (a
+`--strict-checksums` in `.mvn/maven.config`, and a plain-`http://` one is
+refused by the HTTP-blocking mirror. A POM that redeclares the `central` id with another URL (a
 company Nexus, say) overrides Central, so it is reported like any other
 repository and needs `central` in the allowlist to keep its own URL.
 
@@ -553,13 +608,15 @@ project's POMs declare (the root `pom.xml`, its profiles and the module POMs
 it aggregates) that is neither Maven Central nor allowlisted, for example:
 
 ```text
-Warning: Java/Kotlin (JVM): the project's POMs declare repositories that the .mvn/settings.xml mirror redirects to Maven Central whenever Maven uses that file (mvn -s .mvn/settings.xml): jitpack (https://jitpack.io). Artifacts only they host will fail to resolve; to resolve them from their own URL, add their ids to java.repository_allowlist in .qsdev.yaml
+Warning: Java/Kotlin (JVM): the project's POMs declare repositories that the .mvn/settings.xml mirror redirects to Maven Central (the devenv shell loads that file for every mvn run through MAVEN_ARGS): jitpack (https://jitpack.io). Artifacts only they host will fail to resolve; to resolve them from their own URL, add their ids to java.repository_allowlist in .qsdev.yaml
 ```
 
 `.mvn/settings.xml` is only created when absent (strategy `skip`), so a
 change to the allowlist does not rewrite an existing file. Init and update
 then warn that the file's `central-only` or `corporate-proxy` mirror has a
-stale `mirrorOf` and print the value to set by hand. The allowlist is
+stale `mirrorOf` and print the value to set by hand. They likewise warn when a
+file qsdev generated earlier lacks the HTTP-blocking mirror, and print the
+mirror to add. The allowlist is
 team-wide policy: only `.qsdev.yaml` sets it (a `java` key in
 `.qsdev.local.yaml` is an error).
 
@@ -1491,9 +1548,45 @@ The `qsdev:python:poetry-check-lock` task checks both conditions each time the s
 
 | File | Merge Strategy | Purpose |
 |------|---------------|---------|
-| Maven `.mvn/settings.xml` | `skip` | Checksum enforcement and a mirror sending every repository not in `java.repository_allowlist` to Maven Central or the registry proxy (see [Java repository allowlist](#java-repository-allowlist)) |
+| Maven `.mvn/settings.xml` | `skip` | Checksum enforcement, a mirror sending every repository not in `java.repository_allowlist` to Maven Central or the registry proxy, and the HTTP blocker; loaded by every `mvn` in the devenv shell through `MAVEN_ARGS` (Maven >= 3.9.0; see [Java repository allowlist](#java-repository-allowlist)) |
 | Maven `.mvn/maven.config` | `skip` | `--strict-checksums` for every repository |
-| Gradle `gradle.properties` (and `init.gradle` with a registry proxy) | `skip` | Dependency verification; proxy routing (only created if absent) |
+| Gradle `gradle.properties` | `skip` | Strict dependency verification against the committed `gradle/verification-metadata.xml` (only created if absent; see [Gradle verification and registry proxy](#gradle-verification-and-registry-proxy)) |
+| Gradle `gradle/qsdev-proxy.init.gradle` (with a registry proxy) | `overwrite` | Routes every Maven repository, settings-level ones included, through the registry proxy; loaded with `-I` by the qsdev tasks and CI |
+
+#### Gradle verification and registry proxy
+
+`gradle.properties` turns on strict dependency verification, but Gradle
+checks only what `gradle/verification-metadata.xml` lists, and without that
+file it verifies nothing. Bootstrap it once with
+`gradle --write-verification-metadata sha256,pgp help`, review it and commit
+it. The generated `gradle-build` CI step fails with that command in its
+message when the file is missing (`test -f gradle/verification-metadata.xml ||
+...`), and init and update warn about it. CI never writes the file itself,
+since that would trust whatever the network served on that run.
+
+With a registry proxy, qsdev writes `gradle/qsdev-proxy.init.gradle` and
+rewrites it on every update, so a changed proxy URL takes effect. Commit it:
+it sits next to `gradle/wrapper/`, not under the gitignored `.qsdev/`, so CI
+checkouts have it. Gradle has no environment variable that adds an init
+script, so the qsdev tasks (`qsdev-build`, `qsdev-test`) and the generated CI
+steps run `gradle -I "$DEVENV_ROOT/gradle/qsdev-proxy.init.gradle" ...`. A
+`gradle` you run by hand in the shell does not load it; pass the same `-I`
+to resolve through the proxy. The script:
+
+- removes every Maven repository whose URL is not the proxy (Maven Central,
+  JitPack, the Gradle Plugin Portal, company repositories) from each project
+  and from the settings' `pluginManagement` and `dependencyResolutionManagement`
+  repositories, including those declared after it runs, and adds the proxy;
+- leaves project repositories alone when the settings set `repositoriesMode`
+  to `FAIL_ON_PROJECT_REPOS` (adding one would fail the build) or
+  `PREFER_SETTINGS` (Gradle ignores them);
+- needs Gradle 6.8 or later.
+
+Because the Gradle Plugin Portal is removed too, the proxy must also serve
+Gradle plugin markers (proxy `https://plugins.gradle.org/m2/`); init and update
+warn about this when a proxy is set. A root `init.gradle` generated by an older
+qsdev is no longer loaded or generated: `qsdev init --update` deletes it when
+it is unchanged, and stops tracking it when you edited it.
 
 ### C#/.NET
 
@@ -1559,7 +1652,31 @@ The generated config cannot block install scripts. Composer has no setting for t
 
 | File | Merge Strategy | Purpose |
 |------|---------------|---------|
-| sbt or Mill config | `overwrite` | Repository pinning |
+| `.qsdev/sbt-security-plugins.sbt` (sbt) | `overwrite` | The sbt-dependency-lock plugin the `build.sbt.lock` CI check loads with `--addPluginSbtFile` |
+| `project/qsdev.repositories` (sbt, with a registry proxy) | `overwrite` | sbt repositories file: `local` plus the registry proxy's Maven repository |
+
+With a registry proxy, the devenv shell (and so CI) sets
+`SBT_OPTS="-Dsbt.repository.config=$DEVENV_ROOT/project/qsdev.repositories -Dsbt.override.build.repos=true"`,
+so every sbt run resolves dependencies and plugins only through `local` and
+the proxy, ignoring the resolvers the build declares. Commit the file: it sits
+under `project/`, not the gitignored `.qsdev/`, so CI checkouts have it, and
+sbt compiles only `*.sbt` and `*.scala` files there. qsdev rewrites it on
+every update, so a changed proxy URL takes effect. The proxy must also serve
+the sbt plugins the build uses; plugins published only to the Ivy-style
+`repo.scala-sbt.org` need a proxy of that repository. `SBT_OPTS` is
+word-split, so a project root containing a space is not supported. Mill
+projects are not routed through the proxy.
+
+sbt projects get two CI steps. The install phase runs `sbt dependencyLockCheck`
+with sbt-dependency-lock loaded, failing when a `build.sbt.lock` is missing or
+stale. The scan phase converts every `build.sbt.lock` in the project
+(sbt-dependency-lock writes one per sbt project) with `jq` into
+osv-scanner's custom lockfile format, naming each locked dependency as the
+Maven package `org:name`, and runs
+`osv-scanner scan source -L osv-scanner:<file>`. It fails on any known
+vulnerability, and also when no `build.sbt.lock` lists a dependency. It
+needs no sbt plugin and no credentials: only osv.dev is queried. qsdev adds
+`osv-scanner` to the devenv shell of sbt projects.
 
 ### Haskell
 

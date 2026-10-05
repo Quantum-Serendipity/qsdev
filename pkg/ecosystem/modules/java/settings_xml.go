@@ -68,12 +68,14 @@ type Mirrors struct {
 	Mirror []Mirror `xml:"mirror"`
 }
 
-// Mirror defines a Maven repository mirror.
+// Mirror defines a Maven repository mirror. A Blocked mirror (Maven >=
+// 3.8.1) fails every request for the repositories it matches.
 type Mirror struct {
 	ID       string `xml:"id"`
 	Name     string `xml:"name"`
 	URL      string `xml:"url"`
 	MirrorOf string `xml:"mirrorOf"`
+	Blocked  bool   `xml:"blocked,omitempty"`
 }
 
 // hardenedCentral returns the Maven Central repository definition with
@@ -94,7 +96,8 @@ func hardenedCentral() Repository {
 
 // buildSecuritySettings returns a Settings struct configured for supply-chain
 // security: strict checksum enforcement for dependencies and build plugins,
-// snapshot blocking, and mirror as the only mirror. Plugins resolve from
+// snapshot blocking, mirror for every non-allowlisted repository, and Maven's
+// HTTP blocker after it (see httpBlockerMirror). Plugins resolve from
 // pluginRepositories, not repositories, so overriding only the dependency
 // repository would leave plugin downloads at Maven's default checksumPolicy
 // of warn.
@@ -118,7 +121,7 @@ func buildSecuritySettings(mirror Mirror) Settings {
 			ActiveProfile: []string{"security-hardened"},
 		},
 		Mirrors: Mirrors{
-			Mirror: []Mirror{mirror},
+			Mirror: []Mirror{mirror, httpBlockerMirror()},
 		},
 	}
 }
@@ -129,6 +132,28 @@ const (
 	centralMirrorID = "central-only"
 	proxyMirrorID   = "corporate-proxy"
 )
+
+// httpBlockerMirrorID is the id of the HTTP-blocking mirror Maven >= 3.8.1
+// defines in its own conf/settings.xml. Reusing it lets a user's
+// ~/.m2/settings.xml override it the way Maven documents.
+const httpBlockerMirrorID = "maven-default-http-blocker"
+
+// httpBlockerMirror returns a copy of Maven's own HTTP blocker, which fails
+// every request to a plain-http repository other than localhost. The devenv
+// shell loads .mvn/settings.xml with -gs, which replaces Maven's
+// conf/settings.xml and so drops the blocker defined there. It must follow
+// the qsdev mirror: Maven uses the first mirror that matches a repository, so
+// a non-allowlisted http repository is still redirected and only an
+// allowlisted one reaches the blocker.
+func httpBlockerMirror() Mirror {
+	return Mirror{
+		ID:       httpBlockerMirrorID,
+		Name:     "Pseudo repository to mirror external repositories initially using HTTP.",
+		URL:      "http://0.0.0.0/",
+		MirrorOf: "external:http:*",
+		Blocked:  true,
+	}
+}
 
 // mavenCentralURL is the Maven Central repository every non-allowlisted
 // repository is redirected to when no registry proxy is configured.
@@ -181,11 +206,12 @@ func mirrorOfExcept(allowlist []string) string {
 func xmlHeader() string {
 	return "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n" +
 		"<!-- " + branding.GeneratedBy() + " — supply-chain security hardened.\n" +
-		"     Requires: Maven >= 3.2.5 for checksumPolicy.\n" +
 		"     checksumPolicy=fail for dependencies and plugins, snapshots disabled,\n" +
 		"     every repository not in .qsdev.yaml java.repository_allowlist redirected\n" +
-		"     to Maven Central (or the registry proxy) via a mirror.\n" +
-		"     Maven reads this file only when passed with -s .mvn/settings.xml. -->\n"
+		"     to Maven Central (or the registry proxy) via a mirror, plain-http\n" +
+		"     repositories blocked.\n" +
+		"     The devenv shell loads this file as the global settings through\n" +
+		"     MAVEN_ARGS=\"-gs .mvn/settings.xml\", which needs Maven >= " + mavenMinVersion + ". -->\n"
 }
 
 // renderSettingsXML marshals a Settings struct to indented XML with

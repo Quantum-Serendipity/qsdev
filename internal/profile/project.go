@@ -52,7 +52,7 @@ func (in ProjectInputs) updateAgeDays(days int) int {
 func ProjectInputsFromAnswers(answers types.WizardAnswers) ProjectInputs {
 	var ecos []string
 	for _, lang := range answers.Languages {
-		if key := languageEcosystem(lang.Name, lang.PackageManager); key != "" {
+		if key := languageEcosystem(lang); key != "" {
 			ecos = append(ecos, key)
 		}
 	}
@@ -85,12 +85,15 @@ func ProjectInputsFromAnswers(answers types.WizardAnswers) ProjectInputs {
 	}
 }
 
-// languageEcosystem maps a language selection to its package ecosystem key.
-func languageEcosystem(name, packageManager string) string {
-	if key := ecosystem.ProxyKeyForLanguage(name, packageManager); key != "" {
+// languageEcosystem maps a language selection to its package ecosystem key:
+// the registry proxy key its module routes through (see
+// ecosystem.ProxyKeyProvider), or the language name for the container and
+// terraform ecosystems.
+func languageEcosystem(lang types.LanguageChoice) string {
+	if key := ecosystem.ProxyKeyForLanguage(lang); key != "" {
 		return key
 	}
-	switch name {
+	switch name := lang.Name; name {
 	case ecosystem.NameContainer, ecosystem.NameTerraform:
 		return name
 	default:

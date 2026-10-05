@@ -4,6 +4,8 @@ import (
 	"encoding/xml"
 	"os"
 	"path/filepath"
+	"regexp"
+	"slices"
 	"strings"
 	"testing"
 
@@ -11,6 +13,10 @@ import (
 	"github.com/Quantum-Serendipity/qsdev/pkg/ecosystem/modules/java"
 	"github.com/Quantum-Serendipity/qsdev/pkg/types"
 )
+
+// echoedMessageRe matches a double-quoted echo, whose text the shell prints
+// rather than runs.
+var echoedMessageRe = regexp.MustCompile(`echo "[^"]*"`)
 
 // Compile-time interface compliance check.
 var _ ecosystem.EcosystemModule = (*java.Module)(nil)
@@ -309,6 +315,63 @@ func TestDevenvNixFragment_DefaultVersion(t *testing.T) {
 	assertContains(t, fragment, "pkgs.jdk21")
 }
 
+// TestMavenSettingsWired checks that the devenv shell makes every mvn run read
+// the generated .mvn/settings.xml: Maven >= 3.9 prepends MAVEN_ARGS to its
+// command line, and -gs loads the file as the global settings so the user's
+// ~/.m2/settings.xml (credentials) still applies on top of it.
+func TestMavenSettingsWired(t *testing.T) {
+	t.Parallel()
+	const mavenArgs = `env.MAVEN_ARGS = "-gs ${config.devenv.root}/.mvn/settings.xml";`
+	tests := []struct {
+		buildTool string
+		want      bool
+	}{
+		{buildTool: "maven", want: true},
+		{buildTool: "both", want: true},
+		{buildTool: "gradle", want: false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.buildTool, func(t *testing.T) {
+			t.Parallel()
+			frag, err := (&java.Module{}).DevenvNixFragment(ecosystem.ModuleConfig{PackageManager: tt.buildTool})
+			if err != nil {
+				t.Fatalf("DevenvNixFragment() error: %v", err)
+			}
+			if got := strings.Contains(frag, mavenArgs); got != tt.want {
+				t.Errorf("fragment contains %q = %v, want %v:\n%s", mavenArgs, got, tt.want, frag)
+			}
+			if !tt.want && strings.Contains(frag, "MAVEN_ARGS") {
+				t.Errorf("gradle-only fragment sets MAVEN_ARGS:\n%s", frag)
+			}
+		})
+	}
+}
+
+// TestMavenToolchainRequirement checks that qsdev check probes mvn for the
+// version that reads MAVEN_ARGS (3.9.0); an older mvn ignores it and so never
+// loads .mvn/settings.xml.
+func TestMavenToolchainRequirement(t *testing.T) {
+	t.Parallel()
+	var provider ecosystem.ToolchainRequirementProvider = &java.Module{}
+	tests := []struct {
+		buildTool string
+		want      []ecosystem.ToolchainRequirement
+	}{
+		{buildTool: "maven", want: []ecosystem.ToolchainRequirement{{Binary: "mvn", VersionArg: "--version", MinVersion: "3.9.0", Setting: "MAVEN_ARGS -gs .mvn/settings.xml"}}},
+		{buildTool: "both", want: []ecosystem.ToolchainRequirement{{Binary: "mvn", VersionArg: "--version", MinVersion: "3.9.0", Setting: "MAVEN_ARGS -gs .mvn/settings.xml"}}},
+		{buildTool: "gradle"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.buildTool, func(t *testing.T) {
+			t.Parallel()
+			got := provider.ToolchainRequirements(ecosystem.ModuleConfig{PackageManager: tt.buildTool})
+			if !slices.Equal(got, tt.want) {
+				t.Errorf("ToolchainRequirements() = %+v, want %+v", got, tt.want)
+			}
+		})
+	}
+}
+
 // ---------------------------------------------------------------------------
 // SecurityConfigs tests
 // ---------------------------------------------------------------------------
@@ -338,7 +401,10 @@ func TestSecurityConfigs_MavenOnly(t *testing.T) {
 	assertContains(t, content, "<enabled>false</enabled>")
 	assertContains(t, content, "mirrorOf")
 	assertContains(t, content, "<?xml version")
-	assertContains(t, content, "Maven >= 3.2.5")
+	// The header names how the file is loaded and the Maven that loads it.
+	assertContains(t, content, `MAVEN_ARGS="-gs .mvn/settings.xml"`)
+	assertContains(t, content, "Maven >= 3.9.0")
+	assertNotContains(t, content, "only when passed with")
 }
 
 func TestSecurityConfigs_GradleOnly(t *testing.T) {
@@ -536,7 +602,7 @@ func TestSecurityConfigs_Gradle_RegistryProxy(t *testing.T) {
 	}
 	files := m.SecurityConfigs(cfg)
 
-	// Should produce gradle.properties + init.gradle.
+	// Should produce gradle.properties + the proxy init script.
 	if len(files) != 2 {
 		t.Fatalf("SecurityConfigs() returned %d files, want 2", len(files))
 	}
@@ -546,9 +612,9 @@ func TestSecurityConfigs_Gradle_RegistryProxy(t *testing.T) {
 		paths[f.Path] = string(f.Content)
 	}
 
-	initContent, ok := paths["init.gradle"]
+	initContent, ok := paths["gradle/qsdev-proxy.init.gradle"]
 	if !ok {
-		t.Fatal("expected init.gradle in generated files")
+		t.Fatal("expected gradle/qsdev-proxy.init.gradle in generated files")
 	}
 	assertContains(t, initContent, proxy)
 	assertContains(t, initContent, "allprojects")
@@ -565,7 +631,7 @@ func TestSecurityConfigs_Gradle_NoRegistryProxy(t *testing.T) {
 	}
 	files := m.SecurityConfigs(cfg)
 
-	// Should only produce gradle.properties (no init.gradle).
+	// Should only produce gradle.properties (no proxy init script).
 	if len(files) != 1 {
 		t.Fatalf("SecurityConfigs() returned %d files, want 1", len(files))
 	}
@@ -583,7 +649,8 @@ func TestSecurityConfigs_Both_RegistryProxy(t *testing.T) {
 	}
 	files := m.SecurityConfigs(cfg)
 
-	// Should produce settings.xml, maven.config, gradle.properties, and init.gradle.
+	// Should produce settings.xml, maven.config, gradle.properties, and the
+	// Gradle proxy init script.
 	if len(files) != 4 {
 		t.Fatalf("SecurityConfigs() returned %d files, want 4", len(files))
 	}
@@ -598,8 +665,8 @@ func TestSecurityConfigs_Both_RegistryProxy(t *testing.T) {
 	if !paths["gradle.properties"] {
 		t.Error("expected gradle.properties in generated files")
 	}
-	if !paths["init.gradle"] {
-		t.Error("expected init.gradle in generated files")
+	if !paths["gradle/qsdev-proxy.init.gradle"] {
+		t.Error("expected gradle/qsdev-proxy.init.gradle in generated files")
 	}
 }
 
@@ -766,18 +833,20 @@ func TestCICommands_Gradle(t *testing.T) {
 	if len(cmds) != 1 {
 		t.Fatalf("CICommands() returned %d commands, want 1", len(cmds))
 	}
-	// The Nix-provisioned gradle, never the unverified committed wrapper.
-	const want = "gradle build --dependency-verification strict"
-	if cmds[0].Command != want {
-		t.Errorf("cmds[0].Command = %q, want %q", cmds[0].Command, want)
+	// The Nix-provisioned gradle, never the unverified committed wrapper,
+	// and only once the committed verification metadata exists.
+	const want = " && gradle build --dependency-verification strict"
+	if !strings.HasSuffix(cmds[0].Command, want) {
+		t.Errorf("cmds[0].Command = %q, want it to end with %q", cmds[0].Command, want)
 	}
 	if cmds[0].Phase != ecosystem.CIPhaseTest {
 		t.Errorf("cmds[0].Phase = %v, want CIPhaseTest", cmds[0].Phase)
 	}
 	// CI must verify against committed metadata, never regenerate it
-	// (regenerating in CI is trust-on-first-use).
+	// (regenerating in CI is trust-on-first-use). The bootstrap command may
+	// only appear in the quoted message the missing-file precondition prints.
 	for _, c := range cmds {
-		assertNotContains(t, c.Command, "--write-verification-metadata")
+		assertNotContains(t, echoedMessageRe.ReplaceAllString(c.Command, `echo ""`), "--write-verification-metadata")
 	}
 }
 
@@ -796,7 +865,7 @@ func TestCICommands_Both(t *testing.T) {
 		t.Errorf("cmds[0].Command = %q, want Maven verify", cmds[0].Command)
 	}
 	// Then the strictly verified Gradle build.
-	if cmds[1].Command != "gradle build --dependency-verification strict" {
+	if !strings.HasSuffix(cmds[1].Command, " && gradle build --dependency-verification strict") {
 		t.Errorf("cmds[1].Command = %q, want strict Gradle build", cmds[1].Command)
 	}
 }

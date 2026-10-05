@@ -8,6 +8,7 @@ import (
 
 	"github.com/Quantum-Serendipity/qsdev/pkg/ecosystem"
 	"github.com/Quantum-Serendipity/qsdev/pkg/ecosystem/modules/scala"
+	"github.com/Quantum-Serendipity/qsdev/pkg/types"
 )
 
 // newModule returns a fresh Module for testing.
@@ -269,6 +270,82 @@ func TestWizardFields(t *testing.T) {
 	for _, key := range []string{"build_tool", "jdk_version"} {
 		if !keys[key] {
 			t.Errorf("missing wizard field %s", key)
+		}
+	}
+}
+
+// TestScalaSbtProxyWiring checks sbt resolves through the registry proxy: a
+// committed repositories file (the qsdev directory is gitignored, so CI
+// checkouts would lack it there) that the devenv shell points sbt at through
+// SBT_OPTS. Without a proxy, and for Mill, neither is generated.
+func TestScalaSbtProxyWiring(t *testing.T) {
+	t.Parallel()
+	const (
+		proxy    = "https://proxy.corp.internal/repository/maven-central/"
+		repoPath = "project/qsdev.repositories"
+		sbtOpts  = `env.SBT_OPTS = "-Dsbt.repository.config=${config.devenv.root}/project/qsdev.repositories -Dsbt.override.build.repos=true";`
+	)
+	tests := []struct {
+		name  string
+		cfg   ecosystem.ModuleConfig
+		wired bool
+	}{
+		{"sbt with proxy", ecosystem.ModuleConfig{RegistryProxy: proxy}, true},
+		{"explicit sbt with proxy", ecosystem.ModuleConfig{RegistryProxy: proxy, Extras: map[string]string{"build_tool": "sbt"}}, true},
+		{"sbt without proxy", ecosystem.ModuleConfig{}, false},
+		{"mill with proxy", ecosystem.ModuleConfig{RegistryProxy: proxy, Extras: map[string]string{"build_tool": "mill"}}, false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			m := newModule()
+
+			var repos *types.GeneratedFile
+			for _, f := range m.SecurityConfigs(tt.cfg) {
+				if f.Path == repoPath {
+					repos = &f
+				}
+			}
+			if (repos != nil) != tt.wired {
+				t.Fatalf("SecurityConfigs writes %s = %v, want %v", repoPath, repos != nil, tt.wired)
+			}
+			if repos != nil {
+				if repos.Strategy != types.Overwrite {
+					t.Errorf("%s Strategy = %v, want Overwrite", repoPath, repos.Strategy)
+				}
+				want := "[repositories]\n  local\n  proxy: " + proxy + "\n"
+				if !strings.HasSuffix(string(repos.Content), want) {
+					t.Errorf("%s content = %q, want it to end with %q", repoPath, repos.Content, want)
+				}
+			}
+
+			frag, err := m.DevenvNixFragment(tt.cfg)
+			if err != nil {
+				t.Fatalf("DevenvNixFragment: %v", err)
+			}
+			if got := strings.Contains(frag, sbtOpts); got != tt.wired {
+				t.Errorf("fragment contains %q = %v, want %v:\n%s", sbtOpts, got, tt.wired, frag)
+			}
+			if !tt.wired && strings.Contains(frag, "SBT_OPTS") {
+				t.Errorf("fragment sets SBT_OPTS without sbt proxy wiring:\n%s", frag)
+			}
+		})
+	}
+}
+
+// TestProxyKey checks Scala routes through the Maven proxy only for sbt.
+func TestProxyKey(t *testing.T) {
+	t.Parallel()
+	m := newModule()
+	for _, tt := range []struct {
+		buildTool, want string
+	}{{"", "maven"}, {"sbt", "maven"}, {"mill", ""}} {
+		cfg := ecosystem.ModuleConfig{}
+		if tt.buildTool != "" {
+			cfg.Extras = map[string]string{"build_tool": tt.buildTool}
+		}
+		if got := m.ProxyKey(cfg); got != tt.want {
+			t.Errorf("ProxyKey(build_tool=%q) = %q, want %q", tt.buildTool, got, tt.want)
 		}
 	}
 }

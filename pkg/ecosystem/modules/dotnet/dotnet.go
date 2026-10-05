@@ -189,22 +189,21 @@ func (m *Module) SecurityConfigs(config ecosystem.ModuleConfig) []types.Generate
 
 // PreCommitHooks returns pre-commit hook definitions for .NET.
 //
-// The hook runs `dotnet` from the same SDK attribute as languages.dotnet, so
-// it can build the project's target frameworks and satisfy its global.json,
-// and no second, colliding dotnet binary is added to the profile.
-func (m *Module) PreCommitHooks(config ecosystem.ModuleConfig) []ecosystem.HookConfig {
-	sdk, _ := sdkVersionToNixPackage(config.Version)
+// The hook runs `dotnet` from the SDK languages.dotnet pins, so it can build
+// the project's target frameworks and satisfy its global.json, and no second,
+// colliding dotnet binary is added to the profile.
+func (m *Module) PreCommitHooks(_ ecosystem.ModuleConfig) []ecosystem.HookConfig {
 	return []ecosystem.HookConfig{
 		{
-			ID:          "dotnet-format",
-			Name:        "dotnet-format",
-			Description: "Check C#/F# code formatting with dotnet format",
-			Entry:       "dotnet format --verify-no-changes",
-			Language:    "system",
-			Files:       `\.(cs|fs)$`,
-			Stages:      []string{"pre-commit"},
-			BuiltIn:     false,
-			NixPackage:  sdk,
+			ID:              "dotnet-format",
+			Name:            "dotnet-format",
+			Description:     "Check C#/F# code formatting with dotnet format",
+			Entry:           "dotnet format --verify-no-changes",
+			Language:        "system",
+			Files:           `\.(cs|fs)$`,
+			Stages:          []string{"pre-commit"},
+			BuiltIn:         false,
+			LanguagePackage: "dotnet",
 		},
 	}
 }

@@ -78,19 +78,21 @@ func (m *Module) SecurityConfigs(_ ecosystem.ModuleConfig) []types.GeneratedFile
 }
 
 // PreCommitHooks returns pre-commit hook definitions for the Elixir ecosystem.
+// mix-format runs the Elixir languages.elixir provides; devenv's elixir module
+// sets the same hook's package to that toolchain.
 func (m *Module) PreCommitHooks(_ ecosystem.ModuleConfig) []ecosystem.HookConfig {
 	return []ecosystem.HookConfig{
 		{
-			ID:            "mix-format",
-			Name:          "mix-format",
-			Description:   "Check Elixir code formatting with mix format",
-			Entry:         "mix format --check-formatted",
-			Language:      "system",
-			Types:         []string{"elixir"},
-			Stages:        []string{"pre-commit"},
-			PassFilenames: false,
-			BuiltIn:       false,
-			NixPackage:    "elixir",
+			ID:              "mix-format",
+			Name:            "mix-format",
+			Description:     "Check Elixir code formatting with mix format",
+			Entry:           "mix format --check-formatted",
+			Language:        "system",
+			Types:           []string{"elixir"},
+			Stages:          []string{"pre-commit"},
+			PassFilenames:   false,
+			BuiltIn:         false,
+			LanguagePackage: "elixir",
 		},
 	}
 }

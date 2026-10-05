@@ -3,6 +3,7 @@ package elixir_test
 import (
 	"os"
 	"path/filepath"
+	"reflect"
 	"testing"
 
 	"github.com/Quantum-Serendipity/qsdev/pkg/ecosystem"
@@ -75,6 +76,28 @@ func TestDevenvNixFragment_NonEmpty(t *testing.T) {
 	}
 	if frag == "" {
 		t.Error("DevenvNixFragment() returned empty string")
+	}
+}
+
+// TestPreCommitHooks pins the mix-format hook to the Elixir that
+// languages.elixir provides. devenv's elixir module sets the same hook's
+// package to that toolchain, so a second definition from pkgs.elixir was
+// both a duplicate binary and, at equal priority, an evaluation error (U10-01).
+func TestPreCommitHooks(t *testing.T) {
+	t.Parallel()
+	hooks := newModule().PreCommitHooks(ecosystem.ModuleConfig{})
+	want := []ecosystem.HookConfig{{
+		ID:              "mix-format",
+		Name:            "mix-format",
+		Description:     "Check Elixir code formatting with mix format",
+		Entry:           "mix format --check-formatted",
+		Language:        "system",
+		Types:           []string{"elixir"},
+		Stages:          []string{"pre-commit"},
+		LanguagePackage: "elixir",
+	}}
+	if !reflect.DeepEqual(hooks, want) {
+		t.Errorf("PreCommitHooks() = %+v, want %+v", hooks, want)
 	}
 }
 

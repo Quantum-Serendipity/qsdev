@@ -111,19 +111,21 @@ func (m *Module) SecurityConfigs(_ ecosystem.ModuleConfig) []types.GeneratedFile
 }
 
 // PreCommitHooks returns pre-commit hook definitions for the Dart ecosystem.
+// dart format runs the SDK languages.dart provides, so it follows whatever
+// package that language is set to.
 func (m *Module) PreCommitHooks(_ ecosystem.ModuleConfig) []ecosystem.HookConfig {
 	return []ecosystem.HookConfig{
 		{
-			ID:            "dart-format",
-			Name:          "dart-format",
-			Description:   "Check Dart code formatting with dart format",
-			Entry:         "dart format --set-exit-if-changed",
-			Language:      "system",
-			Types:         []string{"dart"},
-			Stages:        []string{"pre-commit"},
-			PassFilenames: true, // the formatter needs file operands
-			BuiltIn:       false,
-			NixPackage:    "dart",
+			ID:              "dart-format",
+			Name:            "dart-format",
+			Description:     "Check Dart code formatting with dart format",
+			Entry:           "dart format --set-exit-if-changed",
+			Language:        "system",
+			Types:           []string{"dart"},
+			Stages:          []string{"pre-commit"},
+			PassFilenames:   true, // the formatter needs file operands
+			BuiltIn:         false,
+			LanguagePackage: "dart",
 		},
 	}
 }

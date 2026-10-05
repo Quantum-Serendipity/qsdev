@@ -5,6 +5,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/Quantum-Serendipity/qsdev/pkg/ecosystem"
@@ -43,5 +44,18 @@ func TestScriptHookEntry_EvaluatesToScript(t *testing.T) {
 	}
 	if want := "export PATH=/nix/tool/bin:$PATH\n" + script + "\n"; got.Text != want {
 		t.Errorf("script text = %q, want %q", got.Text, want)
+	}
+}
+
+// TestScriptHookEntry_LanguagePackagePath checks that a Script hook bound to
+// a devenv language puts that language's pinned package first on PATH.
+func TestScriptHookEntry_LanguagePackagePath(t *testing.T) {
+	t.Parallel()
+	entry := scriptHookEntry(ecosystem.HookConfig{ID: "demo", Script: "zig fmt --check .", LanguagePackage: "zig"})
+	if want := "export PATH=${config.languages.zig.package}/bin:$PATH\n"; !strings.Contains(entry, want) {
+		t.Errorf("entry lacks %q:\n%s", want, entry)
+	}
+	if strings.Contains(entry, "pkgs.zig") {
+		t.Errorf("entry names pkgs.zig instead of the language package:\n%s", entry)
 	}
 }

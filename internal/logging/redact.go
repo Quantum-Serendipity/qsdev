@@ -45,13 +45,24 @@ type Redactor struct {
 	urlTokenRe    *regexp.Regexp
 	nameValRe     *regexp.Regexp
 	keyBoundaryRe *regexp.Regexp
+	flagPairRe    *regexp.Regexp
 }
 
 // NewRedactor creates a Redactor with default secret patterns.
 func NewRedactor() *Redactor {
 	return &Redactor{
 		valuePatterns: compileValuePatterns(),
-		urlCredRe:     regexp.MustCompile(`://[^:@\s]+:[^:@\s]+@`),
+		// user:password userinfo. The user may be empty (redis://:pw@host, the
+		// form Redis and some DSNs use for a password-only credential) and the
+		// password may contain ':', '@', and — as unencoded base64 or generated
+		// passwords often do in logged DSNs — '/', '?' or '#'. What separates
+		// userinfo from host:port followed by a path holding an '@'
+		// ("http://h:8080/a:b@c", "http://localhost:4873/@scope/pkg") is the
+		// port rule: a part after ':' that is all digits up to a '/', '?' or
+		// '#' is a port, so only a password with a non-digit before its first
+		// such byte may continue past it. The user part may not open an IPv6
+		// literal ('[' / ']'), so "http://[::1]:4873/@types%2fnode" is a host.
+		urlCredRe: regexp.MustCompile(`://[^:@\s/?#\[\]]*:(?:[^@\s/?#]+|[0-9]*[^0-9@\s/?#][^@\s]*)@`),
 		// Token-only userinfo (https://TOKEN@host/...), the form git hosts use
 		// for PATs and CI job tokens. Requiring a scheme:// keeps the scp-style
 		// git@host:path form (which has no scheme) untouched.
@@ -59,19 +70,25 @@ func NewRedactor() *Redactor {
 		// Matches "NAME=value" and "NAME: value" pairs so a sensitive credential
 		// NAME (e.g. DATABASE_PASSWORD) redacts its value even when the value
 		// itself matches no credential-shape pattern. The NAME may be wrapped in
-		// plain or backslash-escaped quotes, so JSON ("NAME":"value") and JSON
-		// embedded in a JSON string (\"NAME\":\"value\") are covered too.
+		// plain or backslash-escaped quotes, so JSON ("NAME":"value"), JSON
+		// embedded in a JSON string (\"NAME\":\"value\") and single-quoted
+		// dict reprs ('NAME': 'value', as Python prints headers) are covered.
 		// Groups: 1 opening quote, 2 NAME, 3 closing quote, 4 separator. The
 		// match ends where the value starts and consumes none of it, because
 		// the value may itself begin a pair ("error: token=abc"); the value's
 		// end is computed in redactNamedValues (RE2 has no lookahead).
-		nameValRe: regexp.MustCompile(`(\\?")?([A-Za-z_][A-Za-z0-9_]*)(\\?")?\s*([:=])\s*`),
+		nameValRe: regexp.MustCompile(`(\\?["'])?([A-Za-z_][A-Za-z0-9_]*)(\\?["'])?\s*([:=])\s*`),
 		// Marks the next "NAME=" / "NAME:" key boundary that terminates a value:
 		// a NAME (optionally spaced from its separator) that is preceded by
 		// whitespace. The leading \s requirement means an intra-value token such
 		// as a=b (no preceding space) stays part of the value, while a genuine
 		// following pair on the same line ends it.
 		keyBoundaryRe: regexp.MustCompile(`\s[A-Za-z_][A-Za-z0-9_]*\s*[:=]`),
+		// A whitespace- or start-anchored command-line flag followed by its
+		// separate value ("--password hunter2"). Groups: 1 anchor, 2 flag,
+		// 3 spacing, 4 value. The value may not start with '-', so a following
+		// flag ("--api-key --verbose") is never taken for a value.
+		flagPairRe: regexp.MustCompile(`(^|\s)(-{1,2}[A-Za-z][A-Za-z0-9_-]*)(\s+)([^\s-]\S*)`),
 	}
 }
 
@@ -103,9 +120,14 @@ func compileValuePatterns() []*regexp.Regexp {
 // resolved first so a lazily-computed value is scrubbed too. Besides strings,
 // it scrubs KindAny values — errors (the ubiquitous "error", err attribute),
 // argv slices, maps and structs — which a JSON or text handler would otherwise
-// serialize verbatim.
+// serialize verbatim. A sensitive key is checked before group recursion, so a
+// group named "password" or "credentials" is redacted whole rather than having
+// its benignly-named members passed through (see denyAttr).
 func (r *Redactor) RedactAttr(a slog.Attr) slog.Attr {
 	a.Value = a.Value.Resolve()
+	if r.isKeyDenied(a.Key) {
+		return denyAttr(a)
+	}
 	if a.Value.Kind() == slog.KindGroup {
 		attrs := a.Value.Group()
 		scrubbed := make([]slog.Attr, len(attrs))
@@ -113,10 +135,6 @@ func (r *Redactor) RedactAttr(a slog.Attr) slog.Attr {
 			scrubbed[i] = r.RedactAttr(ga)
 		}
 		return slog.Attr{Key: a.Key, Value: slog.GroupValue(scrubbed...)}
-	}
-
-	if r.isKeyDenied(a.Key) {
-		return slog.String(a.Key, redacted)
 	}
 
 	switch a.Value.Kind() {
@@ -163,10 +181,17 @@ func isNilPointer(v any) bool {
 
 // RedactString scrubs secret patterns from a string value. It runs the
 // value-shape passes (AKIA…, ghp_…, JWT, PEM blocks, …) and URL-userinfo
-// stripping, then a NAME=value pass that redacts the value of any sensitive
-// credential variable — closing the leak where a keyword-less secret
-// (DATABASE_PASSWORD=…, BW_SESSION=…, {"api_token":"…"}) has no recognizable
-// value shape.
+// stripping (including an empty user, redis://:pw@host), then a NAME=value pass
+// that redacts the value of any sensitive credential variable — closing the
+// leak where a keyword-less secret (DATABASE_PASSWORD=…, BW_SESSION=…,
+// {"api_token":"…"}) has no recognizable value shape — and finally a flag pass
+// that redacts the separate value of a sensitive flag ("--password hunter2").
+//
+// In the NAME pass an unquoted sensitive NAME followed by ':' (a header, YAML
+// or "error:"-prefix form such as "Authorization: Basic dXNl…==") redacts the
+// rest of the line, so scheme words, base64 padding and Digest sub-pairs are
+// all covered. A NAME followed by '=' redacts up to the next "NAME=" pair on
+// the line, where an '=' that is base64 padding does not count as a pair.
 func (r *Redactor) RedactString(s string) string {
 	for _, p := range r.valuePatterns {
 		s = p.ReplaceAllString(s, redacted)
@@ -175,7 +200,54 @@ func (r *Redactor) RedactString(s string) string {
 		s = r.redactURLCredentials(s)
 	}
 	s = r.urlTokenRe.ReplaceAllString(s, "${1}"+redacted+"@")
-	return r.redactNamedValues(s)
+	s = r.redactNamedValues(s)
+	return r.redactFlagPairs(s)
+}
+
+// redactFlagPairs redacts the value that follows a sensitive command-line flag
+// written with a separate value in free text ("run --password hunter2 now").
+// The flag decision is isSensitiveFlag, the same predicate the argv walk in
+// redactSeq uses, so a benign flag ("-p 8080:80") is left untouched. A quoted
+// value ('--password "hunter 2"') is redacted through its closing quote.
+func (r *Redactor) redactFlagPairs(s string) string {
+	if strings.IndexByte(s, '-') < 0 {
+		return s
+	}
+	var b strings.Builder
+	last := 0
+	for _, m := range r.flagPairRe.FindAllStringSubmatchIndex(s, -1) {
+		// m[4:6] is the flag, m[8:10] its value.
+		if m[0] < last || !isSensitiveFlag(s[m[4]:m[5]]) {
+			continue
+		}
+		if last == 0 {
+			b.Grow(len(s))
+		}
+		b.WriteString(s[last:m[8]])
+		b.WriteString(redacted)
+		last = quotedValueEnd(s, m[8], m[9])
+	}
+	if last == 0 {
+		return s
+	}
+	b.WriteString(s[last:])
+	return b.String()
+}
+
+// quotedValueEnd returns the end of a flag value token s[from:to]. When the
+// token opens with a quote, the value runs through the matching closing quote
+// on the same line, or to the end of the line when it is unterminated (fail
+// closed), so a multi-word quoted secret is redacted whole.
+func quotedValueEnd(s string, from, to int) int {
+	q := s[from]
+	if q != '"' && q != '\'' {
+		return to
+	}
+	end := lineEnd(s, from)
+	if i := strings.IndexByte(s[from+1:end], q); i >= 0 {
+		return from + 1 + i + 1
+	}
+	return end
 }
 
 // redactNamedValues redacts the VALUE of any "NAME=value" or "NAME: value" pair
@@ -213,12 +285,27 @@ func (r *Redactor) redactNamedValues(s string) string {
 		if valStart == len(s) {
 			continue
 		}
-		from, to, replacement := valStart, r.valueEnd(s, valStart), redacted
-		if m[6] >= 0 && s[m[8]] == ':' {
+		var from, to int
+		replacement := redacted
+		switch {
+		case s[m[8]] == '=':
+			from, to = valStart, max(r.valueEnd(s, valStart), authCredentialEnd(s, valStart))
+		case m[6] >= 0 && s[m[7]-1] == '\'':
+			// A single-quoted key followed by ':' is a dict-repr member
+			// ({'Authorization': 'Basic dXNl…==', 'X': 1}), not JSON.
+			from, to = singleQuotedMemberSpan(s, valStart)
+		case m[6] >= 0:
 			// A quoted key followed by ':' is a JSON member: redact its value
 			// JSON-aware so the rest of the document (and its later members)
 			// keeps its shape. The closing quote's length gives the escape depth.
 			from, to, replacement = jsonValueSpan(s, valStart, m[7]-m[6]-1)
+		default:
+			// A NAME without a closing quote followed by ':' is a header, YAML
+			// or prefix form ("Authorization: Basic dXNl…=="): the value is the
+			// rest of the line, so no scheme word, padding or sub-pair splits
+			// it. When a quote opens right before the NAME (logfmt
+			// msg="auth: Basic …" user=bob) the value stops at its closing quote.
+			from, to = valStart, colonValueEnd(s, valStart, m[2], m[3])
 		}
 		if to <= from {
 			continue
@@ -236,20 +323,148 @@ func (r *Redactor) redactNamedValues(s string) string {
 	return b.String()
 }
 
-// valueEnd returns the offset at which a sensitive NAME's value ends. The value
-// runs from valStart to end-of-line, EXCEPT it stops before the next
+// singleQuotedMemberSpan returns the span to redact for the value of a
+// single-quoted dict-repr member ('Authorization': 'Basic …'). A quoted value
+// is redacted between its quotes, which stay in place so later members keep
+// their shape; an unterminated or unquoted value runs to the end of the line
+// (fail closed), like any other colon-form value.
+func singleQuotedMemberSpan(s string, valStart int) (from, to int) {
+	q := s[valStart]
+	if q != '\'' && q != '"' {
+		return valStart, colonValueEnd(s, valStart, -1, -1)
+	}
+	end := quotedValueEnd(s, valStart, valStart+1)
+	if end-1 > valStart && s[end-1] == q {
+		return valStart + 1, end - 1
+	}
+	return valStart + 1, end
+}
+
+// valueEnd returns the offset at which a sensitive "NAME=" pair's value ends.
+// The value runs from valStart to end-of-line, EXCEPT it stops before the next
 // whitespace-preceded "NAME=" / "NAME:" key so a following pair on the same line
-// is redacted independently rather than swallowed. Trailing whitespace before
-// that boundary is excluded so the separator run is preserved verbatim.
+// is redacted independently rather than swallowed. A candidate key whose '='
+// is base64 padding (see isPaddingBoundary) is part of the value, not a key:
+// "Basic dXNlcjpwYXNzd29yZA==" must not end at " dXNlcjpwYXNzd29yZA=".
+// Trailing whitespace before the boundary is excluded so the separator run is
+// preserved verbatim. The scan loops over FindStringIndex rather than
+// FindAllStringIndex so the common path allocates no slice.
 func (r *Redactor) valueEnd(s string, valStart int) int {
 	// A value never spans a newline.
 	end := lineEnd(s, valStart)
 	// Stop before the next key-like token on the same line.
-	if loc := r.keyBoundaryRe.FindStringIndex(s[valStart:end]); loc != nil {
-		end = valStart + loc[0]
+	for off := valStart; off < end; {
+		loc := r.keyBoundaryRe.FindStringIndex(s[off:end])
+		if loc == nil {
+			break
+		}
+		if !isPaddingBoundary(s, off+loc[1]-1, end) {
+			end = off + loc[0]
+			break
+		}
+		off += loc[1]
 	}
 	trimmed := strings.TrimRight(s[valStart:end], nameValueTrimCutset)
 	return valStart + len(trimmed)
+}
+
+// isPaddingBoundary reports whether the key-boundary separator at sepIdx is
+// really base64 padding rather than a "NAME=" separator: the separator is '='
+// and it is followed by the end of the line (lineEnd) or a byte that cannot
+// start a value — another '=', whitespace, a quote, or a list/map delimiter
+// (',', ';', ')', ']', '}', '>'), as in a Map.toString header dump
+// "{Authorization=Basic dXNl…=, Accept=…}". A genuine pair ("next=1") always
+// has a value after its '='.
+func isPaddingBoundary(s string, sepIdx, lineEnd int) bool {
+	if s[sepIdx] != '=' {
+		return false
+	}
+	if sepIdx+1 >= lineEnd {
+		return true
+	}
+	switch s[sepIdx+1] {
+	case '=', ' ', '\t', '\r', '\f', '\v', '\'', '"', ',', ';', ')', ']', '}', '>':
+		return true
+	}
+	return false
+}
+
+// httpAuthSchemes are the HTTP authentication scheme words (RFC 9110 section
+// 11 and the IANA registry entries seen in logs) that prefix a credential.
+var httpAuthSchemes = []string{"Basic", "Bearer", "Token", "Digest", "Negotiate"}
+
+// authCredentialEnd returns the end of the credential token that follows an
+// HTTP auth scheme word at the start of the value at valStart
+// ("Bearer abc=123"), or valStart when the value has no scheme prefix. The
+// '=' form of a NAME=value pair otherwise ends the value at a key-like token,
+// and a credential such as "abc=123" looks like one; the scheme word marks
+// the next token as the credential. It scans bytes and does not allocate.
+func authCredentialEnd(s string, valStart int) int {
+	end := lineEnd(s, valStart)
+	word := strings.IndexAny(s[valStart:end], " \t")
+	if word <= 0 || !isAuthScheme(s[valStart:valStart+word]) {
+		return valStart
+	}
+	i := valStart + word
+	for i < end && (s[i] == ' ' || s[i] == '\t') {
+		i++
+	}
+	for i < end && !strings.ContainsRune(nameValueTrimCutset, rune(s[i])) {
+		i++
+	}
+	return i
+}
+
+// isAuthScheme reports whether word is an HTTP auth scheme, case-insensitively.
+func isAuthScheme(word string) bool {
+	for _, scheme := range httpAuthSchemes {
+		if strings.EqualFold(word, scheme) {
+			return true
+		}
+	}
+	return false
+}
+
+// colonValueEnd returns where the value of an unquoted "NAME: value" pair
+// ends: the end of the line, or — when a quote (quoteStart:quoteEnd, -1 when
+// absent) opens immediately before NAME — the matching closing quote, so a
+// logfmt field msg="auth: Basic …" keeps its closing quote and later pairs.
+// Ending at end of line is deliberate fail-closed behaviour: a header, YAML or
+// "error:" prefix value may hold spaces, a scheme word, base64 padding or
+// Digest sub-pairs, so benign pairs after a sensitive colon NAME on the same
+// line ("password: x status: ok", Go's "map[password:x user:bob]") are
+// redacted too. Do not split it at key boundaries again: "token: prefix
+// abcdefXYZ=123" would leak its credential.
+func colonValueEnd(s string, valStart, quoteStart, quoteEnd int) int {
+	end := lineEnd(s, valStart)
+	if quoteStart >= 0 {
+		if q := strings.Index(s[valStart:end], s[quoteStart:quoteEnd]); q >= 0 {
+			end = valStart + q
+		}
+	}
+	return valStart + len(strings.TrimRight(s[valStart:end], nameValueTrimCutset))
+}
+
+// denyAttr redacts a whole attribute whose key (or enclosing group) is
+// sensitive: every leaf value becomes RedactionMarker while keys and group
+// structure stay visible for diagnosability, so an inline
+// slog.Group("password", "value", x) and a logger.WithGroup("password") scope
+// render alike. An empty Attr is returned as is: slog handlers drop it, and
+// giving it a value would print a spurious empty-key member.
+func denyAttr(a slog.Attr) slog.Attr {
+	if a.Equal(slog.Attr{}) {
+		return a
+	}
+	v := a.Value.Resolve()
+	if v.Kind() != slog.KindGroup {
+		return slog.String(a.Key, RedactionMarker)
+	}
+	members := v.Group()
+	out := make([]slog.Attr, len(members))
+	for i, m := range members {
+		out[i] = denyAttr(m)
+	}
+	return slog.Attr{Key: a.Key, Value: slog.GroupValue(out...)}
 }
 
 // lineEnd returns the offset of the first newline at or after from, or len(s).
@@ -475,12 +690,33 @@ func stringElem(v reflect.Value) (string, bool) {
 
 // isSensitiveFlag reports whether arg is a command-line flag ("-x", "--name")
 // without an inline value whose name denotes a credential, e.g. --password or
-// --api-key. A "--name=value" argument is handled by the NAME=value pass.
+// --api-key, so the argument after it is a secret. A "--name=value" argument
+// is handled by the NAME=value pass. A flag ending in one of
+// nonSecretValueFlagSuffixes is never sensitive: the argument after it is not
+// the secret itself.
 func isSensitiveFlag(arg string) bool {
 	if !strings.HasPrefix(arg, "-") || strings.Contains(arg, "=") {
 		return false
 	}
+	for _, suffix := range nonSecretValueFlagSuffixes {
+		if hasSuffixFold(arg, suffix) {
+			return false
+		}
+	}
 	return secrets.IsSensitiveName(strings.TrimLeft(arg, "-"))
+}
+
+// nonSecretValueFlagSuffixes mark credential-named flags whose following
+// argument is not a secret: a "-stdin" flag (docker login --password-stdin)
+// reads the secret from stdin and takes no value, and a "-file", "-dir" or
+// "-path" flag (--token-file, --password-file) takes a path that only refers
+// to where the secret is stored, which logs keep for diagnosability.
+var nonSecretValueFlagSuffixes = []string{"-stdin", "-file", "-dir", "-path"}
+
+// hasSuffixFold is strings.HasSuffix with ASCII case folding, without
+// allocating a lowered copy.
+func hasSuffixFold(s, suffix string) bool {
+	return len(s) >= len(suffix) && strings.EqualFold(s[len(s)-len(suffix):], suffix)
 }
 
 // redactStruct walks the exported fields of an all-exported struct, redacting

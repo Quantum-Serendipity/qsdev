@@ -10,6 +10,10 @@ import (
 type RedactingHandler struct {
 	inner    slog.Handler
 	redactor *Redactor
+	// denied is set once any enclosing WithGroup name is sensitive (e.g.
+	// logger.WithGroup("secret")); every attribute beneath it is then redacted
+	// whole, since the inner handler nests it under that group.
+	denied bool
 }
 
 // NewRedactingHandler wraps inner with secret redaction.
@@ -27,7 +31,7 @@ func (h *RedactingHandler) Enabled(ctx context.Context, level slog.Level) bool {
 func (h *RedactingHandler) Handle(ctx context.Context, r slog.Record) error {
 	scrubbed := slog.NewRecord(r.Time, r.Level, h.redactor.RedactString(r.Message), r.PC)
 	r.Attrs(func(a slog.Attr) bool {
-		scrubbed.AddAttrs(h.redactor.RedactAttr(a))
+		scrubbed.AddAttrs(h.redactAttr(a))
 		return true
 	})
 	return h.inner.Handle(ctx, scrubbed)
@@ -36,11 +40,12 @@ func (h *RedactingHandler) Handle(ctx context.Context, r slog.Record) error {
 func (h *RedactingHandler) WithAttrs(attrs []slog.Attr) slog.Handler {
 	redacted := make([]slog.Attr, len(attrs))
 	for i, a := range attrs {
-		redacted[i] = h.redactor.RedactAttr(a)
+		redacted[i] = h.redactAttr(a)
 	}
 	return &RedactingHandler{
 		inner:    h.inner.WithAttrs(redacted),
 		redactor: h.redactor,
+		denied:   h.denied,
 	}
 }
 
@@ -48,7 +53,18 @@ func (h *RedactingHandler) WithGroup(name string) slog.Handler {
 	return &RedactingHandler{
 		inner:    h.inner.WithGroup(name),
 		redactor: h.redactor,
+		denied:   h.denied || h.redactor.isKeyDenied(name),
 	}
+}
+
+// redactAttr scrubs one attribute. Under a sensitive WithGroup scope every leaf
+// value is replaced whole (keys, including those of nested groups, stay visible
+// for diagnosability); otherwise the shared Redactor.RedactAttr rules apply.
+func (h *RedactingHandler) redactAttr(a slog.Attr) slog.Attr {
+	if !h.denied {
+		return h.redactor.RedactAttr(a)
+	}
+	return denyAttr(a)
 }
 
 // TeeHandler fans out log records to multiple handlers.

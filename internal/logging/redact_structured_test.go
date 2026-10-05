@@ -167,10 +167,17 @@ func TestRedactStructured(t *testing.T) {
 			name: "embedded URL credentials are redacted, host preserved",
 			// Split so the user:pass@ credential is never a contiguous literal
 			// (keeps the ripsecrets pre-commit hook happy); the runtime DSN still
-			// exercises the URL-credential redaction path.
-			input:   map[string]any{"dsn": "postgres://appuser:" + "s3cretpw" + "@pg.example.com:5432/maindb"},
+			// exercises the URL-credential redaction path. The key is neutral
+			// ("url"): a "dsn" key is itself sensitive and is redacted whole (next case).
+			input:   map[string]any{"url": "postgres://appuser:" + "s3cretpw" + "@pg.example.com:5432/maindb"},
 			absent:  []string{"appuser", "s3cretpw"},
 			present: []string{"pg.example.com"},
+		},
+		{
+			name:    "dsn key is redacted whole",
+			input:   map[string]any{"dsn": "postgres://appuser:" + "s3cretpw" + "@pg.example.com:5432/maindb"},
+			absent:  []string{"appuser", "s3cretpw", "pg.example.com"},
+			present: []string{redacted},
 		},
 	}
 

@@ -170,3 +170,35 @@ func TestContentSafetyNilSafeAndErrorPassthrough(t *testing.T) {
 		}
 	})
 }
+
+// TestContentSafetyPassCountNotRedacted guards the check/posture outputs
+// (json:"pass" counts and booleans) against a false positive from the
+// credential-name predicate: a bare "pass" key is benign, only an embedded
+// token such as DB_PASS is sensitive. Both the Text (JSON member) path and the
+// Structured (map key) path are covered.
+func TestContentSafetyPassCountNotRedacted(t *testing.T) {
+	t.Parallel()
+
+	const text = `{"pass":3,"fail":0}`
+	structured := map[string]any{"pass": true, "summary": map[string]any{"pass": 3, "fail": 0}, "DB_PASS": "hunter2"}
+	out, err := runContentSafety(t, &spi.ToolResult{Text: text, Structured: structured}, nil)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if out.Text != text {
+		t.Errorf("pass-count JSON altered: got %q, want %q", out.Text, text)
+	}
+	got, ok := out.Structured.(map[string]any)
+	if !ok {
+		t.Fatalf("structured type changed: %T", out.Structured)
+	}
+	if got["pass"] != true {
+		t.Errorf("pass bool altered: %v", got["pass"])
+	}
+	if summary := got["summary"].(map[string]any); summary["pass"] != 3 {
+		t.Errorf("summary pass count altered: %v", summary["pass"])
+	}
+	if got["DB_PASS"] == "hunter2" {
+		t.Error("DB_PASS value not redacted")
+	}
+}

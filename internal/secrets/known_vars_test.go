@@ -189,3 +189,53 @@ func TestSensitiveSubstringFallback(t *testing.T) {
 		})
 	}
 }
+
+// TestIsSensitiveName_Plurals covers plural credential names (one trailing "s"
+// accepted as a token's right boundary), the connection-string / cookie /
+// passphrase tokens, and "pass" as an embedded-only token: DB_PASS is sensitive
+// but a bare "pass" (qsdev's own check/posture pass-count field) is not.
+func TestIsSensitiveName_Plurals(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		key  string
+		want bool
+	}{
+		{"credentials", true},
+		{"secrets", true},
+		{"tokens", true},
+		{"passwords", true},
+		{"api_keys", true},
+		{"keys", true},
+		{"sessions", true},
+		{"passphrase", true},
+		{"cookie", true},
+		{"set-cookie", true},
+		{"Set-Cookie", true},
+		{"dsn", true},
+		{"connection_string", true},
+		{"conn_string", true},
+		{"DB_PASS", true},
+		{"MYSQL_PASS", true},
+		{"smtp-pass", true},
+		{"pass", false},
+		{"Pass", false},
+		{"passthrough", false},
+		{"compass", false},
+		{"bypass", false},
+		{"tokenizer_version", false},
+		{"status", false},
+		{"keyboard", false},
+		{"PWD", false},
+		{"PATH", false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.key, func(t *testing.T) {
+			t.Parallel()
+			if got := IsSensitiveName(tt.key); got != tt.want {
+				t.Errorf("IsSensitiveName(%q) = %v, want %v", tt.key, got, tt.want)
+			}
+		})
+	}
+}

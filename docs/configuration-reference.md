@@ -848,6 +848,24 @@ The file is found in the project enclosing the working directory (the
 directory holding `.qsdev.yaml` or the state directory), or in the working
 directory outside a project.
 
+Every command that generates `devenv.nix` from the catalog names the file in
+its plan: `qsdev init` (every mode, `--dry-run` included), `qsdev init
+--update`, `qsdev update`, `qsdev devenv init`, `qsdev devenv update`, the
+`qsdev devenv add-*` and `remove-*` commands, and `qsdev enable` and
+`qsdev disable`. The name is followed by each pre-commit hook the file
+adds: a new custom hook with the command it runs, a hook added to the
+always-on `security_hooks` list, and a hook added to a hook tier. Hooks the
+built-in catalog or your user defaults file already define are not listed.
+A value holding a control character (a carriage return, an ANSI escape) is
+shown quoted with it escaped, so the file cannot rewrite its own line.
+
+```text
+Project defaults: /path/to/project/.qsdev/defaults.yaml
+  adds pre-commit hook foo-hook (security_hooks)
+  adds pre-commit hook okhook (custom_hooks): ./check.sh
+  adds pre-commit hook okhook (hook_tiers.baseline): ./check.sh
+```
+
 #### Layer order and the security floor
 
 Catalog layers apply in the order **built-in, user, project**:

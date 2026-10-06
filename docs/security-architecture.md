@@ -281,9 +281,14 @@ purpose is to return short-lived cloud credentials. The server does not mount
 `qsdev_nix_run` or `qsdev_credential_vend` without an operator opt-in that the
 project's qsdev configuration cannot set: a flag, an environment variable, or
 the `mcp_serve` section of the user defaults file, which a project defaults
-file is rejected for setting. An environment variable is trusted only as far
-as the shell the server starts from: a committed `devenv.nix` or `.envrc` can
-export one, as it can run any other code in that shell. Credential vending
+file is rejected for setting. A flag or environment variable is trusted only
+as far as whatever starts the server: a committed `.mcp.json` can add
+`--allow-nix-run` or an `env` entry to the qsdev server it launches, and a
+committed `devenv.nix` or `.envrc` can export the variable. Each of those
+files can already run any command once you approve the project's MCP servers
+in Claude Code or run `direnv allow`, so the opt-in gives a hostile
+repository nothing new, and those two approvals are the trust boundary for
+it. Credential vending
 also needs the committed `.qsdev.yaml` to enable `security.credential_vend`,
 whose allow-lists then limit it to the AWS roles, GCP service accounts, Azure
 scopes and managed identities they name; the committed block alone only logs a
@@ -523,6 +528,56 @@ check fails when:
 
 A deleted or unparsable module also fails. Hooks and variables added on top
 pass, as does a disabled formatter or linter.
+
+## Repository Content as Untrusted Input
+
+A cloned repository is untrusted input. Nothing it commits may make qsdev
+generate a weaker or attacker-chosen configuration, write outside the
+project, or expose a gated tool, beyond what the user approves. Each part of
+this has a named acceptance test (`cmd/qsdev/untrusted_input_test.go`, unless
+noted):
+
+- **Project markers.** A `.qsdev/` data directory alone never marks a
+  project, the root walk stops at the enclosing git repository, and a marker
+  owned by another user or writable by everyone is ignored (see
+  [`.qsdev.yaml`](configuration-reference.md#qsdevyaml)). A planted
+  `.qsdev/defaults.yaml` above a fresh repository is not applied, and `init`
+  writes nothing above that repository. CI also runs
+  `scripts/e2e/root-hijack.sh` against the built binary.
+- **Project defaults.** A committed `.qsdev/defaults.yaml` may only tighten
+  (see [Project catalog defaults](#project-catalog-defaults)). A hook id that
+  is not a plain Nix identifier fails the load, naming the id, and nothing is
+  generated. Every command that generates `devenv.nix` from the catalog
+  (`init`, update, `devenv init`/`update`/`add-*`/`remove-*`, `enable`,
+  `disable`) lists every pre-commit hook the file adds, with its section
+  and entry, under `Project defaults: <path>`. A value holding a control or format character (a carriage return, an ANSI escape, a
+  bidi control) is shown quoted with it escaped, so the file cannot rewrite or
+  conceal its own preview line.
+- **Generated Nix.** `devenv.nix` is rendered from a template whose
+  identifier and comment interpolations (env keys, service and script names,
+  hook ids and setting names, section comments) go through functions that
+  fail the render on anything but a plain identifier or a single line.
+  Identifiers reject `a b`, `x;y`, a newline and a Nix keyword; a comment
+  rejects only a line break, since a Nix line comment ends only there and the
+  rest is inert, so the parse-tree test below accepts it only on a line
+  that is a comment up to it.
+  Values are escaped into Nix strings. The few interpolations that emit Nix
+  code (overlay paths, package expressions, ecosystem fragments, service
+  lines, qsdev-built hook entries and packages) come only from compiled
+  modules, the embedded or user-scope catalog, or escaped path literals. A
+  parse-tree test (`addons/devenv/devenv_nix_sinks_test.go`) fails on any
+  new interpolation outside that reviewed list.
+- **Gated MCP tools.** `qsdev_nix_run` and `qsdev_credential_vend` are not
+  mounted from the project's qsdev configuration alone, `qsdev_nix_run`
+  refuses commands the deny rules block, and plain loopback HTTP needs a
+  bearer token (`internal/mcpserve` `TestHTTPLoopback_RequiresToken`). See
+  [Credential vending is opt-in and allow-listed](#layer-12-policy-engine).
+
+**Residual.** A committed `.mcp.json` or `devenv.nix` can carry the gated
+tools' flag or environment opt-ins. This is accepted because either file can
+already run arbitrary commands, so the trust boundary stays Claude Code's
+project-server approval and `direnv allow`, which you should give only to a
+repository you trust.
 
 ## Project File Write Containment
 

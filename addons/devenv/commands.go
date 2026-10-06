@@ -102,6 +102,8 @@ func initCmd() *cobra.Command {
 				}
 			}
 
+			PrintProjectDefaults(cmd.OutOrStdout())
+
 			// Detect project characteristics.
 			detected := detect.Detect(cmd.Context(), projectRoot)
 
@@ -633,6 +635,7 @@ func regenerateAndPersist(cmd *cobra.Command, answers types.WizardAnswers, opts 
 	if err := settleAgainstCommitted(cmd.ErrOrStderr(), opts.projectRoot, &answers); err != nil {
 		return nil, err
 	}
+	PrintProjectDefaults(cmd.OutOrStdout())
 	registry := ecosystem.DefaultRegistry()
 	gen := NewDevenvGenerator(registry, WithProfileRegistry(profile.DefaultProfileRegistry()))
 	files, err := gen.Generate(answers)

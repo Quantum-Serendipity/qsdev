@@ -28,6 +28,10 @@ type Catalog struct {
 	mcpServe        MCPServeOptIns
 	docsCorpus      DocsCorpusConfig
 
+	// projectHooks lists the pre-commit hooks the project defaults file
+	// added (see ProjectOverlayHooks); nil when no project file applied.
+	projectHooks []ProjectHook
+
 	// entryNodes holds, for a catalog parsed from a unified defaults file,
 	// the source YAML node of every entry of each top-level mapping section
 	// (section name -> entry name -> node). MergeCatalogs uses it to

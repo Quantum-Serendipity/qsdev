@@ -2,12 +2,10 @@ package doctor
 
 import (
 	"fmt"
-	"strconv"
-	"strings"
-	"unicode"
 
 	"github.com/Quantum-Serendipity/qsdev/internal/mcphealth"
 	"github.com/Quantum-Serendipity/qsdev/internal/mcpregistry"
+	"github.com/Quantum-Serendipity/qsdev/internal/termutil"
 )
 
 // MCP server statuses in the doctor report.
@@ -128,19 +126,7 @@ func worseMCPStatus(current, severity string) string {
 }
 
 // DisplayName is the server's name made safe to show in a terminal (see
-// terminalSafe).
+// termutil.Safe).
 func (s MCPServerInfo) DisplayName() string {
-	return terminalSafe(s.Name)
-}
-
-// terminalSafe renders text that comes from repository content (an .mcp.json
-// server name, a program a hook runs, a path inside the project) for the
-// terminal. Text holding a control, format or other non-printable character
-// (an ANSI escape sequence could rewrite or hide the lines around it) is
-// shown quoted with those characters escaped.
-func terminalSafe(s string) string {
-	if strings.IndexFunc(s, func(r rune) bool { return !unicode.IsPrint(r) }) >= 0 {
-		return strconv.Quote(s)
-	}
-	return s
+	return termutil.Safe(s.Name)
 }

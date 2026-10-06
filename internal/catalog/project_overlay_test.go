@@ -499,3 +499,88 @@ func TestProjectOverlayRejectsMCPServe(t *testing.T) {
 		}
 	}
 }
+
+// TestProjectOverlayAddedHooks: the catalog records the pre-commit hooks the
+// project defaults file adds (new custom hooks, always-on security hooks and
+// hook tier members), so the init and update plans can show them. Hooks only
+// the developer's org file or the built-in defaults define are not reported,
+// and a catalog without a project file reports none.
+func TestProjectOverlayAddedHooks(t *testing.T) {
+	t.Parallel()
+	org := writeUnifiedFile(t, `
+security_hooks:
+  - orgsec
+custom_hooks:
+  - id: orghook
+    name: Org hook
+    description: org
+    entry: ./org.sh
+    language: system
+    pass_filenames: false
+    stages: [pre-commit]
+`)
+	proj := writeUnifiedFile(t, `
+security_hooks:
+  - foo-hook
+  - orgsec
+  - ripsecrets
+custom_hooks:
+  - id: okhook
+    name: OK hook
+    description: project
+    entry: ./check.sh
+    language: system
+    pass_filenames: false
+    stages: [pre-commit]
+  - id: orghook
+    name: Org hook again
+    description: project copy
+    entry: ./other.sh
+    language: system
+    pass_filenames: false
+    stages: [pre-commit]
+hook_tiers:
+  baseline:
+    - okhook
+    - ripsecrets
+`)
+
+	tests := []struct {
+		name string
+		opts []LoadOption
+		want []ProjectHook
+	}{
+		{
+			name: "project additions over org and built-in",
+			opts: []LoadOption{WithOrgConfigFile(org), WithProjectConfigFile(proj)},
+			want: []ProjectHook{
+				{ID: "foo-hook", Section: sectionSecurityHooks},
+				{ID: "okhook", Entry: "./check.sh", Section: sectionCustomHooks},
+				{ID: "okhook", Entry: "./check.sh", Section: sectionHookTiers + ".baseline"},
+			},
+		},
+		{
+			name: "org file alone",
+			opts: []LoadOption{WithOrgConfigFile(org)},
+		},
+		{
+			name: "built-in defaults alone",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			cat, err := Load(tt.opts...)
+			if err != nil {
+				t.Fatalf("Load() error: %v", err)
+			}
+			got := cat.ProjectOverlayHooks()
+			if !slices.Equal(got, tt.want) {
+				t.Errorf("ProjectOverlayHooks() = %+v, want %+v", got, tt.want)
+			}
+			if tt.want == nil && got != nil {
+				t.Errorf("ProjectOverlayHooks() = %#v, want nil", got)
+			}
+		})
+	}
+}

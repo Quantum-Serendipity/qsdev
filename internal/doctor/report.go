@@ -12,6 +12,7 @@ import (
 	"github.com/Quantum-Serendipity/qsdev/internal/mcphealth"
 	"github.com/Quantum-Serendipity/qsdev/internal/pkgmanager"
 	"github.com/Quantum-Serendipity/qsdev/internal/sysinfo"
+	"github.com/Quantum-Serendipity/qsdev/internal/termutil"
 	"github.com/Quantum-Serendipity/qsdev/pkg/branding"
 )
 
@@ -185,7 +186,7 @@ type ToolEntry struct {
 func (t ToolEntry) problem() (string, bool) {
 	// The name, path and fix can come from repository content (a program a
 	// hook runs), so each is made safe for the terminal.
-	name, fix := terminalSafe(t.Name), terminalSafe(t.FixCommand)
+	name, fix := termutil.Safe(t.Name), termutil.Safe(t.FixCommand)
 	switch {
 	case !t.Found:
 		return withFix(t.withReason("Install "+name), fix), true
@@ -193,7 +194,7 @@ func (t ToolEntry) problem() (string, bool) {
 		return "", false
 	case t.Version == "" && t.InProject:
 		return t.withReason(fmt.Sprintf("%s at %s is inside the project, so doctor does not run it; verify it is >= %s",
-			name, terminalSafe(t.Path), t.MinVersion)), true
+			name, termutil.Safe(t.Path), t.MinVersion)), true
 	case t.Version == "":
 		return t.withReason(fmt.Sprintf("Could not determine %s version (need >= %s)", name, t.MinVersion)), true
 	default:
@@ -474,11 +475,11 @@ func FormatReport(w io.Writer, r *Report, useColor bool) {
 			if p == "" {
 				p = "-"
 			}
-			p = terminalSafe(p)
+			p = termutil.Safe(p)
 			if t.RequiredBy != "" {
 				p += "  " + t.RequiredBy
 			}
-			fmt.Fprintf(w, "  %-14s %-8s %-11s %s\n", terminalSafe(t.Name), sym, terminalSafe(ver), p)
+			fmt.Fprintf(w, "  %-14s %-8s %-11s %s\n", termutil.Safe(t.Name), sym, termutil.Safe(ver), p)
 		}
 		fmt.Fprintln(w)
 	}
@@ -502,7 +503,7 @@ func FormatReport(w io.Writer, r *Report, useColor bool) {
 			if p == "" {
 				p = "-"
 			}
-			fmt.Fprintf(w, "  %-14s %-8s %-11s %s\n", terminalSafe(t.Name), sym, terminalSafe(ver), terminalSafe(p))
+			fmt.Fprintf(w, "  %-14s %-8s %-11s %s\n", termutil.Safe(t.Name), sym, termutil.Safe(ver), termutil.Safe(p))
 		}
 		fmt.Fprintln(w)
 	}
@@ -574,7 +575,7 @@ func formatMCPSection(w io.Writer, ms *MCPSection, okSym, warnSym, failSym strin
 		case MCPStatusMisconfigured:
 			sym = failSym
 		}
-		fmt.Fprintf(w, "  %-20s %s %s (%s)\n", terminalSafe(srv.Name), sym, srv.Status, srv.Transport)
+		fmt.Fprintf(w, "  %-20s %s %s (%s)\n", termutil.Safe(srv.Name), sym, srv.Status, srv.Transport)
 		for _, is := range srv.Issues {
 			isym := warnSym
 			if is.Severity == mcphealth.SeverityError {

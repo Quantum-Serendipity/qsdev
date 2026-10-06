@@ -29,7 +29,11 @@ import (
 	"github.com/Quantum-Serendipity/qsdev/internal/mcpserve/projectctx"
 	"github.com/Quantum-Serendipity/qsdev/internal/mcpserve/spi"
 	"github.com/Quantum-Serendipity/qsdev/internal/mcpserve/tools"
+	"github.com/Quantum-Serendipity/qsdev/internal/mcpserve/tools/devenv"
 	"github.com/Quantum-Serendipity/qsdev/internal/selfprotect/canon"
+	"github.com/Quantum-Serendipity/qsdev/internal/selfprotect/cmdscan"
+	"github.com/Quantum-Serendipity/qsdev/internal/selfprotect/judge"
+	"github.com/Quantum-Serendipity/qsdev/internal/selfprotect/rules"
 	"github.com/Quantum-Serendipity/qsdev/pkg/branding"
 	"github.com/Quantum-Serendipity/qsdev/pkg/types"
 )
@@ -102,6 +106,9 @@ type serveOptions struct {
 	// trustedServers are the MCP server definitions configured into the binary,
 	// trusted for mcp.list health probes alongside the catalog's.
 	trustedServers map[string][]mcpregistry.LaunchSpec
+	// sensitive are the CLI's human-only commands (cmdutil.SensitiveCommands),
+	// which qsdev_nix_run refuses to run as self-protection's SP-014 does.
+	sensitive []cmdscan.CommandSpec
 }
 
 // CommandOption configures the serve command.
@@ -150,7 +157,9 @@ func Command(cmdOpts ...CommandOption) *cobra.Command {
 			"context surface and the framework adapters. The tools still run behind " +
 			"the full middleware chain and mcp.disabled_tools.",
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			return runServe(cmd.Context(), opts)
+			run := opts
+			run.sensitive = cmdutil.SensitiveCommands(cmd.Root())
+			return runServe(cmd.Context(), run)
 		},
 	}
 
@@ -239,6 +248,7 @@ func legacyModuleCommand(module string, run func(context.Context, serveOptions) 
 				transport: string(TransportStdio),
 				port:      defaultHTTPPort,
 				modules:   []string{module},
+				sensitive: cmdutil.SensitiveCommands(cmd.Root()),
 			})
 		},
 	}, cmdutil.ProfileMCPServer)
@@ -335,8 +345,16 @@ func runServe(ctx context.Context, opts serveOptions) error {
 	if err != nil {
 		return err
 	}
-	toolOpts, err = withNixRunDenyRules(toolOpts, func() ([]string, error) {
-		return nixRunDenyRules(root, userScope, canon.ClaudeConfigDir)
+	toolOpts, err = withNixRunPolicy(toolOpts, func() (devenv.NixRunPolicy, error) {
+		deny, err := nixRunDenyRules(root, userScope, canon.ClaudeConfigDir)
+		if err != nil {
+			return devenv.NixRunPolicy{}, err
+		}
+		return devenv.NixRunPolicy{
+			DenyRules: deny,
+			AskRules:  userScope.AllPermissionAskRules(),
+			Judge:     nixRunJudge(root, opts.sensitive),
+		}, nil
 	})
 	if err != nil {
 		return err
@@ -653,20 +671,31 @@ func mountCredentialVend(in mountInputs) (types.CredentialVendConfig, error) {
 	return committed, nil
 }
 
-// withNixRunDenyRules sets opts.NixRunDenyRules from load when qsdev_nix_run
-// is mounted, and leaves opts as is otherwise, so a server without the tool
-// reads nothing for it. A mounted tool whose rules cannot be loaded fails
+// withNixRunPolicy sets opts.NixRunPolicy from load when qsdev_nix_run is
+// mounted, and leaves opts as is otherwise, so a server without the tool
+// reads nothing for it. A mounted tool whose policy cannot be built fails
 // startup rather than running unchecked.
-func withNixRunDenyRules(opts tools.Options, load func() ([]string, error)) (tools.Options, error) {
+func withNixRunPolicy(opts tools.Options, load func() (devenv.NixRunPolicy, error)) (tools.Options, error) {
 	if !opts.NixRun {
 		return opts, nil
 	}
-	rules, err := load()
+	policy, err := load()
 	if err != nil {
-		return tools.Options{}, fmt.Errorf("building the Bash deny rules qsdev_nix_run is checked against: %w", err)
+		return tools.Options{}, fmt.Errorf("building the Bash policy qsdev_nix_run is checked against: %w", err)
 	}
-	opts.NixRunDenyRules = rules
+	opts.NixRunPolicy = policy
 	return opts, nil
+}
+
+// nixRunJudge returns the self-protection verdict qsdev_nix_run holds each
+// Bash command line it is equivalent to: the checks the selfprotect hook
+// applies to a Bash call run in the project root (judge.Evaluate), with
+// SP-014 blocking the CLI's human-only commands, sensitive.
+func nixRunJudge(root string, sensitive []cmdscan.CommandSpec) func(string) (string, string, bool) {
+	return func(line string) (string, string, bool) {
+		d, denied := judge.Evaluate(&rules.EvalContext{ToolName: "Bash", Command: line, CWD: root, SensitiveCommands: sensitive})
+		return d.RuleID, d.Reason, denied
+	}
 }
 
 // nixRunDenyRules returns the deny rules qsdev_nix_run checks each call

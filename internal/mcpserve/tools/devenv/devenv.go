@@ -14,6 +14,7 @@ package devenv
 import (
 	"github.com/Quantum-Serendipity/qsdev/internal/mcpserve/middleware"
 	"github.com/Quantum-Serendipity/qsdev/internal/mcpserve/spi"
+	"github.com/Quantum-Serendipity/qsdev/internal/selfprotect/cmdscan"
 )
 
 // tierStandard mirrors projectctx's standard tool tier.
@@ -21,10 +22,10 @@ const tierStandard = 1
 
 // Tools returns the devenv tool registrations bound to projectRoot. nixRun
 // registers qsdev_nix_run, which the serve command mounts only when the
-// operator opts in; it refuses every call whose Bash equivalent one of
-// nixRunDeny matches. Building the registrations reads nothing, so
-// tools.Names can list them cheaply.
-func Tools(projectRoot string, nixRun bool, nixRunDeny []string) []spi.ToolRegistration {
+// operator opts in; it refuses every call whose Bash equivalent nixRunPolicy
+// refuses. Building the registrations reads nothing, so tools.Names can list
+// them cheaply.
+func Tools(projectRoot string, nixRun bool, nixRunPolicy NixRunPolicy) []spi.ToolRegistration {
 	env := newEnvInfo()
 	regs := []spi.ToolRegistration{
 		{
@@ -40,10 +41,10 @@ func Tools(projectRoot string, nixRun bool, nixRunDeny []string) []spi.ToolRegis
 	if !nixRun {
 		return regs
 	}
-	nix := newNixRunner(projectRoot, nixRunDeny)
+	nix := newNixRunner(projectRoot, nixRunPolicy)
 	return append(regs, spi.ToolRegistration{
-		Name:        "qsdev_nix_run",
-		Description: "Execute a Nix package via `nix run <command> -- <args>` from the project root, in a dedicated process group with a timeout (default 30s, max 10m) and an environment stripped of credential-bearing variables. Remote flake references (URLs, github: and other schemes) and paths outside the project are rejected, and so is a call whose Bash equivalent (the `nix run` command, the program it runs, or a -c script) a Bash deny rule of the project matches. Captures stdout, stderr (each capped at 1 MiB; excess is discarded and flagged *_truncated), exit code, and duration; on timeout the entire process group is killed. Limited to 3 concurrent executions.",
+		Name:        cmdscan.NixRunTool,
+		Description: "Execute a Nix package via `nix run <command> -- <args>` from the project root, in a dedicated process group with a timeout (default 30s, max 10m) and an environment stripped of credential-bearing variables. Remote flake references (URLs, github: and other schemes) and paths outside the project are rejected, and so is a call whose Bash equivalent (the `nix run` command, the program it runs, a -c script or stdin) a Bash deny rule of the project matches, a Bash ask rule (package installs among them) would ask about, or self-protection refuses. Captures stdout, stderr (each capped at 1 MiB; excess is discarded and flagged *_truncated), exit code, and duration; on timeout the entire process group is killed. Limited to 3 concurrent executions.",
 		InputSchema: nixRunSchema(),
 		Category:    middleware.CategoryProcess,
 		Tier:        tierStandard,

@@ -8,6 +8,15 @@ All notable changes to qsdev are recorded in this file. The format is based on
 
 ### Changed
 
+- The MCP server's opt-in `qsdev_nix_run` tool is now held to what a Bash call
+  may do, not only to the Bash deny rules: a call whose Bash equivalent (the
+  `nix run` line, the program it runs, a `-c` script or stdin) self-protection
+  refuses (a write or delete of a protected file, a human-only `qsdev`
+  command, an evasion pattern), or that a Bash ask rule would ask about (a
+  package install through a shell), is refused before nix runs. The
+  selfprotect hook also judges `mcp__<server>__qsdev_nix_run` calls as those
+  Bash command lines.
+
 - Self-protection judges the PowerShell tool's human-only commands in the
   words PowerShell passes a program: `qsdev 'teardown','--force'`,
   `& qsdev teardown,--force`, `& qsdev @('teardown','--force')`, a splat,

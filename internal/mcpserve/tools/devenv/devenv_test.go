@@ -140,7 +140,7 @@ func TestEnvInfoUnknownProbe(t *testing.T) {
 
 func TestNixRunMissingCommand(t *testing.T) {
 	t.Parallel()
-	nix := newNixRunner(t.TempDir(), nil)
+	nix := newNixRunner(t.TempDir(), NixRunPolicy{})
 	res := call(t, nix.handle, map[string]any{})
 	if !res.IsError {
 		t.Fatal("expected IsError when command is missing")
@@ -258,7 +258,7 @@ func TestInstallableRejection(t *testing.T) {
 func TestNixRunRejectsRemoteInstallable(t *testing.T) {
 	t.Parallel()
 	const ref = "github:owner/repo#pkg"
-	nix := newNixRunner(t.TempDir(), nil)
+	nix := newNixRunner(t.TempDir(), NixRunPolicy{})
 	res := call(t, nix.handle, map[string]any{"command": ref})
 	if !res.IsError {
 		t.Fatal("expected IsError for a remote installable")
@@ -281,7 +281,7 @@ func TestNixRunRejectsRemoteInstallable(t *testing.T) {
 // handler must reject it before nix is looked up or run.
 func TestNixRunRejectsFlagAsCommand(t *testing.T) {
 	t.Parallel()
-	nix := newNixRunner(t.TempDir(), nil)
+	nix := newNixRunner(t.TempDir(), NixRunPolicy{})
 	for _, flag := range []string{"--offline", "--impure", "--refresh", "-L"} {
 		t.Run(flag, func(t *testing.T) {
 			t.Parallel()
@@ -350,7 +350,8 @@ func TestRunProcessGroupTimeoutVsCancellation(t *testing.T) {
 // a structured result with an exit code (it does not require a successful run).
 func TestNixRunExecutes(t *testing.T) {
 	testutil.RequireTool(t, "nix", testutil.RequireNix)
-	nix := newNixRunner(t.TempDir(), nil)
+	root := t.TempDir()
+	nix := newNixRunner(root, testNixRunPolicy(t, root, nil))
 	res := call(t, nix.handle, map[string]any{
 		"command": "nixpkgs#hello",
 		"args":    []any{"--version"},

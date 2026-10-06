@@ -27,7 +27,7 @@ func TestInitPlanNamesProjectDefaults(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			dir := testutil.MarkerFreeTempDir(t)
+			dir := testutil.IsolatedDir(t)
 			overlay := catalog.ProjectConfigPath(dir)
 			if tt.overlay {
 				if err := os.MkdirAll(filepath.Dir(overlay), 0o755); err != nil {

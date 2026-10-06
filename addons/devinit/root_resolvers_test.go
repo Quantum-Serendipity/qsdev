@@ -58,7 +58,7 @@ func TestRootResolversAgree(t *testing.T) {
 			if tt.unixOnly && runtime.GOOS == "windows" {
 				t.Skip("marker trust is ACL-based on Windows and out of scope")
 			}
-			root := testutil.MarkerFreeTempDir(t)
+			root := testutil.IsolatedDir(t)
 			plantPaths(t, root, tt.paths...)
 			if tt.shared != "" {
 				chmodShared(t, filepath.Join(root, filepath.FromSlash(tt.shared)))

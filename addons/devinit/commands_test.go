@@ -17,6 +17,7 @@ import (
 	"github.com/Quantum-Serendipity/qsdev/internal/check"
 	qsdevconfig "github.com/Quantum-Serendipity/qsdev/internal/config"
 	"github.com/Quantum-Serendipity/qsdev/internal/state"
+	"github.com/Quantum-Serendipity/qsdev/internal/testutil"
 	"github.com/Quantum-Serendipity/qsdev/internal/toolreg"
 )
 
@@ -25,11 +26,7 @@ import (
 func executeInitCmd(t *testing.T, dir string, args ...string) (string, error) {
 	t.Helper()
 	t.Setenv("QSDEV_SKIP_SETUP", "1")
-	origDir, _ := os.Getwd()
-	defer func() { _ = os.Chdir(origDir) }()
-	if err := os.Chdir(dir); err != nil {
-		t.Fatalf("chdir to %s: %v", dir, err)
-	}
+	t.Chdir(dir)
 
 	cmd := initCmd()
 	var buf bytes.Buffer
@@ -68,7 +65,7 @@ func TestInitCmd_HasCorrectUseAndFlags(t *testing.T) {
 }
 
 func TestInitCmd_DryRun(t *testing.T) {
-	dir := t.TempDir()
+	dir := testutil.IsolatedDir(t)
 
 	output, err := executeInitCmd(t, dir, "--lang", "go", "--yes", "--dry-run")
 	if err != nil {
@@ -88,7 +85,7 @@ func TestInitCmd_DryRun(t *testing.T) {
 }
 
 func TestInitCmd_WritesFiles(t *testing.T) {
-	dir := t.TempDir()
+	dir := testutil.IsolatedDir(t)
 
 	output, err := executeInitCmd(t, dir, "--lang", "go", "--yes")
 	if err != nil {
@@ -109,7 +106,7 @@ func TestInitCmd_WritesFiles(t *testing.T) {
 }
 
 func TestInitCmd_DevenvOnly(t *testing.T) {
-	dir := t.TempDir()
+	dir := testutil.IsolatedDir(t)
 
 	output, err := executeInitCmd(t, dir, "--lang", "go", "--yes", "--devenv-only")
 	if err != nil {
@@ -130,7 +127,7 @@ func TestInitCmd_DevenvOnly(t *testing.T) {
 }
 
 func TestInitCmd_ClaudeOnly(t *testing.T) {
-	dir := t.TempDir()
+	dir := testutil.IsolatedDir(t)
 
 	output, err := executeInitCmd(t, dir, "--lang", "go", "--yes", "--claude-only")
 	if err != nil {
@@ -151,7 +148,7 @@ func TestInitCmd_ClaudeOnly(t *testing.T) {
 }
 
 func TestInitCmd_ForceOverwrite(t *testing.T) {
-	dir := t.TempDir()
+	dir := testutil.IsolatedDir(t)
 
 	// Create an existing devenv.nix.
 	existingContent := []byte("# existing devenv.nix\n")
@@ -182,7 +179,7 @@ func TestInitCmd_ForceOverwrite(t *testing.T) {
 }
 
 func TestInitCmd_ListProfiles(t *testing.T) {
-	dir := t.TempDir()
+	dir := testutil.IsolatedDir(t)
 
 	output, err := executeInitCmd(t, dir, "--list-profiles")
 	if err != nil {
@@ -199,7 +196,7 @@ func TestInitCmd_ListProfiles(t *testing.T) {
 }
 
 func TestInitCmd_Profile(t *testing.T) {
-	dir := t.TempDir()
+	dir := testutil.IsolatedDir(t)
 
 	output, err := executeInitCmd(t, dir, "--profile", "go-web", "--yes")
 	if err != nil {
@@ -220,7 +217,7 @@ func TestInitCmd_Profile(t *testing.T) {
 }
 
 func TestInitCmd_SavesAnswers(t *testing.T) {
-	dir := t.TempDir()
+	dir := testutil.IsolatedDir(t)
 
 	output, err := executeInitCmd(t, dir, "--lang", "go", "--yes")
 	if err != nil {
@@ -234,7 +231,7 @@ func TestInitCmd_SavesAnswers(t *testing.T) {
 }
 
 func TestInitCmd_SavesState(t *testing.T) {
-	dir := t.TempDir()
+	dir := testutil.IsolatedDir(t)
 
 	output, err := executeInitCmd(t, dir, "--lang", "go", "--yes")
 	if err != nil {
@@ -251,7 +248,7 @@ func TestInitCmd_RequiresWizardOrYes(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("huh TUI forms hang on Windows without TTY")
 	}
-	dir := t.TempDir()
+	dir := testutil.IsolatedDir(t)
 
 	// Without --yes and without a complete set of flags, the wizard will
 	// attempt to run. In a test environment without a TTY, the terminal
@@ -266,7 +263,7 @@ func TestInitCmd_RequiresWizardOrYes(t *testing.T) {
 }
 
 func TestInitCmd_UnknownProfile(t *testing.T) {
-	dir := t.TempDir()
+	dir := testutil.IsolatedDir(t)
 
 	_, err := executeInitCmd(t, dir, "--profile", "nonexistent", "--yes")
 	if err == nil {
@@ -278,7 +275,7 @@ func TestInitCmd_UnknownProfile(t *testing.T) {
 }
 
 func TestInitCmd_SavesPerAddonAnswers(t *testing.T) {
-	dir := t.TempDir()
+	dir := testutil.IsolatedDir(t)
 
 	output, err := executeInitCmd(t, dir, "--lang", "go", "--yes")
 	if err != nil {
@@ -307,7 +304,7 @@ func TestInitCmd_SavesPerAddonAnswers(t *testing.T) {
 // Claude Code hooks write under .claude/ (W047): they hold tool inputs and
 // commands, while the rest of .claude/ is meant to be committed.
 func TestInitCmd_GitignoresHookAuditLogs(t *testing.T) {
-	dir := t.TempDir()
+	dir := testutil.IsolatedDir(t)
 	if output, err := executeInitCmd(t, dir, "--lang", "go", "--yes"); err != nil {
 		t.Fatalf("init failed: %v\nOutput: %s", err, output)
 	}
@@ -324,7 +321,7 @@ func TestInitCmd_GitignoresHookAuditLogs(t *testing.T) {
 }
 
 func TestInitCmd_Quiet(t *testing.T) {
-	dir := t.TempDir()
+	dir := testutil.IsolatedDir(t)
 
 	output, err := executeInitCmd(t, dir, "--lang", "go", "--yes", "--quiet")
 	if err != nil {
@@ -342,7 +339,7 @@ func TestInitCmd_Quiet(t *testing.T) {
 }
 
 func TestInitCmd_DryRunWithNonInteractive(t *testing.T) {
-	dir := t.TempDir()
+	dir := testutil.IsolatedDir(t)
 
 	output, err := executeInitCmd(t, dir, "--profile", "go-web", "--yes", "--dry-run")
 	if err != nil {
@@ -360,7 +357,7 @@ func TestInitCmd_DryRunWithNonInteractive(t *testing.T) {
 }
 
 func TestInitCmd_AnswersFilePlusYes(t *testing.T) {
-	dir := t.TempDir()
+	dir := testutil.IsolatedDir(t)
 
 	answersContent := `languages:
   - name: go
@@ -412,7 +409,7 @@ func TestInitCmd_WarnsPoetryProjectFiles(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			dir := t.TempDir()
+			dir := testutil.IsolatedDir(t)
 			for _, f := range tt.files {
 				if err := os.WriteFile(filepath.Join(dir, f), nil, 0o644); err != nil {
 					t.Fatal(err)
@@ -440,7 +437,7 @@ func TestInitCmd_WarnsPoetryProjectFiles(t *testing.T) {
 // so they warn about a missing poetry.lock or pyproject.toml like init does.
 func TestUpdateAndJoin_WarnPoetryProjectFiles(t *testing.T) {
 	t.Run("update", func(t *testing.T) {
-		dir := t.TempDir()
+		dir := testutil.IsolatedDir(t)
 		for _, f := range []string{"pyproject.toml", "poetry.lock"} {
 			if err := os.WriteFile(filepath.Join(dir, f), nil, 0o644); err != nil {
 				t.Fatal(err)
@@ -462,7 +459,7 @@ func TestUpdateAndJoin_WarnPoetryProjectFiles(t *testing.T) {
 	})
 	t.Run("join", func(t *testing.T) {
 		t.Setenv("QSDEV_SKIP_SETUP", "1")
-		dir := t.TempDir()
+		dir := testutil.IsolatedDir(t)
 		config := "version: 1\nlanguages:\n  - name: python\n    package_manager: poetry\n"
 		if err := os.WriteFile(filepath.Join(dir, ".qsdev.yaml"), []byte(config), 0o644); err != nil {
 			t.Fatal(err)
@@ -481,7 +478,7 @@ func TestUpdateAndJoin_WarnPoetryProjectFiles(t *testing.T) {
 // with args, returning the directory and the command output.
 func initGoProject(t *testing.T, args ...string) (string, string) {
 	t.Helper()
-	dir := t.TempDir()
+	dir := testutil.IsolatedDir(t)
 	if err := os.WriteFile(filepath.Join(dir, "go.mod"), []byte("module example.com/aon\n\ngo 1.24\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -839,7 +836,7 @@ func TestInit_OutOfScopeAnswersFileOffNotPersisted(t *testing.T) {
 // TestInit_AgentPostmortemFalseRejected verifies --agent-postmortem=false is
 // rejected with a pointer to the only opt-out rather than silently ignored.
 func TestInit_AgentPostmortemFalseRejected(t *testing.T) {
-	dir := t.TempDir()
+	dir := testutil.IsolatedDir(t)
 	out, err := executeInitCmd(t, dir, "--yes", "--lang", "go", "--agent-postmortem=false")
 	if err == nil {
 		t.Fatalf("init --agent-postmortem=false succeeded:\n%s", out)

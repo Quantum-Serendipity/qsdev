@@ -460,10 +460,8 @@ func doctorJSON(t *testing.T) map[string]any {
 // a project doctor ran its project-scoped checks against the working
 // directory, reporting its .mcp.json and claiming it had no NFS mounts.
 func TestDoctor_NoProjectSkipsProjectSections(t *testing.T) {
-	isolateHome(t)
-	dir := testutil.MarkerFreeTempDir(t)
+	dir := testutil.Project(t, testutil.ProjectOptions{NoGit: true})
 	writeDoctorProjectFixture(t, dir)
-	t.Chdir(dir)
 
 	human := runDoctorFor(t)
 	if !strings.Contains(human, "project checks skipped") {
@@ -491,8 +489,7 @@ func TestDoctor_NoProjectSkipsProjectSections(t *testing.T) {
 // TestDoctor_InsideProjectRunsProjectSections checks that the U13-V01 gate
 // still runs the project-scoped checks from a subdirectory of a project.
 func TestDoctor_InsideProjectRunsProjectSections(t *testing.T) {
-	isolateHome(t)
-	proj := testutil.MarkerFreeTempDir(t)
+	proj := testutil.Project(t, testutil.ProjectOptions{NoGit: true})
 	writeDoctorProjectFixture(t, proj)
 	if err := os.WriteFile(filepath.Join(proj, branding.Get().ConfigFile), []byte("version: 1\n"), 0o644); err != nil {
 		t.Fatal(err)

@@ -77,7 +77,7 @@ func TestProject_LazyEnclosing(t *testing.T) {
 			if tt.unixOnly && runtime.GOOS == "windows" {
 				t.Skip("marker trust is ACL-based on Windows and out of scope")
 			}
-			root := testutil.MarkerFreeTempDir(t)
+			root := testutil.IsolatedDir(t)
 			plant(t, root, tt.markers...)
 			for _, d := range tt.shared {
 				p := filepath.Join(root, filepath.FromSlash(d))
@@ -149,7 +149,7 @@ func TestProject_StoredContextIgnoresMode(t *testing.T) {
 // resolves from the working directory with its own root mode: a Here command
 // acts on the working directory even below an initialized project.
 func TestProject_LazyFallbackUsesAnnotationMode(t *testing.T) {
-	root := testutil.MarkerFreeTempDir(t)
+	root := testutil.IsolatedDir(t)
 	plant(t, root, ".qsdev.yaml", ".devinit/", "services/api/")
 	cwd := filepath.Join(root, "services", "api")
 	t.Chdir(cwd)

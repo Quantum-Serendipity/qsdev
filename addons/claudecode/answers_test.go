@@ -12,6 +12,7 @@ import (
 
 	claudecode "github.com/Quantum-Serendipity/qsdev/addons/claudecode"
 	"github.com/Quantum-Serendipity/qsdev/internal/answers"
+	"github.com/Quantum-Serendipity/qsdev/internal/testutil"
 	"github.com/Quantum-Serendipity/qsdev/pkg/types"
 )
 
@@ -70,8 +71,8 @@ func assertEnableSurvived(t *testing.T, root string) types.WizardAnswers {
 // subcommands must read the primary answers file, not a stale per-addon copy,
 // so they never write an old snapshot over `qsdev enable` changes.
 func TestAddSkill_KeepsPrimaryAnswersWrittenAfterInit(t *testing.T) {
-	root := t.TempDir()
-	chdir(t, root)
+	root := testutil.IsolatedDir(t)
+	t.Chdir(root)
 
 	runClaude(t, "init", "--yes", "--permission-preset", "standard")
 	simulateEnable(t, root)
@@ -87,8 +88,8 @@ func TestAddSkill_KeepsPrimaryAnswersWrittenAfterInit(t *testing.T) {
 // `claude init --force` must overlay only the Claude Code settings it owns
 // instead of replacing the whole primary answers file.
 func TestClaudeInitForce_KeepsNonClaudeAnswers(t *testing.T) {
-	root := t.TempDir()
-	chdir(t, root)
+	root := testutil.IsolatedDir(t)
+	t.Chdir(root)
 
 	runClaude(t, "init", "--yes", "--permission-preset", "standard")
 	simulateEnable(t, root)

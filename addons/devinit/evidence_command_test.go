@@ -16,6 +16,7 @@ import (
 	"github.com/Quantum-Serendipity/qsdev/internal/posture"
 	"github.com/Quantum-Serendipity/qsdev/internal/selfprotect/cmdscan"
 	"github.com/Quantum-Serendipity/qsdev/internal/state"
+	"github.com/Quantum-Serendipity/qsdev/internal/testutil"
 	"github.com/Quantum-Serendipity/qsdev/pkg/types"
 )
 
@@ -23,11 +24,7 @@ import (
 // returns its stdout/stderr buffer and any error.
 func executeEvidenceCmd(t *testing.T, dir string, args ...string) (string, error) {
 	t.Helper()
-	origDir, _ := os.Getwd()
-	defer func() { _ = os.Chdir(origDir) }()
-	if err := os.Chdir(dir); err != nil {
-		t.Fatalf("chdir to %s: %v", dir, err)
-	}
+	t.Chdir(dir)
 
 	cmd := evidenceCmd()
 	var buf bytes.Buffer
@@ -92,7 +89,7 @@ func parseEvidenceJSON(t *testing.T, out string) *evidence.EvidenceReport {
 // reported as "Addressed". The old presence-based assessment marked both
 // Addressed from file existence alone; the posture-driven assessment does not.
 func TestEvidenceCmd_PresentButUnenforcedNotAddressed(t *testing.T) {
-	dir := t.TempDir()
+	dir := testutil.IsolatedDir(t)
 	writeInitialized(t, dir)
 	writeWeakConfig(t, dir)
 
@@ -124,7 +121,7 @@ func TestEvidenceCmd_PresentButUnenforcedNotAddressed(t *testing.T) {
 // `qsdev status`, the evidence command refuses to grade an uninitialized
 // project, so no control can be reported as "Addressed".
 func TestEvidenceCmd_ExactE3ReproUninitialized(t *testing.T) {
-	dir := t.TempDir()
+	dir := testutil.IsolatedDir(t)
 	writeWeakConfig(t, dir) // no writeInitialized: no .qsdev.yaml, no state
 
 	out, err := executeEvidenceCmd(t, dir, "--framework", "soc2", "--format", "json")
@@ -145,7 +142,7 @@ func TestEvidenceCmd_ExactE3ReproUninitialized(t *testing.T) {
 // layer status embedded in (and derived by) the evidence report must equal the
 // status produced by an independent posture.Assess call on the same project.
 func TestEvidenceCmd_ParityWithPostureAssess(t *testing.T) {
-	dir := t.TempDir()
+	dir := testutil.IsolatedDir(t)
 	writeInitialized(t, dir)
 	writeWeakConfig(t, dir)
 
@@ -202,7 +199,7 @@ func TestEvidenceCmd_ParityWithPostureAssess(t *testing.T) {
 // PreToolUse hook), the layer it enforces (install-script-blocking) is
 // enabled and its control (CC6.6) is legitimately Addressed.
 func TestEvidenceCmd_EnforcedLayerAddressed(t *testing.T) {
-	dir := t.TempDir()
+	dir := testutil.IsolatedDir(t)
 	writeInitialized(t, dir)
 
 	// Persist a real init-state manifest that enables attach-guard and records

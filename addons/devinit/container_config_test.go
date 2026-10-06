@@ -198,11 +198,7 @@ func TestGatewayComposeKeepHeld(t *testing.T) {
 func runGatewayUpdate(t *testing.T, dir string, opts UpdateOptions) string {
 	t.Helper()
 	t.Setenv("QSDEV_SKIP_SETUP", "1")
-	origDir, _ := os.Getwd()
-	defer func() { _ = os.Chdir(origDir) }()
-	if err := os.Chdir(dir); err != nil {
-		t.Fatalf("chdir: %v", err)
-	}
+	t.Chdir(dir)
 	cmd := &cobra.Command{}
 	var buf bytes.Buffer
 	cmd.SetOut(&buf)

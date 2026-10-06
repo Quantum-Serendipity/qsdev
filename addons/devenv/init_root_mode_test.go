@@ -5,7 +5,6 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
-	"strings"
 	"testing"
 
 	"github.com/Quantum-Serendipity/qsdev/internal/testutil"
@@ -17,7 +16,7 @@ import (
 // MarkRootHere), so neither the enclosing project's existing devenv.nix nor
 // its join state (a committed config without local state) applies.
 func TestDevenvInitTargetsCwd(t *testing.T) {
-	proj := testutil.MarkerFreeTempDir(t)
+	proj := testutil.IsolatedDir(t)
 	for _, f := range []string{branding.Get().ConfigFile, "devenv.nix"} {
 		if err := os.WriteFile(filepath.Join(proj, f), []byte("version: 1\n"), 0o644); err != nil {
 			t.Fatal(err)
@@ -49,8 +48,7 @@ func TestDevenvInitTargetsCwd(t *testing.T) {
 // init` run from a subdirectory of a project writes devenv.nix into the
 // working directory, never into the enclosing project's root.
 func TestInitCmd_IgnoresAncestorMarker(t *testing.T) {
-	isolateHome(t)
-	proj := testutil.MarkerFreeTempDir(t)
+	proj := testutil.Project(t, testutil.ProjectOptions{NoGit: true})
 	if err := os.WriteFile(filepath.Join(proj, branding.Get().ConfigFile), []byte("version: 1\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -73,18 +71,5 @@ func TestInitCmd_IgnoresAncestorMarker(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(proj, "devenv.nix")); !os.IsNotExist(err) {
 		t.Errorf("devenv init wrote the enclosing project's devenv.nix (stat err = %v)", err)
-	}
-}
-
-// isolateHome points HOME, USERPROFILE and the XDG base directories at fresh
-// temporary directories, so a command under test neither reads nor writes the
-// developer's real per-user state.
-func isolateHome(t *testing.T) {
-	t.Helper()
-	home := t.TempDir()
-	t.Setenv("HOME", home)
-	t.Setenv("USERPROFILE", home)
-	for _, v := range []string{"XDG_CONFIG_HOME", "XDG_DATA_HOME", "XDG_STATE_HOME", "XDG_CACHE_HOME"} {
-		t.Setenv(v, filepath.Join(home, strings.ToLower(v)))
 	}
 }

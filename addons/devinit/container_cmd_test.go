@@ -8,17 +8,15 @@ import (
 	"runtime"
 	"strings"
 	"testing"
+
+	"github.com/Quantum-Serendipity/qsdev/internal/testutil"
 )
 
 // executeContainerCmd creates and runs the container command in the given
 // directory with the provided args.
 func executeContainerCmd(t *testing.T, dir string, args ...string) (string, error) {
 	t.Helper()
-	origDir, _ := os.Getwd()
-	defer func() { _ = os.Chdir(origDir) }()
-	if err := os.Chdir(dir); err != nil {
-		t.Fatalf("chdir to %s: %v", dir, err)
-	}
+	t.Chdir(dir)
 
 	cmd := containerCmd()
 	var buf bytes.Buffer
@@ -30,7 +28,7 @@ func executeContainerCmd(t *testing.T, dir string, args ...string) (string, erro
 }
 
 func TestContainerCmd_NoComposeFiles(t *testing.T) {
-	dir := t.TempDir()
+	dir := testutil.IsolatedDir(t)
 
 	output, err := executeContainerCmd(t, dir, "migrate")
 	if err == nil {
@@ -51,7 +49,7 @@ func TestContainerCmd_NoComposeFiles(t *testing.T) {
 }
 
 func TestContainerCmd_DryRunDefault(t *testing.T) {
-	dir := t.TempDir()
+	dir := testutil.IsolatedDir(t)
 	composePath := filepath.Join(dir, "docker-compose.yml")
 	if err := os.WriteFile(composePath, []byte(`
 services:
@@ -77,7 +75,7 @@ services:
 }
 
 func TestContainerCmd_AutoFix(t *testing.T) {
-	dir := t.TempDir()
+	dir := testutil.IsolatedDir(t)
 	composePath := filepath.Join(dir, "docker-compose.yml")
 	if err := os.WriteFile(composePath, []byte(`services:
   web:
@@ -101,7 +99,7 @@ func TestContainerCmd_AutoFix(t *testing.T) {
 }
 
 func TestContainerCmd_JSONOutput(t *testing.T) {
-	dir := t.TempDir()
+	dir := testutil.IsolatedDir(t)
 	if err := os.WriteFile(filepath.Join(dir, "docker-compose.yml"), []byte(`
 services:
   web:
@@ -126,7 +124,7 @@ services:
 }
 
 func TestContainerCmd_DetectSubcommand(t *testing.T) {
-	dir := t.TempDir()
+	dir := testutil.IsolatedDir(t)
 
 	output, err := executeContainerCmd(t, dir, "detect")
 	if err != nil {
@@ -195,7 +193,7 @@ func TestContainerCmd_DryRunFlagCombinations(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			dir := t.TempDir()
+			dir := testutil.IsolatedDir(t)
 			composePath := filepath.Join(dir, "docker-compose.yml")
 			if err := os.WriteFile(composePath, []byte(fixableCompose), 0o644); err != nil {
 				t.Fatalf("writing compose: %v", err)
@@ -224,7 +222,7 @@ func TestContainerCmd_AutoFixPreservesFileMode(t *testing.T) {
 		t.Skip("POSIX permission bits are not meaningful on Windows")
 	}
 
-	dir := t.TempDir()
+	dir := testutil.IsolatedDir(t)
 	composePath := filepath.Join(dir, "docker-compose.yml")
 	if err := os.WriteFile(composePath, []byte(fixableCompose), 0o600); err != nil {
 		t.Fatalf("writing compose: %v", err)
@@ -251,7 +249,7 @@ func TestContainerCmd_AutoFixPreservesFileMode(t *testing.T) {
 }
 
 func TestContainerCmd_OutputFileHoldsFullReport(t *testing.T) {
-	dir := t.TempDir()
+	dir := testutil.IsolatedDir(t)
 	if err := os.WriteFile(filepath.Join(dir, "docker-compose.yml"), []byte(fixableCompose), 0o644); err != nil {
 		t.Fatalf("writing compose: %v", err)
 	}

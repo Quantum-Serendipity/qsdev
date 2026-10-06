@@ -69,12 +69,12 @@ type enforceEnv struct {
 // marked by its config file, with a subdirectory. It does not write a policy.
 func newEnforceEnv(t *testing.T) enforceEnv {
 	t.Helper()
-	home := t.TempDir()
+	home := testutil.IsolatedDir(t)
 	t.Setenv("HOME", home)
 	t.Setenv("USERPROFILE", home)
 	t.Setenv(envClaudeProjectDir, "")
 
-	project := t.TempDir()
+	project := testutil.IsolatedDir(t)
 	sub := filepath.Join(project, "internal", "pkg")
 	for _, dir := range []string{filepath.Join(project, projectctx.DataDirName()), sub} {
 		if err := os.MkdirAll(dir, 0o755); err != nil {
@@ -519,10 +519,7 @@ func TestPolicyFilesForDeduplicatesHomeProject(t *testing.T) {
 // its user-level .qsdev/ a project marker. The bare data directory is no
 // marker anywhere, so no home matching is needed at all.
 func TestPolicyProjectRoot_HomeMatchedByIdentity(t *testing.T) {
-	realHome, err := filepath.EvalSymlinks(t.TempDir())
-	if err != nil {
-		t.Fatal(err)
-	}
+	realHome := testutil.IsolatedDir(t)
 	start := filepath.Join(realHome, "scratch")
 	for _, dir := range []string{filepath.Join(realHome, projectctx.DataDirName()), start} {
 		if err := os.MkdirAll(dir, 0o755); err != nil {
@@ -588,7 +585,7 @@ func TestPolicyProjectRoot_Bounded(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			root := testutil.MarkerFreeTempDir(t)
+			root := testutil.IsolatedDir(t)
 			plantPaths(t, root, tt.paths...)
 			t.Setenv(envClaudeProjectDir, "")
 			start := filepath.Join(root, filepath.FromSlash(tt.start))

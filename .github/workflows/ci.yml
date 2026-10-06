@@ -71,6 +71,37 @@ jobs:
           path: test-results.xml
           retention-days: 30
 
+  # Runs the whole suite with project markers (.qsdev.yaml, .qsdev/, .devinit/,
+  # .claude/, CLAUDE.md, devenv.nix) planted in /tmp and in a trusted 0755
+  # TMPDIR, in a shuffled order. A test that treats t.TempDir() as a project
+  # without its own .git ceiling (use testutil.IsolatedDir/Project) walks into
+  # the planted ancestor and fails here instead of on a developer machine.
+  # Reproduce locally with PLANT_ROOT=<scratch dir> scripts/ci/planted-markers.sh.
+  hermetic:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    concurrency:
+      group: hermetic-${{ github.ref }}
+      cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+    steps:
+      - name: Harden Runner
+        uses: step-security/harden-runner@9af89fc71515a100421586dfdb3dc9c984fbf411 # v2.19.4
+        with:
+          egress-policy: audit
+
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+
+      - name: Set up Go
+        uses: actions/setup-go@4a3601121dd01d1626a1e23e37211e3254c1c06c # v6.4.0
+        with:
+          go-version-file: go.mod
+
+      - name: Test with planted project markers
+        run: scripts/ci/planted-markers.sh
+
   lint:
     runs-on: ubuntu-latest
     steps:

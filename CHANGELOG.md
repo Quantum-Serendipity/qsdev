@@ -8,6 +8,14 @@ All notable changes to qsdev are recorded in this file. The format is based on
 
 ### Changed
 
+- `qsdev devenv doctor` now runs `qsdev --version` on the `qsdev` the
+  project's Claude Code hooks find on PATH and fails `--check` when it does
+  not satisfy the project's `qsdev_version`, naming its path and version.
+  Before, it only looked the binary up, so a stale `qsdev` earlier on PATH,
+  which the fail-closed selfprotect hook would run, passed. A missing `qsdev`
+  now gets a PATH hint naming the running binary instead of "no nix package
+  is known for qsdev".
+
 - An org defaults file (`$QSDEV_ORG_CONFIG` or the pinned overlay) that fails
   to load, for example because it tries to loosen the built-in security
   floor, now stops every command that generates or changes the project:

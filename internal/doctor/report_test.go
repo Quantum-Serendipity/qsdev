@@ -400,3 +400,130 @@ func TestFormatReport_ProjectSkippedNote(t *testing.T) {
 		})
 	}
 }
+
+// TestRequiredProblems: every required tool that blocks the environment gets
+// one actionable line (missing, outdated or of unknown version), optional
+// tools never do, and the recommendations reuse the same lines.
+func TestRequiredProblems(t *testing.T) {
+	t.Parallel()
+	nixHost := &sysinfo.OSInfo{OS: "linux", Family: "nixos", Distro: "nixos", PackageManager: "nix", HasNix: true}
+	checks := []ToolStatus{
+		{Name: "git", Required: true, Installed: true, Version: "2.47.1", VersionOK: true},
+		{Name: "nix", Required: true, Installed: false, MinVersion: "2.4"},
+		{Name: "devenv", Required: true, Installed: true, Version: "1.4.1", MinVersion: "2.1"},
+		{Name: "python3", Required: true, Installed: true, MinVersion: "3.9"},
+		{Name: "shfmt", Required: false, Installed: false},
+	}
+
+	r := BuildReport(nixHost, checks, "0.1.0")
+
+	want := []string{
+		"Install nix: qsdev devenv setup",
+		"Upgrade devenv to >= 2.1: qsdev devenv setup",
+		"Could not determine python3 version (need >= 3.9)",
+	}
+	if got := r.RequiredProblems(); !slices.Equal(got, want) {
+		t.Errorf("RequiredProblems() = %q, want %q", got, want)
+	}
+	if r.AllRequiredPresent {
+		t.Error("AllRequiredPresent = true with required problems")
+	}
+	wantRecs := append(slices.Clone(want), "Install shfmt: qsdev devenv add-package shfmt")
+	if !slices.Equal(r.Recommendations, wantRecs) {
+		t.Errorf("Recommendations = %q, want %q", r.Recommendations, wantRecs)
+	}
+}
+
+// TestRequiredProblems_None: a report whose required tools all meet their
+// floors has no problems.
+func TestRequiredProblems_None(t *testing.T) {
+	t.Parallel()
+	r := BuildReport(&sysinfo.OSInfo{OS: "linux", PackageManager: "nix", HasNix: true}, []ToolStatus{
+		{Name: "devenv", Required: true, Installed: true, Version: "2.1.2", MinVersion: "2.1", VersionOK: true},
+	}, "0.1.0")
+	if got := r.RequiredProblems(); len(got) != 0 {
+		t.Errorf("RequiredProblems() = %q, want none", got)
+	}
+}
+
+// TestBuildReport_RequiredByHooks: a tool required because something other
+// than the environment needs it says so, in the problem line and the table,
+// and is not sent to `devenv setup`, which installs prerequisites only.
+func TestBuildReport_RequiredByHooks(t *testing.T) {
+	t.Parallel()
+	const why = "needed by Claude Code hooks"
+	nixHost := &sysinfo.OSInfo{OS: "linux", Family: "nixos", Distro: "nixos", PackageManager: "nix", HasNix: true}
+	r := BuildReport(nixHost, []ToolStatus{
+		{Name: "no-such-hook-tool", Required: true, RequiredBy: why},
+		{Name: "shfmt", Required: true, RequiredBy: why, Installed: true, Version: "3.0", MinVersion: "3.9"},
+	}, "0.1.0")
+
+	want := []string{
+		"Install no-such-hook-tool, " + why + ": no nix package is known for no-such-hook-tool; install it from its official distribution",
+		"Upgrade shfmt to >= 3.9, " + why + ": qsdev devenv add-package shfmt",
+	}
+	if got := r.RequiredProblems(); !slices.Equal(got, want) {
+		t.Errorf("RequiredProblems() = %q, want %q", got, want)
+	}
+	var buf bytes.Buffer
+	FormatReport(&buf, r, false)
+	if !strings.Contains(buf.String(), why) {
+		t.Errorf("report does not say why the tool is required:\n%s", buf.String())
+	}
+}
+
+// TestReport_HookProgramNameTerminalSafe: a program name from repository
+// content (a hook command word, a CRLF shebang) cannot put raw control bytes
+// into the problem lines or the table.
+func TestReport_HookProgramNameTerminalSafe(t *testing.T) {
+	t.Parallel()
+	const why = "needed by Claude Code hooks"
+	nixHost := &sysinfo.OSInfo{OS: "linux", Family: "nixos", Distro: "nixos", PackageManager: "nix", HasNix: true}
+	r := BuildReport(nixHost, []ToolStatus{
+		{Name: "\x1b[1A\x1b[2K\rAll required tools are present.\x1b[8m selfprotect", Required: true, RequiredBy: why},
+		{Name: "python3\r", Required: true, RequiredBy: why},
+	}, "0.1.0")
+
+	var buf bytes.Buffer
+	FormatReport(&buf, r, false)
+	out := strings.Join(r.RequiredProblems(), "\n") + buf.String()
+	if i := strings.IndexFunc(out, func(c rune) bool { return c == '\x1b' || c == '\r' }); i >= 0 {
+		t.Errorf("output holds a raw control byte at %d:\n%q", i, out)
+	}
+	if !strings.Contains(out, `"python3\r"`) {
+		t.Errorf("output does not show the CRLF name quoted:\n%s", out)
+	}
+}
+
+// TestBuildReport_InProjectUnknownVersion: a required tool found inside the
+// project, which doctor does not run, says so instead of "could not
+// determine".
+func TestBuildReport_InProjectUnknownVersion(t *testing.T) {
+	t.Parallel()
+	r := BuildReport(&sysinfo.OSInfo{OS: "linux"}, []ToolStatus{
+		{Name: "python3", Required: true, Installed: true, InProject: true, Path: "/p/.venv/bin/python3", MinVersion: "3.9"},
+	}, "0.1.0")
+	want := []string{"python3 at /p/.venv/bin/python3 is inside the project, so doctor does not run it; verify it is >= 3.9"}
+	if got := r.RequiredProblems(); !slices.Equal(got, want) {
+		t.Errorf("RequiredProblems() = %q, want %q", got, want)
+	}
+}
+
+// TestBuildReport_OutdatedNixUpgradeHint: an installed nix below its floor
+// is pointed at an in-place upgrade, not at setup, which would run the Nix
+// installer over it.
+func TestBuildReport_OutdatedNixUpgradeHint(t *testing.T) {
+	t.Parallel()
+	tc, ok := CheckNamed("nix")
+	if !ok || tc.UpgradeHint == "" {
+		t.Fatalf("nix check = %+v; want an UpgradeHint", tc)
+	}
+	nixHost := &sysinfo.OSInfo{OS: "linux", Family: "debian", PackageManager: "nix", HasNix: true}
+	r := BuildReport(nixHost, []ToolStatus{
+		{Name: "nix", Required: true, Installed: true, Version: "2.3.0", MinVersion: "2.4", UpgradeHint: tc.UpgradeHint},
+	}, "0.1.0")
+	want := []string{"Upgrade nix to >= 2.4: " + tc.UpgradeHint}
+	if got := r.RequiredProblems(); !slices.Equal(got, want) {
+		t.Errorf("RequiredProblems() = %q, want %q", got, want)
+	}
+}

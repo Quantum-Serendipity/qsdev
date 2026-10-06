@@ -133,10 +133,13 @@ func (pc *ProjectContext) handleDetect(ctx context.Context, _ *spi.ToolCallConte
 	return &spi.ToolResult{Text: text, Structured: structured}, nil
 }
 
-// handleDoctor delegates to internal/doctor's prerequisite checks.
+// handleDoctor delegates to internal/doctor's checks for the project, the
+// same ones `qsdev devenv doctor` runs there (doctor.ProjectChecks), so the
+// two verdicts agree on the programs the project's hooks need.
 func (pc *ProjectContext) handleDoctor(ctx context.Context, _ *spi.ToolCallContext, req *spi.ToolRequest) (*spi.ToolResult, error) {
 	verbose := boolArg(req.Arguments, "verbose")
-	results := doctor.RunAllChecks(ctx, sysinfo.DetectOS())
+	toolChecks, checksErr := doctor.ProjectChecks(pc.projectRoot)
+	results := doctor.RunChecks(ctx, sysinfo.DetectOS(), toolChecks)
 
 	var missingRequired, missingOptional []string
 	checks := make([]map[string]any, 0, len(results))
@@ -153,6 +156,7 @@ func (pc *ProjectContext) handleDoctor(ctx context.Context, _ *spi.ToolCallConte
 			checks = append(checks, map[string]any{
 				"name": r.Name, "required": r.Required, "installed": r.Installed,
 				"version": r.Version, "version_ok": r.VersionOK, "notes": r.Notes,
+				"required_by": r.RequiredBy,
 			})
 		}
 	}
@@ -163,6 +167,11 @@ func (pc *ProjectContext) handleDoctor(ctx context.Context, _ *spi.ToolCallConte
 		"missing_required": missingRequired, "missing_optional": missingOptional,
 		"checks": checks,
 	}
+	if checksErr != nil {
+		// The host tools are still checked; `qsdev check` reports settings
+		// it cannot read.
+		structured["warning"] = doctor.HookProgramsWarning(checksErr)
+	}
 	verdict := "PASS"
 	if !pass {
 		verdict = "FAIL"
@@ -171,6 +180,9 @@ func (pc *ProjectContext) handleDoctor(ctx context.Context, _ *spi.ToolCallConte
 		verdict, len(results), len(missingRequired), len(missingOptional))
 	if len(missingRequired) > 0 {
 		text += "\nrequired missing: " + strings.Join(missingRequired, ", ")
+	}
+	if checksErr != nil {
+		text += "\nwarning: " + doctor.HookProgramsWarning(checksErr)
 	}
 	return &spi.ToolResult{Text: text, Structured: structured}, nil
 }

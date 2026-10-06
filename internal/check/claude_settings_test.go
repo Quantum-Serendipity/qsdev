@@ -697,6 +697,9 @@ func TestCheckHookPrograms(t *testing.T) {
 		{name: "negated program", command: `! nonexistent-bin selfprotect`, event: "PreToolUse"},
 		{name: "or-handled block runs its first program", command: `{ nonexistent-bin selfprotect; gofmt -l .; } || true`, event: "PreToolUse", wantSev: SeverityCritical, wantProg: "nonexistent-bin"},
 		{name: "and-list left operand is not handled", command: `nonexistent-bin selfprotect && true`, event: "PreToolUse", wantSev: SeverityCritical, wantProg: "nonexistent-bin"},
+		// The generated fail-closed wrapper handles the failure by blocking, so the wrapped program must resolve.
+		{name: "fail-closed wrapped self-protection", command: claudesettings.FailClosedCommand("self-protection", "nonexistent-bin selfprotect"), event: "PreToolUse", wantSev: SeverityCritical, wantProg: "nonexistent-bin"},
+		{name: "fail-closed wrapped resolvable", command: claudesettings.FailClosedCommand("self-protection", "gofmt -l ."), event: "PreToolUse"},
 		// hash -p binds a name without PATH.
 		{name: "hash -p then bare program", command: `hash -p "$CLAUDE_PROJECT_DIR/.venv/bin/ruff" nonexistent-bin; nonexistent-bin check`, event: "PostToolUse"},
 		{name: "hash -r then bare program", command: `hash -r; nonexistent-bin selfprotect`, event: "PreToolUse", wantSev: SeverityCritical, wantProg: "nonexistent-bin"},

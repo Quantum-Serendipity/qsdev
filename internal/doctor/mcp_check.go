@@ -128,18 +128,19 @@ func worseMCPStatus(current, severity string) string {
 }
 
 // DisplayName is the server's name made safe to show in a terminal (see
-// displayMCPServerName).
+// terminalSafe).
 func (s MCPServerInfo) DisplayName() string {
-	return displayMCPServerName(s.Name)
+	return terminalSafe(s.Name)
 }
 
-// displayMCPServerName renders a server name from .mcp.json for the terminal.
-// The name is repository content, so one holding a control, format or other
-// non-printable character (an ANSI escape sequence could rewrite or hide the
-// lines around it) is shown quoted with those characters escaped.
-func displayMCPServerName(name string) string {
-	if strings.IndexFunc(name, func(r rune) bool { return !unicode.IsPrint(r) }) >= 0 {
-		return strconv.Quote(name)
+// terminalSafe renders text that comes from repository content (an .mcp.json
+// server name, a program a hook runs, a path inside the project) for the
+// terminal. Text holding a control, format or other non-printable character
+// (an ANSI escape sequence could rewrite or hide the lines around it) is
+// shown quoted with those characters escaped.
+func terminalSafe(s string) string {
+	if strings.IndexFunc(s, func(r rune) bool { return !unicode.IsPrint(r) }) >= 0 {
+		return strconv.Quote(s)
 	}
-	return name
+	return s
 }

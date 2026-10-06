@@ -270,7 +270,7 @@ func verifyGeneratedFiles(projectRoot string, expected types.GeneratedState, gua
 				if generated[relPath] != nil {
 					r.Message = fmt.Sprintf("%s differs from the version this qsdev generates", guardRole(relPath, support))
 				}
-				r.Remediation = guardRemediation(relPath)
+				r.Remediation = restoreGeneratedRemediation(relPath)
 			}
 			results = append(results, remediate(r))
 		case types.Deleted:
@@ -289,7 +289,7 @@ func verifyGeneratedFiles(projectRoot string, expected types.GeneratedState, gua
 			if slices.Contains(guards, relPath) {
 				r.Severity = SeverityCritical
 				r.Message = fmt.Sprintf("%s has been deleted", guardRole(relPath, support))
-				r.Remediation = guardRemediation(relPath) + ", or 'qsdev check --auto-fix'"
+				r.Remediation = restoreGeneratedRemediation(relPath) + ", or 'qsdev check --auto-fix'"
 			}
 			results = append(results, remediate(r))
 		case types.Unknown:
@@ -338,9 +338,10 @@ func guardRole(relPath string, support []string) string {
 // checkout, where the restoring commands refuse to run until it is joined.
 const joinFirstRemediation = "Run 'qsdev init --yes' to join this checkout, then: "
 
-// guardRemediation restores the generated version of the guard script at
-// relPath. --configs-only keeps the update from replacing the binary.
-func guardRemediation(relPath string) string {
+// restoreGeneratedRemediation restores the generated version of the file at
+// relPath even when it was hand-edited, which 'init --update' only writes as a
+// sidecar. --configs-only keeps the update from replacing the binary.
+func restoreGeneratedRemediation(relPath string) string {
 	return fmt.Sprintf("Run 'qsdev update --configs-only --overwrite-modified' to restore the generated %s", relPath)
 }
 

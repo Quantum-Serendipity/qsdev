@@ -145,8 +145,10 @@ func TestCheckDevenvSecurityFloor(t *testing.T) {
 					t.Errorf("message %q does not name %s", got.Message, want)
 				}
 			}
-			if got.Status == StatusFail && !strings.Contains(got.Remediation, "init --update") {
-				t.Errorf("remediation %q does not say how to regenerate", got.Remediation)
+			// 'init --update' only writes a sidecar beside a hand-edited
+			// devenv.nix, so the remediation must name the overwriting update.
+			if got.Status == StatusFail && !strings.Contains(got.Remediation, "update --configs-only --overwrite-modified") {
+				t.Errorf("remediation %q does not say how to restore the generated file", got.Remediation)
 			}
 		})
 	}

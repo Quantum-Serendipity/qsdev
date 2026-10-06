@@ -339,7 +339,14 @@ requires a bearer token on every request:
 
 The token keeps other local accounts and web pages out. A process running as
 your user, an agent included, can read the token file, so the server still
-checks each `qsdev_nix_run` call against the Bash deny rules.
+holds each `qsdev_nix_run` call to what a Bash call may do. It judges the
+Bash command lines the call is equivalent to (the `nix run` line, the program
+the installable names with its arguments, a `-c` script and stdin) and
+refuses the call when a Bash deny rule matches one, when a Bash ask rule
+(package installs among them) would ask about one other than the `nix run`
+line, or when self-protection refuses one (a write to a protected file, a
+human-only `qsdev` command, an evasion pattern). The selfprotect hook judges
+`mcp__<server>__qsdev_nix_run` calls the same way.
 
 ### MCP credential vending
 

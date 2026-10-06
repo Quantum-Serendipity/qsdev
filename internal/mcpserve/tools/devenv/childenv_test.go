@@ -113,7 +113,7 @@ func TestToolsNixRunOptIn(t *testing.T) {
 	t.Parallel()
 	for _, nixRun := range []bool{false, true} {
 		var names []string
-		for _, r := range Tools(t.TempDir(), nixRun, nil) {
+		for _, r := range Tools(t.TempDir(), nixRun, NixRunPolicy{}) {
 			names = append(names, r.Name)
 		}
 		if got := slices.Contains(names, "qsdev_nix_run"); got != nixRun {

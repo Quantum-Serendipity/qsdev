@@ -1,29 +1,36 @@
 package claudecode
 
-// DefaultSecretPatterns contains the default credential detection regex
-// patterns used by the scan-secrets hook. Like PlaceholderIndicators, it mirrors
-// templates/hooks/scan-secrets.py and serves as the Go-side test oracle
-// (kept in sync by TestSecretPatterns_MatchPythonHook).
-var DefaultSecretPatterns = []string{
-	`(AKIA|ASIA)[0-9A-Z]{16}`,
-	`(?i)aws[_-]?(secret[_-]?access[_-]?key|session[_-]?token)\s*[=:]\s*[A-Za-z0-9/+=]{20,}`,
-	`gh[pousr]_[A-Za-z0-9_]{36,}`,
-	`glpat-[A-Za-z0-9_-]{20,}`,
-	`["']?[Aa](pi|PI)[_-]?[Kk](ey|EY)["']?\s*[=:]\s*["'][A-Za-z0-9_-]{20,}["']`,
-	`-----BEGIN ((RSA|EC|DSA|OPENSSH|ENCRYPTED|PGP) )?PRIVATE KEY( BLOCK)?-----`,
-	`eyJ[A-Za-z0-9_-]{10,}\.eyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}`,
-	`(mongodb(\+srv)?|postgres(ql)?|mysql|redis)://[^\s"':]+:[^\s"'@]+@[^\s"']{5,}`,
-	`xox[bprase]-[A-Za-z0-9-]{10,}`,
-	`sk_(live|test)_[A-Za-z0-9]{20,}`,
-	`SG\.[A-Za-z0-9_-]{22}\.[A-Za-z0-9_-]{43}`,
-	`(?i)(password|passwd|secret|token|credential)["']?\s*[=:]\s*["'][^\s"']{8,}["']`,
-	`github_pat_[A-Za-z0-9_]{22,}`,
-	`sk-ant-[A-Za-z0-9_-]{20,}`,
-	`sk-(proj|svcacct|admin)-[A-Za-z0-9_-]{20,}|sk-[A-Za-z0-9]{20}T3BlbkFJ[A-Za-z0-9]{20}`,
-	`AIza[0-9A-Za-z_-]{35}`,
-	`npm_[A-Za-z0-9]{36}`,
-	`pypi-[A-Za-z0-9_-]{50,}`,
-	`https://hooks\.slack\.com/services/T[A-Za-z0-9]+/B[A-Za-z0-9]+/[A-Za-z0-9]+`,
+import "github.com/Quantum-Serendipity/qsdev/internal/secrets"
+
+// ScanHeuristicPatterns are the scan-only KEY="value" assignment heuristics
+// the scan-secrets hook checks in every file. They are not credential token
+// shapes, so they stay out of the internal/secrets canon (and out of log
+// redaction).
+var ScanHeuristicPatterns = []secrets.ValuePattern{
+	// AWS secret access key and session token assignments.
+	{Name: "aws-assignment", Regex: `(?i)aws[_-]?(secret[_-]?access[_-]?key|session[_-]?token)\s*[=:]\s*[A-Za-z0-9/+=]{20,}`},
+	// Quoted API key assignments.
+	{Name: "api-key-assignment", Regex: `["']?[Aa](pi|PI)[_-]?[Kk](ey|EY)["']?\s*[=:]\s*["'][A-Za-z0-9_-]{20,}["']`},
+	// Quoted password/secret/token assignments; the key may be quoted (JSON).
+	{Name: "secret-assignment", Regex: `(?i)(password|passwd|secret|token|credential)["']?\s*[=:]\s*["'][^\s"']{8,}["']`},
+}
+
+// DefaultSecretPatterns are the patterns the scan-secrets hook checks in
+// every file: the internal/secrets credential canon followed by
+// ScanHeuristicPatterns. Like PlaceholderIndicators, it mirrors
+// DEFAULT_PATTERNS in templates/hooks/scan-secrets.py and serves as the
+// Go-side test oracle (kept in sync by TestSecretPatterns_MatchPythonHook).
+var DefaultSecretPatterns = defaultSecretPatterns()
+
+func defaultSecretPatterns() []string {
+	patterns := make([]string, 0, len(secrets.ValuePatterns)+len(ScanHeuristicPatterns))
+	for _, vp := range secrets.ValuePatterns {
+		patterns = append(patterns, vp.Regex)
+	}
+	for _, h := range ScanHeuristicPatterns {
+		patterns = append(patterns, h.Regex)
+	}
+	return patterns
 }
 
 // ConfigSecretPatterns mirror CONFIG_PATTERNS in scan-secrets.py: unquoted

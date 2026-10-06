@@ -93,6 +93,9 @@ type ExportHookStatus = HookStatus
 // ExportDefaultSecretPatterns exposes DefaultSecretPatterns for external tests.
 var ExportDefaultSecretPatterns = DefaultSecretPatterns
 
+// ExportScanHeuristicPatterns exposes ScanHeuristicPatterns for external tests.
+var ExportScanHeuristicPatterns = ScanHeuristicPatterns
+
 // ExportConfigSecretPatterns exposes ConfigSecretPatterns for external tests.
 var ExportConfigSecretPatterns = ConfigSecretPatterns
 

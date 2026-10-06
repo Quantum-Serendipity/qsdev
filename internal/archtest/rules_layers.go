@@ -15,8 +15,8 @@ func Rules() []Rule {
 // ("internal/catalog") or external import paths ("net/http"), each matching
 // itself and everything below it; Allow carves targets back out of Deny.
 // Transitive rules follow the importer's module-internal dependency closure,
-// so a denied package reached through a helper still counts. Test files are
-// exempt.
+// so a denied package reached through a helper still counts. An empty From
+// means every package. Test files are exempt.
 type layerRule struct {
 	ID         string
 	From       []string
@@ -52,7 +52,12 @@ var layerTable = []layerRule{
 		ID: "hookrt-lean", From: []string{"internal/hookrt"}, Transitive: true,
 		Deny: []string{"github.com/charmbracelet", "internal/posture", "internal/mcpregistry", "internal/selfupdate"},
 	},
+	// secretstest assembles credential-shaped samples; a production import
+	// would ship them in the binary, so only _test.go files may import it.
+	{ID: "secretstest-test-only", Except: []string{secretstestPkg}, Deny: []string{secretstestPkg}},
 }
+
+const secretstestPkg = "internal/secrets/secretstest"
 
 func layerRules() []Rule {
 	rules := make([]Rule, 0, len(layerTable))
@@ -66,7 +71,7 @@ func (lr layerRule) check(repo *Repo) []Violation {
 	graph := importGraph(repo)
 	var out []Violation
 	for _, pkg := range sortedPkgs(graph) {
-		if !underAny(pkg, lr.From) || underAny(pkg, lr.Except) {
+		if (len(lr.From) > 0 && !underAny(pkg, lr.From)) || underAny(pkg, lr.Except) {
 			continue
 		}
 		targets := graph[pkg]

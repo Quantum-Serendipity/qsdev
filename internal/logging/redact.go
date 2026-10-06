@@ -26,32 +26,40 @@ const nameValueTrimCutset = "\t\n\f\r "
 // so the per-map-node redaction walk does not re-box the string on every call.
 var redactedReflectVal = reflect.ValueOf(redacted)
 
-// privateKeyBlockPattern matches a whole PEM/PGP private-key block — header,
-// base64 body and footer — so the key material is redacted, not just the BEGIN
-// line. (?s) lets the body span real newlines, and the lazy body equally spans
-// the literal "\n" escapes of a JSON-encoded key. A block with no END marker (a
-// truncated excerpt) is redacted through the end of the input: fail closed.
-const privateKeyBlockPattern = `(?s)-----BEGIN [A-Z0-9 ]*PRIVATE KEY(?: BLOCK)?-----.*?(?:-----END [A-Z0-9 ]*PRIVATE KEY(?: BLOCK)?-----|\z)`
+// privateKeyBlockRe extends the canon private-key header
+// (secrets.PrivateKeyHeaderPattern) through the key body to its END line, so
+// the key material is redacted, not just the BEGIN line. The canon owns the header
+// shape; extending it to END is this package's redaction mechanic. (?s) lets the
+// body span real newlines, and the lazy body equally spans the literal "\n"
+// escapes of a JSON-encoded key. A block with no END marker (a truncated
+// excerpt) is redacted through the end of the input: fail closed.
+var privateKeyBlockRe = regexp.MustCompile(`(?s)` + secrets.PrivateKeyHeaderPattern +
+	`.*?(?:` + privateKeyFooterPattern + `|\z)`)
+
+// privateKeyFooterPattern is the END line matching the canon header's shape;
+// the block extension and the excerpt END scan share this one copy.
+const privateKeyFooterPattern = `-----END [A-Z0-9 ]*PRIVATE KEY(?: BLOCK)?-----`
 
 var (
-	privateKeyBeginRe = regexp.MustCompile(`-----BEGIN [A-Z0-9 ]*PRIVATE KEY(?: BLOCK)?-----`)
-	privateKeyEndRe   = regexp.MustCompile(`-----END [A-Z0-9 ]*PRIVATE KEY(?: BLOCK)?-----`)
+	privateKeyBeginRe = regexp.MustCompile(secrets.PrivateKeyHeaderPattern)
+	privateKeyEndRe   = regexp.MustCompile(privateKeyFooterPattern)
 )
 
 // Redactor scrubs secret values from log attributes.
 type Redactor struct {
-	valuePatterns []*regexp.Regexp
-	urlCredRe     *regexp.Regexp
-	urlTokenRe    *regexp.Regexp
-	nameValRe     *regexp.Regexp
-	keyBoundaryRe *regexp.Regexp
-	flagPairRe    *regexp.Regexp
+	// redactCanonMatch is the redactValueMatch method value, bound once so the
+	// per-pattern replace pass does not allocate a closure on every call.
+	redactCanonMatch func(string) string
+	urlCredRe        *regexp.Regexp
+	urlTokenRe       *regexp.Regexp
+	nameValRe        *regexp.Regexp
+	keyBoundaryRe    *regexp.Regexp
+	flagPairRe       *regexp.Regexp
 }
 
 // NewRedactor creates a Redactor with default secret patterns.
 func NewRedactor() *Redactor {
-	return &Redactor{
-		valuePatterns: compileValuePatterns(),
+	r := &Redactor{
 		// user:password userinfo. The user may be empty (redis://:pw@host, the
 		// form Redis and some DSNs use for a password-only credential) and the
 		// password may contain ':', '@', and — as unencoded base64 or generated
@@ -90,30 +98,19 @@ func NewRedactor() *Redactor {
 		// flag ("--api-key --verbose") is never taken for a value.
 		flagPairRe: regexp.MustCompile(`(^|\s)(-{1,2}[A-Za-z][A-Za-z0-9_-]*)(\s+)([^\s-]\S*)`),
 	}
+	r.redactCanonMatch = r.redactValueMatch
+	return r
 }
 
-func compileValuePatterns() []*regexp.Regexp {
-	patterns := []string{
-		`AKIA[A-Z0-9]{16}`,
-		`gh[pousr]_[A-Za-z0-9_]{36,}`,
-		`github_pat_[A-Za-z0-9_]{22,}`,
-		`glpat-[A-Za-z0-9\-_]{20,}`,
-		`sk_(live|test)_[A-Za-z0-9]{24,}`,
-		`npm_[A-Za-z0-9]{36,}`,
-		`eyJ[A-Za-z0-9_-]{10,}\.eyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]+`,
-		privateKeyBlockPattern,
-		`AccountKey=[A-Za-z0-9+/=]{44,}`,
-		`AIza[A-Za-z0-9_-]{35}`,
-		`mongodb(?:\+srv)?://[^:]+:[^@\s]+@[^\s]+`,
-		`hv[sbr]\.[A-Za-z0-9_-]{24,}`,
-		`xox[bpras]-[A-Za-z0-9-]{10,}`,
+// redactValueMatch is the replacement for one secrets canon match. A match that
+// carries URL userinfo (the canon's database connection-string shape) has only
+// its credentials redacted, the way the URL pass treats every scheme, so the
+// host stays visible for diagnosability; any other match is redacted whole.
+func (r *Redactor) redactValueMatch(m string) string {
+	if r.urlCredRe.MatchString(m) {
+		return r.redactURLCredentials(m)
 	}
-
-	compiled := make([]*regexp.Regexp, 0, len(patterns))
-	for _, p := range patterns {
-		compiled = append(compiled, regexp.MustCompile(p))
-	}
-	return compiled
+	return redacted
 }
 
 // RedactAttr scrubs secret values from a single slog.Attr. LogValuers are
@@ -180,8 +177,8 @@ func isNilPointer(v any) bool {
 }
 
 // RedactString scrubs secret patterns from a string value. It runs the
-// value-shape passes (AKIA…, ghp_…, JWT, PEM blocks, …) and URL-userinfo
-// stripping (including an empty user, redis://:pw@host), then a NAME=value pass
+// value-shape passes (whole PEM blocks, then the secrets.ValuePatterns canon)
+// and URL-userinfo stripping (including an empty user, redis://:pw@host), then a NAME=value pass
 // that redacts the value of any sensitive credential variable — closing the
 // leak where a keyword-less secret (DATABASE_PASSWORD=…, BW_SESSION=…,
 // {"api_token":"…"}) has no recognizable value shape — and finally a flag pass
@@ -193,8 +190,17 @@ func isNilPointer(v any) bool {
 // all covered. A NAME followed by '=' redacts up to the next "NAME=" pair on
 // the line, where an '=' that is base64 padding does not count as a pair.
 func (r *Redactor) RedactString(s string) string {
-	for _, p := range r.valuePatterns {
-		s = p.ReplaceAllString(s, redacted)
+	// Whole key blocks go first, so the canon's header-only private-key entry
+	// never consumes a header and leaves the key body behind. Each replace is
+	// guarded by a non-allocating MatchString: a regexp replace copies its input
+	// even when nothing matches, and most log lines match no canon pattern.
+	if privateKeyBlockRe.MatchString(s) {
+		s = privateKeyBlockRe.ReplaceAllString(s, redacted)
+	}
+	for _, p := range secrets.CompiledValuePatterns() {
+		if p.MatchString(s) {
+			s = p.ReplaceAllStringFunc(s, r.redactCanonMatch)
+		}
 	}
 	if r.urlCredRe.MatchString(s) {
 		s = r.redactURLCredentials(s)

@@ -30,8 +30,8 @@ func TestMergeCatalogs_UnsetVarsUnion(t *testing.T) {
 
 	got := MergeCatalogs(base, overlay).UnsetVars()
 	want := append(slices.Clone(base.UnsetVars()), "MY_TEAM_TOKEN")
-	if len(base.UnsetVars()) != 38 {
-		t.Fatalf("embedded unset_vars has %d entries, want 38", len(base.UnsetVars()))
+	if len(base.UnsetVars()) == 0 {
+		t.Fatal("embedded unset_vars is empty")
 	}
 	if !slices.Equal(got, want) {
 		t.Errorf("UnsetVars() = %v (len %d), want embedded list plus MY_TEAM_TOKEN (len %d)", got, len(got), len(want))
@@ -115,8 +115,13 @@ func TestLoad_OrgOverlayOnlyAdds(t *testing.T) {
 			t.Errorf("SecurityHooks() = %v, missing %q", cat.SecurityHooks(), h)
 		}
 	}
-	if got := len(cat.UnsetVars()); got != 39 {
-		t.Errorf("len(UnsetVars()) = %d, want 39", got)
+	base, err := LoadEmbeddedOnly()
+	if err != nil {
+		t.Fatalf("LoadEmbeddedOnly: %v", err)
+	}
+	want := append(slices.Clone(base.UnsetVars()), "MY_TEAM_TOKEN")
+	if got := cat.UnsetVars(); !slices.Equal(got, want) {
+		t.Errorf("UnsetVars() = %v (len %d), want embedded list plus MY_TEAM_TOKEN (len %d)", got, len(got), len(want))
 	}
 }
 

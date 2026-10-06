@@ -28,6 +28,13 @@ type ToolCheck struct {
 	// prerequisite (see RequireBinaries); "" for a prerequisite.
 	RequiredBy string
 	MinVersion string
+	// Constraint, when set, is a version constraint in qsdev_version syntax
+	// (">= 1.2", "^1.2") the version must satisfy, in place of MinVersion.
+	Constraint string
+	// PathHint, when set, replaces the install and upgrade advice for a tool
+	// no package manager provides: the CLI's own binary, which the hooks find
+	// on PATH (see ProjectChecks).
+	PathHint string
 	// InstallHint tells the user how to install a missing tool.
 	InstallHint string
 	// ParseVersion extracts the version from the tool's full version output

@@ -6,6 +6,7 @@ import (
 	"context"
 	"sync"
 
+	"github.com/Quantum-Serendipity/qsdev/internal/config"
 	"github.com/Quantum-Serendipity/qsdev/internal/sysinfo"
 	"github.com/Quantum-Serendipity/qsdev/internal/toolcheck"
 )
@@ -44,6 +45,7 @@ func runSingleCheck(ctx context.Context, tc ToolCheck, osInfo *sysinfo.OSInfo) T
 		Name:       tc.Name,
 		Required:   tc.Required,
 		RequiredBy: tc.RequiredBy,
+		PathHint:   tc.PathHint,
 	}
 
 	if !info.Found {
@@ -74,7 +76,8 @@ func runSingleCheck(ctx context.Context, tc ToolCheck, osInfo *sysinfo.OSInfo) T
 	// With no floor any installed version is OK; with one, a version that
 	// could not be determined is not.
 	status.MinVersion = tc.MinVersion
-	status.VersionOK = toolcheck.MeetsMinimum(status.Version, tc.MinVersion)
+	status.Constraint = tc.Constraint
+	status.VersionOK = versionOK(status.Version, tc)
 
 	if tc.AutoInstall != nil {
 		status.AutoInstallable = tc.AutoInstall(osInfo)
@@ -89,6 +92,16 @@ func runSingleCheck(ctx context.Context, tc ToolCheck, osInfo *sysinfo.OSInfo) T
 	}
 
 	return status
+}
+
+// versionOK reports whether version meets tc's floor: its Constraint when
+// set, else its MinVersion. A version that could not be determined meets no
+// constraint.
+func versionOK(version string, tc ToolCheck) bool {
+	if tc.Constraint != "" {
+		return version != "" && config.CheckBinaryVersion(tc.Constraint, version) == nil
+	}
+	return toolcheck.MeetsMinimum(version, tc.MinVersion)
 }
 
 // detect finds binary on PATH and, unless versionFlag is empty (a

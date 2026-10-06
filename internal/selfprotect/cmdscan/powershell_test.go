@@ -210,3 +210,21 @@ func TestParsePowerShellAllocs(t *testing.T) {
 		t.Errorf("PowerShellText allocated %.0f times, want at most 2", got)
 	}
 }
+
+func TestPowerShellAsPOSIX(t *testing.T) {
+	t.Parallel()
+	tests := []struct{ line, want string }{
+		{`qsdev 'teardown','--force'`, "qsdev teardown --force\n"},
+		{`& qsdev teardown,--force`, "qsdev teardown --force\n"},
+		{`& qsdev @a`, "qsdev $_\n"},
+		{`& qsdev @('teardown','--force')`, "qsdev $_\nteardown --force\n"},
+		{`[Diagnostics.Process]::Start('qsdev','teardown --force')`, "[diagnostics.process]::start\nqsdev teardown --force\n"},
+		{`Start-Process qsdev -ArgumentList 'a','b'`, "start-process qsdev -ArgumentList a b\n"},
+		{`git status`, "git status\n"},
+	}
+	for _, tt := range tests {
+		if got := PowerShellAsPOSIX(ParsePowerShell(tt.line)); got != tt.want {
+			t.Errorf("PowerShellAsPOSIX(%q) = %q, want %q", tt.line, got, tt.want)
+		}
+	}
+}

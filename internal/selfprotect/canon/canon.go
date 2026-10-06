@@ -109,6 +109,12 @@ func ensureInit() error {
 // running session loads its user settings from.
 const ClaudeConfigDirEnv = "CLAUDE_CONFIG_DIR"
 
+// AgentEnvMarkers are the environment variables AI coding agents export to the
+// shells they run commands in (Claude Code sets CLAUDECODE=1). The CLI's human
+// gate refuses a sensitive command while one is set, so a shell session that
+// clears one must not run the CLI.
+var AgentEnvMarkers = []string{"CLAUDECODE"}
+
 // claudeConfigFiles are the entries of a Claude Code configuration directory
 // that register or steer enforcement, mirroring the .claude entries of
 // staticSegments (a directory entry ends in "/"), plus .claude.json, which

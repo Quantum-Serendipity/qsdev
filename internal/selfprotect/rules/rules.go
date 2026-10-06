@@ -355,6 +355,11 @@ var sp008 = Rule{
 		if reason := settingsOverride(ctx); reason != "" {
 			return Deny, reason
 		}
+		if isPowerShell(ctx) {
+			if reason := psEnvOverride(ctx); reason != "" {
+				return Deny, reason
+			}
+		}
 		return Allow, ""
 	},
 }
@@ -534,6 +539,12 @@ var sp014 = Rule{
 		}
 		app := branding.Get().AppName
 		hits := cmdscan.InvokedSpecs(ctx.Command, app, ctx.SensitiveCommands)
+		if isPowerShell(ctx) {
+			// The words PowerShell passes a native program: array elements
+			// (`qsdev 'teardown','--force'`) and splats are not POSIX words.
+			posix := cmdscan.PowerShellAsPOSIX(ctx.powerShell().cmds)
+			hits = append(hits, cmdscan.InvokedSpecs(posix, app, ctx.SensitiveCommands)...)
+		}
 		if len(hits) == 0 {
 			return Allow, ""
 		}

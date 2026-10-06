@@ -212,6 +212,10 @@ type CheckContext struct {
 	// why: pinned, or the account's home overlay when none is pinned (see
 	// catalog.ProjectOrgConfigSource).
 	OrgConfigSource string
+	// OrgOverlayErr is why the catalog this run loaded skipped the org
+	// overlay (see catalog.OrgOverlayError), or nil when it applied or there
+	// is none.
+	OrgOverlayErr error
 	// DeclaredEnv holds the environment variables the project's devenv
 	// modules (devenv.nix, devenv.local.nix) declare, read by the command
 	// layer; the cloud isolation check judges environment separation from

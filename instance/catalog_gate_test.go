@@ -1,7 +1,9 @@
 package instance
 
 import (
+	"bytes"
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
 
@@ -151,5 +153,66 @@ func TestGates_CatalogBeforeSensitivity(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "defaults validate") {
 		t.Errorf("qsdev disable x: error %q does not name 'defaults validate'", err)
+	}
+}
+
+// TestCatalogGate_SkippedOrgOverlay pins XS-WS2 B6 at the gate: a catalog
+// that loaded only by skipping the org overlay (one that loosens the built-in
+// floor) fails every command that may generate or change something, while a
+// read-only invocation runs on the built-in defaults and says so.
+func TestCatalogGate_SkippedOrgOverlay(t *testing.T) {
+	t.Parallel()
+	overlayErr := fmt.Errorf("user defaults /home/u/.config/qsdev/defaults.yaml: %w",
+		errors.New("defaults file loosens the built-in security floor"))
+	tests := []struct {
+		name    string
+		args    []string
+		wantErr bool
+	}{
+		{"mutating command", []string{"init"}, true},
+		{"read-only flag unset", []string{"update"}, true},
+		{"read-only flag set", []string{"update", "--dry-run"}, false},
+		{"read-only command", []string{"status"}, false},
+		{"read-only contract left by a flag", []string{"status", "--scan"}, true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			run := func(*cobra.Command, []string) error { return nil }
+			root := &cobra.Command{Use: "qsdev", RunE: run, SilenceUsage: true, SilenceErrors: true}
+			initCmd := &cobra.Command{Use: "init", RunE: run}
+			update := cmdutil.MarkReadOnly(&cobra.Command{Use: "update", RunE: run}, "dry-run")
+			update.Flags().Bool("dry-run", false, "")
+			status := cmdutil.MarkReadOnly(&cobra.Command{Use: "status", RunE: run}, "", "scan")
+			status.Flags().Bool("scan", false, "")
+			root.AddCommand(initCmd, update, status)
+			installCatalogGate(root, func() error { return orgOverlaySkippedError{err: overlayErr} })
+
+			cmd, rest, err := root.Find(tt.args)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := cmd.ParseFlags(rest); err != nil {
+				t.Fatal(err)
+			}
+			var stderr bytes.Buffer
+			cmd.SetErr(&stderr)
+			err = root.PersistentPreRunE(cmd, cmd.Flags().Args())
+			if !tt.wantErr {
+				if err != nil {
+					t.Fatalf("qsdev %v: unexpected error %v", tt.args, err)
+				}
+				if !strings.Contains(stderr.String(), "loosens the built-in security floor") {
+					t.Errorf("qsdev %v: no warning naming the skipped overlay; stderr %q", tt.args, stderr.String())
+				}
+				return
+			}
+			if !errors.Is(err, overlayErr) {
+				t.Fatalf("qsdev %v: error %v does not wrap the overlay error", tt.args, err)
+			}
+			if !strings.Contains(err.Error(), "defaults validate") {
+				t.Errorf("qsdev %v: error %q does not name 'defaults validate'", tt.args, err)
+			}
+		})
 	}
 }

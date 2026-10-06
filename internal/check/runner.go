@@ -12,6 +12,7 @@ func RunAllChecks(ctx CheckContext) *CheckReport {
 	results = append(results, CheckBinaryCompatibility(ctx)...)
 	results = append(results, CheckConfigIntegrity(ctx)...)
 	results = append(results, CheckOrgOverlay(ctx))
+	results = append(results, CheckOrgOverlayLoaded(ctx)...)
 	results = append(results, CheckRequiredTools(ctx)...)
 	results = append(results, CheckFileState(ctx)...)
 	results = append(results, CheckSecurityHardening(ctx)...)

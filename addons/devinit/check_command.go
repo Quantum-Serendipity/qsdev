@@ -85,6 +85,7 @@ func runCheck(cmd *cobra.Command, format check.OutputFormat, auditLevel check.Au
 	// check alongside the checks that need no catalog. No auto-fix runs: the
 	// fixes regenerate from the catalog.
 	toolRegistry, failure := loadCheckRegistry()
+	ctx.OrgOverlayErr = catalog.OrgOverlayError()
 	if failure != nil {
 		return emitCheckReport(cmd, check.RunCatalogUnavailable(ctx, *failure), format, auditLevel)
 	}

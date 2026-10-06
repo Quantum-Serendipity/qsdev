@@ -58,3 +58,26 @@ func ReadOnlyArgs(cmd *cobra.Command) ([]string, bool) {
 	}
 	return args, true
 }
+
+// ReadOnlyInvocation reports whether cmd, with the flags it was parsed with,
+// runs in its read-only form: it is marked (MarkReadOnly), the flag that
+// makes it read-only, if any, is set, and no flag that leaves the contract
+// was given.
+func ReadOnlyInvocation(cmd *cobra.Command) bool {
+	viaFlag, ok := cmd.Annotations[ReadOnlyAnnotation]
+	if !ok {
+		return false
+	}
+	if viaFlag != "" {
+		f := cmd.Flags().Lookup(viaFlag)
+		if f == nil || f.Value.String() != "true" {
+			return false
+		}
+	}
+	for _, name := range ReadOnlyLostBy(cmd) {
+		if cmd.Flags().Changed(name) {
+			return false
+		}
+	}
+	return true
+}

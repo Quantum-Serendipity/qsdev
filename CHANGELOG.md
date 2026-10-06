@@ -8,6 +8,17 @@ All notable changes to qsdev are recorded in this file. The format is based on
 
 ### Changed
 
+- An org defaults file (`$QSDEV_ORG_CONFIG` or the pinned overlay) that fails
+  to load, for example because it tries to loosen the built-in security
+  floor, now stops every command that generates or changes the project:
+  `init`, `init --update`, `update`, `enable`, `disable`, `repair`,
+  `claude *` and `devenv *` exit non-zero naming the file and
+  `qsdev defaults validate`, and `qsdev check` fails `config_catalog` (high).
+  Before, they skipped the whole file (including its tightening entries),
+  generated from the built-in defaults and exited 0, recording the skip only
+  in the session log. Read-only invocations (`status`, `doctor`,
+  `--dry-run`) still run on the built-in defaults and print a warning.
+
 - `qsdev devenv doctor` enforces host version floors: devenv >= 2.1 (the
   `require_version` the generated `devenv.yaml` declares) and nix >= 2.4 (the
   first release with `nix profile` and flakes) are required, and python3 >=

@@ -494,9 +494,13 @@ lower:
 
 An org overlay that breaks the floor fails to load
 (`ErrOverlayLoosens`), naming the file and each field, instead of quietly
-generating a weaker `devenv.nix`; `qsdev defaults validate` reports it,
-and commands that read only the user scope fall back to the built-in
-catalog with a warning. The rules carry no exemption for a managed or
+generating a weaker `devenv.nix`; `qsdev defaults validate` reports it.
+The catalog then skips the whole file, so every command that generates or
+changes the project (`init`, `update`, `enable`, `disable`, `repair`,
+`claude *`, `devenv *`) refuses to run, `qsdev check` fails
+`config_catalog`, and only read-only invocations (`status`, `doctor`,
+`--dry-run`) and commands that read only the user scope fall back to the
+built-in catalog, with a warning. The rules carry no exemption for a managed or
 root-owned overlay: the built-in catalog satisfies them, so no legitimate
 distribution needs to un-strip a credential or drop a required hook. The
 committed project layer applies last and may only add, so a developer's

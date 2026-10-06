@@ -9,6 +9,7 @@ func RunCatalogUnavailable(ctx CheckContext, failure CheckResult) *CheckReport {
 	results := []CheckResult{failure}
 	results = append(results, CheckBinaryCompatibility(ctx)...)
 	results = append(results, CheckOrgOverlay(ctx))
+	results = append(results, CheckOrgOverlayLoaded(ctx)...)
 	results = append(results, CheckFileState(ctx)...)
 
 	return BuildReport(results, ctx.BinaryVersion, projectName(ctx))

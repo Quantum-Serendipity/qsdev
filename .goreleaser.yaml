@@ -24,6 +24,10 @@ builds:
       - -X github.com/Quantum-Serendipity/qsdev/internal/version.commit={{.Commit}}
       - -X github.com/Quantum-Serendipity/qsdev/internal/version.date={{.CommitDate}}
       - -X github.com/Quantum-Serendipity/qsdev/internal/version.builtBy=goreleaser
+      # The gateway image's index digest from release.yml's gateway-image job,
+      # pinning generated compose files to the image this release published.
+      # Unset in snapshot builds, which then keep the tag-only reference.
+      - -X github.com/Quantum-Serendipity/qsdev/internal/version.gatewayImageDigest={{ envOrDefault "GATEWAY_IMAGE_DIGEST" "" }}
     mod_timestamp: "{{ .CommitTimestamp }}"
     goos:
       - linux

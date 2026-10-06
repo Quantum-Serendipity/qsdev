@@ -171,7 +171,7 @@ func TestGenerateGatewayForHooklessFramework(t *testing.T) {
 	if !ok {
 		t.Fatalf("compose missing service %q; services=%v", DefaultServiceName, parsed.Services)
 	}
-	if want := ImageForVersion(version.Info().Version); svc.Image != want {
+	if want := ImageForVersion(version.Info().Version, version.GatewayImageDigest()); svc.Image != want {
 		t.Errorf("service image = %q, want %q", svc.Image, want)
 	}
 	if svc.Environment[EnvDeployMode] != string(DeployGateway) {
@@ -258,28 +258,79 @@ func TestGenerateNoGatewayForHookOnlyProject(t *testing.T) {
 	}
 }
 
-// TestImageForVersion is the regression test for the unpinned gateway image: the
-// generated compose must reference the release tag the build descends from, not
-// a mutable :latest, whenever the build carries a release version.
-func TestImageForVersion(t *testing.T) {
+// TestImageForVersionPinsDigest is the regression test for the unpinned
+// gateway image: the generated compose must reference the release the build
+// descends from, not a mutable :latest, and a release build stamped with the
+// published index digest pins that digest too, so a re-pushed tag cannot
+// swap the enforcing gateway binary. A development build, or a missing or
+// malformed digest, keeps the tag-only reference.
+func TestImageForVersionPinsDigest(t *testing.T) {
 	t.Parallel()
+	digest := "sha256:" + strings.Repeat("0123456789abcdef", 4)
 	tests := []struct {
 		name    string
 		version string
+		digest  string
 		want    string
 	}{
-		{"release", "0.8.0", ImageRepository + ":0.8.0"},
-		{"v-prefixed tag", "v0.8.0", ImageRepository + ":0.8.0"},
-		{"git describe after release", "v0.8.0-3-gabc1234-dirty", ImageRepository + ":0.8.0"},
-		{"padded", " 1.2.3\n", ImageRepository + ":1.2.3"},
-		{"development build", "dev", ImageRepository + ":latest"},
-		{"bare commit", "abc1234", ImageRepository + ":latest"},
+		{"release", "0.8.0", "", ImageRepository + ":0.8.0"},
+		{"v-prefixed tag", "v0.8.0", "", ImageRepository + ":0.8.0"},
+		{"git describe after release", "v0.8.0-3-gabc1234-dirty", "", ImageRepository + ":0.8.0"},
+		{"padded", " 1.2.3\n", "", ImageRepository + ":1.2.3"},
+		{"development build", "dev", "", ImageRepository + ":latest"},
+		{"bare commit", "abc1234", "", ImageRepository + ":latest"},
+		{"release with digest", "0.8.0", digest, ImageRepository + ":0.8.0@" + digest},
+		{"v-prefixed release with digest", "v0.8.0", digest, ImageRepository + ":0.8.0@" + digest},
+		{"padded digest", "0.8.0", " " + digest + "\n", ImageRepository + ":0.8.0@" + digest},
+		{"development build ignores digest", "dev", digest, ImageRepository + ":latest"},
+		{"uppercase digest", "0.8.0", "sha256:" + strings.Repeat("A", 64), ImageRepository + ":0.8.0"},
+		{"short digest", "0.8.0", "sha256:" + strings.Repeat("a", 63), ImageRepository + ":0.8.0"},
+		{"bare hex digest", "0.8.0", strings.Repeat("a", 64), ImageRepository + ":0.8.0"},
+		{"at-prefixed digest", "0.8.0", "@" + digest, ImageRepository + ":0.8.0"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
-			if got := ImageForVersion(tt.version); got != tt.want {
-				t.Errorf("ImageForVersion(%q) = %q, want %q", tt.version, got, tt.want)
+			if got := ImageForVersion(tt.version, tt.digest); got != tt.want {
+				t.Errorf("ImageForVersion(%q, %q) = %q, want %q", tt.version, tt.digest, got, tt.want)
+			}
+			wantReleased := !strings.HasSuffix(tt.want, ":latest")
+			if _, released := imageForVersion(tt.version, tt.digest); released != wantReleased {
+				t.Errorf("imageForVersion(%q, %q) released = %t, want %t", tt.version, tt.digest, released, wantReleased)
+			}
+		})
+	}
+}
+
+// TestGenerateRecordsImageRelease pins what callers warn on: Artifacts names
+// the image the compose references and whether a release published it. A
+// dev build's :latest fallback is not a released image; an explicit
+// GenerateOptions.Image is the operator's choice and is taken as published.
+func TestGenerateRecordsImageRelease(t *testing.T) {
+	t.Parallel()
+	hookless := []FrameworkProfile{{ID: aiframework.Cursor, Tier: aiframework.TierAdvisory}}
+	_, wantReleased := imageForVersion(version.Info().Version, version.GatewayImageDigest())
+	tests := []struct {
+		name         string
+		image        string
+		wantImage    string
+		wantReleased bool
+	}{
+		{"build version", "", ImageForVersion(version.Info().Version, version.GatewayImageDigest()), wantReleased},
+		{"override", "registry.example/qsdev@sha256:" + strings.Repeat("a", 64), "registry.example/qsdev@sha256:" + strings.Repeat("a", 64), true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			art, err := ContainerConfigGenerator{}.Generate(GenerateOptions{Frameworks: hookless, Image: tt.image})
+			if err != nil {
+				t.Fatalf("Generate: %v", err)
+			}
+			if art.Image != tt.wantImage || art.ReleasedImage != tt.wantReleased {
+				t.Errorf("Image, ReleasedImage = %q, %t, want %q, %t", art.Image, art.ReleasedImage, tt.wantImage, tt.wantReleased)
+			}
+			if !strings.Contains(art.ComposeYAML, "image: "+tt.wantImage+"\n") {
+				t.Errorf("compose does not reference %s:\n%s", tt.wantImage, art.ComposeYAML)
 			}
 		})
 	}

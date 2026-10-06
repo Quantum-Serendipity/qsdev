@@ -247,10 +247,24 @@ claims:
     files: [docs/configuration-reference.md]
     tests:
       - TestNixRun_BashEquivalentDenied
-      - TestBashEquivalents
+      - TestNixRunCommandLines
       - TestFirstMatchingBashRule
       - TestNixRunDenyRules
-      - TestServeBuildsNixRunDenyRulesOnlyWhenMounted
+      - TestServeBuildsNixRunPolicyOnlyWhenMounted
+    tiers: []
+
+  - id: mcp-nix-run-selfprotect
+    text: >-
+      or when self-protection refuses one (a write to a protected file, a
+      human-only `qsdev` command, an evasion pattern). The selfprotect hook
+      judges `mcp__<server>__qsdev_nix_run` calls the same way.
+    files: [docs/configuration-reference.md]
+    tests:
+      - TestNixRun_PolicyRefusesWhatBashMayNot
+      - TestNixRunJudge
+      - TestSelfprotect_NixRunTool
+      - TestIsNixRunTool
+      - internal/selfprotect/judge.TestEvaluate
     tiers: []
 
   - id: mcp-http-bearer-token

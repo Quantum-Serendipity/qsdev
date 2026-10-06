@@ -314,7 +314,7 @@ func runServe(ctx context.Context, opts serveOptions) error {
 	// Build the tool modules' registrations first, so an unknown --module fails
 	// startup before anything is served. The gated tools are included only
 	// when mountOptions selects them, from the operator's opt-ins: the flags,
-	// the env and the user-scope catalog, never the repository.
+	// the env and the user-scope catalog, never the project's qsdev config.
 	userScope, err := qsdevcatalog.LoadUserScope()
 	if err != nil {
 		return fmt.Errorf("loading the user defaults for the MCP tool opt-ins: %w", err)
@@ -528,9 +528,14 @@ func firstOptIn(sources ...optInSource) string {
 }
 
 // mountOptions decides which gated tools the server mounts, and logs each
-// decision once. Both tools are off unless the operator opts in, from a
-// source the repository does not control (a flag, the env, or the
-// mcp_serve section of the user-scope catalog):
+// decision once. Both tools are off unless the operator opts in, from a flag,
+// the env, or the mcp_serve section of the user-scope catalog, never from the
+// project's qsdev configuration (.qsdev.yaml, .qsdev/defaults.yaml). A
+// committed .mcp.json can still carry a flag or env opt-in for the qsdev
+// entry, and a committed devenv.nix or .envrc can export the env key. That
+// adds nothing to what either file can already do (run any command once the
+// user approves the project's MCP servers or allows direnv), so those two
+// approvals are the trust boundary for these opt-ins, as for the files:
 //
 //   - qsdev_nix_run starts processes on the host: --allow-nix-run,
 //     QSDEV_MCP_ALLOW_NIX_RUN or mcp_serve.allow_nix_run.

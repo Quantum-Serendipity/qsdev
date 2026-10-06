@@ -41,6 +41,8 @@ func nixSpecificFuncMap() template.FuncMap {
 		"nixAttrSet":    nixAttrSet,
 		"nixAttrName":   NixAttrName,
 		"nixHookID":     nixHookID,
+		"nixIdent":      nixIdent,
+		"nixComment":    nixComment,
 	}
 }
 
@@ -112,14 +114,38 @@ func ValidateNixAttrPath(s string) error {
 	return nil
 }
 
-// nixHookID returns id unchanged for rendering as git-hooks.hooks.<id>, or
-// an error when ValidateNixIdent rejects it, so a hostile id fails the render
-// instead of splicing Nix into the generated file.
+// nixIdent returns s unchanged for rendering as a bare Nix identifier (an
+// attribute name such as env.<key>, services.<name> or scripts.<name>), or
+// an error naming s when ValidateNixIdent rejects it, so a hostile value
+// fails the render instead of splicing Nix into the generated file.
+func nixIdent(s string) (string, error) {
+	if err := ValidateNixIdent(s); err != nil {
+		return "", err
+	}
+	return s, nil
+}
+
+// nixHookID is nixIdent for git-hooks.hooks.<id>, with an error that names
+// the value as a hook id.
 func nixHookID(id string) (string, error) {
-	if err := ValidateNixIdent(id); err != nil {
+	if _, err := nixIdent(id); err != nil {
 		return "", fmt.Errorf("invalid hook id %q: %w", id, err)
 	}
 	return id, nil
+}
+
+// nixComment returns s unchanged for rendering after `# ` on one line, or an
+// error naming s when it contains CR or LF: a Nix line comment ends at
+// either, so the rest of s would be parsed as Nix code. It deliberately
+// accepts what nixIdent rejects (spaces, ';', a keyword such as "let"):
+// inside a line comment those are inert, and display names hold spaces. The
+// XS-WS6 rejection set of `a b`, `x;y`, a newline and a Nix keyword applies
+// to nixIdent; nixComment rejects only line breaks.
+func nixComment(s string) (string, error) {
+	if strings.ContainsAny(s, "\r\n") {
+		return "", fmt.Errorf("%q cannot be a Nix line comment: it contains a line break", s)
+	}
+	return s, nil
 }
 
 // NixAttrName renders key as a Nix attribute name: bare when it is a plain

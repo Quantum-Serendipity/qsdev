@@ -3,7 +3,6 @@ package devinit
 import (
 	"errors"
 	"fmt"
-	"io"
 	"io/fs"
 	"log/slog"
 	"os"
@@ -48,6 +47,7 @@ for the current project. Detects existing languages and frameworks, applies
 project-type profiles, and writes all files atomically.`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if opts.Update {
+				devenv.PrintProjectDefaults(cmd.OutOrStdout())
 				return runUpdate(cmd, updateOptionsFromInit(opts))
 			}
 			return runInitWithModeDetection(cmd, opts)
@@ -121,7 +121,7 @@ func runInitWithModeDetection(cmd *cobra.Command, opts InitOptions) error {
 
 	// d. Print explanation, and the project defaults file the plan applies.
 	_, _ = fmt.Fprintf(cmd.OutOrStdout(), "[%s] %s\n", result.Mode, result.Explanation)
-	printProjectDefaults(cmd.OutOrStdout())
+	devenv.PrintProjectDefaults(cmd.OutOrStdout())
 
 	// e. Dispatch to appropriate handler.
 	switch result.Mode {
@@ -140,15 +140,6 @@ func runInitWithModeDetection(cmd *cobra.Command, opts InitOptions) error {
 		return runRepair(cmd, opts)
 	default:
 		return fmt.Errorf("unexpected onboarding mode: %s", result.Mode)
-	}
-}
-
-// printProjectDefaults names the project defaults file the catalog applies
-// (the layer of the root the runtime set for this command), if any. A file
-// the trust rule refuses is not named: loading the catalog reports it.
-func printProjectDefaults(w io.Writer) {
-	if p, err := catalog.ProjectConfigFile(catalog.ProjectRoot()); err == nil && p != "" {
-		_, _ = fmt.Fprintf(w, "Project defaults: %s\n", p)
 	}
 }
 

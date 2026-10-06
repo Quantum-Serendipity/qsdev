@@ -13,6 +13,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/Quantum-Serendipity/qsdev/addons/devenv"
 	"github.com/Quantum-Serendipity/qsdev/internal/cmdutil"
 	qsdevconfig "github.com/Quantum-Serendipity/qsdev/internal/config"
 	"github.com/Quantum-Serendipity/qsdev/internal/extlog/capture"
@@ -534,6 +535,7 @@ func runSelfUpdateStage(cmd *cobra.Command, opts FullUpdateOptions) StageResult 
 }
 
 func runConfigUpdateStage(cmd *cobra.Command, opts FullUpdateOptions) StageResult {
+	devenv.PrintProjectDefaults(cmd.OutOrStdout())
 	err := runUpdate(cmd, UpdateOptions{
 		Force:          opts.OverwriteModified,
 		AllowDowngrade: opts.AllowDowngrade,

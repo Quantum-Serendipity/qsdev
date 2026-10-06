@@ -3,6 +3,7 @@ package tmpl
 import (
 	"encoding/json"
 	"os/exec"
+	"strconv"
 	"strings"
 	"testing"
 	"text/template"
@@ -191,6 +192,99 @@ func TestNixHookID(t *testing.T) {
 			}
 			if tt.input != "" && strings.Contains(buf.String(), tt.input) {
 				t.Errorf("rejected hook id reached output: %q", buf.String())
+			}
+		})
+	}
+}
+
+func TestNixIdent(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name    string
+		input   string
+		wantErr bool
+	}{
+		{"env_key", "DEVENV_SECURITY_HARDENED", false},
+		{"service", "postgres", false},
+		{"script", "open-keycloak", false},
+		{"setting", "configPath", false},
+		{"empty", "", true},
+		{"space", "a b", true},
+		{"semicolon", "x;y", true},
+		{"newline", "a\nb", true},
+		{"carriage_return", "a\rb", true},
+		{"keyword", "let", true},
+		{"dotted", "a.b", true},
+		{"injection", nixHookIDPayloads[0], true},
+	}
+	tpl := template.Must(template.New("t").Funcs(NixFuncMap()).Parse(`{{ nixIdent . }} = 1;`))
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			var buf strings.Builder
+			err := tpl.Execute(&buf, tt.input)
+			if !tt.wantErr {
+				if err != nil {
+					t.Fatalf("nixIdent(%q) error = %v, want nil", tt.input, err)
+				}
+				if want := tt.input + " = 1;"; buf.String() != want {
+					t.Fatalf("nixIdent(%q) rendered %q, want %q", tt.input, buf.String(), want)
+				}
+				return
+			}
+			if err == nil || !strings.Contains(err.Error(), strconv.Quote(tt.input)) {
+				t.Fatalf("nixIdent(%q) error = %v, want an error naming the value", tt.input, err)
+			}
+			if tt.input != "" && strings.Contains(buf.String(), tt.input) {
+				t.Errorf("rejected identifier reached output: %q", buf.String())
+			}
+		})
+	}
+}
+
+// TestNixComment covers the `# ...` comment sink: a comment ends at the
+// first CR or LF, so either would let the rest of the value run as Nix code.
+// Anything else (spaces, ';', keywords) is inert inside a comment.
+func TestNixComment(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name    string
+		input   string
+		wantErr bool
+	}{
+		{"display_name", "Go", false},
+		{"spaces_and_parens", "LSP servers (qsdev-managed)", false},
+		{"space", "a b", false},
+		{"semicolon", "x;y", false},
+		{"keyword", "let", false},
+		{"empty", "", false},
+		{"newline", "Go\nevil = 1;", true},
+		{"carriage_return", "Go\revil = 1;", true},
+		{"crlf", "Go\r\nevil = 1;", true},
+		{"trailing_newline", "Go\n", true},
+	}
+	tpl := template.Must(template.New("t").Funcs(NixFuncMap()).Parse(`# {{ nixComment . }}`))
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			var buf strings.Builder
+			err := tpl.Execute(&buf, tt.input)
+			if !tt.wantErr {
+				if err != nil {
+					t.Fatalf("nixComment(%q) error = %v, want nil", tt.input, err)
+				}
+				if want := "# " + tt.input; buf.String() != want {
+					t.Fatalf("nixComment(%q) rendered %q, want %q", tt.input, buf.String(), want)
+				}
+				return
+			}
+			if err == nil || !strings.Contains(err.Error(), strconv.Quote(tt.input)) {
+				t.Fatalf("nixComment(%q) error = %v, want an error naming the value", tt.input, err)
+			}
+			if strings.Contains(buf.String(), "evil") {
+				t.Errorf("rejected comment reached output: %q", buf.String())
 			}
 		})
 	}

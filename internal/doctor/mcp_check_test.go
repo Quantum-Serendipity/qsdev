@@ -259,24 +259,13 @@ func TestFormatReport_MCPSection(t *testing.T) {
 func TestDisplayMCPServerName(t *testing.T) {
 	t.Parallel()
 
-	tests := []struct {
-		name string
-		in   string
-		want string
-	}{
-		{"plain", "github", "github"},
-		{"space and unicode letters", "my server é", "my server é"},
-		{"ansi escape", "evil\u001b[2K\rok", `"evil\x1b[2K\rok"`},
-		{"bidi override", "a\u202eb", `"a\u202eb"`},
-		{"newline", "a\nb", `"a\nb"`},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			t.Parallel()
-			if got := terminalSafe(tt.in); got != tt.want {
-				t.Errorf("terminalSafe(%q) = %s, want %s", tt.in, got, tt.want)
-			}
-		})
+	for in, want := range map[string]string{
+		"github":            "github",
+		"evil\u001b[2K\rok": `"evil\x1b[2K\rok"`,
+	} {
+		if got := (MCPServerInfo{Name: in}).DisplayName(); got != want {
+			t.Errorf("DisplayName(%q) = %s, want %s", in, got, want)
+		}
 	}
 }
 

@@ -600,8 +600,13 @@ type hookRun struct {
 // checkHookScripts), is built from any other expansion (including ~user), or
 // cannot be named is left out, as is every program of an unparseable
 // command. On Windows a POSIX absolute path is left out, as Git Bash maps it
-// into its own layer.
+// into its own layer. A command wrapped by claudesettings.FailClosedCommand
+// is scanned without the wrapper: it handles a failure by blocking every
+// matching call, not by letting the hook go without its program.
 func hookPrograms(projectRoot, command string) []hookRun {
+	if inner, ok := claudesettings.FailClosedInner(command); ok {
+		command = inner
+	}
 	s := hookScan{projectRoot: projectRoot, funcs: map[string]bool{}, dir: projectRoot}
 	s.scan(command, 0)
 	return s.runs

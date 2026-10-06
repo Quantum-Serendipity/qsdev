@@ -8,6 +8,43 @@ All notable changes to qsdev are recorded in this file. The format is based on
 
 ### Changed
 
+- `qsdev devenv doctor` enforces host version floors: devenv >= 2.1 (the
+  `require_version` the generated `devenv.yaml` declares) and nix >= 2.4 (the
+  first release with `nix profile` and flakes) are required, and python3 >=
+  3.9 is required by projects with Python hooks. A host with devenv 1.x, nix
+  below 2.4, or a required tool whose version cannot be read now fails
+  `doctor --check`, which lists each problem as "Install X: <fix>", "Upgrade
+  X to >= Y: <fix>" or "Could not determine X version (need >= Y)" instead of
+  "All required tools are present.". The full report marks such a required
+  tool as failed rather than a warning, and the JSON report gains each tool's
+  `min_version`. No generated files change.
+- `qsdev devenv setup`, the init/join auto-setup and the bootstrap devenv step
+  verify what they installed. Setup re-runs the checks and fails (exit
+  non-zero) when a selected tool is still missing from PATH or below its
+  floor, naming the PATH fix or the version found; auto-setup prints
+  "Prerequisites installed." only after that verification passes. The
+  bootstrap step upgrades a devenv below 2.1 instead of reporting it
+  "already installed", and fails when the version on PATH is still too old
+  afterwards. An installed nix below 2.4 is not reinstalled: the Nix
+  installer cannot upgrade it, so setup and doctor point at the in-place
+  upgrade instead. The init/join prerequisite gate applies the same floors,
+  so an outdated devenv or nix reaches the verified auto-setup instead of
+  being reported "OK". Setup also fails when it leaves a required tool
+  missing or outdated (an installed nix below 2.4, or a tool deselected at
+  the prompt), listing each with its upgrade hint.
+- `qsdev devenv doctor` (and the MCP `doctor` tool) require the programs the
+  project's Claude Code hooks look up on PATH, including the interpreter of
+  each hook script and programs inside the generated fail-closed wrappers. A
+  python3 inside the project (an activated `.venv`, devenv's
+  `.devenv/state/venv`) is never run; its version is read from the
+  environment's `pyvenv.cfg`. Doctor and `qsdev check` resolve hook programs
+  on the PATH of the shell they run in, which they assume is the PATH Claude
+  Code starts hooks with: run them from the activated devenv shell (in CI,
+  inside `devenv shell`). A hook program spelled as another Python version
+  (`python`, `python3.11`) or, on Windows, in another case or with a
+  PATHEXT extension keeps the python3 floor. When the Claude Code settings
+  cannot be read, every doctor output warns that the hook programs were not
+  checked.
 - `qsdev sandbox exec` keeps the project's control plane read-only for the
   hook categories with a writable project (formatter, generator,
   test-runner): git's hooks, config, info and modules, `.claude` (except the

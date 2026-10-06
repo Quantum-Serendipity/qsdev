@@ -15,7 +15,7 @@ import (
 const (
 	nixpkgsURL     = "github:NixOS/nixpkgs/nixpkgs-unstable"
 	gitHooksURL    = "github:cachix/git-hooks.nix"
-	requireVersion = ">=2.1"
+	requireVersion = ">=" + types.MinDevenv
 	yamlHeaderFmt  = "# %s init — security-hardened devenv configuration.\n# See https://devenv.sh/reference/yaml-options/ for all options.\n"
 )
 

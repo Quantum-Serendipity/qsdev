@@ -157,7 +157,7 @@ func TestDetect_RefusesProjectBinary(t *testing.T) {
 	if _, err := os.Stat(marker); err == nil {
 		t.Fatal("Detect ran a binary inside the project")
 	}
-	if !info.Found || info.Version != "" {
-		t.Errorf("Detect = %+v, want found without a version", info)
+	if !info.Found || info.Version != "" || !info.InProject {
+		t.Errorf("Detect = %+v, want found in the project without a version", info)
 	}
 }

@@ -370,6 +370,18 @@ func IsFailClosed(cmd string) bool {
 	return failClosedSuffixRe.MatchString(cmd)
 }
 
+// FailClosedInner returns the command FailClosedCommand wrapped, for any
+// owner, and false when cmd is not wrapped that way. The wrapper handles the
+// command's failure by blocking, so what it runs is the inner command's
+// programs.
+func FailClosedInner(cmd string) (string, bool) {
+	loc := failClosedSuffixRe.FindStringIndex(cmd)
+	if loc == nil {
+		return "", false
+	}
+	return cmd[:loc[0]], true
+}
+
 // programRe returns a pattern matching a hook command whose program is a
 // project hook script, capturing the script. Only the forms qsdev emits are
 // accepted: the script, addressed through the project-dir variable, may

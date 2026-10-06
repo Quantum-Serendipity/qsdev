@@ -461,6 +461,28 @@ func TestIsFailClosed(t *testing.T) {
 	}
 }
 
+func TestFailClosedInner(t *testing.T) {
+	t.Parallel()
+	inners := []string{
+		`"${CLAUDE_PROJECT_DIR}"/.claude/hooks/package-guard.py`,
+		"qsdev selfprotect",
+		"qsdev sandbox exec -- python3 x.py --flag",
+	}
+	for _, owner := range []string{"package-guard", "self-protection", "a.b_c-1"} {
+		for _, inner := range inners {
+			got, ok := FailClosedInner(FailClosedCommand(owner, inner))
+			if !ok || got != inner {
+				t.Errorf("FailClosedInner(FailClosedCommand(%q, %q)) = %q, %v; want %q, true", owner, inner, got, ok, inner)
+			}
+		}
+	}
+	for _, cmd := range []string{"qsdev selfprotect", FailClosedCommand("x", "a") + "; true", "a || true", ""} {
+		if got, ok := FailClosedInner(cmd); ok || got != "" {
+			t.Errorf("FailClosedInner(%q) = %q, %v; want \"\", false", cmd, got, ok)
+		}
+	}
+}
+
 // TestHoldsProjectSettings covers the paths a deletion must never reach: the
 // project settings file, which registers the self-protection hook, and the
 // directories holding it, in every spelling that opens it on some host.

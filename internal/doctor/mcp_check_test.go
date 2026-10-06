@@ -273,8 +273,8 @@ func TestDisplayMCPServerName(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
-			if got := displayMCPServerName(tt.in); got != tt.want {
-				t.Errorf("displayMCPServerName(%q) = %s, want %s", tt.in, got, tt.want)
+			if got := terminalSafe(tt.in); got != tt.want {
+				t.Errorf("terminalSafe(%q) = %s, want %s", tt.in, got, tt.want)
 			}
 		})
 	}

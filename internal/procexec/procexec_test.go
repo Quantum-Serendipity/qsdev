@@ -205,6 +205,22 @@ func TestForbidExec_VersionProbe(t *testing.T) {
 	}
 }
 
+// TestVersionProbe_InsideProjectSentinel verifies only a refusal for lying
+// inside the project carries ErrInsideProject, so callers can tell "not run
+// because it is project code" from any other failure.
+func TestVersionProbe_InsideProjectSentinel(t *testing.T) {
+	project := t.TempDir()
+	outside := touch(t, filepath.Join(t.TempDir(), "bin", "tool"))
+	inside := touch(t, filepath.Join(project, ".venv", "bin", "python3"))
+
+	if err := VersionProbe(context.Background(), project, inside, "--version").Err; !errors.Is(err, ErrInsideProject) {
+		t.Errorf("in-project probe Err = %v, want ErrInsideProject", err)
+	}
+	if err := VersionProbe(context.Background(), project, outside, "--help").Err; err == nil || errors.Is(err, ErrInsideProject) {
+		t.Errorf("bad-flag probe Err = %v, want a non-ErrInsideProject error", err)
+	}
+}
+
 func TestLocalProbes_DeclaredOnce(t *testing.T) {
 	t.Parallel()
 	if len(localProbes) == 0 {

@@ -7,6 +7,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"path/filepath"
 	"runtime"
 	"slices"
 	"strings"
@@ -15,6 +16,7 @@ import (
 	"github.com/Quantum-Serendipity/qsdev/internal/catalog"
 	"github.com/Quantum-Serendipity/qsdev/internal/doctor"
 	"github.com/Quantum-Serendipity/qsdev/internal/pkgmanager"
+	"github.com/Quantum-Serendipity/qsdev/internal/sysinfo"
 )
 
 func TestSetupCmd_Flags(t *testing.T) {
@@ -486,6 +488,318 @@ func TestInstallWithPM(t *testing.T) {
 			}
 			if strings.Join(tt.pm.installed, ",") != strings.Join(tt.wantInstalled, ",") {
 				t.Errorf("installed %v, want %v", tt.pm.installed, tt.wantInstalled)
+			}
+		})
+	}
+}
+
+// TestVerifyInstalled covers U13-09: a selected tool counts as set up only
+// when the re-run doctor check finds it at a version meeting its floor.
+func TestVerifyInstalled(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name      string
+		post      []doctor.ToolStatus
+		wantParts []string // empty: verification passes
+	}{
+		{
+			name: "ok",
+			post: []doctor.ToolStatus{
+				{Name: "devenv", Installed: true, Version: "2.1.2", MinVersion: "2.1", VersionOK: true},
+				{Name: "direnv", Installed: true, VersionOK: true},
+			},
+		},
+		{
+			name: "not on PATH",
+			post: []doctor.ToolStatus{
+				{Name: "devenv", MinVersion: "2.1"},
+				{Name: "direnv", Installed: true, VersionOK: true},
+			},
+			wantParts: []string{"devenv", "open a new shell or add ~/.nix-profile/bin to PATH"},
+		},
+		{
+			name: "below minimum",
+			post: []doctor.ToolStatus{
+				{Name: "devenv", Installed: true, Version: "1.4.1", MinVersion: "2.1"},
+				{Name: "direnv", Installed: true, VersionOK: true},
+			},
+			wantParts: []string{"devenv", "still below minimum 2.1 (found 1.4.1)"},
+		},
+		{
+			name: "unknown version",
+			post: []doctor.ToolStatus{
+				{Name: "devenv", Installed: true, MinVersion: "2.1"},
+				{Name: "direnv", Installed: true, VersionOK: true},
+			},
+			wantParts: []string{"devenv", "could not determine its version (need >= 2.1)"},
+		},
+		{
+			name:      "missing from the re-check",
+			post:      []doctor.ToolStatus{{Name: "direnv", Installed: true, VersionOK: true}},
+			wantParts: []string{"devenv", "not verified"},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			err := verifyInstalled([]string{"devenv", "direnv"}, tt.post)
+			if len(tt.wantParts) == 0 {
+				if err != nil {
+					t.Fatalf("verifyInstalled: %v", err)
+				}
+				return
+			}
+			if err == nil {
+				t.Fatal("verifyInstalled passed, want an error")
+			}
+			for _, part := range tt.wantParts {
+				if !strings.Contains(err.Error(), part) {
+					t.Errorf("error %q missing %q", err, part)
+				}
+			}
+			if strings.Contains(err.Error(), "direnv") {
+				t.Errorf("error %q names direnv, which verified", err)
+			}
+		})
+	}
+}
+
+// fakeSetupDeps returns setup dependencies whose first check reports
+// devenv missing, whose install records the tools it was asked for and
+// succeeds, and whose re-check reports post.
+func fakeSetupDeps(installed *[]string, post []doctor.ToolStatus) setupDeps {
+	calls := 0
+	return setupDeps{
+		osInfo: &sysinfo.OSInfo{OS: "linux", Distro: "ubuntu", Family: "debian", HasNix: true},
+		install: func(_ context.Context, _ io.Writer, name string) error {
+			*installed = append(*installed, name)
+			return nil
+		},
+		checks: func(context.Context) []doctor.ToolStatus {
+			calls++
+			if calls == 1 {
+				return []doctor.ToolStatus{
+					{Name: "nix", Installed: true, Version: "2.28.0", MinVersion: "2.4", VersionOK: true},
+					{Name: "devenv", MinVersion: "2.1", AutoInstallable: true},
+					{Name: "direnv", Installed: true, VersionOK: true},
+				}
+			}
+			return post
+		},
+	}
+}
+
+var (
+	postDevenvMissing = []doctor.ToolStatus{
+		{Name: "nix", Installed: true, Version: "2.28.0", MinVersion: "2.4", VersionOK: true},
+		{Name: "devenv", MinVersion: "2.1"},
+	}
+	postDevenvOutdated = []doctor.ToolStatus{
+		{Name: "nix", Installed: true, Version: "2.28.0", MinVersion: "2.4", VersionOK: true},
+		{Name: "devenv", Installed: true, Version: "1.4.1", MinVersion: "2.1"},
+	}
+	postDevenvOK = []doctor.ToolStatus{
+		{Name: "nix", Installed: true, Version: "2.28.0", MinVersion: "2.4", VersionOK: true},
+		{Name: "devenv", Installed: true, Version: "2.1.2", MinVersion: "2.1", VersionOK: true},
+	}
+)
+
+// TestRunSetup_VerificationFailureReturnsError covers U13-09: setup fails
+// with ErrSetupIncomplete when an install command "succeeds" but the tool
+// is still missing or below its floor.
+func TestRunSetup_VerificationFailureReturnsError(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name     string
+		post     []doctor.ToolStatus
+		wantPart string // "": setup succeeds
+	}{
+		{"not on PATH", postDevenvMissing, "open a new shell or add ~/.nix-profile/bin to PATH"},
+		{"outdated after install", postDevenvOutdated, "still below minimum 2.1 (found 1.4.1)"},
+		{"verified", postDevenvOK, ""},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			var installed []string
+			var buf bytes.Buffer
+			err := runSetup(context.Background(), &buf, true, false, fakeSetupDeps(&installed, tt.post))
+
+			if !slices.Equal(installed, []string{"devenv"}) {
+				t.Errorf("installed = %v, want [devenv]", installed)
+			}
+			if tt.wantPart == "" {
+				if err != nil {
+					t.Fatalf("runSetup: %v\n%s", err, buf.String())
+				}
+				return
+			}
+			if !errors.Is(err, ErrSetupIncomplete) {
+				t.Fatalf("error = %v, want %v", err, ErrSetupIncomplete)
+			}
+			if !strings.Contains(buf.String(), tt.wantPart) {
+				t.Errorf("output missing %q:\n%s", tt.wantPart, buf.String())
+			}
+		})
+	}
+}
+
+// TestAutoSetupPrerequisites_VerifiesAfterInstall covers U13-09: the
+// init/join auto-setup re-checks after installing and prints
+// "Prerequisites installed." only when verification passes.
+func TestAutoSetupPrerequisites_VerifiesAfterInstall(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name     string
+		post     []doctor.ToolStatus
+		wantPart string // "": auto-setup succeeds
+	}{
+		{"not on PATH", postDevenvMissing, "open a new shell or add ~/.nix-profile/bin to PATH"},
+		{"outdated after install", postDevenvOutdated, "still below minimum 2.1 (found 1.4.1)"},
+		{"verified", postDevenvOK, ""},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			var installed []string
+			var buf bytes.Buffer
+			err := autoSetup(context.Background(), &buf, fakeSetupDeps(&installed, tt.post))
+
+			if !slices.Equal(installed, []string{"devenv"}) {
+				t.Errorf("installed = %v, want [devenv]", installed)
+			}
+			printed := strings.Contains(buf.String(), "Prerequisites installed.")
+			if tt.wantPart == "" {
+				if err != nil {
+					t.Fatalf("autoSetup: %v\n%s", err, buf.String())
+				}
+				if !printed {
+					t.Errorf("output lacks 'Prerequisites installed.':\n%s", buf.String())
+				}
+				return
+			}
+			if !errors.Is(err, ErrSetupIncomplete) {
+				t.Fatalf("error = %v, want %v", err, ErrSetupIncomplete)
+			}
+			if printed {
+				t.Errorf("printed 'Prerequisites installed.' although verification failed:\n%s", buf.String())
+			}
+			if !strings.Contains(err.Error(), tt.wantPart) {
+				t.Errorf("error %q missing %q", err, tt.wantPart)
+			}
+		})
+	}
+}
+
+// TestAutoSetup_OutdatedNixNotReinstalled: the Nix installer installs, it
+// does not upgrade, so an installed nix below its floor is left to a manual
+// upgrade: setup never calls its installer and says how to upgrade. The
+// doctor checks run for real against fake tools.
+func TestAutoSetup_OutdatedNixNotReinstalled(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("the fake tools are POSIX shell scripts")
+	}
+	bin := t.TempDir()
+	for name, out := range map[string]string{
+		"nix":    "nix (Nix) 2.3.0",
+		"devenv": "devenv 2.1.2 (x86_64-linux)",
+		"direnv": "2.34.0",
+		"git":    "git version 2.47.1",
+	} {
+		writeFileMode(t, filepath.Join(bin, name), "#!/bin/sh\necho '"+out+"'\n", 0o755)
+	}
+	t.Setenv("PATH", bin)
+	osInfo := &sysinfo.OSInfo{OS: "linux", Distro: "ubuntu", Family: "debian", HasNix: true}
+	var installed []string
+	deps := setupDeps{
+		osInfo: osInfo,
+		checks: func(ctx context.Context) []doctor.ToolStatus {
+			return doctor.RunChecks(ctx, osInfo, doctor.RequiredChecks())
+		},
+		install: func(_ context.Context, _ io.Writer, name string) error {
+			installed = append(installed, name)
+			return nil
+		},
+	}
+	nix, _ := doctor.CheckNamed("nix")
+
+	var buf bytes.Buffer
+	err := autoSetup(context.Background(), &buf, deps)
+	if len(installed) != 0 {
+		t.Errorf("setup installed %q; an outdated nix must not be reinstalled", installed)
+	}
+	if err == nil || !strings.Contains(err.Error(), "nix ("+nix.UpgradeHint+")") {
+		t.Errorf("autoSetup = %v; want an error naming the nix upgrade", err)
+	}
+	if strings.Contains(buf.String(), "Prerequisites installed.") {
+		t.Errorf("autoSetup claimed success:\n%s", buf.String())
+	}
+}
+
+// TestRunSetup_RequiredManualToolFails: setup must not exit 0 while a
+// required tool it cannot install or upgrade (an outdated nix) still
+// fails its check, whether or not other tools were installed in the run.
+func TestRunSetup_RequiredManualToolFails(t *testing.T) {
+	t.Parallel()
+	const hint = "upgrade Nix in place"
+	nixOld := doctor.ToolStatus{Name: "nix", Required: true, Installed: true, Version: "2.3.0", MinVersion: "2.4", UpgradeHint: hint}
+	devenvOK := doctor.ToolStatus{Name: "devenv", Required: true, Installed: true, Version: "2.1.2", MinVersion: "2.1", VersionOK: true}
+	shellcheckMissing := doctor.ToolStatus{Name: "shellcheck", AutoInstallable: true}
+	shellcheckOK := doctor.ToolStatus{Name: "shellcheck", Installed: true, VersionOK: true}
+	tests := []struct {
+		name          string
+		pre, post     []doctor.ToolStatus
+		wantInstalled []string
+		wantErr       bool
+	}{
+		{"nix only", []doctor.ToolStatus{nixOld, devenvOK}, nil, nil, true},
+		{"nix and installable optional", []doctor.ToolStatus{nixOld, devenvOK, shellcheckMissing},
+			[]doctor.ToolStatus{nixOld, devenvOK, shellcheckOK}, []string{"shellcheck"}, true},
+		{"optional manual only", []doctor.ToolStatus{devenvOK, {Name: "hadolint"}}, nil, nil, false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			var installed []string
+			calls := 0
+			deps := setupDeps{
+				osInfo: &sysinfo.OSInfo{OS: "linux", Distro: "ubuntu", Family: "debian", HasNix: true},
+				install: func(_ context.Context, _ io.Writer, name string) error {
+					installed = append(installed, name)
+					return nil
+				},
+				checks: func(context.Context) []doctor.ToolStatus {
+					calls++
+					if calls == 1 {
+						return tt.pre
+					}
+					return tt.post
+				},
+			}
+			var buf bytes.Buffer
+			err := runSetup(context.Background(), &buf, true, false, deps)
+
+			if !slices.Equal(installed, tt.wantInstalled) {
+				t.Errorf("installed = %v, want %v", installed, tt.wantInstalled)
+			}
+			if !tt.wantErr {
+				if err != nil {
+					t.Fatalf("runSetup: %v\n%s", err, buf.String())
+				}
+				if !strings.Contains(buf.String(), "Manual installation required for: hadolint") {
+					t.Errorf("output does not list the optional manual tool:\n%s", buf.String())
+				}
+				return
+			}
+			if !errors.Is(err, ErrSetupIncomplete) {
+				t.Fatalf("error = %v, want %v\n%s", err, ErrSetupIncomplete, buf.String())
+			}
+			want := "nix (" + hint + ")"
+			if !strings.Contains(err.Error(), want) {
+				t.Errorf("error %q missing %q", err, want)
+			}
+			if !strings.Contains(buf.String(), "Manual installation required for: "+want) {
+				t.Errorf("output missing the manual nix upgrade:\n%s", buf.String())
 			}
 		})
 	}

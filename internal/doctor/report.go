@@ -25,18 +25,21 @@ type Report struct {
 	// ProjectRoot is the project the project-scoped checks ran against, or
 	// "" outside a project, where they are skipped. It is always emitted so
 	// JSON consumers can tell "skipped" from "clean".
-	ProjectRoot        string              `json:"project_root"`
-	ContainerRuntime   *ContainerSection   `json:"container_runtime,omitempty"`
-	SandboxRuntime     *SandboxSection     `json:"sandbox_runtime,omitempty"`
-	MCPServers         *MCPSection         `json:"mcp_servers,omitempty"`
-	CloudProviders     *CloudSection       `json:"cloud_providers,omitempty"`
-	ModuleChecks       *ModuleCheckSection `json:"module_checks,omitempty"`
-	ProjectToolchains  []string            `json:"project_toolchains,omitempty"` // see ecosystem.ToolchainChecker
-	OrgOverlayDrift    string              `json:"org_overlay_drift,omitempty"`  // see catalog.OrgConfigDrift
-	RequiredTools      []ToolEntry         `json:"required_tools"`
-	OptionalTools      []ToolEntry         `json:"optional_tools"`
-	Recommendations    []string            `json:"recommendations,omitempty"`
-	AllRequiredPresent bool                `json:"all_required_present"`
+	ProjectRoot       string              `json:"project_root"`
+	ContainerRuntime  *ContainerSection   `json:"container_runtime,omitempty"`
+	SandboxRuntime    *SandboxSection     `json:"sandbox_runtime,omitempty"`
+	MCPServers        *MCPSection         `json:"mcp_servers,omitempty"`
+	CloudProviders    *CloudSection       `json:"cloud_providers,omitempty"`
+	ModuleChecks      *ModuleCheckSection `json:"module_checks,omitempty"`
+	ProjectToolchains []string            `json:"project_toolchains,omitempty"` // see ecosystem.ToolchainChecker
+	OrgOverlayDrift   string              `json:"org_overlay_drift,omitempty"`  // see catalog.OrgConfigDrift
+	// HookProgramsWarning is set when the programs the project's Claude
+	// Code hooks need could not be determined (see HookProgramsWarning).
+	HookProgramsWarning string      `json:"hook_programs_warning,omitempty"`
+	RequiredTools       []ToolEntry `json:"required_tools"`
+	OptionalTools       []ToolEntry `json:"optional_tools"`
+	Recommendations     []string    `json:"recommendations,omitempty"`
+	AllRequiredPresent  bool        `json:"all_required_present"`
 }
 
 // SetContainerSection attaches a container runtime check result to the report.
@@ -124,6 +127,15 @@ func (r *Report) SetOrgOverlayDrift(drift string) {
 	r.OrgOverlayDrift = drift
 }
 
+// SetHookProgramsError records that ProjectChecks failed with err, so the
+// hook programs were not checked; nil clears it.
+func (r *Report) SetHookProgramsError(err error) {
+	r.HookProgramsWarning = ""
+	if err != nil {
+		r.HookProgramsWarning = HookProgramsWarning(err)
+	}
+}
+
 // SystemInfo captures OS-level details for the report.
 type SystemInfo struct {
 	OS          string `json:"os"`
@@ -155,9 +167,68 @@ type ToolEntry struct {
 	Name       string `json:"name"`
 	Found      bool   `json:"found"`
 	Version    string `json:"version,omitempty"`
+	MinVersion string `json:"min_version,omitempty"`
 	VersionOK  bool   `json:"version_ok"`
 	Path       string `json:"path,omitempty"`
+	// InProject reports that the binary lies inside the project and was
+	// not run (see ToolStatus.InProject).
+	InProject  bool   `json:"in_project,omitempty"`
 	FixCommand string `json:"fix_command,omitempty"`
+	// RequiredBy says what needs a required tool that is not an
+	// environment prerequisite (see ToolStatus.RequiredBy).
+	RequiredBy string `json:"required_by,omitempty"`
+}
+
+// problem returns the one-line remediation for a tool that is missing, below
+// its floor or of a version that could not be determined, and false for a
+// tool that is fine. Both the recommendations and RequiredProblems use it.
+func (t ToolEntry) problem() (string, bool) {
+	// The name, path and fix can come from repository content (a program a
+	// hook runs), so each is made safe for the terminal.
+	name, fix := terminalSafe(t.Name), terminalSafe(t.FixCommand)
+	switch {
+	case !t.Found:
+		return withFix(t.withReason("Install "+name), fix), true
+	case t.VersionOK || t.MinVersion == "":
+		return "", false
+	case t.Version == "" && t.InProject:
+		return t.withReason(fmt.Sprintf("%s at %s is inside the project, so doctor does not run it; verify it is >= %s",
+			name, terminalSafe(t.Path), t.MinVersion)), true
+	case t.Version == "":
+		return t.withReason(fmt.Sprintf("Could not determine %s version (need >= %s)", name, t.MinVersion)), true
+	default:
+		return withFix(t.withReason(fmt.Sprintf("Upgrade %s to >= %s", name, t.MinVersion)), fix), true
+	}
+}
+
+// withReason appends ", <RequiredBy>" to line when the tool has that reason.
+func (t ToolEntry) withReason(line string) string {
+	if t.RequiredBy == "" {
+		return line
+	}
+	return line + ", " + t.RequiredBy
+}
+
+// withFix appends ": fix" to line when there is a fix command.
+func withFix(line, fix string) string {
+	if fix == "" {
+		return line
+	}
+	return line + ": " + fix
+}
+
+// RequiredProblems returns one line per required tool that keeps this host
+// from running the environment: "Install X: <fix>", "Upgrade X to >= Y:
+// <fix>" or "Could not determine X version (need >= Y)". It is empty when
+// every required tool is present and meets its floor.
+func (r *Report) RequiredProblems() []string {
+	var problems []string
+	for _, t := range r.RequiredTools {
+		if line, ok := t.problem(); ok {
+			problems = append(problems, line)
+		}
+	}
+	return problems
 }
 
 // BuildReport constructs a Report from raw OS info and check results.
@@ -205,36 +276,31 @@ func BuildReport(osInfo *sysinfo.OSInfo, checks []ToolStatus, qsdevVersion strin
 
 	for _, ts := range checks {
 		entry := ToolEntry{
-			Name:      ts.Name,
-			Found:     ts.Installed,
-			Version:   ts.Version,
-			VersionOK: ts.VersionOK,
-			Path:      ts.Path,
+			Name:       ts.Name,
+			Found:      ts.Installed,
+			Version:    ts.Version,
+			MinVersion: ts.MinVersion,
+			VersionOK:  ts.VersionOK,
+			Path:       ts.Path,
+			InProject:  ts.InProject,
+			RequiredBy: ts.RequiredBy,
 		}
-
-		if !ts.Installed || (ts.MinVersion != "" && !ts.VersionOK) {
+		if ts.NeedsSetup() {
+			// fixCommand never returns "": a tool with no known package
+			// gets explicit guidance rather than an empty "Install X: ".
 			entry.FixCommand = fixCommand(pm, family, ts)
 		}
 
-		if ts.Required {
-			r.RequiredTools = append(r.RequiredTools, entry)
-			if !ts.Installed || (ts.MinVersion != "" && !ts.VersionOK) {
+		if line, ok := entry.problem(); ok {
+			r.Recommendations = append(r.Recommendations, line)
+			if ts.Required {
 				r.AllRequiredPresent = false
 			}
+		}
+		if ts.Required {
+			r.RequiredTools = append(r.RequiredTools, entry)
 		} else {
 			r.OptionalTools = append(r.OptionalTools, entry)
-		}
-	}
-
-	// Build recommendations. fixCommand never returns "": a tool with no known
-	// package gets explicit guidance rather than an empty "Install X: ".
-	for _, ts := range checks {
-		cmd := fixCommand(pm, family, ts)
-		switch {
-		case !ts.Installed:
-			r.Recommendations = append(r.Recommendations, fmt.Sprintf("Install %s: %s", ts.Name, cmd))
-		case ts.MinVersion != "" && !ts.VersionOK:
-			r.Recommendations = append(r.Recommendations, fmt.Sprintf("Upgrade %s to >= %s: %s", ts.Name, ts.MinVersion, cmd))
 		}
 	}
 
@@ -246,11 +312,17 @@ func BuildReport(osInfo *sysinfo.OSInfo, checks []ToolStatus, qsdevVersion strin
 // security rules and deny list forbid: required prerequisites point at
 // `devenv setup`, and other tools at `devenv add-package <attr>`, which pins
 // them in the project's devenv.nix. A tool with no known package for the
-// manager gets an explicit note instead of an empty command.
+// manager gets an explicit note instead of an empty command. A tool required
+// for another reason (ToolStatus.RequiredBy) is not a prerequisite setup
+// installs, so it gets the advice of an optional tool. An installed tool
+// with an UpgradeHint (one setup cannot upgrade) gets that hint.
 func fixCommand(pm pkgmanager.PackageManager, family string, ts ToolStatus) string {
+	if ts.Installed && ts.UpgradeHint != "" {
+		return ts.UpgradeHint
+	}
 	app := branding.Get().AppName
 	if _, isNix := pm.(*pkgmanager.Nix); isNix {
-		if ts.Required {
+		if ts.Required && ts.RequiredBy == "" {
 			return app + " devenv setup"
 		}
 		if pkg, ok := pkgmanager.PackageFor(pm, family, ts.Name); ok {
@@ -376,16 +448,23 @@ func FormatReport(w io.Writer, r *Report, useColor bool) {
 		fmt.Fprintln(w)
 	}
 
+	// Claude Code hooks
+	if r.HookProgramsWarning != "" {
+		fmt.Fprintln(w, "Claude Code Hooks")
+		fmt.Fprintf(w, "  %s %s\n", warnSym, r.HookProgramsWarning)
+		fmt.Fprintln(w)
+	}
+
 	// Required Tools
 	if len(r.RequiredTools) > 0 {
 		fmt.Fprintln(w, "Required Tools")
 		fmt.Fprintf(w, "  %-14s %-8s %-11s %s\n", "NAME", "STATUS", "VERSION", "PATH")
 		for _, t := range r.RequiredTools {
+			// A required tool below its floor fails --check, so it is a
+			// failure here too, not a warning.
 			sym := okSym
-			if !t.Found {
+			if _, bad := t.problem(); bad {
 				sym = failSym
-			} else if !t.VersionOK {
-				sym = warnSym
 			}
 			ver := t.Version
 			if ver == "" {
@@ -395,7 +474,11 @@ func FormatReport(w io.Writer, r *Report, useColor bool) {
 			if p == "" {
 				p = "-"
 			}
-			fmt.Fprintf(w, "  %-14s %-8s %-11s %s\n", t.Name, sym, ver, p)
+			p = terminalSafe(p)
+			if t.RequiredBy != "" {
+				p += "  " + t.RequiredBy
+			}
+			fmt.Fprintf(w, "  %-14s %-8s %-11s %s\n", terminalSafe(t.Name), sym, terminalSafe(ver), p)
 		}
 		fmt.Fprintln(w)
 	}
@@ -419,7 +502,7 @@ func FormatReport(w io.Writer, r *Report, useColor bool) {
 			if p == "" {
 				p = "-"
 			}
-			fmt.Fprintf(w, "  %-14s %-8s %-11s %s\n", t.Name, sym, ver, p)
+			fmt.Fprintf(w, "  %-14s %-8s %-11s %s\n", terminalSafe(t.Name), sym, terminalSafe(ver), terminalSafe(p))
 		}
 		fmt.Fprintln(w)
 	}
@@ -491,7 +574,7 @@ func formatMCPSection(w io.Writer, ms *MCPSection, okSym, warnSym, failSym strin
 		case MCPStatusMisconfigured:
 			sym = failSym
 		}
-		fmt.Fprintf(w, "  %-20s %s %s (%s)\n", displayMCPServerName(srv.Name), sym, srv.Status, srv.Transport)
+		fmt.Fprintf(w, "  %-20s %s %s (%s)\n", terminalSafe(srv.Name), sym, srv.Status, srv.Transport)
 		for _, is := range srv.Issues {
 			isym := warnSym
 			if is.Severity == mcphealth.SeverityError {

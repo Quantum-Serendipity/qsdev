@@ -41,7 +41,7 @@ func TestInitIgnoresAncestorProjectDefaults(t *testing.T) {
 	b := branding.Get()
 	env := guardrailEnv(t)
 
-	proj := filepath.Join(testutil.MarkerFreeTempDir(t), "proj")
+	proj := filepath.Join(testutil.IsolatedDir(t), "proj")
 	sub := filepath.Join(proj, "sub")
 	overlay := catalog.ProjectConfigPath(proj)
 	for _, d := range []string{sub, filepath.Dir(overlay)} {

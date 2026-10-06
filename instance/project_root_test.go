@@ -44,7 +44,7 @@ func TestSessionProjectRoot(t *testing.T) {
 			if tt.unixOnly && runtime.GOOS == "windows" {
 				t.Skip("marker trust is ACL-based on Windows and out of scope")
 			}
-			root := testutil.MarkerFreeTempDir(t)
+			root := testutil.IsolatedDir(t)
 			for _, d := range tt.dirs {
 				if err := os.MkdirAll(filepath.Join(root, filepath.FromSlash(d)), 0o755); err != nil {
 					t.Fatal(err)
@@ -135,7 +135,7 @@ func TestInitCommandSetsCatalogProjectRoot(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			catalog.ResetDefault()
 			t.Cleanup(catalog.ResetDefault)
-			root := testutil.MarkerFreeTempDir(t)
+			root := testutil.IsolatedDir(t)
 			if err := os.MkdirAll(filepath.Join(root, filepath.FromSlash(tt.cwd)), 0o755); err != nil {
 				t.Fatal(err)
 			}

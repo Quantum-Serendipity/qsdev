@@ -14,6 +14,7 @@ import (
 	"github.com/Quantum-Serendipity/qsdev/internal/catalog"
 	qsdevconfig "github.com/Quantum-Serendipity/qsdev/internal/config"
 	"github.com/Quantum-Serendipity/qsdev/internal/state"
+	"github.com/Quantum-Serendipity/qsdev/internal/testutil"
 	"github.com/Quantum-Serendipity/qsdev/pkg/types"
 )
 
@@ -40,8 +41,7 @@ func runDevenv(t *testing.T, args ...string) (string, error) {
 // returns the project root.
 func initProject(t *testing.T) string {
 	t.Helper()
-	tmpDir := t.TempDir()
-	chdir(t, tmpDir)
+	tmpDir := testutil.Project(t, testutil.ProjectOptions{})
 	if out, err := runDevenv(t, "init", "--lang", "go", "--yes"); err != nil {
 		t.Fatalf("init failed: %v\n%s", err, out)
 	}

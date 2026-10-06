@@ -32,7 +32,7 @@ func TestInitUpdateTargetsCwdNotAncestor(t *testing.T) {
 			if tt.unixOnly && runtime.GOOS == "windows" {
 				t.Skip("marker trust is ACL-based on Windows and out of scope")
 			}
-			base := testutil.MarkerFreeTempDir(t)
+			base := testutil.IsolatedDir(t)
 			anc := filepath.Join(base, "anc")
 			plantPaths(t, base, "anc/"+b.StateDir+"/", "anc/child/")
 			if tt.shared {

@@ -7,7 +7,6 @@ import (
 	"strings"
 
 	"github.com/Quantum-Serendipity/qsdev/internal/toolreg"
-	"github.com/Quantum-Serendipity/qsdev/pkg/branding"
 )
 
 // CheckDevenvSecurityFloor reports whether the project's devenv modules still
@@ -56,8 +55,11 @@ func CheckDevenvSecurityFloor(ctx CheckContext) CheckResult {
 	}
 	result.Status, result.Severity = StatusFail, SeverityHigh
 	result.Message = toolreg.DevenvNixFile + " is weaker than the generated security floor: " + strings.Join(problems, "; ")
-	result.Remediation = "Run '" + branding.Get().AppName + " init --update' to regenerate " + toolreg.DevenvNixFile +
-		" (and check your user/org defaults file); keep local changes in devenv.local.nix without disabling these"
+	// devenv.nix only fails here after a hand edit, and 'init --update' leaves a
+	// hand-edited devenv.nix in place (it writes a sidecar), so name the step
+	// that overwrites it.
+	result.Remediation = restoreGeneratedRemediation(toolreg.DevenvNixFile) +
+		" (this discards your edits; check your user/org defaults file too); keep local changes in devenv.local.nix without disabling these"
 	return result
 }
 

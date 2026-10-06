@@ -1039,6 +1039,20 @@ func TestRunCheck_WeakenedDevenvNixFails(t *testing.T) {
 	if report.Summary.Fail < 1 {
 		t.Errorf("summary %+v counts no failure", report.Summary)
 	}
+
+	// Following the remediation must clear the failure. 'init --update' only
+	// writes a sidecar beside a hand-edited devenv.nix, so it would not.
+	const restore = "update --configs-only --overwrite-modified"
+	if !strings.Contains(r.Remediation, restore) {
+		t.Fatalf("devenv_security_floor remediation %q does not name %q", r.Remediation, restore)
+	}
+	t.Chdir(dir)
+	if out, err := executeUpdate(append(strings.Fields(restore)[1:], "--skip-container")); err != nil {
+		t.Fatalf("following the remediation (%s): %v\n%s", restore, err, out)
+	}
+	if r := floorResult(t, runCheckJSON(t, dir)); r.Status != check.StatusPass {
+		t.Errorf("after following the remediation: devenv_security_floor = %+v, want pass", r)
+	}
 }
 
 // TestRunCheck_NeutralisedDevenvNixFails covers ways to defeat the security

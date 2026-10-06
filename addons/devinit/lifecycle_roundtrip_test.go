@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"io/fs"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"runtime"
 	"slices"
@@ -142,7 +141,7 @@ func loadProjectAnswers(t *testing.T, dir string) types.WizardAnswers {
 
 // assertSharedFilesWellFormed checks every shared file is in its own format:
 // JSON files parse, CLAUDE.md carries no raw MCP JSON, and devenv.nix carries
-// no Markdown and parses as Nix when nix-instantiate is available.
+// no Markdown and parses as Nix (see assertNixParses).
 func assertSharedFilesWellFormed(t *testing.T, dir string) {
 	t.Helper()
 	for _, rel := range []string{".mcp.json", ".claude/settings.json"} {
@@ -168,11 +167,7 @@ func assertSharedFilesWellFormed(t *testing.T, dir string) {
 			t.Errorf("devenv.nix contains a Markdown line: %q", line)
 		}
 	}
-	if nixInstantiate, err := exec.LookPath("nix-instantiate"); err == nil {
-		if out, err := exec.Command(nixInstantiate, "--parse", filepath.Join(dir, "devenv.nix")).CombinedOutput(); err != nil {
-			t.Errorf("devenv.nix does not parse: %v\n%s", err, out)
-		}
-	}
+	assertNixParses(t, dir)
 }
 
 // TestLifecycle_SharedContentMatchesFileFormat is the F027 regression: tools

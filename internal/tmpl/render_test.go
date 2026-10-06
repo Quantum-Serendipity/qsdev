@@ -7,6 +7,8 @@ import (
 	"strings"
 	"testing"
 	"testing/fstest"
+
+	"github.com/Quantum-Serendipity/qsdev/internal/testutil"
 )
 
 type nixTestData struct {
@@ -161,10 +163,7 @@ func TestRenderMissingTemplate(t *testing.T) {
 }
 
 func TestRenderNixValidation(t *testing.T) {
-	nixInst, err := exec.LookPath("nix-instantiate")
-	if err != nil {
-		t.Skip("nix-instantiate not on PATH, skipping Nix validation test")
-	}
+	nixInst := testutil.RequireTool(t, "nix-instantiate", testutil.RequireNix)
 
 	// Use a purpose-built template that produces standalone-valid Nix.
 	// The main test.nix.tmpl uses nixList (bare identifiers) which are

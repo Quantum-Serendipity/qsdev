@@ -3,7 +3,6 @@ package devinit
 import (
 	"bytes"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -12,6 +11,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/Quantum-Serendipity/qsdev/internal/sandbox/policy"
+	"github.com/Quantum-Serendipity/qsdev/internal/testutil"
 )
 
 // isolateApprovals points the sandbox policy approval store and the policy
@@ -110,19 +110,21 @@ func TestSandboxApprove_Refusals(t *testing.T) {
 		agent       bool
 		stdin       string
 		wantErr     string
+		needsNix    bool // the case evaluates the policy with a real nix
 	}
 	tests := []approveCase{
 		{name: "agent session", policy: "{ }", interactive: true, agent: true, wantErr: "AI agent session"},
 		{name: "no terminal", policy: "{ }", wantErr: "interactive terminal"},
 		{name: "missing policy", interactive: true, wantErr: "sandbox policy"},
 		{name: "unevaluable policy", policy: "{ this is not nix", interactive: true, stdin: "y\n", wantErr: "not approved"},
-	}
-	if _, err := exec.LookPath("nix"); err == nil {
 		// Declining needs an evaluable policy, so a working nix.
-		tests = append(tests, approveCase{name: "declined", policy: "{ }", interactive: true, stdin: "n\n"})
+		{name: "declined", policy: "{ }", interactive: true, stdin: "n\n", needsNix: true},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			if tt.needsNix {
+				testutil.RequireTool(t, "nix", testutil.RequireNix)
+			}
 			isolateApprovals(t)
 			project := t.TempDir()
 			t.Setenv("CLAUDE_PROJECT_DIR", project)
@@ -156,9 +158,7 @@ func TestSandboxApprove_Refusals(t *testing.T) {
 // TestSandboxApprove_EndToEnd approves a policy with the real `nix eval`, runs
 // a hook under it, and pins that an edit after approval blocks the hook again.
 func TestSandboxApprove_EndToEnd(t *testing.T) {
-	if _, err := exec.LookPath("nix"); err != nil {
-		t.Skip("nix is not installed")
-	}
+	testutil.RequireTool(t, "nix", testutil.RequireNix)
 	isolateApprovals(t)
 	project := t.TempDir()
 	t.Setenv("CLAUDE_PROJECT_DIR", project)

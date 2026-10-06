@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/Quantum-Serendipity/qsdev/internal/mcpserve/spi"
+	"github.com/Quantum-Serendipity/qsdev/internal/testutil"
 )
 
 func call(t *testing.T, h spi.ToolHandler, args map[string]any) *spi.ToolResult {
@@ -348,9 +349,7 @@ func TestRunProcessGroupTimeoutVsCancellation(t *testing.T) {
 // evaluation, so the test asserts only that the handler executes nix and returns
 // a structured result with an exit code (it does not require a successful run).
 func TestNixRunExecutes(t *testing.T) {
-	if _, err := exec.LookPath("nix"); err != nil {
-		t.Skip("nix not installed; skipping live nix_run execution test")
-	}
+	testutil.RequireTool(t, "nix", testutil.RequireNix)
 	nix := newNixRunner(t.TempDir(), nil)
 	res := call(t, nix.handle, map[string]any{
 		"command": "nixpkgs#hello",

@@ -10,6 +10,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/Quantum-Serendipity/qsdev/internal/testutil"
 )
 
 // normalizeCases are devenv.nix-shaped modules and their normalized form.
@@ -95,10 +97,7 @@ func TestNormalizeNixModule(t *testing.T) {
 // normalization and requires the same result.
 func TestNormalizeNixModule_PreservesValue(t *testing.T) {
 	t.Parallel()
-	nixInstantiate, err := exec.LookPath("nix-instantiate")
-	if err != nil {
-		t.Skip("nix-instantiate not available")
-	}
+	nixInstantiate := testutil.RequireTool(t, "nix-instantiate", testutil.RequireNix)
 	eval := func(t *testing.T, src string) string {
 		t.Helper()
 		path := filepath.Join(t.TempDir(), "m.nix")

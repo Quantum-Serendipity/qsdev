@@ -345,11 +345,13 @@ func checkToolPin(t *testing.T, where, key, value, kind, target string, nixSeen 
 }
 
 type workflowStep struct {
-	Name string            `yaml:"name"`
-	Uses string            `yaml:"uses"`
-	Run  string            `yaml:"run"`
-	With map[string]string `yaml:"with"`
-	Env  map[string]string `yaml:"env"`
+	Name            string            `yaml:"name"`
+	If              string            `yaml:"if"`
+	ContinueOnError string            `yaml:"continue-on-error"`
+	Uses            string            `yaml:"uses"`
+	Run             string            `yaml:"run"`
+	With            map[string]string `yaml:"with"`
+	Env             map[string]string `yaml:"env"`
 }
 
 // workflowPermissions is a permissions block. The shorthand scalar form
@@ -387,14 +389,16 @@ func (l *stringList) UnmarshalYAML(n *yaml.Node) error {
 }
 
 type workflowJob struct {
-	Name        string              `yaml:"name"`
-	Strategy    workflowStrategy    `yaml:"strategy"`
-	RunsOn      stringList          `yaml:"runs-on"`
-	Needs       stringList          `yaml:"needs"`
-	Outputs     map[string]string   `yaml:"outputs"`
-	Permissions workflowPermissions `yaml:"permissions"`
-	Env         map[string]string   `yaml:"env"`
-	Steps       []workflowStep      `yaml:"steps"`
+	Name            string              `yaml:"name"`
+	If              string              `yaml:"if"`
+	ContinueOnError string              `yaml:"continue-on-error"`
+	Strategy        workflowStrategy    `yaml:"strategy"`
+	RunsOn          stringList          `yaml:"runs-on"`
+	Needs           stringList          `yaml:"needs"`
+	Outputs         map[string]string   `yaml:"outputs"`
+	Permissions     workflowPermissions `yaml:"permissions"`
+	Env             map[string]string   `yaml:"env"`
+	Steps           []workflowStep      `yaml:"steps"`
 }
 
 // workflowStrategy is a job's strategy block; the matrix stays a node

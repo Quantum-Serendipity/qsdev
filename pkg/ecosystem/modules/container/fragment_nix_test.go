@@ -6,6 +6,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/Quantum-Serendipity/qsdev/internal/testutil"
 	"github.com/Quantum-Serendipity/qsdev/pkg/ecosystem"
 )
 
@@ -52,10 +53,7 @@ func TestDevenvNixFragment_PodmanSocketPaths(t *testing.T) {
 // errors that would make the generated devenv.nix unevaluable.
 func TestDevenvNixFragment_NixParses(t *testing.T) {
 	t.Parallel()
-	nixInstantiate, err := exec.LookPath("nix-instantiate")
-	if err != nil {
-		t.Skip("nix-instantiate not available")
-	}
+	nixInstantiate := testutil.RequireTool(t, "nix-instantiate", testutil.RequireNix)
 
 	for _, rt := range []string{"", "docker", "podman-rootless", "podman-rootful"} {
 		t.Run("runtime="+rt, func(t *testing.T) {
@@ -80,10 +78,7 @@ func TestDevenvNixFragment_NixParses(t *testing.T) {
 // DOCKER_HOST when no runtime directory exists.
 func TestDevenvNixFragment_RootlessDockerHostEval(t *testing.T) {
 	t.Parallel()
-	nixInstantiate, err := exec.LookPath("nix-instantiate")
-	if err != nil {
-		t.Skip("nix-instantiate not available")
-	}
+	nixInstantiate := testutil.RequireTool(t, "nix-instantiate", testutil.RequireNix)
 	frag, err := newModule().DevenvNixFragment(ecosystem.ModuleConfig{
 		Extras: map[string]string{"container_runtime": "podman-rootless"},
 	})

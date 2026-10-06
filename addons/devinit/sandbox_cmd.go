@@ -308,11 +308,18 @@ func printSandboxStatusText(cmd *cobra.Command, caps *sandbox.SystemCapabilities
 // status command stay honest even when kernel-capability probing reports a tier
 // stronger than the tool set can deliver.
 func unenforceableLayers(tier sandbox.DegradationTier) []string {
+	return layersWithoutTools(tier, sandbox.LLRestrictBin(), sandbox.SeccompFilterFile())
+}
+
+// layersWithoutTools is unenforceableLayers with the enforcement tool paths
+// given: llBin is the ll-restrict helper and seccompFile the compiled BPF
+// filter, each "" when this build does not carry it.
+func layersWithoutTools(tier sandbox.DegradationTier, llBin, seccompFile string) []string {
 	var layers []string
-	if sandbox.TierClaimsLandlock(tier) && sandbox.LLRestrictBin() == "" {
+	if sandbox.TierClaimsLandlock(tier) && llBin == "" {
 		layers = append(layers, "Landlock")
 	}
-	if sandbox.TierClaimsSeccomp(tier) && sandbox.SeccompFilterFile() == "" {
+	if sandbox.TierClaimsSeccomp(tier) && seccompFile == "" {
 		layers = append(layers, "seccomp")
 	}
 	return layers

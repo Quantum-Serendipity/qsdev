@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/Quantum-Serendipity/qsdev/internal/catalog"
+	"github.com/Quantum-Serendipity/qsdev/internal/testutil"
 )
 
 // nixSecretsCheckDef returns the catalog definition of the always-on
@@ -45,10 +46,7 @@ func TestBuildNixSecretsCheckEntry_PatternIsNixEscaped(t *testing.T) {
 // runs are the catalog regexes, and that they catch a dotted env secret.
 func TestBuildNixSecretsCheckEntry_PatternsEvaluateToCatalogRegexes(t *testing.T) {
 	t.Parallel()
-	nixInstantiate, err := exec.LookPath("nix-instantiate")
-	if err != nil {
-		t.Skip("nix-instantiate not available")
-	}
+	nixInstantiate := testutil.RequireTool(t, "nix-instantiate", testutil.RequireNix)
 	def := nixSecretsCheckDef(t)
 	entry := buildNixSecretsCheckEntry(def)
 	bindings, _, ok := strings.Cut(entry, "\n        in\n")

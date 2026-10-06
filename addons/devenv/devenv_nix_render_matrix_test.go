@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/Quantum-Serendipity/qsdev/internal/catalog"
+	"github.com/Quantum-Serendipity/qsdev/internal/testutil"
 	"github.com/Quantum-Serendipity/qsdev/internal/validation"
 	"github.com/Quantum-Serendipity/qsdev/pkg/ecosystem"
 	"github.com/Quantum-Serendipity/qsdev/pkg/types"
@@ -173,10 +174,7 @@ func TestGenerateDevenvNix_DefinesEachKeyOnce(t *testing.T) {
 // normalizing drops the unused ones).
 func TestGenerateDevenvNix_NormalizePreservesAST(t *testing.T) {
 	t.Parallel()
-	nixInstantiate, err := exec.LookPath("nix-instantiate")
-	if err != nil {
-		t.Skip("nix-instantiate not available")
-	}
+	nixInstantiate := testutil.RequireTool(t, "nix-instantiate", testutil.RequireNix)
 	cases := matrixCases(t)
 	cases["hostile-env"] = types.WizardAnswers{
 		ProjectName: "matrix",
@@ -248,7 +246,8 @@ func TestGenerateDevenvNix_UserEnvOverridesModuleEnv(t *testing.T) {
 			t.Errorf("%s = %q, want %q", path, attrs[path], want)
 		}
 	}
-	if nixInstantiate, err := exec.LookPath("nix-instantiate"); err == nil {
+	t.Run("nix-parse", func(t *testing.T) {
+		nixInstantiate := testutil.RequireTool(t, "nix-instantiate", testutil.RequireNix)
 		path := filepath.Join(t.TempDir(), "devenv.nix")
 		if err := os.WriteFile(path, got.Content, 0o644); err != nil {
 			t.Fatal(err)
@@ -256,7 +255,7 @@ func TestGenerateDevenvNix_UserEnvOverridesModuleEnv(t *testing.T) {
 		if out, err := exec.Command(nixInstantiate, "--parse", path).CombinedOutput(); err != nil {
 			t.Fatalf("devenv.nix does not parse: %v\n%s", err, out)
 		}
-	}
+	})
 }
 
 // TestLockFileAudit_WatchesEcosystemLockFiles is the W068 regression: the

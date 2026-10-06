@@ -7,7 +7,6 @@ import (
 	"errors"
 	"io"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"runtime"
 	"slices"
@@ -18,6 +17,7 @@ import (
 	"github.com/Quantum-Serendipity/qsdev/internal/sandbox"
 	"github.com/Quantum-Serendipity/qsdev/internal/sandbox/backendselect"
 	"github.com/Quantum-Serendipity/qsdev/internal/sandbox/shim"
+	"github.com/Quantum-Serendipity/qsdev/internal/testutil"
 )
 
 // noSandboxProbe reports a host with no sandbox tooling, forcing the
@@ -176,9 +176,7 @@ func TestSandboxExec_CategoryFlagHelpListsNames(t *testing.T) {
 // policy naming an unknown category stops `sandbox exec` with the blocking
 // exit code instead of running the hook under a misread category.
 func TestSandboxExec_UnknownPolicyCategoryFailsClosed(t *testing.T) {
-	if _, err := exec.LookPath("nix"); err != nil {
-		t.Skip("nix is not installed")
-	}
+	testutil.RequireTool(t, "nix", testutil.RequireNix)
 	isolateApprovals(t)
 	project := t.TempDir()
 	t.Setenv("CLAUDE_PROJECT_DIR", project)
@@ -222,14 +220,14 @@ func TestSandboxExec_DenyStderrIsHookOnly(t *testing.T) {
 func TestSandboxExec_BubblewrapEndToEnd(t *testing.T) {
 	caps := sandbox.ProbeCapabilitiesDefault(context.Background())
 	if backend, _ := backendselect.ResolveBackend(*caps); backend.Name() != "bubblewrap" {
-		t.Skip("bubblewrap backend not available on this host")
+		testutil.Unavailable(t, testutil.RequireE3, "bubblewrap backend not available on this host")
 	}
 	cat, err := hostExecutable("cat")
 	if err != nil {
-		t.Skipf("cat not found: %v", err)
+		testutil.Unavailable(t, testutil.RequireE3, "cat not found: %v", err)
 	}
 	if real, err := filepath.EvalSymlinks(cat); err != nil || !pathWithin(real, sandboxStoreDir) {
-		t.Skip("host coreutils are not in the Nix store")
+		testutil.Unavailable(t, testutil.RequireE3, "host coreutils are not in the Nix store")
 	}
 
 	project := t.TempDir()
@@ -495,14 +493,14 @@ func TestNamespaceHookCommand_SelfInvocation(t *testing.T) {
 func TestSandboxExec_SelfInvocationRunsInsideBwrap(t *testing.T) {
 	caps := sandbox.ProbeCapabilitiesDefault(context.Background())
 	if backend, _ := backendselect.ResolveBackend(*caps); backend.Name() != "bubblewrap" {
-		t.Skip("bubblewrap backend not available on this host")
+		testutil.Unavailable(t, testutil.RequireE3, "bubblewrap backend not available on this host")
 	}
 	self, err := shim.HostExecutable()
 	if err != nil {
 		t.Fatal(err)
 	}
 	if hint := shim.LinkageHint(self); hint != "" {
-		t.Skip(hint)
+		testutil.Unavailable(t, testutil.RequireE3, "%s", hint)
 	}
 
 	t.Setenv("CLAUDE_PROJECT_DIR", t.TempDir())
@@ -690,14 +688,14 @@ func TestRunSandboxed_UnavailablePolicyBackendIsSetupFailure(t *testing.T) {
 func TestSandboxExec_GuardrailCreationExits2(t *testing.T) {
 	caps := sandbox.ProbeCapabilitiesDefault(context.Background())
 	if backend, _ := backendselect.ResolveBackend(*caps); backend.Name() != "bubblewrap" {
-		t.Skip("bubblewrap backend not available on this host")
+		testutil.Unavailable(t, testutil.RequireE3, "bubblewrap backend not available on this host")
 	}
 	sh, err := hostExecutable("sh")
 	if err != nil {
-		t.Skipf("sh not found: %v", err)
+		testutil.Unavailable(t, testutil.RequireE3, "sh not found: %v", err)
 	}
 	if real, err := filepath.EvalSymlinks(sh); err != nil || !pathWithin(real, sandboxStoreDir) {
-		t.Skip("host shell is not in the Nix store")
+		testutil.Unavailable(t, testutil.RequireE3, "host shell is not in the Nix store")
 	}
 
 	project := t.TempDir()

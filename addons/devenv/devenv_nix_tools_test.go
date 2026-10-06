@@ -10,6 +10,7 @@ import (
 
 	"github.com/Quantum-Serendipity/qsdev/addons/devenv"
 	"github.com/Quantum-Serendipity/qsdev/internal/gitworkflow"
+	"github.com/Quantum-Serendipity/qsdev/internal/testutil"
 	"github.com/Quantum-Serendipity/qsdev/internal/validation"
 	"github.com/Quantum-Serendipity/qsdev/pkg/types"
 )
@@ -92,22 +93,22 @@ func TestGenerateDevenvNix_EnabledToolSections(t *testing.T) {
 	}
 }
 
-// requireNixParses checks content is syntactically valid Nix when
-// nix-instantiate is available.
+// requireNixParses checks content is syntactically valid Nix in a
+// "nix-parse" subtest, which skips (or fails under testutil.RequireNix) when
+// nix-instantiate is unavailable, leaving the caller's other checks running.
 func requireNixParses(t *testing.T, content []byte) {
 	t.Helper()
-	nixInstantiate, err := exec.LookPath("nix-instantiate")
-	if err != nil {
-		return
-	}
-	path := filepath.Join(t.TempDir(), "devenv.nix")
-	if err := os.WriteFile(path, content, 0o644); err != nil {
-		t.Fatal(err)
-	}
-	out, err := exec.Command(nixInstantiate, "--parse", path).CombinedOutput()
-	if err != nil {
-		t.Fatalf("generated devenv.nix does not parse: %v\n%s\n--- content ---\n%s", err, out, content)
-	}
+	t.Run("nix-parse", func(t *testing.T) {
+		nixInstantiate := testutil.RequireTool(t, "nix-instantiate", testutil.RequireNix)
+		path := filepath.Join(t.TempDir(), "devenv.nix")
+		if err := os.WriteFile(path, content, 0o644); err != nil {
+			t.Fatal(err)
+		}
+		out, err := exec.Command(nixInstantiate, "--parse", path).CombinedOutput()
+		if err != nil {
+			t.Fatalf("generated devenv.nix does not parse: %v\n%s\n--- content ---\n%s", err, out, content)
+		}
+	})
 }
 
 // TestGenerateDevenvNix_BranchNamingPattern is the F469 regression: the

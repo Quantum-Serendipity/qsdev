@@ -113,16 +113,27 @@ func TestLandlockFlags_SkipsDenyPaths(t *testing.T) {
 
 func TestInjectLandlock_Unavailable(t *testing.T) {
 	t.Parallel()
-	if sandbox.LLRestrictBin() != "" {
-		t.Skip("ll-restrict is available, cannot test unavailable path")
-	}
 
 	original := []string{"/usr/bin/hook", "--arg1"}
-	result := InjectLandlock(original, &sandbox.SandboxConfig{
+	result := injectLandlock(original, &sandbox.SandboxConfig{
 		HookCategory: sandbox.CategoryLinter,
-	})
+	}, "")
 
-	if len(result) != len(original) {
+	if !slices.Equal(result, original) {
 		t.Errorf("expected command unchanged, got %v", result)
+	}
+}
+
+func TestInjectLandlock_Available(t *testing.T) {
+	t.Parallel()
+
+	const llBin = "/nix/store/x-ll-restrict/bin/ll-restrict"
+	cfg := &sandbox.SandboxConfig{HookCategory: sandbox.CategoryLinter, ProjectDir: "/work/p"}
+	original := []string{"/usr/bin/hook", "--arg1"}
+
+	want := append(append([]string{llBin}, landlockFlags(cfg)...), "--")
+	want = append(want, original...)
+	if got := injectLandlock(original, cfg, llBin); !slices.Equal(got, want) {
+		t.Errorf("injectLandlock() = %v, want %v", got, want)
 	}
 }

@@ -6,6 +6,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/Quantum-Serendipity/qsdev/internal/testutil"
 )
 
 // TestUpdate_AppliesCloudIsolateCLIConfig guards W135: once
@@ -73,16 +75,15 @@ func TestUpdate_AppliesCloudIsolateCLIConfig(t *testing.T) {
 	}
 }
 
-// assertNixParses checks dir's devenv.nix with nix-instantiate --parse when
-// it is available.
+// assertNixParses checks dir's devenv.nix with nix-instantiate --parse in a
+// "nix-parse" subtest, which skips (or fails under testutil.RequireNix) when
+// nix-instantiate is unavailable, leaving the caller's other checks running.
 func assertNixParses(t *testing.T, dir string) {
 	t.Helper()
-	nixInstantiate, err := exec.LookPath("nix-instantiate")
-	if err != nil {
-		t.Log("nix-instantiate not available, skipping syntax validation")
-		return
-	}
-	if out, err := exec.Command(nixInstantiate, "--parse", filepath.Join(dir, "devenv.nix")).CombinedOutput(); err != nil {
-		t.Fatalf("nix-instantiate --parse rejected devenv.nix: %v\n%s", err, out)
-	}
+	t.Run("nix-parse", func(t *testing.T) {
+		nixInstantiate := testutil.RequireTool(t, "nix-instantiate", testutil.RequireNix)
+		if out, err := exec.Command(nixInstantiate, "--parse", filepath.Join(dir, "devenv.nix")).CombinedOutput(); err != nil {
+			t.Fatalf("nix-instantiate --parse rejected devenv.nix: %v\n%s", err, out)
+		}
+	})
 }

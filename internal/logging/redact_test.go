@@ -1,10 +1,15 @@
 package logging
 
 import (
+	"bytes"
+	"fmt"
 	"log/slog"
 	"reflect"
 	"strings"
 	"testing"
+
+	"github.com/Quantum-Serendipity/qsdev/internal/secrets"
+	"github.com/Quantum-Serendipity/qsdev/internal/secrets/secretstest"
 )
 
 func TestRedactString_AWSKey(t *testing.T) {
@@ -720,5 +725,57 @@ func TestAuthCredentialEnd_NoAllocs(t *testing.T) {
 	}
 	if n := testing.AllocsPerRun(100, func() { _ = isSensitiveFlag("--Password-STDIN") || isSensitiveFlag("--token-FILE") }); n != 0 {
 		t.Errorf("isSensitiveFlag allocated %v times, want 0", n)
+	}
+}
+
+// tokenShapeInput embeds a canon sample between fixed prefix and suffix text.
+// A private-key header sample is closed with its END line, because a header
+// with no END is redacted through the end of the input by design.
+func tokenShapeInput(sample string) (input, prefix, suffix string) {
+	prefix, suffix = "error: got ", " here"
+	if privateKeyBeginRe.MatchString(sample) {
+		sample += "\nMIIEsecretkeybody\n" + strings.Replace(sample, "BEGIN", "END", 1)
+	}
+	return prefix + sample + suffix, prefix, suffix
+}
+
+// TestRedactString_TokenShapes proves the log redactor covers every token
+// shape in the secrets canon: each sample is scrubbed from a plain string and
+// from a JSON slog record routed through RedactingHandler, while the fixed
+// text around it survives.
+func TestRedactString_TokenShapes(t *testing.T) {
+	t.Parallel()
+
+	samples := secretstest.ValuePatternSamples()
+	r := NewRedactor()
+	for _, vp := range secrets.ValuePatterns {
+		if len(samples[vp.Name]) == 0 {
+			t.Errorf("canon entry %q has no secretstest sample", vp.Name)
+		}
+		for i, sample := range samples[vp.Name] {
+			input, prefix, suffix := tokenShapeInput(sample)
+			t.Run(fmt.Sprintf("%s/%d", vp.Name, i), func(t *testing.T) {
+				t.Parallel()
+
+				got := r.RedactString(input)
+				if strings.Contains(got, sample) {
+					t.Errorf("RedactString left the %s sample: %q", vp.Name, got)
+				}
+				if !strings.HasPrefix(got, prefix) || !strings.HasSuffix(got, suffix) {
+					t.Errorf("RedactString lost the surrounding text: %q", got)
+				}
+
+				var buf bytes.Buffer
+				logger := slog.New(NewRedactingHandler(slog.NewJSONHandler(&buf, nil)))
+				logger.Info(input, "detail", input)
+				out := buf.String()
+				if strings.Contains(out, sample) {
+					t.Errorf("RedactingHandler left the %s sample: %s", vp.Name, out)
+				}
+				if !strings.Contains(out, `"msg":"error: got `) || !strings.Contains(out, ` here","detail":"error: got `) {
+					t.Errorf("RedactingHandler lost the surrounding text: %s", out)
+				}
+			})
+		}
 	}
 }

@@ -118,6 +118,7 @@ func TestLayerRules(t *testing.T) {
 		{"internal->addons", Key{"internal-no-adapters", "internal/mcp -> addons/claudecode"}, true},
 		{"app->instance", Key{"app-no-adapters", "internal/app/project -> instance"}, true},
 		{"app not double-reported", Key{"internal-no-adapters", "internal/app/project -> instance"}, false},
+		{"secretstest from production", Key{"secretstest-test-only", "internal/redact -> internal/secrets/secretstest"}, true},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -131,8 +132,8 @@ func TestLayerRules(t *testing.T) {
 			}
 		})
 	}
-	if len(got) != 7 {
-		t.Errorf("got %d violations, want 7: %v", len(got), got)
+	if len(got) != 8 {
+		t.Errorf("got %d violations, want 8: %v", len(got), got)
 	}
 }
 

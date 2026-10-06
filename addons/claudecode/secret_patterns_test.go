@@ -2,7 +2,6 @@ package claudecode_test
 
 import (
 	"regexp"
-	"strings"
 	"testing"
 
 	claudecode "github.com/Quantum-Serendipity/qsdev/addons/claudecode"
@@ -18,116 +17,54 @@ func TestDefaultSecretPatterns_AllCompile(t *testing.T) {
 	}
 }
 
-func TestDefaultSecretPatterns_Count(t *testing.T) {
+// TestScanHeuristicPatterns_PositiveNegative covers the scan-only KEY="value"
+// assignment heuristics, keyed by heuristic name. Token shapes are covered by
+// the canon tests in internal/secrets.
+func TestScanHeuristicPatterns_PositiveNegative(t *testing.T) {
 	t.Parallel()
-	if len(claudecode.ExportDefaultSecretPatterns) != 19 {
-		t.Errorf("expected 19 default patterns, got %d", len(claudecode.ExportDefaultSecretPatterns))
+	byName := make(map[string]*regexp.Regexp, len(claudecode.ExportScanHeuristicPatterns))
+	for _, h := range claudecode.ExportScanHeuristicPatterns {
+		if h.Name == "" || byName[h.Name] != nil {
+			t.Fatalf("heuristic name %q is empty or duplicated", h.Name)
+		}
+		byName[h.Name] = regexp.MustCompile(h.Regex)
 	}
-}
-
-func TestSecretPatterns_PositiveMatches(t *testing.T) {
-	t.Parallel()
 	tests := []struct {
-		name    string
-		pattern int
-		input   string
+		name      string
+		heuristic string
+		input     string
+		want      bool
 	}{
-		{"AWS access key", 0, "AKIAIOSFODNN7REALKEY"},
-		{"AWS secret key assignment", 1, "aws_secret_access_key = wJalrXUtnFEMI/K7MDENG/bPxRfiCYzzzzzz"},
-		{"AWS session token", 1, "aws_session_token: ABCDEFGHIJKLMNOPQRSTzzzz"},
-		{"GitHub PAT", 2, "ghp_ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijkl"},
-		{"GitHub secret", 2, "ghs_ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijkl"},
-		{"GitLab PAT", 3, "glpat-xxxxxxxxxxxxxxxxxxxx"},
-		{"API key double-quoted", 4, `API_KEY = "abcdefghijklmnopqrstuvwx"`},
-		{"API key single-quoted", 4, `api_key: 'abcdefghijklmnopqrstuvwx'`},
-		{"RSA private key", 5, "-----BEGIN RSA PRIVATE KEY-----"},
-		{"EC private key", 5, "-----BEGIN EC PRIVATE KEY-----"},
-		{"Generic private key", 5, "-----BEGIN PRIVATE KEY-----"},
-		{"OPENSSH private key", 5, "-----BEGIN OPENSSH PRIVATE KEY-----"},
-		{"JWT token", 6, "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.dozjgNryP4J3jVmNHl0w5N_XgL0n3I9PlFUP0THsR8U"},
-		{"MongoDB connection string", 7, "mongodb://admin:password@db.example.com:27017/mydb"},
-		{"PostgreSQL connection string", 7, "postgresql://user:pass@localhost:5432/database"},
-		{"Redis connection string", 7, "redis://default:secretpass@redis.example.com:6379"},
-		{"MySQL connection string", 7, "mysql://root:rootpass@127.0.0.1:3306/testdb"},
-		{"Slack bot token", 8, "xoxb-AAAAAAAAAA-AAAAAAAAAAAAA-AAAAAAAAAAAAAAAAAAAAAAAA"},
-		{"Stripe live key", 9, "sk_live_AAAAAAAAAAAAAAAAAAAA"},
-		{"Stripe test key", 9, "sk_test_AAAAAAAAAAAAAAAAAAAA"},
-		{"SendGrid key", 10, "SG.abcdefghijklmnopqrstuv.ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqr"},
-		{"Password assignment", 11, `password = "supersecretpassword123"`},
-		{"Secret assignment", 11, `secret: "my_very_secret_value_here"`},
-		{"Token assignment", 11, `token = "abcdefghijklmnopqrstuvwxyz"`},
-		{"AWS secret key UPPERCASE", 1, "AWS_SECRET_ACCESS_KEY = wJalrXUtnFEMI/K7MDENG/bPxRfiCYzzzzzz"},
-		{"AWS session token UPPERCASE", 1, "AWS_SESSION_TOKEN: ABCDEFGHIJKLMNOPQRSTzzzz"},
-		{"PASSWORD uppercase", 11, `PASSWORD = "supersecretpassword123"`},
-		{"SECRET uppercase", 11, `SECRET: "my_very_secret_value_here"`},
-		{"TOKEN uppercase", 11, `TOKEN = "abcdefghijklmnopqrstuvwxyz"`},
-		{"Slack enterprise token", 8, "xoxe-AAAAAAAAAA-AAAAAAAAAAAAA"},
-		// W044: formats the scan used to miss.
-		{"AWS temporary key", 0, "ASIA" + strings.Repeat("Q", 16)},
-		{"GitHub OAuth token", 2, "gho_" + strings.Repeat("a", 36)},
-		{"GitHub refresh token", 2, "ghr_" + strings.Repeat("a", 36)},
-		{"Encrypted private key", 5, "-----BEGIN ENCRYPTED PRIVATE KEY-----"},
-		{"PGP private key block", 5, "-----BEGIN PGP PRIVATE KEY BLOCK-----"},
-		{"JSON password", 11, `{"password": "hunter2hunter2"}`},
-		{"GitHub fine-grained PAT", 12, "github_pat_" + strings.Repeat("A1b2", 6)},
-		{"Anthropic key", 13, "sk-ant-api03-" + strings.Repeat("Ab9_", 6)},
-		{"OpenAI project key", 14, "sk-proj-" + strings.Repeat("Ab9-", 6)},
-		{"OpenAI legacy key", 14, "sk-" + strings.Repeat("a", 20) + "T3BlbkFJ" + strings.Repeat("b", 20)},
-		{"Google API key", 15, "AIza" + strings.Repeat("x", 35)},
-		{"npm token", 16, "npm_" + strings.Repeat("a1", 18)},
-		{"PyPI token", 17, "pypi-" + strings.Repeat("AgE", 20)},
-		{"Slack webhook", 18, "https://hooks.slack.com/services/T0001/B0002/" + strings.Repeat("x", 24)},
+		{"AWS secret key assignment", "aws-assignment", "aws_secret_access_key = wJalrXUtnFEMI/K7MDENG/bPxRfiCYzzzzzz", true},
+		{"AWS session token", "aws-assignment", "aws_session_token: ABCDEFGHIJKLMNOPQRSTzzzz", true},
+		{"AWS secret key UPPERCASE", "aws-assignment", "AWS_SECRET_ACCESS_KEY = wJalrXUtnFEMI/K7MDENG/bPxRfiCYzzzzzz", true},
+		{"AWS session token UPPERCASE", "aws-assignment", "AWS_SESSION_TOKEN: ABCDEFGHIJKLMNOPQRSTzzzz", true},
+		{"AWS region is not a secret", "aws-assignment", "aws_region = us-east-1", false},
+		{"AWS secret key short value", "aws-assignment", "aws_secret_access_key = short", false},
+		{"API key double-quoted", "api-key-assignment", `API_KEY = "abcdefghijklmnopqrstuvwx"`, true},
+		{"API key single-quoted", "api-key-assignment", `api_key: 'abcdefghijklmnopqrstuvwx'`, true},
+		{"API key no value", "api-key-assignment", "API_KEY = ", false},
+		{"API key short value", "api-key-assignment", `API_KEY = "short"`, false},
+		{"Password assignment", "secret-assignment", `password = "supersecretpassword123"`, true},
+		{"Secret assignment", "secret-assignment", `secret: "my_very_secret_value_here"`, true},
+		{"Token assignment", "secret-assignment", `token = "abcdefghijklmnopqrstuvwxyz"`, true},
+		{"PASSWORD uppercase", "secret-assignment", `PASSWORD = "supersecretpassword123"`, true},
+		{"SECRET uppercase", "secret-assignment", `SECRET: "my_very_secret_value_here"`, true},
+		{"TOKEN uppercase", "secret-assignment", `TOKEN = "abcdefghijklmnopqrstuvwxyz"`, true},
+		{"JSON password", "secret-assignment", `{"password": "hunter2hunter2"}`, true},
+		{"Short password", "secret-assignment", `password = "short"`, false},
+		{"Password no quotes", "secret-assignment", "password = noquotes", false},
+		{"Env var reference", "secret-assignment", "password = ${DB_PASSWORD}", false},
 	}
-
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
-			re := regexp.MustCompile(claudecode.ExportDefaultSecretPatterns[tt.pattern])
-			if !re.MatchString(tt.input) {
-				t.Errorf("pattern %d should match %q", tt.pattern, tt.input)
+			re := byName[tt.heuristic]
+			if re == nil {
+				t.Fatalf("no scan heuristic named %q", tt.heuristic)
 			}
-		})
-	}
-}
-
-func TestSecretPatterns_NegativeMatches(t *testing.T) {
-	t.Parallel()
-	tests := []struct {
-		name    string
-		pattern int
-		input   string
-	}{
-		{"Short AKIA prefix", 0, "AKIA1234"},
-		{"Non-uppercase AKIA", 0, "AKIAiosfodnn7realkey"},
-		{"GitHub wrong prefix", 2, "ghx_ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijkl"},
-		{"Short GitHub token", 2, "ghp_short"},
-		{"GitLab wrong prefix", 3, "glpat_no_dash_here"},
-		{"API key no value", 4, "API_KEY = "},
-		{"API key short value", 4, `API_KEY = "short"`},
-		{"Not a private key", 5, "-----BEGIN CERTIFICATE-----"},
-		{"Short JWT", 6, "eyJ.eyJ.abc"},
-		{"HTTP URL not DB", 7, "https://example.com/api/endpoint"},
-		{"PostgreSQL no credentials", 7, "postgres://localhost:5432/testdb"},
-		{"Redis no credentials", 7, "redis://localhost:6379"},
-		{"MongoDB no credentials", 7, "mongodb://localhost:27017/mydb"},
-		{"Slack wrong prefix", 8, "xoxx-not-a-token"},
-		{"Stripe wrong prefix", 9, "pk_live_ABCDEFGHIJKLMNOPQRSTUVWXYZabcde"},
-		{"Short Stripe key", 9, "sk_live_short"},
-		{"Short password", 11, `password = "short"`},
-		{"Password no quotes", 11, "password = noquotes"},
-		{"Env var reference", 11, "password = ${DB_PASSWORD}"},
-		{"Anthropic prefix only", 13, "sk-ant-short"},
-		{"OpenAI unrelated sk- word", 14, "sk-learn-is-a-library"},
-		{"Google short", 15, "AIzaShort"},
-		{"npm short", 16, "npm_install"},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			t.Parallel()
-			re := regexp.MustCompile(claudecode.ExportDefaultSecretPatterns[tt.pattern])
-			if re.MatchString(tt.input) {
-				t.Errorf("pattern %d should NOT match %q", tt.pattern, tt.input)
+			if got := re.MatchString(tt.input); got != tt.want {
+				t.Errorf("heuristic %q on %q = %v, want %v", tt.heuristic, tt.input, got, tt.want)
 			}
 		})
 	}

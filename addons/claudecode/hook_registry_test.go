@@ -19,6 +19,7 @@ import (
 
 	claudecode "github.com/Quantum-Serendipity/qsdev/addons/claudecode"
 	"github.com/Quantum-Serendipity/qsdev/internal/sandbox"
+	"github.com/Quantum-Serendipity/qsdev/internal/secrets"
 	"github.com/Quantum-Serendipity/qsdev/internal/selfprotect/hookio"
 	"github.com/Quantum-Serendipity/qsdev/pkg/types"
 )
@@ -430,6 +431,10 @@ func TestDefaultHookRegistry_SandboxCategoriesValid(t *testing.T) {
 	}
 }
 
+// TestSecretPatterns_MatchPythonHook pins that scan-secrets.py scans exactly
+// the canon token shapes plus the scan heuristics (DEFAULT_PATTERNS), and
+// exactly ConfigSecretPatterns in config files (CONFIG_PATTERNS): a pattern
+// missing from either side, or one left behind after a canon change, fails.
 func TestSecretPatterns_MatchPythonHook(t *testing.T) {
 	t.Parallel()
 
@@ -437,12 +442,70 @@ func TestSecretPatterns_MatchPythonHook(t *testing.T) {
 	if err != nil {
 		t.Fatalf("reading scan-secrets.py: %v", err)
 	}
-	content := string(pyContent)
 
-	all := append(append([]string{}, claudecode.ExportDefaultSecretPatterns...), claudecode.ExportConfigSecretPatterns...)
-	for i, goPattern := range all {
-		if !strings.Contains(content, goPattern) {
-			t.Errorf("Go pattern [%d] %q not found in scan-secrets.py (patterns may be out of sync)", i, goPattern)
+	var want []string
+	for _, vp := range secrets.ValuePatterns {
+		want = append(want, vp.Regex)
+	}
+	for _, h := range claudecode.ExportScanHeuristicPatterns {
+		want = append(want, h.Regex)
+	}
+	if !slices.Equal(claudecode.ExportDefaultSecretPatterns, want) {
+		t.Errorf("DefaultSecretPatterns = %q, want canon regexes then ScanHeuristicPatterns %q",
+			claudecode.ExportDefaultSecretPatterns, want)
+	}
+
+	assertSameSet(t, "DEFAULT_PATTERNS", pythonRawStringList(t, pyContent, "DEFAULT_PATTERNS"), want)
+	assertSameSet(t, "CONFIG_PATTERNS", pythonRawStringList(t, pyContent, "CONFIG_PATTERNS"), claudecode.ExportConfigSecretPatterns)
+}
+
+// pythonRawStringList parses the `name: list[str] = [...]` literal in a Python
+// source file whose elements are raw strings (r'...', r"...", r"""..."""),
+// skipping comment lines.
+func pythonRawStringList(t *testing.T, src []byte, name string) []string {
+	t.Helper()
+	block := regexp.MustCompile(`(?ms)^` + regexp.QuoteMeta(name) + `\b[^=\n]*=\s*\[\n(.*?)^\]`).FindSubmatch(src)
+	if block == nil {
+		t.Fatalf("%s list not found in scan-secrets.py", name)
+	}
+	var code strings.Builder
+	for line := range strings.Lines(string(block[1])) {
+		if !strings.HasPrefix(strings.TrimSpace(line), "#") {
+			code.WriteString(line)
+		}
+	}
+	lit := regexp.MustCompile(`(?s)r"""(.*?)"""|r'([^'\n]*)'|r"([^"\n]*)"`)
+	var got []string
+	for _, m := range lit.FindAllStringSubmatch(code.String(), -1) {
+		got = append(got, m[1]+m[2]+m[3])
+	}
+	if len(got) == 0 {
+		t.Fatalf("%s in scan-secrets.py has no raw-string elements", name)
+	}
+	return got
+}
+
+// assertSameSet reports the elements only one of got and want contains, and
+// any duplicate in got.
+func assertSameSet(t *testing.T, label string, got, want []string) {
+	t.Helper()
+	wantSet := make(map[string]bool, len(want))
+	for _, w := range want {
+		wantSet[w] = true
+	}
+	gotSet := make(map[string]bool, len(got))
+	for _, g := range got {
+		if gotSet[g] {
+			t.Errorf("%s lists %q twice", label, g)
+		}
+		gotSet[g] = true
+		if !wantSet[g] {
+			t.Errorf("%s has %q, which the Go side does not", label, g)
+		}
+	}
+	for _, w := range want {
+		if !gotSet[w] {
+			t.Errorf("%s is missing %q", label, w)
 		}
 	}
 }

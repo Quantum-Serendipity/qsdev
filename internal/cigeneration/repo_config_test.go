@@ -369,15 +369,45 @@ func (p *workflowPermissions) UnmarshalYAML(n *yaml.Node) error {
 	return nil
 }
 
+// stringList is a workflow key that takes a single string or a list of
+// strings (needs, runs-on). Both forms decode to a slice.
+type stringList []string
+
+func (l *stringList) UnmarshalYAML(n *yaml.Node) error {
+	if n.Kind == yaml.ScalarNode {
+		*l = stringList{n.Value}
+		return nil
+	}
+	var s []string
+	if err := n.Decode(&s); err != nil {
+		return fmt.Errorf("decoding string or list: %w", err)
+	}
+	*l = s
+	return nil
+}
+
+type workflowJob struct {
+	Name        string              `yaml:"name"`
+	Strategy    workflowStrategy    `yaml:"strategy"`
+	RunsOn      stringList          `yaml:"runs-on"`
+	Needs       stringList          `yaml:"needs"`
+	Outputs     map[string]string   `yaml:"outputs"`
+	Permissions workflowPermissions `yaml:"permissions"`
+	Env         map[string]string   `yaml:"env"`
+	Steps       []workflowStep      `yaml:"steps"`
+}
+
+// workflowStrategy is a job's strategy block; the matrix stays a node
+// because its axes and include entries are arbitrary keys.
+type workflowStrategy struct {
+	Matrix yaml.Node `yaml:"matrix"`
+}
+
 type workflowFile struct {
-	On          map[string]yaml.Node `yaml:"on"`
-	Permissions workflowPermissions  `yaml:"permissions"`
-	Env         map[string]string    `yaml:"env"`
-	Jobs        map[string]struct {
-		Permissions workflowPermissions `yaml:"permissions"`
-		Env         map[string]string   `yaml:"env"`
-		Steps       []workflowStep      `yaml:"steps"`
-	} `yaml:"jobs"`
+	On          map[string]yaml.Node   `yaml:"on"`
+	Permissions workflowPermissions    `yaml:"permissions"`
+	Env         map[string]string      `yaml:"env"`
+	Jobs        map[string]workflowJob `yaml:"jobs"`
 }
 
 // readRepoWorkflows decodes every workflow in .github/workflows by file name.

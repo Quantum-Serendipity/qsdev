@@ -55,6 +55,7 @@ func planGatewayCompose(w io.Writer, projectRoot string, answers types.WizardAns
 	if !art.NeedsGateway {
 		return gatewayCompose{art: art}
 	}
+	warnUnpublishedImage(w, art)
 	return gatewayCompose{
 		art: art,
 		file: &types.GeneratedFile{
@@ -64,6 +65,16 @@ func planGatewayCompose(w io.Writer, projectRoot string, answers types.WizardAns
 			Strategy: types.ThreeWayMerge,
 		},
 	}
+}
+
+// warnUnpublishedImage tells a development build's user that the image the
+// fragment references is only published by releases and may not match the
+// build.
+func warnUnpublishedImage(w io.Writer, art *container.Artifacts) {
+	if art.ReleasedImage {
+		return
+	}
+	fmt.Fprintf(w, "Warning: gateway image %s is only published for release builds; build it locally with build/docker/Dockerfile\n", art.Image)
 }
 
 // keepHeld drops the orphan plan for a held compose fragment, so a skipped or

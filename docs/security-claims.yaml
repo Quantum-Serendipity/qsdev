@@ -192,7 +192,21 @@ claims:
       Releases carry [SLSA](https://slsa.dev/) Build L2 provenance (GitHub
       artifact attestations)
     files: [SECURITY.md]
-    tests: []
+    tests: [TestReleaseAttestsEveryPublishedArtifact]
+    tiers: []
+
+  - id: gateway-image-signed
+    text: >-
+      The gateway container image (`ghcr.io/quantum-serendipity/qsdev`) is
+      published for linux/amd64 and linux/arm64, cosign keyless-signed by the
+      `release.yml` workflow and carries build provenance; the release
+      verifies the signature against that workflow's exact identity before
+      publishing binaries
+    files: [SECURITY.md]
+    tests:
+      - TestGatewayImagePublishedSignedAttested
+      - TestGatewayImageIdentityMatchesReleaseWorkflow
+      - TestDockerfileCrossCompiles
     tiers: []
 
   - id: version-sentinel-advisory

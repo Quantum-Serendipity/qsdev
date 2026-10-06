@@ -3,6 +3,7 @@ package azure_test
 import (
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
@@ -17,6 +18,7 @@ var _ ecosystem.DenyRuleProvider = (*azure.Module)(nil)
 var _ ecosystem.ReadDenyRuleProvider = (*azure.Module)(nil)
 var _ ecosystem.PackageProvider = (*azure.Module)(nil)
 var _ ecosystem.DoctorCheckProvider = (*azure.Module)(nil)
+var _ ecosystem.EnvKeeper = (*azure.Module)(nil)
 
 func newModule() *azure.Module {
 	return &azure.Module{}
@@ -323,5 +325,28 @@ func TestDevenvNix_IsolateCLIConfig(t *testing.T) {
 				t.Errorf("fragment lost the ARM_SUBSCRIPTION_ID guidance:\n%s", fragment)
 			}
 		})
+	}
+}
+
+// TestKeepEnvVars verifies the module passes exactly its documented
+// per-project selector variables through devenv.yaml clean.keep: the list is
+// the one the devenv.nix guidance comment names, so a value the user sets in
+// their shell reaches Terraform azurerm.
+func TestKeepEnvVars(t *testing.T) {
+	t.Parallel()
+
+	got := newModule().KeepEnvVars()
+	want := []string{"ARM_SUBSCRIPTION_ID", "ARM_TENANT_ID"}
+	if !slices.Equal(got, want) {
+		t.Errorf("KeepEnvVars() = %v, want %v", got, want)
+	}
+	frag, err := newModule().DevenvNixFragment(ecosystem.ModuleConfig{})
+	if err != nil {
+		t.Fatalf("DevenvNixFragment error: %v", err)
+	}
+	for _, name := range got {
+		if !strings.Contains(frag, "#   env."+name+" = ") {
+			t.Errorf("kept variable %q is not documented in the devenv.nix guidance:\n%s", name, frag)
+		}
 	}
 }

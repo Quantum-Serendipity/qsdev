@@ -26,6 +26,7 @@ import (
 	"github.com/Quantum-Serendipity/qsdev/internal/tier"
 	"github.com/Quantum-Serendipity/qsdev/internal/toolreg"
 	"github.com/Quantum-Serendipity/qsdev/internal/update"
+	"github.com/Quantum-Serendipity/qsdev/internal/validation"
 	"github.com/Quantum-Serendipity/qsdev/pkg/branding"
 	"github.com/Quantum-Serendipity/qsdev/pkg/fileutil"
 	"github.com/Quantum-Serendipity/qsdev/pkg/generate"
@@ -70,7 +71,11 @@ func runEnable(cmd *cobra.Command, toolName string, opts enableOptions) error {
 	}
 
 	registry := toolreg.DefaultRegistry()
-	answers, tool, err := loadToolForEnable(cmdContext(cmd), cmd.ErrOrStderr(), registry, projectRoot, toolName)
+	tool, isTool := registry.ByName(toolName)
+	if !isTool {
+		return runLanguageChange(cmd, toolName, true, opts.DryRun, opts.Force)
+	}
+	answers, err := loadLifecycleAnswers(cmdContext(cmd), cmd.ErrOrStderr(), projectRoot)
 	if err != nil {
 		return err
 	}
@@ -134,20 +139,56 @@ func runEnable(cmd *cobra.Command, toolName string, opts enableOptions) error {
 	return nil
 }
 
-// loadToolForEnable loads saved answers, infers enabled tools, and looks up
-// the named tool in registry.
-func loadToolForEnable(ctx context.Context, w io.Writer, registry *toolreg.Registry, projectRoot, toolName string) (types.WizardAnswers, *toolreg.Tool, error) {
-	answers, err := loadLifecycleAnswers(ctx, w, projectRoot)
-	if err != nil {
-		return types.WizardAnswers{}, nil, err
-	}
+// unknownNameError reports a name that is neither a tool nor a language.
+func unknownNameError(name string) error {
+	return fmt.Errorf("unknown tool or language %q; use '%s list' to see available tools, or name a supported language: %s",
+		name, branding.Get().AppName, strings.Join(validation.Languages(), ", "))
+}
 
-	tool, ok := registry.ByName(toolName)
-	if !ok {
-		return types.WizardAnswers{}, nil, fmt.Errorf("unknown tool %q; use '%s list' to see available tools", toolName, branding.Get().AppName)
-	}
+// languageForceError rejects --force on a language name: the flag's narrow
+// tool-file meaning has no language counterpart, and mapping it to update's
+// overwrite mode would discard the user's edits to every managed file.
+func languageForceError() error {
+	return fmt.Errorf("--force does not apply to language modules: edits to managed files are merged or kept as sidecars; run '%s update %s' to replace them with freshly generated versions",
+		branding.Get().AppName, overwriteModifiedFlag)
+}
 
-	return answers, tool, nil
+// runLanguageChange adds (add) or removes the language module name through
+// the update pipeline, so one step regenerates the devenv files, the Claude
+// Code settings with the module's deny rules, the answers and .qsdev.yaml.
+// Tools are resolved before languages (the catalog keeps the two name spaces
+// disjoint); a name that is neither is an error. Modified managed files are
+// always merged or kept, never overwritten, so force is refused.
+func runLanguageChange(cmd *cobra.Command, name string, add, dryRun, force bool) error {
+	if !validation.IsValidLanguage(name) {
+		return unknownNameError(name)
+	}
+	if force {
+		return languageForceError()
+	}
+	changed := false
+	opts := UpdateOptions{DryRun: dryRun, OverwriteFlag: "'" + branding.Get().AppName + " update " + overwriteModifiedFlag + "'"}
+	err := runUpdateWith(cmd, opts, func(a *types.WizardAnswers) (bool, error) {
+		if add {
+			changed = a.AddLanguage(name)
+		} else {
+			changed = a.RemoveLanguage(name)
+		}
+		return changed, nil
+	})
+	verb := "disabled"
+	if add {
+		verb = "enabled"
+	}
+	switch {
+	case err != nil:
+		return err
+	case !changed:
+		fmt.Fprintf(cmd.OutOrStdout(), "Language %q is already %s.\n", name, verb)
+	case !dryRun:
+		fmt.Fprintf(cmd.OutOrStdout(), "Language %q %s.\n", name, verb)
+	}
+	return nil
 }
 
 // loadLifecycleAnswers loads saved answers (empty if no prior init) and
@@ -582,15 +623,14 @@ func runDisable(cmd *cobra.Command, toolName string, opts disableOptions) error 
 	}
 
 	registry := toolreg.DefaultRegistry()
+	tool, ok := registry.ByName(toolName)
+	if !ok {
+		return runLanguageChange(cmd, toolName, false, false, opts.Force)
+	}
 
 	answers, err := loadLifecycleAnswers(cmdContext(cmd), cmd.ErrOrStderr(), projectRoot)
 	if err != nil {
 		return err
-	}
-
-	tool, ok := registry.ByName(toolName)
-	if !ok {
-		return fmt.Errorf("unknown tool %q; use '%s list' to see available tools", toolName, branding.Get().AppName)
 	}
 
 	// Already disabled — no-op.

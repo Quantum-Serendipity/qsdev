@@ -17,6 +17,7 @@ var _ ecosystem.DenyRuleProvider = (*gcp.Module)(nil)
 var _ ecosystem.ReadDenyRuleProvider = (*gcp.Module)(nil)
 var _ ecosystem.PackageProvider = (*gcp.Module)(nil)
 var _ ecosystem.DoctorCheckProvider = (*gcp.Module)(nil)
+var _ ecosystem.EnvKeeper = (*gcp.Module)(nil)
 
 func newModule() *gcp.Module {
 	return &gcp.Module{}
@@ -406,5 +407,28 @@ func TestDevenvNix_IsolateCLIConfig(t *testing.T) {
 				t.Errorf("fragment lost the CLOUDSDK_ACTIVE_CONFIG_NAME guidance:\n%s", frag)
 			}
 		})
+	}
+}
+
+// TestKeepEnvVars verifies the module passes exactly its documented
+// per-project selector variables through devenv.yaml clean.keep: the list is
+// the one the devenv.nix guidance comment names, so a value the user sets in
+// their shell reaches gcloud and the client libraries.
+func TestKeepEnvVars(t *testing.T) {
+	t.Parallel()
+
+	got := newModule().KeepEnvVars()
+	want := []string{"CLOUDSDK_ACTIVE_CONFIG_NAME", "CLOUDSDK_CORE_PROJECT", "GOOGLE_CLOUD_PROJECT"}
+	if !slices.Equal(got, want) {
+		t.Errorf("KeepEnvVars() = %v, want %v", got, want)
+	}
+	frag, err := newModule().DevenvNixFragment(ecosystem.ModuleConfig{})
+	if err != nil {
+		t.Fatalf("DevenvNixFragment error: %v", err)
+	}
+	for _, name := range got {
+		if !strings.Contains(frag, "#   env."+name+" = ") {
+			t.Errorf("kept variable %q is not documented in the devenv.nix guidance:\n%s", name, frag)
+		}
 	}
 }

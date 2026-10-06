@@ -107,6 +107,13 @@ var envHints = []cloudcommon.EnvVarHint{
 	{Name: "ARM_TENANT_ID", Description: "Azure tenant ID"},
 }
 
+// KeepEnvVars returns the envHints names, which devenv.yaml clean.keep passes
+// through from the user's shell. They select a subscription and tenant
+// and carry no credential.
+func (m *Module) KeepEnvVars() []string {
+	return cloudcommon.EnvHintNames(envHints)
+}
+
 // DevenvNixFragment returns the Nix code fragment to include in devenv.nix
 // for Azure CLI support. It documents ARM_SUBSCRIPTION_ID and ARM_TENANT_ID
 // without setting them (see cloudcommon.EnvGuidanceFragment) and, with

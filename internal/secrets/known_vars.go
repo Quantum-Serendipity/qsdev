@@ -5,13 +5,19 @@ import "strings"
 // KnownCredentialVars is the canonical list of environment variable names
 // that carry credentials or secrets. Used by the log redaction handler and
 // the devenv addon's environment stripping.
+//
+// Only credentials belong here. Selector variables that pick an account
+// context without granting access (AWS_PROFILE, AWS_REGION,
+// AWS_DEFAULT_REGION, CLOUDSDK_CORE_PROJECT, GCLOUD_PROJECT, AZURE_TENANT_ID,
+// AZURE_SUBSCRIPTION_ID, ...) are deliberately absent: the catalog unset_vars
+// is a superset of this list, so a selector here would be stripped from the
+// devenv shell and discard the value a cloud module or the user set.
 var KnownCredentialVars = []string{
 	// AWS
 	"AWS_ACCESS_KEY_ID",
 	"AWS_SECRET_ACCESS_KEY",
 	"AWS_SESSION_TOKEN",
 	"AWS_SECURITY_TOKEN",
-	"AWS_DEFAULT_REGION",
 	// GitHub
 	"GITHUB_TOKEN",
 	"GH_TOKEN",
@@ -21,13 +27,9 @@ var KnownCredentialVars = []string{
 	"GL_TOKEN",
 	// GCP
 	"GOOGLE_APPLICATION_CREDENTIALS",
-	"GCLOUD_PROJECT",
-	"CLOUDSDK_CORE_PROJECT",
 	// Azure
 	"AZURE_CLIENT_ID",
 	"AZURE_CLIENT_SECRET",
-	"AZURE_TENANT_ID",
-	"AZURE_SUBSCRIPTION_ID",
 	// Package registries
 	"NPM_TOKEN",
 	"PYPI_TOKEN",

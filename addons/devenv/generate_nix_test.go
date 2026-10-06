@@ -775,3 +775,41 @@ func TestGenerateDevenvNix_JavaScriptSubproject(t *testing.T) {
 		t.Fatalf("nix-instantiate --parse rejected generated devenv.nix: %v\n%s\n%s", err, out, content)
 	}
 }
+
+// TestGenerateDevenvNix_AWSRegionNotUnset verifies, with the real aws module
+// and a configured region, that devenv.nix exports AWS_REGION and
+// AWS_DEFAULT_REGION and that neither is in unsetEnvVars. devenv applies
+// unsetEnvVars after env, so an unset selector would discard the configured
+// value. No cloud selector variable may be stripped.
+func TestGenerateDevenvNix_AWSRegionNotUnset(t *testing.T) {
+	t.Parallel()
+	answers := types.WizardAnswers{
+		Languages: []types.LanguageChoice{{Name: "aws", Extras: []string{"aws_default_region=eu-west-1"}}},
+	}
+	got, err := devenv.GenerateDevenvNix(answers, ecosystem.DefaultRegistry())
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	content := string(got.Content)
+	requireContains(t, content, `    AWS_REGION = "eu-west-1";`)
+	requireContains(t, content, `    AWS_DEFAULT_REGION = "eu-west-1";`)
+
+	var unsetLine string
+	for line := range strings.SplitSeq(content, "\n") {
+		if strings.Contains(line, "unsetEnvVars = ") {
+			unsetLine = line
+			break
+		}
+	}
+	if unsetLine == "" {
+		t.Fatalf("no unsetEnvVars line in devenv.nix:\n%s", content)
+	}
+	for _, v := range []string{
+		"AWS_REGION", "AWS_DEFAULT_REGION", "AWS_PROFILE",
+		"CLOUDSDK_CORE_PROJECT", "GCLOUD_PROJECT", "AZURE_TENANT_ID", "AZURE_SUBSCRIPTION_ID",
+	} {
+		if strings.Contains(unsetLine, `"`+v+`"`) {
+			t.Errorf("unsetEnvVars strips selector %s: %s", v, unsetLine)
+		}
+	}
+}

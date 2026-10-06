@@ -3,11 +3,11 @@ package devinit
 import (
 	"errors"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
 
+	"github.com/Quantum-Serendipity/qsdev/internal/testutil"
 	"github.com/Quantum-Serendipity/qsdev/pkg/generate"
 	"github.com/Quantum-Serendipity/qsdev/pkg/types"
 )
@@ -94,9 +94,7 @@ func TestValidateToolChange_RefusesWholeChange(t *testing.T) {
 // made the next `qsdev update` write an unparseable devenv.nix and exit 0.
 // Needs nix-instantiate, the validator for .nix files.
 func TestUpdate_PoisonedPackageDoesNotBreakDevenvNix(t *testing.T) {
-	if _, err := exec.LookPath("nix-instantiate"); err != nil {
-		t.Skip("nix-instantiate not on PATH")
-	}
+	testutil.RequireTool(t, "nix-instantiate", testutil.RequireNix)
 	dir := initLifecycleProject(t)
 	before := readProjectFile(t, dir, "devenv.nix")
 

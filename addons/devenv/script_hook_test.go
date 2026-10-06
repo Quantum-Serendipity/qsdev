@@ -8,6 +8,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/Quantum-Serendipity/qsdev/internal/testutil"
 	"github.com/Quantum-Serendipity/qsdev/pkg/ecosystem"
 )
 
@@ -18,10 +19,7 @@ import (
 func TestScriptHookEntry_EvaluatesToScript(t *testing.T) {
 	t.Parallel()
 
-	nixInstantiate, err := exec.LookPath("nix-instantiate")
-	if err != nil {
-		t.Skip("nix-instantiate not available")
-	}
+	nixInstantiate := testutil.RequireTool(t, "nix-instantiate", testutil.RequireNix)
 
 	script := "v=${HOME##*/}\necho '' \"$@\"\n  indented ${1:-x}"
 	entry := scriptHookEntry(ecosystem.HookConfig{ID: "demo", Script: script, NixPackage: "tool"})

@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/Quantum-Serendipity/qsdev/internal/testutil"
 	"github.com/Quantum-Serendipity/qsdev/pkg/ecosystem"
 
 	// Register every ecosystem module with the DefaultRegistry via init().
@@ -22,8 +23,8 @@ import (
 //
 // It runs whenever nix is on PATH and can resolve the nixpkgs flake (about a
 // second with a warm cache), so every `go test ./...` on a Nix machine checks
-// it. QSDEV_CHECK_NIX_ATTRS=1 makes it mandatory (fail instead of skip when
-// nix or nixpkgs is unavailable); QSDEV_CHECK_NIX_ATTRS=0 or -short skips it.
+// it. testutil.CheckNixAttrs=1 makes it mandatory (fail instead of skip when
+// nix or nixpkgs is unavailable); testutil.CheckNixAttrs=0 or -short skips it.
 func TestCustomHookNixPackagesResolve(t *testing.T) {
 	nixBin := requireNixpkgs(t)
 
@@ -59,29 +60,17 @@ func TestCustomHookNixPackagesResolve(t *testing.T) {
 }
 
 // requireNixpkgs returns the nix binary when the nixpkgs flake is resolvable,
-// honouring QSDEV_CHECK_NIX_ATTRS (see TestCustomHookNixPackagesResolve).
+// honouring testutil.CheckNixAttrs (see TestCustomHookNixPackagesResolve).
 func requireNixpkgs(t *testing.T) string {
 	t.Helper()
-	mode := os.Getenv("QSDEV_CHECK_NIX_ATTRS")
-	required := mode == "1"
-	unavailable := func(format string, args ...any) {
-		t.Helper()
-		if required {
-			t.Fatalf(format, args...)
-		}
-		t.Skipf(format, args...)
+	if !testutil.CheckNixAttrs.Required() && (os.Getenv(string(testutil.CheckNixAttrs)) == "0" || testing.Short()) {
+		t.Skipf("NixPackage attribute validation disabled (%s=0 or -short)", testutil.CheckNixAttrs)
 	}
-	if !required && (mode == "0" || testing.Short()) {
-		t.Skip("NixPackage attribute validation disabled (QSDEV_CHECK_NIX_ATTRS=0 or -short)")
-	}
-	nixBin, err := exec.LookPath("nix")
-	if err != nil {
-		unavailable("nix not available; cannot validate hook NixPackage attributes")
-	}
+	nixBin := testutil.RequireTool(t, "nix", testutil.CheckNixAttrs)
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
 	defer cancel()
 	if out, err := exec.CommandContext(ctx, nixBin, "eval", "--raw", "nixpkgs#lib.version").CombinedOutput(); err != nil {
-		unavailable("nixpkgs flake not resolvable (offline?): %v\n%s", err, out)
+		testutil.Unavailable(t, testutil.CheckNixAttrs, "nixpkgs flake not resolvable (offline?): %v\n%s", err, out)
 	}
 	return nixBin
 }

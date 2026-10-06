@@ -16,6 +16,7 @@ import (
 	"testing"
 
 	"github.com/Quantum-Serendipity/qsdev/internal/sandbox"
+	"github.com/Quantum-Serendipity/qsdev/internal/testutil"
 	"github.com/Quantum-Serendipity/qsdev/pkg/branding"
 )
 
@@ -70,21 +71,9 @@ func TestBubblewrapBackend_NoFalseWarnWhenApplied(t *testing.T) {
 //
 // These model the WU-23 adversarial findings: a hardened `sandbox exec` must
 // strip credential env vars, isolate the PID namespace, and deny writes to
-// $HOME. They are skipped when bwrap or unprivileged user namespaces are
-// unavailable so CI stays green on hosts without them.
-
-// requireE3Env makes the E3 tests fail instead of skip when the host cannot run
-// them, so a CI leg that provisions bubblewrap cannot silently lose coverage.
-const requireE3Env = "QSDEV_REQUIRE_E3"
-
-// skipE3 skips the calling test, or fails it when QSDEV_REQUIRE_E3=1.
-func skipE3(t *testing.T, format string, args ...any) {
-	t.Helper()
-	if os.Getenv(requireE3Env) == "1" {
-		t.Fatalf(format+" ("+requireE3Env+"=1)", args...)
-	}
-	t.Skipf(format, args...)
-}
+// $HOME. They skip when bwrap or unprivileged user namespaces are
+// unavailable, and fail instead under testutil.RequireE3, which the CI job
+// that provisions bubblewrap sets.
 
 // e3Backend returns a real bubblewrap backend, a resolved POSIX shell path that
 // is reachable inside the sandbox, and the extra mounts required for it.
@@ -96,17 +85,14 @@ func skipE3(t *testing.T, format string, args ...any) {
 func e3Backend(t *testing.T) (*BubblewrapBackend, string, []sandbox.MountSpec) {
 	t.Helper()
 
-	bwrapPath, err := exec.LookPath("bwrap")
-	if err != nil {
-		skipE3(t, "bwrap not available; skipping E3 integration test")
-	}
+	bwrapPath := testutil.RequireTool(t, "bwrap", testutil.RequireE3)
 
 	shPath, mounts := resolveSandboxShell(t)
 
 	probe := exec.CommandContext(context.Background(), bwrapPath, //nolint:gosec // fixed test probe
 		"--unshare-user", "--ro-bind", "/", "/", "--", shPath, "-c", "exit 0")
 	if out, probeErr := probe.CombinedOutput(); probeErr != nil {
-		skipE3(t, "host cannot run bwrap with a user namespace (err=%v, output=%q); skipping E3", probeErr, out)
+		testutil.Unavailable(t, testutil.RequireE3, "host cannot run bwrap with a user namespace (err=%v, output=%q)", probeErr, out)
 	}
 
 	backend := NewBubblewrapBackend(sandbox.TierFull, bwrapPath, true)
@@ -140,7 +126,7 @@ func resolveSandboxShell(t *testing.T) (string, []sandbox.MountSpec) {
 
 	sh, err := exec.LookPath("sh")
 	if err != nil {
-		skipE3(t, "no POSIX shell found; skipping E3 integration test")
+		testutil.Unavailable(t, testutil.RequireE3, "no POSIX shell found")
 	}
 	if resolved, rerr := filepath.EvalSymlinks(sh); rerr == nil {
 		sh = resolved
@@ -310,7 +296,7 @@ func TestBubblewrapBackend_E3_PolicyDenyPathHidden(t *testing.T) {
 func TestBubblewrapBackend_E3_LandlockAllowsDevAndProc(t *testing.T) {
 	t.Parallel()
 	if sandbox.LLRestrictBin() == "" {
-		t.Skip("ll-restrict not available; skipping Landlock integration test")
+		testutil.Unavailable(t, testutil.RequireE3, "ll-restrict not available (build with the ll-restrict ldflags)")
 	}
 	backend, shPath, mounts := e3Backend(t)
 
@@ -341,11 +327,11 @@ func TestBubblewrapBackend_E3_NestedUserNamespaceBlocked(t *testing.T) {
 	backend, _, mounts := e3Backend(t)
 
 	if !supportsDisableUserNS(context.Background(), backend.bwrapBin) {
-		skipE3(t, "bwrap at %s is older than 0.8 and cannot disable nested user namespaces", backend.bwrapBin)
+		testutil.Unavailable(t, testutil.RequireE3, "bwrap at %s is older than 0.8 and cannot disable nested user namespaces", backend.bwrapBin)
 	}
 	unshareBin, err := exec.LookPath("unshare")
 	if err != nil {
-		skipE3(t, "unshare(1) not available; skipping nested user namespace probe")
+		testutil.Unavailable(t, testutil.RequireE3, "unshare(1) not available")
 	}
 	if resolved, rerr := filepath.EvalSymlinks(unshareBin); rerr == nil {
 		unshareBin = resolved

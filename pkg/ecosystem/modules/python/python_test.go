@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/Quantum-Serendipity/qsdev/internal/testutil"
 	"github.com/Quantum-Serendipity/qsdev/pkg/branding"
 	"github.com/Quantum-Serendipity/qsdev/pkg/ecosystem"
 	"github.com/Quantum-Serendipity/qsdev/pkg/ecosystem/modules/python"
@@ -684,10 +685,7 @@ func TestDevenvNixFragment_SupplyChainEnv(t *testing.T) {
 // nix-instantiate (when available) inside a devenv-style module.
 func TestDevenvNixFragment_NixParses(t *testing.T) {
 	t.Parallel()
-	nixInstantiate, err := exec.LookPath("nix-instantiate")
-	if err != nil {
-		t.Skip("nix-instantiate not available")
-	}
+	nixInstantiate := testutil.RequireTool(t, "nix-instantiate", testutil.RequireNix)
 	for _, pm := range []string{"pip", "uv", "poetry"} {
 		t.Run(pm, func(t *testing.T) {
 			t.Parallel()

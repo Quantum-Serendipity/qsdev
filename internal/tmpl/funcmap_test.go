@@ -6,6 +6,8 @@ import (
 	"strings"
 	"testing"
 	"text/template"
+
+	"github.com/Quantum-Serendipity/qsdev/internal/testutil"
 )
 
 func TestNixPkgList(t *testing.T) {
@@ -330,10 +332,7 @@ func TestNixMultiline(t *testing.T) {
 // indented string and checks it decodes back to the input unchanged (no live
 // antiquotation, no lost or doubled quotes).
 func TestNixMultiline_NixRoundTrip(t *testing.T) {
-	nix, err := exec.LookPath("nix-instantiate")
-	if err != nil {
-		t.Skip("nix-instantiate not available")
-	}
+	nix := testutil.RequireTool(t, "nix-instantiate", testutil.RequireNix)
 	inputs := []string{
 		"echo '${HOME}'",
 		"docker build --build-arg V='${VERSION}' .",

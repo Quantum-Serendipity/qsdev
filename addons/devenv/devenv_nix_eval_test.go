@@ -20,6 +20,7 @@ import (
 
 	"github.com/Quantum-Serendipity/qsdev/addons/devenv"
 	"github.com/Quantum-Serendipity/qsdev/internal/catalog"
+	"github.com/Quantum-Serendipity/qsdev/internal/testutil"
 	"github.com/Quantum-Serendipity/qsdev/pkg/ecosystem"
 	"github.com/Quantum-Serendipity/qsdev/pkg/types"
 )
@@ -33,12 +34,15 @@ import (
 // from the caller's NIX_PATH with the global flake registry disabled, then
 // evaluates against that local store path.
 //
+// Without nix-instantiate or a locally resolvable nixpkgs it skips, or fails
+// under testutil.RequireNix.
+//
 // The devenv_print_dev_env subtest fetches the devenv inputs and is meant for
-// nightly and maintainer runs only: it runs only with QSDEV_NIXEVAL=1, which
-// also makes a missing Nix tool a failure instead of a skip.
+// nightly and maintainer runs only: it runs only with QSDEV_NIXEVAL=1, and
+// then fails when devenv or git is missing.
 
-// nixEvalEnv is the opt-in variable that turns a missing Nix tool into a
-// failure instead of a skip.
+// nixEvalEnv is the opt-in variable that runs the network-fetching
+// devenv_print_dev_env subtest.
 const nixEvalEnv = "QSDEV_NIXEVAL"
 
 // devenvHookDef is a git-hooks.hooks.<hook>.package definition that a devenv
@@ -121,7 +125,7 @@ func TestDevenvNixEvaluates(t *testing.T) {
 // needs only nix-instantiate and a nixpkgs already in the local store (see
 // offlineNixEnv); nothing is fetched.
 func testHookPackagePriorities(t *testing.T) {
-	nixInstantiate := lookPathOrSkip(t, "nix-instantiate")
+	nixInstantiate := testutil.RequireTool(t, "nix-instantiate", testutil.RequireNix)
 	env := offlineNixEnv(t, nixInstantiate)
 	for _, tc := range nixEvalCases() {
 		t.Run(tc.name, func(t *testing.T) {
@@ -162,13 +166,13 @@ func testHookPackagePriorities(t *testing.T) {
 // testDevenvPrintDevEnv writes each rendered project into a fresh git
 // repository and runs devenv print-dev-env, the full devenv evaluation. It
 // fetches the devenv inputs, so it runs only when QSDEV_NIXEVAL=1 asks for
-// it (and then fails when devenv is missing).
+// it, and then fails when devenv or git is missing.
 func testDevenvPrintDevEnv(t *testing.T) {
 	if os.Getenv(nixEvalEnv) != "1" {
 		t.Skipf("fetches the devenv inputs; set %s=1 to run it", nixEvalEnv)
 	}
-	devenvBin := lookPathOrSkip(t, "devenv")
-	gitBin := lookPathOrSkip(t, "git")
+	devenvBin := lookPathOrFail(t, "devenv")
+	gitBin := lookPathOrFail(t, "git")
 	for _, tc := range nixEvalCases() {
 		t.Run(tc.name, func(t *testing.T) {
 			dir := t.TempDir()
@@ -207,19 +211,15 @@ func testDevenvPrintDevEnv(t *testing.T) {
 	}
 }
 
-// lookPathOrSkip resolves a tool on PATH, skipping the test without it unless
-// QSDEV_NIXEVAL=1 makes the run mandatory.
-func lookPathOrSkip(t *testing.T, name string) string {
+// lookPathOrFail resolves a tool on PATH for the opted-in network test, which
+// fails without it: QSDEV_NIXEVAL=1 asked for the run.
+func lookPathOrFail(t *testing.T, name string) string {
 	t.Helper()
 	path, err := exec.LookPath(name)
-	if err == nil {
-		return path
-	}
-	if os.Getenv(nixEvalEnv) == "1" {
+	if err != nil {
 		t.Fatalf("%s=1 but %s is not on PATH: %v", nixEvalEnv, name, err)
 	}
-	t.Skipf("%s not on PATH (set %s=1 to require it)", name, nixEvalEnv)
-	return ""
+	return path
 }
 
 // isolatedEnv is the parent environment with HOME, TMPDIR and the XDG base
@@ -253,7 +253,7 @@ const noFlakeRegistry = "flake-registry = "
 // with the global flake registry disabled, and returns isolatedEnv pinned to
 // that store path (NIX_PATH=nixpkgs=<path>) with the global registry still
 // disabled, so the evaluation never reaches the network. Without a locally
-// resolvable nixpkgs the test skips, or fails when QSDEV_NIXEVAL=1.
+// resolvable nixpkgs the test skips, or fails under testutil.RequireNix.
 func offlineNixEnv(t *testing.T, nixInstantiate string) []string {
 	t.Helper()
 	ctx, cancel := context.WithTimeout(t.Context(), time.Minute)
@@ -268,11 +268,8 @@ func offlineNixEnv(t *testing.T, nixInstantiate string) []string {
 		if errors.As(err, &exitErr) {
 			stderr = string(exitErr.Stderr)
 		}
-		msg := fmt.Sprintf("<nixpkgs> does not resolve offline (point NIX_PATH at a local nixpkgs): %v\n%s", err, stderr)
-		if os.Getenv(nixEvalEnv) == "1" {
-			t.Fatal(msg)
-		}
-		t.Skip(msg)
+		testutil.Unavailable(t, testutil.RequireNix,
+			"<nixpkgs> does not resolve offline (point NIX_PATH at a local nixpkgs): %v\n%s", err, stderr)
 	}
 	env := slices.DeleteFunc(isolatedEnv(t), func(kv string) bool {
 		return strings.HasPrefix(kv, "NIX_PATH=")

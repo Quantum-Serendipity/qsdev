@@ -11,6 +11,7 @@ import (
 	"testing"
 
 	"github.com/Quantum-Serendipity/qsdev/internal/sandbox"
+	"github.com/Quantum-Serendipity/qsdev/internal/testutil"
 )
 
 // TestBubblewrapBackend_E3_ForwardsStdin pins that the sandboxed hook receives
@@ -60,10 +61,7 @@ func TestBubblewrapBackend_E3_AppliesResourceLimits(t *testing.T) {
 	if err := sandbox.UserScopeUsable(systemdRun); err != nil {
 		t.Skipf("no systemd user session: %v", err)
 	}
-	bwrapPath, err := exec.LookPath("bwrap")
-	if err != nil {
-		t.Skip("bwrap not available")
-	}
+	bwrapPath := testutil.RequireTool(t, "bwrap", testutil.RequireE3)
 	backend := NewBubblewrapBackend(sandbox.TierFull, bwrapPath, true, WithSystemdRun(systemdRun))
 
 	script := `while IFS= read -r l; do printf 'cgroup=%s\n' "$l"; done < /proc/self/cgroup; ` +

@@ -13,5 +13,6 @@ func Run() {
 		panic("forbidden")
 	}
 	_ = exec.Command("a")
+	_ = os.Unsetenv("K") // production code may unset
 	fmt.Fprintln(os.Stderr, "x")
 }

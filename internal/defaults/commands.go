@@ -103,7 +103,8 @@ func showCmd() *cobra.Command {
 }
 
 func runShow(cmd *cobra.Command, section string, jsonFlag bool) error {
-	cat, err := loadFresh()
+	// Show what the catalog applies: the pinned overlay (catalog.OrgConfigPin).
+	cat, err := loadFresh(catalog.PolicyOrgConfigFile())
 	if err != nil {
 		return fmt.Errorf("loading catalog: %w", err)
 	}
@@ -160,7 +161,10 @@ func runValidate(cmd *cobra.Command) error {
 		return nil
 	}
 
-	if _, err := loadFresh(); err != nil {
+	// Validate the overlay this run resolves, the one reported below, even
+	// before it is pinned: validating a file applies nothing, and a file a
+	// developer is about to pin must be checked first.
+	if _, err := loadFresh(orgFile); err != nil {
 		fmt.Fprintf(cmd.ErrOrStderr(), "Validation errors: %v\n", err)
 		return fmt.Errorf("defaults file is invalid")
 	}
@@ -297,11 +301,11 @@ func runReset(cmd *cobra.Command, yes bool) error {
 	return nil
 }
 
-// loadFresh loads the catalog, with the same project and user defaults files
-// as Default, without using the cached Default() singleton. Like Default, it
-// refuses a project defaults file that fails the trust rule (see
-// catalog.ProjectConfigFile).
-func loadFresh() (*catalog.Catalog, error) {
+// loadFresh loads the catalog, with the same project defaults file as
+// Default and the org overlay orgFile ("" for none), without using the
+// cached Default() singleton. Like Default, it refuses a project defaults
+// file that fails the trust rule (see catalog.ProjectConfigFile).
+func loadFresh(orgFile string) (*catalog.Catalog, error) {
 	var opts []catalog.LoadOption
 
 	projFile, err := catalog.ProjectConfigFile(catalog.ProjectRoot())
@@ -311,9 +315,7 @@ func loadFresh() (*catalog.Catalog, error) {
 	if projFile != "" {
 		opts = append(opts, catalog.WithProjectConfigFile(projFile))
 	}
-
-	// The overlay the catalog applies: the pinned one (catalog.OrgConfigPin).
-	if orgFile := catalog.PolicyOrgConfigFile(); orgFile != "" {
+	if orgFile != "" {
 		opts = append(opts, catalog.WithOrgConfigFile(orgFile))
 	}
 

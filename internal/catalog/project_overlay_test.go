@@ -360,7 +360,7 @@ permission_preset_defs:
 	}
 	ov := &projectOverlay{path: "defaults.yaml", cat: proj,
 		sections: []string{"permission_deny_rules", sectionPermissionPresetDefs}}
-	if _, errs := applyProjectOverlay(base, ov); len(errs) > 0 {
+	if _, errs := applyProjectOverlay(base, base, ov); len(errs) > 0 {
 		t.Fatalf("applyProjectOverlay() errors: %v", errs)
 	}
 

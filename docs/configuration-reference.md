@@ -844,11 +844,53 @@ tier_to_compliance:
   standard: strict
 ```
 
-Layers apply in the order built-in, project, user: the user defaults file
-has the last word, so a developer's own file overrides the project's
-additions where both set the same entry. The file is found in the project
-enclosing the working directory (the directory holding `.qsdev.yaml` or the
-state directory), or in the working directory outside a project.
+The file is found in the project enclosing the working directory (the
+directory holding `.qsdev.yaml` or the state directory), or in the working
+directory outside a project.
+
+#### Layer order and the security floor
+
+Catalog layers apply in the order **built-in, user, project**:
+
+1. The built-in catalog sets the security floor.
+2. The user defaults file (`~/.config/qsdev/defaults.yaml` or the pinned
+   `$QSDEV_ORG_CONFIG` overlay) may change most of the catalog, but never
+   below that floor.
+3. The committed project policy applies last. It may only add or tighten
+   (table above), so a developer's own file cannot erase a deny rule, hook
+   or compliance raise the repository committed: where both set the same
+   deny set, the result is the user file's list plus the project's
+   additions, and where both raise a tier's compliance level the higher
+   one applies. The project file is judged against the built-in catalog
+   alone, so a user file never makes it fail to load.
+
+In the user defaults file, map sections (`tiers`, `tools`, `compliance`,
+...) merge per entry, and list sections replace the built-in list, except:
+
+| Section | User-file effect |
+|---------|------------------|
+| `security_hooks` | Hooks are added to the built-in always-on hooks; none can be removed |
+| `unset_vars` | Variables are added to the built-in credentials the shell strips; none can be removed |
+| `keep_vars` | Replaces the built-in list, but may not name a variable `unset_vars` strips |
+| `compliance.<level>.required_pre_commit_hooks` | May only grow for a built-in level |
+| `compliance.<level>.order` | Cannot change for a built-in level |
+| `compliance.<level>.age_gating_threshold_hours` | May not shrink for a built-in level |
+| `compliance.<level>.script_blocking`, `claude_audit_log`, `license_scanning` | May not be turned off for a built-in level |
+| `compliance.<level>.claude_permission_level` | May not name a less strict preset (by `strictness`) for a built-in level |
+| `tier_to_compliance` | A built-in tier may move only to a level of equal or higher `order` that is not weaker, in any of the ways above, than its built-in level |
+| `hook_tier_order`, `hook_tiers` | The built-in hook tiers stay first, in order; a `security_hooks` or `custom_hooks` entry may not move to a higher hook tier |
+
+`mcp_server_policy` and `sbom_policy` have no strictness order and are not
+part of the floor.
+
+A user defaults file that breaks one of these rules fails to load with
+an error that names the file and each offending field (for example
+`keep_vars: cannot keep "GITHUB_TOKEN"`); `qsdev defaults validate`
+reports the same error. A compliance level's required hook must also be
+a tool or an always-on hook (`security_hooks` or `custom_hooks`):
+`hook_tiers` only filters hooks by security level and never enables one,
+so a required hook listed only there is rejected. Use hook tiers to place
+non-security hooks such as formatters.
 
 ---
 

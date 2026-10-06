@@ -45,6 +45,38 @@ All notable changes to qsdev are recorded in this file. The format is based on
   PATHEXT extension keeps the python3 floor. When the Claude Code settings
   cannot be read, every doctor output warns that the hook programs were not
   checked.
+- The user (org) defaults file can no longer lower the built-in security
+  floor. Its `security_hooks` and `unset_vars` now add to the built-in
+  lists instead of replacing them, and a file that keeps a stripped
+  credential in `keep_vars`, weakens a built-in compliance level (drops a
+  required hook, shortens the age gate, turns off script blocking, the
+  Claude audit log or license scanning, loosens the Claude permission
+  preset, or renumbers it), maps a tier to a lower or weaker compliance
+  level, or tiers an always-on hook out of a security level now fails to
+  load (`qsdev defaults validate` names each
+  field; previously it reported such a file as valid). `qsdev defaults
+  validate` now checks the overlay it reports (`$QSDEV_ORG_CONFIG` or the
+  home overlay) even before it is pinned, instead of silently validating
+  the pinned overlay. Catalog layers now
+  apply in the order built-in, user, project, so the committed project
+  policy, which may only add, can no longer be erased by a user file: where
+  both set the same deny set, the result is the user list plus the
+  project's additions; the project file is still judged against the
+  built-in catalog, so a user file never makes it fail to load. A compliance level's required hook that is listed
+  only in `hook_tiers` (which never enables a hook) is rejected.
+
+- `qsdev check` now fails (high severity, `devenv_security_floor`) when the
+  hand-edited `devenv.nix`, together with `devenv.local.nix`, no longer
+  enables a security git hook (the always-on hooks, the custom hooks, and
+  the compliance level's required hooks) or no longer strips a credential
+  variable that the generated `devenv.nix` does. Before, a `devenv.nix`
+  with `ripsecrets.enable = false;` or a deleted `unsetEnvVars` entry
+  passed, because the generated-file checks skip `devenv.nix`. It also
+  fails when a security hook's settings (`entry`, `excludes`, ...) differ
+  from the generated file, or when a module cannot be verified statically
+  (`imports`, a computed `unsetEnvVars`). Disabling a formatter or linter
+  hook is still allowed.
+
 - `qsdev sandbox exec` keeps the project's control plane read-only for the
   hook categories with a writable project (formatter, generator,
   test-runner): git's hooks, config, info and modules, `.claude` (except the

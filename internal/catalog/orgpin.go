@@ -238,14 +238,28 @@ func describePin(pin OrgConfigPin) string {
 	}
 }
 
-// OrgConfigDrift returns why the overlay OrgConfigPath resolves now is not
-// the one the catalog may read for the project at projectRoot, given its
-// pin, or "" when it is: it lies below the project or the temporary
+// runOrgConfigPath returns the overlay this run names given pin: the one
+// <EnvPrefix>ORG_CONFIG names, or, with the variable unset, the pinned
+// overlay when one is recorded (the run then names no overlay of its own, so
+// the pin applies; W0N-14), else OrgConfigPath's default, the account's home
+// overlay.
+func runOrgConfigPath(pin OrgConfigPin) string {
+	if pin.Recorded && os.Getenv(branding.Get().EnvPrefix+"ORG_CONFIG") == "" {
+		return pin.Path
+	}
+	return OrgConfigPath()
+}
+
+// OrgConfigDrift returns why the overlay this run names (runOrgConfigPath)
+// is not the one the catalog may read for the project at projectRoot, given
+// its pin, or "" when it is: it lies below the project or the temporary
 // directory, which the agent can write, or it is not the pinned overlay (the
-// account's home overlay without a pin). check and doctor report it; the
-// catalog reads the pinned overlay instead (PolicyOrgConfigFile).
+// account's home overlay without a pin). An unset <EnvPrefix>ORG_CONFIG
+// names the pinned overlay, so it never drifts from it. check and doctor
+// report drift; the catalog reads the pinned overlay instead
+// (PolicyOrgConfigFile).
 func OrgConfigDrift(projectRoot string, pin OrgConfigPin) string {
-	resolved, err := resolveOrgConfig(OrgConfigPath())
+	resolved, err := resolveOrgConfig(runOrgConfigPath(pin))
 	if err != nil {
 		return err.Error()
 	}
@@ -283,10 +297,11 @@ func ProjectOrgConfigSource(projectRoot string) string {
 }
 
 // PolicyOrgConfigFile returns the org overlay file the catalog applies: the
-// one OrgConfigFile names, or, when UseOrgConfigPin is in force and that
-// overlay drifts (OrgConfigDrift), the pinned overlay (the account's home
-// overlay when none is pinned), with a warning. It returns "" when the
-// overlay it settles on does not exist.
+// one OrgConfigFile names, or, when UseOrgConfigPin is in force, the one this
+// run names (runOrgConfigPath: the pinned overlay when <EnvPrefix>ORG_CONFIG
+// is unset), and when that overlay drifts (OrgConfigDrift) the pinned overlay
+// (the account's home overlay when none is pinned), with a warning. It
+// returns "" when the overlay it settles on does not exist.
 func PolicyOrgConfigFile() string {
 	pinMu.Lock()
 	active, root, pin := pinActive, pinRoot, pinned
@@ -296,7 +311,10 @@ func PolicyOrgConfigFile() string {
 	}
 	drift := OrgConfigDrift(root, pin)
 	if drift == "" {
-		return OrgConfigFile()
+		if p := runOrgConfigPath(pin); p != "" && fileExists(p) {
+			return p
+		}
+		return ""
 	}
 	fallback := pinnedOverlay(pin)
 	if fallback != "" && untrustedOrgConfigLocation(fallback, root) != "" {

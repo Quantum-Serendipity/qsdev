@@ -403,6 +403,40 @@ func TestCustomHooks(t *testing.T) {
 	}
 }
 
+func TestCatalog_SecurityHookIDs(t *testing.T) {
+	t.Parallel()
+	cat := loadTestCatalog(t)
+	always := slices.Concat(cat.SecurityHooks(), []string{"lock-file-audit", "nix-secrets-check"})
+
+	tests := []struct {
+		level string
+		want  []string
+	}{
+		{"baseline", slices.Concat(always, []string{"gitleaks"})},
+		{"enhanced", slices.Concat(always, []string{"gitleaks", "semgrep"})},
+		{"strict", slices.Concat(always, []string{"gitleaks", "semgrep", "license-compliance"})},
+		// An unknown or empty level adds no required hooks.
+		{"", always},
+		{"no-such-level", always},
+	}
+	for _, tt := range tests {
+		t.Run(tt.level, func(t *testing.T) {
+			t.Parallel()
+			got := cat.SecurityHookIDs(tt.level)
+			want := slices.Clone(tt.want)
+			slices.Sort(want)
+			if !slices.Equal(got, want) {
+				t.Errorf("SecurityHookIDs(%q) = %v, want %v", tt.level, got, want)
+			}
+		})
+	}
+
+	// gofmt is a formatter in a hook tier, not a security hook.
+	if slices.Contains(cat.SecurityHookIDs("strict"), "gofmt") {
+		t.Error("SecurityHookIDs classifies the gofmt formatter as a security hook")
+	}
+}
+
 // --- Hook Tier Tests ---
 
 func TestHookTierOrder(t *testing.T) {
@@ -1012,18 +1046,20 @@ func TestMergeCatalogs_OverlayReplacesTier(t *testing.T) {
 	}
 }
 
+// A list section outside the security floor (security_hooks and unset_vars
+// only add; see TestMergeCatalogs_SecurityHooksUnion) is replaced wholesale.
 func TestMergeCatalogs_OverlayReplacesStringSlice(t *testing.T) {
 	t.Parallel()
 	base := loadTestCatalog(t)
 
 	overlay := &Catalog{}
-	overlay.security.Hooks.Default = []string{"custom-hook"}
+	overlay.security.BasePackages = []string{"custom-pkg"}
 
 	merged := MergeCatalogs(base, overlay)
-	hooks := merged.SecurityHooks()
+	pkgs := merged.BasePackages()
 
-	if len(hooks) != 1 || hooks[0] != "custom-hook" {
-		t.Errorf("SecurityHooks() = %v, want [custom-hook]", hooks)
+	if len(pkgs) != 1 || pkgs[0] != "custom-pkg" {
+		t.Errorf("BasePackages() = %v, want [custom-pkg]", pkgs)
 	}
 }
 

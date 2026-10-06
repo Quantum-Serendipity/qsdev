@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 
 	"github.com/mattn/go-isatty"
 	"github.com/spf13/cobra"
@@ -185,6 +186,11 @@ func runCheck(cmd *cobra.Command, format check.OutputFormat, auditLevel check.Au
 		ctx.GeneratedContent[rel] = f.Content
 	}
 	ctx.ExpectedGenerationErr = expectedGenerationErr(answersErr, genErr)
+	// The hand-edited devenv.nix (and devenv.local.nix) must still enable the
+	// security hooks and strip the variables the generated one does.
+	if ctx.ExpectedGenerationErr == nil {
+		ctx.ExpectedGenerationErr = fillDevenvSecurity(&ctx, answers, freshFiles, projectRoot)
+	}
 	ctx.RequiredMCPServers = requiredMCPServers(answers, toolRegistry, freshFiles)
 	if answers.ClaudeCode {
 		for _, h := range claudecode.HooksWithoutPolicy(answers) {
@@ -421,6 +427,40 @@ func requiredMCPServers(answers types.WizardAnswers, reg *toolreg.Registry, fres
 		}
 	}
 	return required
+}
+
+// fillDevenvSecurity records in ctx the security git hooks (see
+// catalog.SecurityHookIDs for the answers' compliance level) the devenv.nix in
+// freshFiles enables, the variables it strips and the git-hooks settings that
+// shape those hooks, next to what the project's devenv modules declare. It
+// records nothing when the generator writes no devenv.nix, and returns an
+// error when the generated file cannot be read.
+func fillDevenvSecurity(ctx *check.CheckContext, answers types.WizardAnswers, freshFiles map[string]types.GeneratedFile, projectRoot string) error {
+	f, ok := freshFiles[toolreg.DevenvNixFile]
+	if !ok {
+		return nil
+	}
+	cat, err := catalog.Default()
+	if err != nil {
+		return fmt.Errorf("loading catalog for the devenv security floor: %w", err)
+	}
+	expected, err := devenv.DeclaredSecurity(string(f.Content))
+	if err != nil {
+		return fmt.Errorf("reading the generated %s: %w", toolreg.DevenvNixFile, err)
+	}
+	level := answers.ComplianceLevel
+	if level == "" {
+		level = cat.TierCompliance(answers.Tier)
+	}
+	security := cat.SecurityHookIDs(level)
+	ctx.ExpectedDevenvHooks = slices.DeleteFunc(expected.Hooks, func(id string) bool { return !slices.Contains(security, id) })
+	ctx.ExpectedUnsetVars = expected.UnsetVars
+	ctx.ExpectedDevenvHookSettings = expected.SecuritySettings(ctx.ExpectedDevenvHooks)
+
+	declared, err := devenv.ProjectDeclaredSecurity(projectRoot)
+	ctx.DevenvHooks, ctx.DevenvUnsetVars, ctx.DevenvSecurityErr = declared.Hooks, declared.UnsetVars, err
+	ctx.DevenvHookSettings = declared.SecuritySettings(ctx.ExpectedDevenvHooks)
+	return nil
 }
 
 // expectedGenerationErr reports why the generator's output for the project

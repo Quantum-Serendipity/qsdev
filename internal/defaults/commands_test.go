@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	"github.com/Quantum-Serendipity/qsdev/internal/catalog"
+	"github.com/Quantum-Serendipity/qsdev/pkg/branding"
 )
 
 func TestSectionFromUnified(t *testing.T) {
@@ -197,5 +198,35 @@ func useProjectRoot(t *testing.T, root string) {
 	t.Cleanup(catalog.ResetDefault)
 	if err := catalog.SetProjectRoot(root); err != nil {
 		t.Fatalf("SetProjectRoot(%q): %v", root, err)
+	}
+}
+
+// `defaults validate` fails on an org overlay that would keep a stripped
+// credential, naming the variable (XS-N1: it used to report the file valid).
+// Not parallel: it sets the environment and the catalog's project root.
+func TestValidate_DefaultsValidateRejectsLooseningOverlay(t *testing.T) {
+	useProjectRoot(t, t.TempDir())
+	overlay := filepath.Join(t.TempDir(), "defaults.yaml")
+	content := "security_hooks: [check-merge-conflicts]\nkeep_vars: [PATH, GITHUB_TOKEN, AWS_SECRET_ACCESS_KEY]\n"
+	if err := os.WriteFile(overlay, []byte(content), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv(branding.Get().EnvPrefix+"ORG_CONFIG", overlay)
+
+	cmd := validateCmd()
+	var stdout, stderr bytes.Buffer
+	cmd.SetOut(&stdout)
+	cmd.SetErr(&stderr)
+	cmd.SetArgs(nil)
+	if err := cmd.Execute(); err == nil {
+		t.Fatalf("defaults validate succeeded, want error; stdout: %s", stdout.String())
+	}
+	for _, want := range []string{"GITHUB_TOKEN", "AWS_SECRET_ACCESS_KEY", overlay} {
+		if !strings.Contains(stderr.String(), want) {
+			t.Errorf("stderr = %q, want it to name %q", stderr.String(), want)
+		}
+	}
+	if strings.Contains(stdout.String(), "is valid") {
+		t.Errorf("stdout = %q, must not report the file valid", stdout.String())
 	}
 }

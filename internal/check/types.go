@@ -218,6 +218,28 @@ type CheckContext struct {
 	// it. DeclaredEnvErr records a module that could not be read or parsed.
 	DeclaredEnv    map[string]string
 	DeclaredEnvErr error
+	// ExpectedDevenvHooks are the security git hooks (see
+	// catalog.SecurityHookIDs) the devenv.nix generated for the project
+	// enables, and ExpectedUnsetVars the variables its unsetEnvVars strips.
+	// Both are nil when the generator writes no devenv.nix (or its output is
+	// unknown, see ExpectedGenerationErr). The project's devenv modules
+	// must still enable and strip every one of them.
+	ExpectedDevenvHooks []string
+	ExpectedUnsetVars   []string
+	// ExpectedDevenvHookSettings are the generated devenv.nix's other
+	// git-hooks definitions that shape those hooks (a hook's entry, files or
+	// excludes, a setting for every hook), by attribute path, and
+	// DevenvHookSettings the project's modules' (see
+	// devenv.DevenvSecurity.SecuritySettings). They must match.
+	ExpectedDevenvHookSettings map[string]string
+	DevenvHookSettings         map[string]string
+	// DevenvHooks and DevenvUnsetVars are the git hooks the project's devenv
+	// modules (devenv.nix, devenv.local.nix) enable and the variables they
+	// strip, read by the command layer. DevenvSecurityErr records a module
+	// that could not be read or parsed.
+	DevenvHooks       []string
+	DevenvUnsetVars   []string
+	DevenvSecurityErr error
 	// ProbeTool runs a tool's version probe for the toolchain requirement
 	// checks; nil skips them.
 	ProbeTool ToolProber

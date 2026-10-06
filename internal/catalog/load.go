@@ -9,13 +9,19 @@ import (
 	"strings"
 )
 
-// Load reads the embedded defaults and optionally overlays project and
-// organization configuration from unified defaults files. Layers apply in
-// order embedded, project, org, so the org file (the developer's own
-// defaults) overrides the project file. The project file is committed to
-// the repository and is restricted to adding or tightening (see
-// applyProjectOverlay); a file that tries anything else fails the load with
-// an error wrapping ErrProjectOverlayRejected.
+// Load reads the embedded defaults and optionally overlays organization and
+// project configuration from unified defaults files. Layers apply in order
+// embedded, org, project:
+//
+//   - the org file (the developer's own defaults) may change most of the
+//     catalog, but not below the built-in security floor (see
+//     securityFloorViolations); a file that tries fails the load with an
+//     error wrapping ErrOverlayLoosens;
+//   - the committed project policy applies last and may only add or tighten
+//     (see applyProjectOverlay), so the org file cannot erase its additions;
+//     it is judged against the embedded defaults alone, so the org file never
+//     makes it fail, and a file that tries anything else fails the load with
+//     an error wrapping ErrProjectOverlayRejected.
 func Load(opts ...LoadOption) (*Catalog, error) {
 	cfg := &loadConfig{}
 	for _, opt := range opts {
@@ -28,23 +34,17 @@ func Load(opts ...LoadOption) (*Catalog, error) {
 	}
 	cat := embedded
 
-	// The project layer goes first so the org layer above it keeps the last
-	// word; the project layer itself may only add or tighten.
-	if cfg.projectConfigFile != "" {
-		cat, err = applyProjectConfigFile(cat, cfg.projectConfigFile)
+	if cfg.orgConfigFile != "" {
+		cat, err = applyOrgConfigFile(embedded, cfg.orgConfigFile)
 		if err != nil {
 			return nil, err
 		}
 	}
 
-	if cfg.orgConfigFile != "" {
-		orgCat, err := loadUnifiedFile(cfg.orgConfigFile)
+	if cfg.projectConfigFile != "" {
+		cat, err = applyProjectConfigFile(cat, embedded, cfg.projectConfigFile)
 		if err != nil {
-			if !os.IsNotExist(err) {
-				return nil, fmt.Errorf("loading org config from %s: %w", cfg.orgConfigFile, err)
-			}
-		} else {
-			cat = MergeCatalogs(cat, orgCat)
+			return nil, err
 		}
 	}
 
@@ -78,9 +78,28 @@ func LoadUserScope() (*Catalog, error) {
 	return Load()
 }
 
-// applyProjectConfigFile applies the project defaults file at path to cat.
-// A missing file leaves cat unchanged.
-func applyProjectConfigFile(cat *Catalog, path string) (*Catalog, error) {
+// applyOrgConfigFile merges the org defaults file at path onto embedded and
+// rejects a result below embedded's security floor. A missing file leaves
+// embedded unchanged.
+func applyOrgConfigFile(embedded *Catalog, path string) (*Catalog, error) {
+	orgCat, err := loadUnifiedFile(path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return embedded, nil
+		}
+		return nil, fmt.Errorf("loading org config from %s: %w", path, err)
+	}
+	merged := MergeCatalogs(embedded, orgCat)
+	if errs := securityFloorViolations(embedded, merged, path); len(errs) > 0 {
+		return nil, fmt.Errorf("%w: %s", ErrOverlayLoosens, joinCatalogErrors(errs))
+	}
+	return merged, nil
+}
+
+// applyProjectConfigFile applies the project defaults file at path to cat,
+// judging it against the embedded defaults (see applyProjectOverlay). A
+// missing file leaves cat unchanged.
+func applyProjectConfigFile(cat, embedded *Catalog, path string) (*Catalog, error) {
 	ov, err := loadProjectOverlay(path)
 	if err != nil {
 		if os.IsNotExist(err) {
@@ -88,7 +107,7 @@ func applyProjectConfigFile(cat *Catalog, path string) (*Catalog, error) {
 		}
 		return nil, fmt.Errorf("loading project config from %s: %w", path, err)
 	}
-	out, errs := applyProjectOverlay(cat, ov)
+	out, errs := applyProjectOverlay(cat, embedded, ov)
 	if len(errs) > 0 {
 		return nil, fmt.Errorf("%w: %s", ErrProjectOverlayRejected, joinCatalogErrors(errs))
 	}

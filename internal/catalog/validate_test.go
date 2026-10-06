@@ -2,6 +2,8 @@ package catalog
 
 import (
 	"fmt"
+	"maps"
+	"slices"
 	"strings"
 	"testing"
 )
@@ -88,5 +90,35 @@ func TestValidate_HookIDGrammarAcceptsEmbedded(t *testing.T) {
 	cat.security.Hooks.Default = append(cat.security.Hooks.Default, "ripsecrets", "check-added-large-files")
 	if errs := cat.validateHookIDs("defaults.yaml"); len(errs) > 0 {
 		t.Errorf("validateHookIDs() = %v, want none", errs)
+	}
+}
+
+// A compliance level's required hook that is not a tool must be always on
+// (security_hooks or custom_hooks): hook_tiers membership only filters
+// hooks, it never renders one, so a hook found only there would never run.
+func TestValidate_RequiredNonToolHookMustBeAlwaysOn(t *testing.T) {
+	t.Parallel()
+
+	if errs := loadTestCatalog(t).validateComplianceHooks(); len(errs) > 0 {
+		t.Fatalf("embedded catalog: validateComplianceHooks() = %v, want none", errs)
+	}
+
+	cat := loadTestCatalog(t)
+	cat.hookTiers.Tiers = mergeStringSliceMap(cat.hookTiers.Tiers, nil)
+	cat.hookTiers.Tiers["baseline"] = append(cat.hookTiers.Tiers["baseline"], "tier-only-hook")
+	strict := cat.compliance.Levels["strict"]
+	strict.RequiredPreCommitHooks = append(slices.Clone(strict.RequiredPreCommitHooks), "tier-only-hook")
+	cat.compliance.Levels = maps.Clone(cat.compliance.Levels)
+	cat.compliance.Levels["strict"] = strict
+
+	errs := cat.Validate()
+	var found bool
+	for _, e := range errs {
+		if e.Field == "strict.required_pre_commit_hooks" && strings.Contains(e.Message, `"tier-only-hook"`) {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("Validate() = %v, want an error naming strict.required_pre_commit_hooks and tier-only-hook", errs)
 	}
 }

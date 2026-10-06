@@ -10,7 +10,9 @@ import (
 // MergeCatalogs merges an overlay catalog into a base catalog.
 // Non-empty overlay fields override or extend the base. For map fields,
 // overlay entries are added or replace base entries with the same key.
-// For slice fields, the overlay replaces the base if non-empty.
+// For slice fields, the overlay replaces the base if non-empty, except the
+// security floor lists security_hooks and unset_vars, which the overlay can
+// only add to (see securityFloorViolations for the rest of the floor).
 //
 // Struct-valued map entries (tiers, compliance levels, project profiles,
 // tools, MCP servers, bootstrap tools, permission presets) parsed from a
@@ -46,9 +48,11 @@ func MergeCatalogs(base, overlay *Catalog) *Catalog {
 	result.mcpServe = cmp.Or(overlay.mcpServe, base.mcpServe)
 
 	// Security: merge lists and sub-structures.
-	result.security.Hooks.Default = mergeStringSlice(base.security.Hooks.Default, overlay.security.Hooks.Default)
+	// The always-on hooks and the stripped variables are part of the security
+	// floor: every layer may only add to them.
+	result.security.Hooks.Default = unionStrings(base.security.Hooks.Default, overlay.security.Hooks.Default)
 	result.security.BasePackages = mergeStringSlice(base.security.BasePackages, overlay.security.BasePackages)
-	result.security.CleanEnvironment.UnsetVars = mergeStringSlice(
+	result.security.CleanEnvironment.UnsetVars = unionStrings(
 		base.security.CleanEnvironment.UnsetVars, overlay.security.CleanEnvironment.UnsetVars,
 	)
 	result.security.CleanEnvironment.KeepVars = mergeStringSlice(

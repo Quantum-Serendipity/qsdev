@@ -138,7 +138,7 @@ func lineMentionsMcpConfig(ctx *EvalContext) bool {
 	return false
 }
 
-// bashMutatesMcpConfig reports whether a Bash command writes/redirects to or
+// shellMutatesMcpConfig reports whether a shell command writes/redirects to or
 // mutates an MCP config file (as opposed to merely reading it). A mention of an
 // MCP config is the deny trigger; the command is cleared only when every
 // command is a proven reader (or a directory change) whose write redirects do
@@ -146,8 +146,12 @@ func lineMentionsMcpConfig(ctx *EvalContext) bool {
 // command word cannot clear it (fail closed), nor can a parse error. So `sh -c
 // 'echo x > .mcp.json'`, `{ echo x; } > .mcp.json`, `sed -i … .mcp.json` and
 // `cd .cursor && echo x > mcp.json` deny, while `cat .mcp.json` and
-// `jq . .mcp.json` (reads) clear.
-func bashMutatesMcpConfig(ctx *EvalContext) bool {
+// `jq . .mcp.json` (reads) clear. A PowerShell line is judged in its own
+// dialect (psMutatesMcpConfig).
+func shellMutatesMcpConfig(ctx *EvalContext) bool {
+	if isPowerShell(ctx) {
+		return psMutatesMcpConfig(ctx)
+	}
 	if !lineMentionsMcpConfig(ctx) {
 		return false
 	}

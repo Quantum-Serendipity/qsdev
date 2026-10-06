@@ -1149,6 +1149,13 @@ func ContainsProtectedPath(s string) bool {
 	return containsProtectedPath(s, pathmatch.Platform.FoldCase)
 }
 
+// ContainsProtectedPathFold is ContainsProtectedPath ignoring case on every
+// platform, for text whose paths are case-insensitive wherever it runs
+// (PowerShell), so its verdict does not depend on the host OS.
+func ContainsProtectedPathFold(s string) bool {
+	return containsProtectedPath(s, true)
+}
+
 func containsProtectedPath(s string, foldCase bool) bool {
 	return brandedTables().containsProtectedPath(s, foldCase)
 }

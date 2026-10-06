@@ -62,6 +62,11 @@ func CheckParsed(toolName string, command string, filePath string, cmds []cmdsca
 		if blocked, reason := checkObfuscation(command, cmds, parseErr); blocked {
 			return true, "obfuscation", reason
 		}
+		if cmdscan.ToolDialect(toolName) == cmdscan.PowerShell {
+			if blocked, reason := checkPowerShellObfuscation(command); blocked {
+				return true, "obfuscation", reason
+			}
+		}
 	}
 
 	if cmdscan.IsShellTool(toolName) && command != "" {

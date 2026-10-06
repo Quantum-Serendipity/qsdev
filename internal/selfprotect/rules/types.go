@@ -61,10 +61,13 @@ type EvalContext struct {
 	scanned     []scannedCommand
 	scannedDone bool
 
-	// Shared Bash verdicts, memoized by lineMentionsProtected and
-	// bashMutatesProtected since several rules consult them.
+	// Shared shell verdicts, memoized by lineMentionsProtected and
+	// shellMutatesProtected since several rules consult them.
 	mentions, mutates         bool
 	mentionsDone, mutatesDone bool
+
+	// ps is the command tokenized as PowerShell, memoized by powerShell.
+	ps *psLine
 
 	// fs answers every filesystem question the rules ask about the paths of
 	// this one decision, so each distinct path or directory is looked up once

@@ -451,6 +451,31 @@ func TestContainsProtectedPath(t *testing.T) {
 	}
 }
 
+// TestContainsProtectedPathFold verifies the case-folding variant matches a
+// differently-cased protected path on every OS (PowerShell paths are
+// case-insensitive wherever it runs), and over-matches nothing the
+// platform variant rejects.
+func TestContainsProtectedPathFold(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		input string
+		want  bool
+	}{
+		{"remove-item .CLAUDE/SETTINGS.JSON", true},
+		{"ri .Claude", true},
+		{"rm -rf .QSDEV", true},
+		{"/ETC/GDEV/policy.yaml", true},
+		{".claude/settings.json", true},
+		{"my.CLAUDE.bak", false},
+		{"NODE_MODULES", false},
+	}
+	for _, tt := range tests {
+		if got := ContainsProtectedPathFold(tt.input); got != tt.want {
+			t.Errorf("ContainsProtectedPathFold(%q) = %v, want %v", tt.input, got, tt.want)
+		}
+	}
+}
+
 // TestIsProtected_FailsClosedOnHomeError verifies the fail-CLOSED behavior of
 // IsProtected when the home directory cannot be resolved (regression for
 // F-CAP-20.4-3). If os.UserHomeDir fails, the home-anchored protected-prefix

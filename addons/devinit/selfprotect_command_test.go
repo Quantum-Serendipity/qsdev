@@ -14,6 +14,7 @@ import (
 	"github.com/Quantum-Serendipity/qsdev/internal/selfprotect/canon"
 	"github.com/Quantum-Serendipity/qsdev/internal/selfprotect/hookio"
 	"github.com/Quantum-Serendipity/qsdev/internal/selfprotect/rules"
+	"github.com/Quantum-Serendipity/qsdev/pkg/branding"
 )
 
 // TestBuildContext_EditContentReachesRules is the end-to-end guard for the
@@ -133,6 +134,9 @@ func TestSelfprotectHook_Decisions(t *testing.T) {
 	bash := func(command string) string {
 		return toolCallJSON(t, "Bash", map[string]any{"command": command})
 	}
+	pwsh := func(command string) string {
+		return toolCallJSON(t, "PowerShell", map[string]any{"command": command})
+	}
 	gateDodge := "ignore-scripts=false\n"
 
 	tests := []struct {
@@ -209,6 +213,17 @@ func TestSelfprotectHook_Decisions(t *testing.T) {
 		{"clustered commit -n is blocked", bash("git commit -m wip -qn"), 2, "GIT-001"},
 		{"git output into .git/config is blocked", bash("git log -1 --format=%B --output .git/config"), 2, "GIT-001"},
 		{"commit message mentioning git options is allowed", bash(`git commit -m "handle sh -c and --no-verify"`), 0, ""},
+		// U18-08: the PowerShell tool, judged in its own dialect by the
+		// evasion checks and the Tier-1 rules together.
+		{"powershell delete of settings is blocked", pwsh(`Remove-Item .claude\settings.json`), 2, "qsdev-selfprotect:"},
+		{"powershell Out-File onto settings is blocked", pwsh(`'{}' | Out-File .claude\settings.json`), 2, "qsdev-selfprotect:"},
+		{"powershell process kill is blocked", pwsh(`Stop-Process -Name ` + branding.Get().AppName), 2, "SP-009"},
+		{"powershell encoded command is blocked", pwsh(`pwsh -EncodedCommand AAAA`), 2, "qsdev-selfprotect:"},
+		{"powershell iex is blocked", pwsh(`iex (gc x.ps1)`), 2, "qsdev-selfprotect:"},
+		{"powershell read of settings is allowed", pwsh(`Get-Content .claude\settings.json`), 0, ""},
+		{"powershell listing of .claude is allowed", pwsh(`Get-ChildItem .claude`), 0, ""},
+		{"powershell kill by id is allowed", pwsh(`Stop-Process -Id 1234`), 0, ""},
+		{"powershell script file is allowed", pwsh(`pwsh -File build.ps1`), 0, ""},
 		{"malformed input fails closed", "{not json", 2, "internal error"},
 		{"empty input fails closed", "", 2, "internal error"},
 	}

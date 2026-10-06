@@ -2593,11 +2593,19 @@ def _unverified(reason: str) -> Install:
 _AUDIT_FIX_MANAGERS = frozenset({"npm", "pnpm", "cargo"})
 
 
+def _is_audit_verb(exe: str, tok: str) -> bool:
+    if exe == "npm":
+        return len(tok) >= 2 and "audit".startswith(tok)
+    return tok == "audit"
+
+
 def _audit_resolve(exe: str, sub: list) -> Optional[Install]:
     """`npm audit fix`, `npm audit --json fix`, `pnpm audit --fix`, `cargo audit fix`:
     the manager picks and installs new versions itself, so the guard cannot check
-    them. npm's `fix` is a positional that may follow flags, so any argument counts."""
-    if exe not in _AUDIT_FIX_MANAGERS or sub[:1] != ["audit"]:
+    them. npm's `fix` is a positional that may follow flags, so any argument counts.
+    npm also runs an unambiguous prefix of a command (`npm aud fix`); a prefix that
+    npm rejects as ambiguous only makes the guard ask on a command that fails anyway."""
+    if exe not in _AUDIT_FIX_MANAGERS or not sub or not _is_audit_verb(exe, sub[0]):
         return None
     if any(t in ("fix", "--fix") or t.startswith("--fix=") for t in sub[1:]):
         return _unverified(f"`{exe} audit ... fix` upgrades dependencies to versions the manager "

@@ -8,6 +8,15 @@ All notable changes to qsdev are recorded in this file. The format is based on
 
 ### Changed
 
+- Self-protection judges the PowerShell tool's human-only commands in the
+  words PowerShell passes a program: `qsdev 'teardown','--force'`,
+  `& qsdev teardown,--force`, `& qsdev @('teardown','--force')`, a splat,
+  `Start-Process qsdev -ArgumentList 'teardown','--force'` and
+  `[Diagnostics.Process]::Start('qsdev','teardown --force')` are now denied
+  (SP-014) as their Bash spellings are; before, the array syntax hid the
+  subcommand. A PowerShell line that sets or clears `CLAUDECODE` or a Claude
+  Code settings variable is denied (SP-008).
+
 - `qsdev devenv doctor` now runs `qsdev --version` on the `qsdev` the
   project's Claude Code hooks find on PATH and fails `--check` when it does
   not satisfy the project's `qsdev_version`, naming its path and version.

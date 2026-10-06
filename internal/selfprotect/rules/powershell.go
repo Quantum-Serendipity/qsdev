@@ -1,6 +1,7 @@
 package rules
 
 import (
+	"regexp"
 	"slices"
 	"strings"
 
@@ -243,4 +244,41 @@ func psMutatesArea(ctx *EvalContext, a protectedArea) bool {
 func psMutatesMcpConfig(ctx *EvalContext) bool {
 	line := ctx.powerShell()
 	return (commandMentionsMcpConfig(line.norm) || commandMentionsMcpConfig(line.loose)) && psMutates(ctx)
+}
+
+// psSessionEnv are the variables a PowerShell line must not set or clear: an
+// agent marker (canon.AgentEnvMarkers), which the CLI's human gate reads, and
+// the variables that change the settings and hooks a Claude Code session
+// loads (settingsOverrideEnv). Unlike a Bash call, a PowerShell session may
+// keep what it sets for the commands and the programs it starts later.
+var psSessionEnv = append(slices.Clone(canon.AgentEnvMarkers), settingsOverrideEnv...)
+
+// rePSEnvWrite finds, in a PowerShell line's loose text (lower-cased, quotes
+// removed), a write to one of psSessionEnv: an assignment to $env:NAME (any
+// operator but a comparison), a reference to the Env: drive (env:NAME,
+// env:\NAME), which only a non-read command (Remove-Item, Set-Item, ...)
+// changes, or a [Environment]::SetEnvironmentVariable call.
+var rePSEnvWrite, rePSEnvDrive, rePSSetEnvVar = func() (*regexp.Regexp, *regexp.Regexp, *regexp.Regexp) {
+	names := make([]string, len(psSessionEnv))
+	for i, n := range psSessionEnv {
+		names[i] = regexp.QuoteMeta(strings.ToLower(n))
+	}
+	alt := `(` + strings.Join(names, "|") + `)\b`
+	return regexp.MustCompile(`\$\{?env:` + alt + `\}?\s*[-+*/%?]*=([^=]|$)`),
+		regexp.MustCompile(`(^|[^a-z0-9_$:{])env:[/\\]*` + alt),
+		regexp.MustCompile(`setenvironmentvariable\W*` + alt)
+}()
+
+// psEnvOverride reports why a PowerShell line sets or clears one of
+// psSessionEnv, or "".
+func psEnvOverride(ctx *EvalContext) string {
+	line := ctx.powerShell()
+	for _, text := range []string{line.norm, line.loose} {
+		if rePSEnvWrite.MatchString(text) || rePSSetEnvVar.MatchString(text) ||
+			rePSEnvDrive.MatchString(text) && psMutates(ctx) {
+			return "the PowerShell session would set or clear an agent marker or Claude Code settings variable, " +
+				"which the commands and programs it runs later inherit"
+		}
+	}
+	return ""
 }

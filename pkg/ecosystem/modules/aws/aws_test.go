@@ -3,6 +3,7 @@ package aws_test
 import (
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
@@ -18,6 +19,7 @@ var _ ecosystem.ReadDenyRuleProvider = (*aws.Module)(nil)
 var _ ecosystem.PackageProvider = (*aws.Module)(nil)
 var _ ecosystem.WizardFieldProvider = (*aws.Module)(nil)
 var _ ecosystem.DoctorCheckProvider = (*aws.Module)(nil)
+var _ ecosystem.EnvKeeper = (*aws.Module)(nil)
 
 func newModule() *aws.Module {
 	return &aws.Module{}
@@ -336,12 +338,15 @@ func TestReadDenyRules_AllPresent(t *testing.T) {
 
 // --- DevenvNix tests ---
 
-// TestDevenvNix_AWSEnvOnlyWhenConfigured verifies AWS_PROFILE and
+// TestDevenvNix_AWSEnvOnlyWhenConfigured verifies AWS_PROFILE, AWS_REGION and
 // AWS_DEFAULT_REGION are exported only with real configured values. devenv env
 // overrides the user's shell, so a placeholder would clobber a working profile.
+// A configured region sets both region variables, because the JS v3 and Go v2
+// SDKs read AWS_REGION while the CLI also honors AWS_DEFAULT_REGION.
 func TestDevenvNix_AWSEnvOnlyWhenConfigured(t *testing.T) {
 	t.Parallel()
 
+	const inherited = "inherited from your shell through devenv.yaml clean.keep, or set in devenv.local.nix"
 	tests := []struct {
 		name    string
 		extras  map[string]string
@@ -350,19 +355,31 @@ func TestDevenvNix_AWSEnvOnlyWhenConfigured(t *testing.T) {
 	}{
 		{
 			name:    "unconfigured exports nothing",
-			want:    []string{"# AWS_PROFILE, AWS_DEFAULT_REGION: not set here"},
-			notWant: []string{"env.AWS_PROFILE", "env.AWS_DEFAULT_REGION", "PLACEHOLDER"},
+			want:    []string{"# AWS_PROFILE, AWS_REGION, AWS_DEFAULT_REGION: not set here; " + inherited},
+			notWant: []string{"env.AWS_PROFILE", "env.AWS_REGION", "env.AWS_DEFAULT_REGION", "PLACEHOLDER"},
 		},
 		{
 			name:    "profile only",
 			extras:  map[string]string{"aws_profile": "dev-sso"},
-			want:    []string{`env.AWS_PROFILE = "dev-sso";`, "# AWS_DEFAULT_REGION: not set here"},
-			notWant: []string{"env.AWS_DEFAULT_REGION", "PLACEHOLDER"},
+			want:    []string{`env.AWS_PROFILE = "dev-sso";`, "# AWS_REGION, AWS_DEFAULT_REGION: not set here; " + inherited},
+			notWant: []string{"env.AWS_REGION", "env.AWS_DEFAULT_REGION", "PLACEHOLDER"},
 		},
 		{
-			name:    "both configured",
-			extras:  map[string]string{"aws_profile": "dev-sso", "aws_default_region": "eu-west-1"},
-			want:    []string{`env.AWS_PROFILE = "dev-sso";`, `env.AWS_DEFAULT_REGION = "eu-west-1";`},
+			name:   "region only",
+			extras: map[string]string{"aws_default_region": "eu-west-1"},
+			want: []string{
+				`env.AWS_REGION = "eu-west-1";`, `env.AWS_DEFAULT_REGION = "eu-west-1";`,
+				"# AWS_PROFILE: not set here; " + inherited,
+			},
+			notWant: []string{"env.AWS_PROFILE", "PLACEHOLDER"},
+		},
+		{
+			name:   "both configured",
+			extras: map[string]string{"aws_profile": "dev-sso", "aws_default_region": "eu-west-1"},
+			want: []string{
+				`env.AWS_PROFILE = "dev-sso";`,
+				`env.AWS_REGION = "eu-west-1";`, `env.AWS_DEFAULT_REGION = "eu-west-1";`,
+			},
 			notWant: []string{"not set here", "PLACEHOLDER"},
 		},
 		{
@@ -449,31 +466,51 @@ func TestDevenvPackages_WithVault(t *testing.T) {
 func TestWizardFields(t *testing.T) {
 	t.Parallel()
 
-	m := newModule()
-	fields := m.WizardFields()
+	fields := newModule().WizardFields()
+	want := []struct {
+		key  string
+		typ  ecosystem.WizardFieldType
+		desc []string
+	}{
+		{"aws_default_region", ecosystem.FieldTypeInput, []string{"inherit AWS_REGION and AWS_DEFAULT_REGION from your shell"}},
+		// A profile entered here is committed for every teammate, so the
+		// field must say so and point personal profiles elsewhere.
+		{"aws_profile", ecosystem.FieldTypeInput, []string{"inherit AWS_PROFILE from your shell", "whole team", "devenv.local.nix"}},
+		{"aws_vault", ecosystem.FieldTypeConfirm, []string{"aws-vault"}},
+	}
+	if len(fields) != len(want) {
+		t.Fatalf("expected %d wizard fields, got %d", len(want), len(fields))
+	}
+	for i, w := range want {
+		f := fields[i]
+		if f.Key != w.key || f.Type != w.typ {
+			t.Errorf("field %d = %q (%v), want %q (%v)", i, f.Key, f.Type, w.key, w.typ)
+		}
+		for _, d := range w.desc {
+			if !strings.Contains(f.Description, d) {
+				t.Errorf("field %q description %q does not mention %q", f.Key, f.Description, d)
+			}
+		}
+		// An empty input means "inherit from the shell", so inputs have no default.
+		if w.typ == ecosystem.FieldTypeInput && f.Default != "" {
+			t.Errorf("field %q default = %q, want empty", f.Key, f.Default)
+		}
+	}
+	if fields[0].Placeholder != "us-east-1" {
+		t.Errorf("region placeholder = %q, want us-east-1", fields[0].Placeholder)
+	}
+}
 
-	if len(fields) != 2 {
-		t.Fatalf("expected 2 wizard fields, got %d", len(fields))
-	}
+// TestKeepEnvVars lists the selector variables the AWS module passes through
+// devenv.yaml clean.keep: the profile and both region variables the CLI and
+// SDKs read.
+func TestKeepEnvVars(t *testing.T) {
+	t.Parallel()
 
-	// First field: region input.
-	if fields[0].Key != "aws_default_region" {
-		t.Errorf("expected first field key aws_default_region, got %q", fields[0].Key)
-	}
-	if fields[0].Type != ecosystem.FieldTypeInput {
-		t.Errorf("expected first field to be Input, got %v", fields[0].Type)
-	}
-	// Unset means "inherit from the shell", so the field has no default.
-	if fields[0].Default != "" || fields[0].Placeholder != "us-east-1" {
-		t.Errorf("expected no default and placeholder us-east-1, got %q / %q", fields[0].Default, fields[0].Placeholder)
-	}
-
-	// Second field: aws-vault confirm.
-	if fields[1].Key != "aws_vault" {
-		t.Errorf("expected second field key aws_vault, got %q", fields[1].Key)
-	}
-	if fields[1].Type != ecosystem.FieldTypeConfirm {
-		t.Errorf("expected second field to be Confirm, got %v", fields[1].Type)
+	got := newModule().KeepEnvVars()
+	want := []string{"AWS_PROFILE", "AWS_REGION", "AWS_DEFAULT_REGION"}
+	if !slices.Equal(got, want) {
+		t.Errorf("KeepEnvVars() = %v, want %v", got, want)
 	}
 }
 

@@ -77,6 +77,19 @@ All notable changes to qsdev are recorded in this file. The format is based on
   (`imports`, a computed `unsetEnvVars`). Disabling a formatter or linter
   hook is still allowed.
 
+- Cloud selector variables are no longer stripped from the devenv shell
+  (U11-WS4). `AWS_DEFAULT_REGION`, `GCLOUD_PROJECT`, `CLOUDSDK_CORE_PROJECT`,
+  `AZURE_TENANT_ID` and `AZURE_SUBSCRIPTION_ID` pick an account context but
+  grant no access, so they left the credential list and the generated
+  `unsetEnvVars`; a region set by the `aws_default_region` extra used to be
+  unset again right after devenv exported it. The selected AWS, GCP and Azure
+  modules now add their selectors to devenv.yaml `clean.keep`, so these values
+  pass through from your shell: `AWS_PROFILE`, `AWS_REGION`,
+  `AWS_DEFAULT_REGION`, `CLOUDSDK_ACTIVE_CONFIG_NAME`,
+  `CLOUDSDK_CORE_PROJECT`, `GOOGLE_CLOUD_PROJECT`, `ARM_SUBSCRIPTION_ID` and
+  `ARM_TENANT_ID`. The `aws_default_region` extra now sets `AWS_REGION` as
+  well as `AWS_DEFAULT_REGION`, and the wizard asks for the `aws_profile`
+  extra. Run `qsdev init --update` to regenerate devenv.nix and devenv.yaml.
 - `qsdev sandbox exec` keeps the project's control plane read-only for the
   hook categories with a writable project (formatter, generator,
   test-runner): git's hooks, config, info and modules, `.claude` (except the

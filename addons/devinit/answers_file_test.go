@@ -3,6 +3,7 @@ package devinit_test
 import (
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
@@ -235,5 +236,39 @@ func TestAnswersFile_RejectsUnimplementedHookPresets(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+// TestAnswersFileRoundTrip_Cloud is the U11-05 replay regression: the answers
+// a detection-driven init saves for an AWS CDK project (cdk.json selects the
+// aws module) load back through the --answers-file loader and validate.
+func TestAnswersFileRoundTrip_Cloud(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "cdk.json"), []byte(`{"app": "npx ts-node bin/app.ts"}`+"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("QSDEV_SKIP_SETUP", "1")
+	t.Chdir(dir)
+	cmd := devinit.ExportInitCmd()
+	var out strings.Builder
+	cmd.SetOut(&out)
+	cmd.SetErr(&out)
+	cmd.SetArgs([]string{"--yes"})
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("init: %v\n%s", err, out.String())
+	}
+
+	answers, err := devinit.ExportLoadAnswersFile(devinit.ExportAnswersPath(dir))
+	if err != nil {
+		t.Fatalf("loading the saved answers through the answers-file loader: %v", err)
+	}
+	if !slices.ContainsFunc(answers.Languages, func(l types.LanguageChoice) bool { return l.Name == "aws" }) {
+		t.Fatalf("saved answers languages = %+v, want aws detected from cdk.json", answers.Languages)
+	}
+	if err := devinit.ExportValidateAnswersFileCompleteness(answers); err != nil {
+		t.Errorf("saved answers are incomplete: %v", err)
+	}
+	if err := devinit.ValidateAnswers(answers); err != nil {
+		t.Errorf("saved answers fail validation: %v", err)
 	}
 }

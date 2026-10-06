@@ -2,6 +2,7 @@ package catalog
 
 import (
 	"fmt"
+	"maps"
 	"slices"
 	"strings"
 	"testing"
@@ -1389,4 +1390,43 @@ func TestAllPermissionAskRules(t *testing.T) {
 			t.Fatal("AllPermissionAskRules() order is not deterministic")
 		}
 	}
+}
+
+// toolLanguageOverlap returns the sorted names that are both a tool and a
+// language.
+func toolLanguageOverlap(tools map[string]ToolDef, languages []string) []string {
+	var overlap []string
+	for _, lang := range languages {
+		if _, ok := tools[lang]; ok {
+			overlap = append(overlap, lang)
+		}
+	}
+	slices.Sort(overlap)
+	return overlap
+}
+
+// TestCatalogToolAndLanguageNamesDisjoint keeps `enable|disable <name>`
+// unambiguous: the command resolves tools first and falls back to languages,
+// so a tool named like a language would make that language unreachable. The
+// guard subtest proves the check fails when a tool takes a language's name.
+func TestCatalogToolAndLanguageNamesDisjoint(t *testing.T) {
+	t.Parallel()
+	cat := loadTestCatalog(t)
+	tools, languages := cat.Tools(), cat.Languages()
+	if len(tools) == 0 || len(languages) == 0 {
+		t.Fatalf("catalog has %d tools and %d languages; want both non-empty", len(tools), len(languages))
+	}
+
+	if overlap := toolLanguageOverlap(tools, languages); len(overlap) > 0 {
+		t.Errorf("names are both a tool and a language: %v", overlap)
+	}
+
+	t.Run("guard", func(t *testing.T) {
+		t.Parallel()
+		clash := maps.Clone(tools)
+		clash[languages[0]] = ToolDef{}
+		if got := toolLanguageOverlap(clash, languages); !slices.Equal(got, []string{languages[0]}) {
+			t.Errorf("overlap with tool %q added = %v, want [%s]", languages[0], got, languages[0])
+		}
+	})
 }

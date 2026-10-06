@@ -1,6 +1,9 @@
 package secrets
 
-import "testing"
+import (
+	"slices"
+	"testing"
+)
 
 func TestIsSensitiveName(t *testing.T) {
 	t.Parallel()
@@ -237,5 +240,30 @@ func TestIsSensitiveName_Plurals(t *testing.T) {
 				t.Errorf("IsSensitiveName(%q) = %v, want %v", tt.key, got, tt.want)
 			}
 		})
+	}
+}
+
+// TestKnownCredentialVars_ExcludeSelectors guards that the credential canon
+// carries no non-secret selector variables. A region, profile name, project
+// ID, tenant ID or subscription ID picks an account context but grants no
+// access; listing one here strips it from the devenv shell (catalog
+// unset_vars must be a superset of this list), which discards the value a
+// cloud module or the user deliberately set.
+func TestKnownCredentialVars_ExcludeSelectors(t *testing.T) {
+	t.Parallel()
+
+	selectors := []string{
+		"AWS_DEFAULT_REGION",
+		"AWS_REGION",
+		"AWS_PROFILE",
+		"GCLOUD_PROJECT",
+		"CLOUDSDK_CORE_PROJECT",
+		"AZURE_TENANT_ID",
+		"AZURE_SUBSCRIPTION_ID",
+	}
+	for _, s := range selectors {
+		if slices.Contains(KnownCredentialVars, s) {
+			t.Errorf("KnownCredentialVars contains selector %q, which is not a credential", s)
+		}
 	}
 }

@@ -235,7 +235,7 @@ YAML-based security policies define fine-grained rules evaluated at tool invocat
 
 **Condition types** (10): `tool_match`, `path_glob`, `regex_match`, `command_match`, `file_existence`, `file_type`, `denied_path_check`, `semantic`, `all`, `any`, `not`.
 
-**Actions** (4): `block` (exit 2), `warn` (exit 0 + finding), `audit` (exit 0 + monitored finding), `prompt` (interactive approval, falls back to block without a terminal).
+**Actions** (4): `block` (exit 2), `warn` (exit 0 + finding), `audit` (exit 0 + monitored finding), `prompt` (interactive approval is not implemented yet: on any stdin, an interactive terminal included, the verdict resolves to the rule's `default_on_timeout`, and it blocks unless that default is `allow`, `proceed`, `continue` or `warn`).
 
 **Bypass tiers** (3):
 - `enforce_always` — The rule cannot be lifted with `qsdev session allow`. Used for self-protection rules.
@@ -371,7 +371,7 @@ server's trust tier:
 |------|-----------|
 | 1 (local, trusted) | Wrapped in a provenance frame |
 | 2 (enterprise) | Datamarked, then framed |
-| 3 (fallback, untrusted) | Scanned for injection patterns (hits become an inline warning), datamarked, then framed |
+| 3 (fallback, untrusted) | Scanned for injection indicators (hits become an inline warning), datamarked, then framed |
 
 Datamarking replaces the whitespace in prose with a Private Use Area rune
 (U+E000–U+E0FF) chosen at random for each result, so injected text no longer
@@ -386,6 +386,42 @@ and `structuredContent` are kept as the tool returned them. The provenance frame
 tag carries a random nonce per result, and a qsdev tag inside the output is
 escaped, so tool output can neither close the frame nor open a forged trusted
 one.
+
+The tier 3 scan looks for four indicator classes and names each class it finds
+once in a `[qsdev:warning] potential prompt injection detected (...)` line
+placed outside the datamarked text:
+
+- `instruction-override`: phrases such as "ignore previous", "disregard all
+  previous", "ignore the above instructions", "override system prompt" or
+  "reveal your system prompt". Each phrase matches as a case-insensitive
+  substring, so a longer word or an underscore after the phrase still
+  matches. It also matches as whole words of the text with every run of
+  whitespace, punctuation or control characters collapsed to one space and
+  zero-width and other invisible characters removed, in each decoded string
+  of a JSON document (so `\n` or `\t` escapes do not split a phrase), and in
+  letters hidden in Unicode TAG characters, even when they are spread over
+  several flag-shaped emoji tag sequences.
+- `forged-qsdev-tag`: an opening or closing `<qsdev:` tag, in any case and
+  with whitespace or invisible characters inside it, also inside a decoded
+  JSON string.
+- `role-marker`: chat-template tokens (`<|im_start|>`, `<|im_end|>`,
+  `<|endoftext|>`, `<|system|>`, `<|assistant|>`, `<|user|>`, `[INST]`,
+  `<<SYS>>`) and a `Human:` or `Assistant:` turn at the start of a line,
+  also inside a decoded JSON string.
+- `unicode-tag-smuggling`: Unicode TAG characters (U+E0000–U+E007F), which
+  render as nothing but a model can read, except inside a valid emoji tag
+  sequence.
+
+Some markers are deliberately not flagged, because ordinary pages and tool
+output carry them and the warning would then appear on almost every result:
+`{{` and `${` (template and shell syntax), `</`, `<script`, `javascript:` and
+`data:text/html` (HTML and XSS syntax, which do nothing to a model reading
+text), a bare or lowercase `system:` or `assistant:` key (YAML and Nix
+configuration), base64 blocks (hashes, keys and encoded assets), BiDi
+isolates and embeddings (they mislead a human reader rather than the model,
+and localized strings use isolates routinely), and subdivision-flag emoji
+such as the England flag (a valid emoji tag sequence). Datamarking and
+framing still apply to all of this content.
 
 ### Layer 14: Agent Self-Protection
 
@@ -996,8 +1032,8 @@ Self-protection (Layer 14) and the permission deny rules match how a command is 
 
 ### Policy Engine Limitations
 
-- **Semantic conditions** — The `semantic` condition type is defined in the schema but not yet implemented. Rules using it always evaluate to false.
-- **Prompt action** — Interactive prompting falls back to block when stdin is not a terminal (e.g., in CI). Full interactive approval is deferred to a future release.
+- **Semantic conditions** — The `semantic` condition type is an offline phrase heuristic, not a model call. It matches the built-in full instruction-override phrases (such as "ignore previous instructions", never the bare "ignore previous" opening that the tier 3 warning also flags), every single-quoted phrase of 5 or more characters in the rule's prompt, and the tool-intent phrases "exfiltrate", "disable security" and "disable the security". Each phrase matches as a case-insensitive substring of the raw tool input, command and file path, as on earlier releases. A phrase that starts and ends with a letter or digit also matches as whole words of that text normalized for whitespace, punctuation and zero-width characters, and of each decoded string of the JSON tool input (which carries, for example, the content of a `Write`). A quoted phrase with leading or trailing punctuation, such as `'/etc/'`, is matched only literally, so it never shrinks to a fragment such as `etc` that matches `git fetch`. A paraphrase that uses none of these phrases is not matched.
+- **Prompt action** — Interactive approval is not implemented yet. On any stdin, an interactive terminal included, a `prompt` verdict resolves to the rule's `default_on_timeout`, and it blocks unless that default is `allow`, `proceed`, `continue` or `warn`.
 
 ## Further Reading
 

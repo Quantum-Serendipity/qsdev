@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/Quantum-Serendipity/qsdev/internal/selfprotect/hookio"
+	"github.com/Quantum-Serendipity/qsdev/internal/testutil"
 )
 
 // adversarialPayloads are the U18-04 shapes that ran for seconds to minutes
@@ -19,8 +20,8 @@ import (
 // hookio.MaxCommandBytes and MaxSimpleCommands. maxRatio bounds how much
 // doubling n may multiply the evaluation's CPU time, zero meaning
 // linearRatio; cpuBudget bounds the best CPU time at n, zero meaning
-// defaultCPUBudget (scaled by raceScale). tool is the shell tool that runs
-// the payload, zero meaning Bash.
+// defaultCPUBudget (scaled by testutil.RaceScale). tool is the shell tool
+// that runs the payload, zero meaning Bash.
 var adversarialPayloads = []struct {
 	name      string
 	build     func(n int) string
@@ -155,8 +156,8 @@ func doublingRatio(half, full time.Duration) float64 {
 }
 
 // runAdversarial evaluates the payloads of tool whose cd field equals cd at
-// n and at 2n. The best wall time at n must be inside hookio.EvalDeadline (scaled by
-// raceScale), the absolute property the hook relies on; the best CPU time at
+// n and at 2n. The best wall time at n must be inside hookio.EvalDeadline
+// (scaled by testutil.RaceScale), the absolute property the hook relies on; the best CPU time at
 // n must be inside the payload's cpuBudget; and the CPU doubling ratio must
 // stay under the payload's maxRatio, which pins the complexity. Neither CPU
 // bound depends on how loaded the machine is. The ratio doubles n rather than
@@ -166,7 +167,7 @@ func doublingRatio(half, full time.Duration) float64 {
 // so sibling tests do not add to the process CPU time.
 func runAdversarial(t *testing.T, tool string, cd bool) {
 	t.Helper()
-	deadline := hookio.EvalDeadline * raceScale
+	deadline := hookio.EvalDeadline * testutil.RaceScale
 	for _, p := range adversarialPayloads {
 		if p.cd != cd || cmp.Or(p.tool, "Bash") != tool {
 			continue
@@ -180,7 +181,7 @@ func runAdversarial(t *testing.T, tool string, cd bool) {
 			if atN.wall > deadline {
 				t.Errorf("EvaluateAll took %v at best, want under the %v hook deadline", atN.wall, deadline)
 			}
-			if budget := cmp.Or(p.cpuBudget, defaultCPUBudget) * raceScale; atN.cpu > budget {
+			if budget := cmp.Or(p.cpuBudget, defaultCPUBudget) * testutil.RaceScale; atN.cpu > budget {
 				t.Errorf("EvaluateAll took %v of CPU at best, want under %v", atN.cpu, budget)
 			}
 			if ratio := doublingRatio(atN.cpu, doubled.cpu); ratio >= limit {

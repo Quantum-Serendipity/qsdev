@@ -1,6 +1,4 @@
-//go:build !race
-
 package devinit
 
-// raceScale widens time budgets under the race detector; see race_on_test.go.
-const raceScale = 1
+// See race_on_test.go: time budgets scale by testutil.RaceScale. This file no
+// longer declares anything and is due for removal.

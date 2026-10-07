@@ -158,6 +158,42 @@ jobs:
         with:
           version: ${{ env.GOLANGCI_LINT_VERSION }}
 
+  # XD-WS1 performance gate: holds the generated hooks and the CLI commands to
+  # the CPU budgets in internal/perfbudget/budgets.yaml, scaled by a
+  # calibration measured on this runner. A budget a fix still owes is a
+  # tracked skip naming its workstream; the step summary lists every row.
+  # Each command runs without network in its own user and network namespace,
+  # which Ubuntu's AppArmor policy forbids unprivileged processes by default.
+  # No -race: it distorts CPU time.
+  perf:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Harden Runner
+        uses: step-security/harden-runner@9af89fc71515a100421586dfdb3dc9c984fbf411 # v2.19.4
+        with:
+          egress-policy: audit
+
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+
+      - name: Set up Go
+        uses: actions/setup-go@4a3601121dd01d1626a1e23e37211e3254c1c06c # v6.4.0
+        with:
+          go-version-file: go.mod
+
+      - name: Allow unprivileged user namespaces
+        run: sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+
+      # The two packages' suites run in parallel (go test runs package test
+      # binaries concurrently), which keeps the step within about 4 minutes.
+      - name: Performance budgets
+        env:
+          QSDEV_PERF_REQUIRE_NETNS: "1"
+        run: go test -tags perf -run Perf -count=1 ./cmd/qsdev ./addons/claudecode
+
   vulncheck:
     runs-on: ubuntu-latest
     steps:

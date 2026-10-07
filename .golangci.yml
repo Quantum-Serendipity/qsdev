@@ -1,5 +1,11 @@
 version: "2"
 
+run:
+  # The perf-tagged measurement suites (internal/perfbudget, `go test -tags
+  # perf -run Perf`) are linted with the rest of the tree.
+  build-tags:
+    - perf
+
 linters:
   default: standard
   enable:

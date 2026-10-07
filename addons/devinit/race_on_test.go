@@ -1,7 +1,5 @@
-//go:build race
-
 package devinit
 
-// raceScale widens time budgets under the race detector, which slows the
-// selfprotect hook about four-fold.
-const raceScale = 5
+// Time budgets in this package's tests scale by testutil.RaceScale, the one
+// race-detector factor of the repository. This file no longer declares
+// anything and is due for removal.

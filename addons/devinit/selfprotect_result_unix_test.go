@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/Quantum-Serendipity/qsdev/internal/selfprotect/hookio"
+	"github.com/Quantum-Serendipity/qsdev/internal/testutil"
 )
 
 // mkfifo creates a FIFO at path. Opening it with no writer blocks forever.
@@ -49,7 +50,7 @@ func TestDetectGuardedFileChange_FIFOTargetDenies(t *testing.T) {
 		if !v.blocked || v.ruleID != "GD-004" || !strings.Contains(v.reason, "not a regular file") {
 			t.Errorf("detectGuardedFileChange = (%v, %q, %q), want GD-004 deny naming 'not a regular file'", v.blocked, v.ruleID, v.reason)
 		}
-	case <-time.After(100 * time.Millisecond * raceScale):
+	case <-time.After(100 * time.Millisecond * testutil.RaceScale):
 		t.Fatal("detectGuardedFileChange blocked on the FIFO")
 	}
 

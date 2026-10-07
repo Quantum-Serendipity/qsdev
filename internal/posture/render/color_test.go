@@ -1,8 +1,9 @@
 package render
 
 import (
-	"os"
 	"testing"
+
+	"github.com/Quantum-Serendipity/qsdev/internal/testutil"
 )
 
 func TestColorSupported_NOCOLORDisables(t *testing.T) {
@@ -24,7 +25,7 @@ func TestColorSupported_NOCOLOREmptyValueDisables(t *testing.T) {
 
 func TestColorSupported_FORCECOLOREnables(t *testing.T) {
 	// Ensure NO_COLOR is not set.
-	os.Unsetenv("NO_COLOR")
+	testutil.UnsetEnv(t, "NO_COLOR")
 	t.Setenv("FORCE_COLOR", "1")
 
 	if !ColorSupported(0) {
@@ -43,8 +44,7 @@ func TestColorSupported_NOCOLORTakesPrecedence(t *testing.T) {
 }
 
 func TestColorSupported_TERMDumbDisables(t *testing.T) {
-	os.Unsetenv("NO_COLOR")
-	os.Unsetenv("FORCE_COLOR")
+	testutil.UnsetEnv(t, "NO_COLOR", "FORCE_COLOR")
 	t.Setenv("TERM", "dumb")
 
 	if ColorSupported(0) {
@@ -53,8 +53,7 @@ func TestColorSupported_TERMDumbDisables(t *testing.T) {
 }
 
 func TestColorSupported_NonTTYFallback(t *testing.T) {
-	os.Unsetenv("NO_COLOR")
-	os.Unsetenv("FORCE_COLOR")
+	testutil.UnsetEnv(t, "NO_COLOR", "FORCE_COLOR")
 	t.Setenv("TERM", "xterm-256color")
 
 	// fd 0 in a test process is not a terminal, so this should return false.

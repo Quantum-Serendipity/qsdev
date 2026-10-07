@@ -53,7 +53,7 @@ jobs:
       # for weeks that way, and `test (ubuntu-latest)` is a required check, so
       # it randomly blocked merges.
       - name: Test
-        run: gotestsum --format testname --junitfile test-results.xml -- ${{ matrix.os == 'ubuntu-latest' && '-race' || '' }} ./...
+        run: gotestsum --format testname --junitfile test-results.xml -- -shuffle=on ${{ matrix.os == 'ubuntu-latest' && '-race' || '' }} ./...
 
       # The integration-tagged MCP health suite builds the real qsdev binary and
       # drives it over stdio; a build failure or startup crash fails it. One leg
@@ -203,6 +203,114 @@ jobs:
         env:
           VERIFY_ACTION_PINS: "1"
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      # Verifies every npx/uvx package the tool catalog launches as an MCP
+      # server exists on npm or PyPI at its pinned version: a typo or a
+      # yanked release would otherwise ship as a server that cannot start.
+      - name: Verify MCP server packages against their registries
+        run: go test ./internal/catalog/ -run '^TestMCPServerPackagesResolve$' -v
+        env:
+          VERIFY_MCP_PACKAGES: "1"
+
+  # Runs the whole suite where the tools its output checks need are present,
+  # so they fail instead of skipping: Nix (evaluation of rendered devenv.nix,
+  # nixpkgs attributes), bubblewrap and the Landlock helper (the E3 sandbox
+  # tests), and the secret scanners. Every switch below turns "tool
+  # unavailable" into a failure (internal/testutil/require.go), and skipreport
+  # fails the job on any skip that names one of their tools, which catches a
+  # raw t.Skip that bypasses testutil.RequireTool. The tools come from the
+  # flake's pinned nixpkgs, and both NIX_PATH and the nixpkgs flake registry
+  # entry are pinned to flake.lock, so no upstream nixpkgs change can turn
+  # this check red without a repo change. CGO_ENABLED=0 matches flake.nix's
+  # qsdev build: a cgo test binary links the host's /lib64 loader, which the
+  # bwrap sandbox does not mount. coreutils and bash come from nixpkgs so the
+  # E3 hooks' cat and sh resolve into /nix/store. The ldflags inject the ll-restrict and seccomp
+  # store paths exactly as flake.nix does; without them sandbox.LLRestrictBin
+  # is empty and the Landlock E3 test cannot run. No -race: the ubuntu test
+  # leg covers that.
+  nix-sandbox:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    env:
+      CGO_ENABLED: "0"
+      QSDEV_REQUIRE_NIX: "1"
+      QSDEV_REQUIRE_E3: "1"
+      QSDEV_CHECK_NIX_ATTRS: "1"
+      QSDEV_REQUIRE_SECTOOLS: "1"
+    steps:
+      - name: Harden Runner
+        uses: step-security/harden-runner@9af89fc71515a100421586dfdb3dc9c984fbf411 # v2.19.4
+        with:
+          egress-policy: audit
+
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+
+      - name: Set up Go
+        uses: actions/setup-go@4a3601121dd01d1626a1e23e37211e3254c1c06c # v6.4.0
+        with:
+          go-version-file: go.mod
+
+      - name: Load tool versions
+        # Single source of the tool versions below; see the file's header.
+        shell: bash
+        run: grep -E '^[A-Z][A-Z0-9_]*=' .github/tool-versions.env >> "$GITHUB_ENV"
+
+      - name: Install gotestsum
+        run: go install gotest.tools/gotestsum@${{ env.GOTESTSUM_VERSION }}
+
+      # The official release tarball, checked against its pinned SHA-256 in
+      # .github/tool-versions.env before it runs; no third-party action.
+      - name: Install Nix
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: .github/scripts/install-nix.sh
+
+      # Ubuntu 24.04 confines unprivileged user namespaces with AppArmor,
+      # and bwrap needs one.
+      - name: Allow unprivileged user namespaces
+        run: sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+
+      - name: Build qsdev and the sandbox helpers
+        id: nix-build
+        run: |
+          nix build --no-link --print-out-paths .#qsdev .#ll-restrict .#seccomp-filter
+          echo "ll-restrict=$(nix build --no-link --print-out-paths .#ll-restrict)" >> "$GITHUB_OUTPUT"
+          echo "seccomp-filter=$(nix build --no-link --print-out-paths .#seccomp-filter)" >> "$GITHUB_OUTPUT"
+
+      - name: Check the flake
+        run: nix flake check
+
+      # offlineNixEnv resolves <nixpkgs> through NIX_PATH; point it at the
+      # flake's locked nixpkgs so evaluation never reaches a channel.
+      - name: Pin NIX_PATH to the locked nixpkgs
+        run: echo "NIX_PATH=nixpkgs=$(nix eval --raw --inputs-from . nixpkgs#path)" >> "$GITHUB_ENV"
+
+      # The nixpkgs attribute checks evaluate `nixpkgs#...`, which resolves
+      # through the flake registry (rolling nixpkgs-unstable by default), not
+      # NIX_PATH. Pin the registry entry to the same locked revision.
+      - name: Pin the nixpkgs flake registry to the locked nixpkgs
+        shell: bash
+        run: |
+          node=$(jq -r '.nodes.root.inputs.nixpkgs' flake.lock)
+          rev=$(jq -r --arg n "$node" '.nodes[$n].locked.rev' flake.lock)
+          nix registry add nixpkgs "github:NixOS/nixpkgs/${rev}"
+
+      - name: Test with the tools required
+        env:
+          LL_RESTRICT: ${{ steps.nix-build.outputs.ll-restrict }}
+          SECCOMP_FILTER: ${{ steps.nix-build.outputs.seccomp-filter }}
+        run: |
+          nix shell --inputs-from . nixpkgs#bubblewrap nixpkgs#coreutils nixpkgs#bash nixpkgs#gitleaks nixpkgs#ripsecrets --command \
+            gotestsum --format testname --jsonfile test.json -- -count=1 \
+            -ldflags "-X github.com/Quantum-Serendipity/qsdev/internal/sandbox.llRestrictPath=${LL_RESTRICT}/bin/ll-restrict -X github.com/Quantum-Serendipity/qsdev/internal/sandbox.seccompFilterPath=${SECCOMP_FILTER}/hook-blocklist.bpf" \
+            ./...
+
+      - name: Reject skips of required tools
+        if: ${{ !cancelled() }}
+        run: go run ./internal/testutil/cmd/skipreport test.json
 
   # Builds the OpenGrep derivation (nix/opengrep) on every platform it
   # advertises, smoke-tests the binary, and runs the rule library through it:

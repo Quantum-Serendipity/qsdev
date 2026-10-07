@@ -43,6 +43,7 @@ var symbolTable = []symbolBan{
 	{ID: "config-parseqsdevconfig", Pkg: "internal/config", Name: "ParseQsdevConfig", Owners: []string{"internal/projectmodel"}},
 	{ID: "os-stderr", Pkg: "os", Name: "Stderr", Owners: []string{"cmd", "instance", "internal/procexec"}},
 	{ID: "test-os-chdir", Pkg: "os", Name: "Chdir", Tests: true},
+	{ID: "test-os-unsetenv", Pkg: "os", Name: "Unsetenv", Tests: true},
 	{ID: "mcphealth-checkall", Pkg: "internal/mcphealth", Name: "CheckAll", Owners: mcpregistryOwner},
 	{ID: "mcphealth-checkserver", Pkg: "internal/mcphealth", Name: "CheckServer", Owners: mcpregistryOwner},
 	{ID: "mcphealth-probetarget", Pkg: "internal/mcphealth", Name: "ProbeTarget", Owners: mcpregistryOwner},

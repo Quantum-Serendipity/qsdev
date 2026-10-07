@@ -79,14 +79,18 @@ func landlockFlags(cfg *sandbox.SandboxConfig) []string {
 // The original command is prefixed with: ll-restrict <flags> -- <original-cmd>
 // Returns the original command unchanged if ll-restrict is unavailable.
 func InjectLandlock(hookCmd []string, cfg *sandbox.SandboxConfig) []string {
-	flags := PrepareLandlockFlags(cfg)
-	if flags == nil {
+	return injectLandlock(hookCmd, cfg, sandbox.LLRestrictBin())
+}
+
+// injectLandlock is InjectLandlock with the helper path given, "" when it is
+// unavailable, so both branches are testable on any host.
+func injectLandlock(hookCmd []string, cfg *sandbox.SandboxConfig, llBin string) []string {
+	if llBin == "" {
 		return hookCmd
 	}
 
-	llBin := sandbox.LLRestrictBin()
 	result := []string{llBin}
-	result = append(result, flags...)
+	result = append(result, landlockFlags(cfg)...)
 	result = append(result, "--")
 	result = append(result, hookCmd...)
 	return result

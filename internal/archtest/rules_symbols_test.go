@@ -62,7 +62,7 @@ func TestSymbolRules(t *testing.T) {
 	})
 	// Comments, strings, test files and same-named methods on local
 	// variables must add nothing beyond the entries above.
-	n := len(got) - countRule(got, "init-non-module") - countRule(got, "test-os-chdir")
+	n := len(got) - countRule(got, "init-non-module") - countRule(got, "test-os-chdir") - countRule(got, "test-os-unsetenv")
 	for _, r := range mcphealthProbeRules {
 		n -= countRule(got, r)
 	}
@@ -94,6 +94,18 @@ func TestChdirInTests(t *testing.T) {
 	})
 	if n := countRule(got, "test-os-chdir"); n != 2 {
 		t.Errorf("got %d test-os-chdir entries, want 2: %v", n, got)
+	}
+}
+
+func TestUnsetenvInTests(t *testing.T) {
+	t.Parallel()
+	got := Collect(loadSymbolFixture(t), symbolRules())
+	wantViolations(t, got, []violationCase{
+		{"test file calls", Key{"test-os-unsetenv", "internal/writer"}, 1},
+		{"non-test file ignored", Key{"test-os-unsetenv", "internal/procexec"}, 0},
+	})
+	if n := countRule(got, "test-os-unsetenv"); n != 1 {
+		t.Errorf("got %d test-os-unsetenv entries, want 1: %v", n, got)
 	}
 }
 

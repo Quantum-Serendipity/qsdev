@@ -111,31 +111,38 @@ func isASCIILetter(b byte) bool {
 // deleteTargetsProtected reports whether a Bash command deletes a protected
 // path: the line invokes a delete verb (in the raw text, its quote-stripped
 // form, or a parsed command word) and mutates a protected path per the shared
-// bashMutatesProtected predicate. So `sh -c 'rm .claude/settings.json'`,
+// shellMutatesProtected predicate. So `sh -c 'rm .claude/settings.json'`,
 // `sudo rm …`, `… | xargs rm`, `V=…; rm "$V"`, `rm ~/.cl""aude/settings.json`
 // and `cd .claude && rm settings.json` all deny, while
 // `rm -rf ../build && grep x .claude/...` clears.
+//
+// A PowerShell line deletes through one of its delete verbs (psDeletes).
 func deleteTargetsProtected(ctx *EvalContext) bool {
-	return hasVerb(ctx, reDeleteCmd, deleteVerbs) && bashMutatesProtected(ctx)
+	if isPowerShell(ctx) {
+		return psDeletes(ctx) && shellMutatesProtected(ctx)
+	}
+	return hasVerb(ctx, reDeleteCmd, deleteVerbs) && shellMutatesProtected(ctx)
 }
 
 // linkTargetsProtected reports whether `ln`/`link` creates a link at or to a
 // protected path, with the same shared mutation analysis as SP-003.
 func linkTargetsProtected(ctx *EvalContext) bool {
-	return hasVerb(ctx, reLinkCmd, linkVerbs) && bashMutatesProtected(ctx)
+	return hasVerb(ctx, reLinkCmd, linkVerbs) && shellMutatesProtected(ctx)
 }
 
 // copyIsDangerous reports whether a Bash command mutates a protected path
-// through any command (the shared bashMutatesProtected predicate: redirect
+// through any command (the shared shellMutatesProtected predicate: redirect
 // clobbers, copies onto it, in-place editors, interpreters, wrappers, unknown
 // binaries) or exfiltrates one (a protected read copied, redirected, or piped
 // out of the repo). Read-only commands and a benign in-repo backup of a
-// protected file stay allowed.
+// protected file stay allowed. A PowerShell line has no separate exfiltration
+// analysis: sending a protected read to any command but another read is
+// already a mutation in its dialect (fail closed).
 func copyIsDangerous(ctx *EvalContext) bool {
-	if bashMutatesProtected(ctx) {
+	if shellMutatesProtected(ctx) {
 		return true
 	}
-	if !lineMentionsProtected(ctx) {
+	if isPowerShell(ctx) || !lineMentionsProtected(ctx) {
 		return false
 	}
 	scs, err := ctx.scannedCommands()
@@ -177,7 +184,7 @@ func traversalReachesProtected(ctx *EvalContext) bool {
 func auditTrailMutated(ctx *EvalContext) bool {
 	scs, err := ctx.scannedCommands()
 	for _, a := range auditAreas {
-		if bashMutatesArea(ctx, a) || (err == nil && copiesFromArea(scs, a)) {
+		if shellMutatesArea(ctx, a) || (err == nil && copiesFromArea(scs, a)) {
 			return true
 		}
 	}
@@ -361,7 +368,8 @@ var sp009 = Rule{
 			return Allow, ""
 		}
 		if (reKillCmd.MatchString(ctx.Command) && reProcessTarget.MatchString(ctx.Command)) ||
-			reSystemctl.MatchString(ctx.Command) {
+			reSystemctl.MatchString(ctx.Command) ||
+			(isPowerShell(ctx) && psKillsProtected(ctx)) {
 			return Deny, "process management targeting security processes"
 		}
 		return Allow, ""
@@ -376,7 +384,7 @@ var sp010 = Rule{
 		if !cmdscan.IsShellTool(ctx.ToolName) {
 			return Allow, ""
 		}
-		if bashMutatesArea(ctx, hooksArea) {
+		if shellMutatesArea(ctx, hooksArea) {
 			return Deny, "modification of hook scripts"
 		}
 		return Allow, ""
@@ -437,7 +445,7 @@ var mcp005 = Rule{
 		}
 		// A Bash command that mutates (writes/redirects to) an MCP config is a
 		// blind, un-inspectable overwrite; deny it. Reads are allowed.
-		if cmdscan.IsShellTool(ctx.ToolName) && bashMutatesMcpConfig(ctx) {
+		if cmdscan.IsShellTool(ctx.ToolName) && shellMutatesMcpConfig(ctx) {
 			return Deny, "modification of MCP server configuration"
 		}
 		return Allow, ""
@@ -452,7 +460,7 @@ var int001 = Rule{
 		if !cmdscan.IsShellTool(ctx.ToolName) {
 			return Allow, ""
 		}
-		if bashMutatesArea(ctx, binaryArea) {
+		if shellMutatesArea(ctx, binaryArea) {
 			return Deny, "modification of security binary"
 		}
 		return Allow, ""

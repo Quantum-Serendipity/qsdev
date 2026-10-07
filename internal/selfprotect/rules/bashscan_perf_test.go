@@ -19,7 +19,8 @@ import (
 // hookio.MaxCommandBytes and MaxSimpleCommands. maxRatio bounds how much
 // doubling n may multiply the evaluation's CPU time, zero meaning
 // linearRatio; cpuBudget bounds the best CPU time at n, zero meaning
-// defaultCPUBudget (scaled by raceScale).
+// defaultCPUBudget (scaled by raceScale). tool is the shell tool that runs
+// the payload, zero meaning Bash.
 var adversarialPayloads = []struct {
 	name      string
 	build     func(n int) string
@@ -28,6 +29,7 @@ var adversarialPayloads = []struct {
 	cpuBudget time.Duration
 	want      Verdict
 	cd        bool
+	tool      string
 }{
 	{name: "unclosed braces", build: repeatAfter("echo ", "{", ""), n: 60000, want: Allow},
 	{name: "unclosed braces then protected write", build: repeatAfter("echo ", "{", "; rm -rf .claude/settings.json"), n: 60000, want: Deny},
@@ -51,6 +53,14 @@ var adversarialPayloads = []struct {
 	// about 6.
 	{name: "long cd chain then protected write", build: repeatAfter("", "cd a && ", "rm .claude/settings.json"), n: 1999, maxRatio: quadraticRatio, want: Deny, cd: true},
 	{name: "long cd chain", build: repeatAfter("", "cd a && ", "true"), n: 1999, maxRatio: quadraticRatio, want: Allow, cd: true},
+	// PowerShell lines go through the PowerShell tokenizer (and the POSIX
+	// parse the rules that only add denies still use): many quoted words,
+	// many commands, and runs of here-string openers and of here-string
+	// lines that never close.
+	{name: "powershell many quoted words", build: repeatAfter("Get-Content ", `'.cl''aude\x' `, ""), n: 4000, want: Allow, tool: "PowerShell"},
+	{name: "powershell many commands then delete", build: repeatAfter("", "gc a; ", `ri .claude\settings.json`), n: 1999, want: Deny, tool: "PowerShell"},
+	{name: "powershell here-string openers", build: repeatAfter("Write-Output ", "@' ", ""), n: 15000, want: Allow, tool: "PowerShell"},
+	{name: "powershell unclosed here-string", build: repeatAfter("Write-Output @'\n", "'x\n", ""), n: 15000, want: Allow, tool: "PowerShell"},
 }
 
 // repeatAfter returns a payload builder that repeats unit n times between
@@ -104,14 +114,14 @@ func (a evalTiming) min(b evalTiming) evalTiming {
 // the sample spans minCPUSample, fails on a verdict other than want, and
 // returns the mean time per evaluation. It collects garbage first so an
 // earlier sample's allocations are not charged to this one.
-func timeEval(t *testing.T, command string, want Verdict) evalTiming {
+func timeEval(t *testing.T, tool, command string, want Verdict) evalTiming {
 	t.Helper()
 	cwd := filepath.Join(t.TempDir(), "project")
 	runtime.GC()
 	startWall, startCPU := time.Now(), processCPUTime(t)
 	var runs time.Duration
 	for {
-		ctx := EvalContext{ToolName: "Bash", Command: command, CWD: cwd}
+		ctx := EvalContext{ToolName: tool, Command: command, CWD: cwd}
 		if v, _ := Tier1Rules.EvaluateAll(&ctx); v != want {
 			t.Fatalf("verdict = %v, want %v (payload of %d bytes)", v, want, len(command))
 		}
@@ -125,13 +135,13 @@ func timeEval(t *testing.T, command string, want Verdict) evalTiming {
 // doublingTimes samples half and full alternately, so a load spike does not
 // land on one size only, and returns the best timing of each once their CPU
 // ratio is under limit or maxTimingRuns pairs have run.
-func doublingTimes(t *testing.T, half, full string, want Verdict, limit float64) (bestHalf, bestFull evalTiming) {
+func doublingTimes(t *testing.T, tool, half, full string, want Verdict, limit float64) (bestHalf, bestFull evalTiming) {
 	t.Helper()
 	bestHalf = evalTiming{wall: math.MaxInt64, cpu: math.MaxInt64}
 	bestFull = bestHalf
 	for run := 1; run <= maxTimingRuns; run++ {
-		bestHalf = bestHalf.min(timeEval(t, half, want))
-		bestFull = bestFull.min(timeEval(t, full, want))
+		bestHalf = bestHalf.min(timeEval(t, tool, half, want))
+		bestFull = bestFull.min(timeEval(t, tool, full, want))
 		if run >= minTimingRuns && doublingRatio(bestHalf.cpu, bestFull.cpu) < limit {
 			break
 		}
@@ -144,8 +154,8 @@ func doublingRatio(half, full time.Duration) float64 {
 	return float64(full) / float64(max(half, minRatioBaseline))
 }
 
-// runAdversarial evaluates the payloads whose cd field equals cd at n and
-// at 2n. The best wall time at n must be inside hookio.EvalDeadline (scaled by
+// runAdversarial evaluates the payloads of tool whose cd field equals cd at
+// n and at 2n. The best wall time at n must be inside hookio.EvalDeadline (scaled by
 // raceScale), the absolute property the hook relies on; the best CPU time at
 // n must be inside the payload's cpuBudget; and the CPU doubling ratio must
 // stay under the payload's maxRatio, which pins the complexity. Neither CPU
@@ -154,11 +164,11 @@ func doublingRatio(half, full time.Duration) float64 {
 // collector's pacing, not the algorithm, decides it, so a linear scan could
 // measure over linearRatio. Callers are not parallel
 // so sibling tests do not add to the process CPU time.
-func runAdversarial(t *testing.T, cd bool) {
+func runAdversarial(t *testing.T, tool string, cd bool) {
 	t.Helper()
 	deadline := hookio.EvalDeadline * raceScale
 	for _, p := range adversarialPayloads {
-		if p.cd != cd {
+		if p.cd != cd || cmp.Or(p.tool, "Bash") != tool {
 			continue
 		}
 		t.Run(p.name, func(t *testing.T) {
@@ -166,7 +176,7 @@ func runAdversarial(t *testing.T, cd bool) {
 			if limit == 0 {
 				limit = linearRatio
 			}
-			atN, doubled := doublingTimes(t, p.build(p.n), p.build(2*p.n), p.want, limit)
+			atN, doubled := doublingTimes(t, tool, p.build(p.n), p.build(2*p.n), p.want, limit)
 			if atN.wall > deadline {
 				t.Errorf("EvaluateAll took %v at best, want under the %v hook deadline", atN.wall, deadline)
 			}
@@ -184,12 +194,17 @@ func runAdversarial(t *testing.T, cd bool) {
 // TestFindBraceGroup_Linear pins the U18-04 brace fix: an unclosed `{` no
 // longer rescans the rest of the word, and a word with many groups neither
 // recurses once per group nor builds a copy of itself per level.
-func TestFindBraceGroup_Linear(t *testing.T) { runAdversarial(t, false) }
+func TestFindBraceGroup_Linear(t *testing.T) { runAdversarial(t, "Bash", false) }
 
 // TestScannedCommands_LongCdChainUnderBudget pins the U18-04 cd-chain fix: a
 // chain of cd into missing directories no longer re-cleans the whole missing
 // tail per component for every later command.
-func TestScannedCommands_LongCdChainUnderBudget(t *testing.T) { runAdversarial(t, true) }
+func TestScannedCommands_LongCdChainUnderBudget(t *testing.T) { runAdversarial(t, "Bash", true) }
+
+// TestPowerShellNative_LinearCPU pins the PowerShell tokenizer as one linear
+// pass: doubling a PowerShell payload at most doubles the CPU time of its
+// evaluation, here-string openers and unclosed here-strings included.
+func TestPowerShellNative_LinearCPU(t *testing.T) { runAdversarial(t, "PowerShell", false) }
 
 // findBraceGroup reports the first group braceGroups finds, in the shape of
 // the original findBraceGroup, so the two can be compared.
@@ -393,7 +408,7 @@ func BenchmarkSelfprotectAdversarial(b *testing.B) {
 		command := p.build(p.n)
 		b.Run(p.name, func(b *testing.B) {
 			for b.Loop() {
-				ctx := EvalContext{ToolName: "Bash", Command: command, CWD: cwd}
+				ctx := EvalContext{ToolName: cmp.Or(p.tool, "Bash"), Command: command, CWD: cwd}
 				Tier1Rules.EvaluateAll(&ctx)
 			}
 		})

@@ -12,6 +12,7 @@ import (
 
 	"github.com/Quantum-Serendipity/qsdev/addons/devenv"
 	"github.com/Quantum-Serendipity/qsdev/internal/catalog"
+	"github.com/Quantum-Serendipity/qsdev/internal/testutil"
 	"github.com/Quantum-Serendipity/qsdev/internal/tmpl"
 	"github.com/Quantum-Serendipity/qsdev/internal/validation"
 	"github.com/Quantum-Serendipity/qsdev/pkg/ecosystem"
@@ -339,10 +340,7 @@ func TestGenerateDevenvNix_EnterShellEscaping(t *testing.T) {
 // scope for `nix-instantiate --parse`, which also rejects references to
 // undefined variables.
 func TestGenerateDevenvNix_NixInstantiateParse(t *testing.T) {
-	nixInstantiate, err := exec.LookPath("nix-instantiate")
-	if err != nil {
-		t.Skip("nix-instantiate not available, skipping syntax validation")
-	}
+	nixInstantiate := testutil.RequireTool(t, "nix-instantiate", testutil.RequireNix)
 
 	cat, err := catalog.Default()
 	if err != nil {
@@ -676,10 +674,7 @@ func TestGenerateDevenvNix_RejectsHostileModuleHookID(t *testing.T) {
 // (languages.java.enable, jdk.package) is a Nix parse error that left
 // `qsdev init` without a devenv.nix for any Java+Scala repository.
 func TestGenerateDevenvNix_JVMCombinationsParse(t *testing.T) {
-	nixInstantiate, err := exec.LookPath("nix-instantiate")
-	if err != nil {
-		t.Skip("nix-instantiate not available, skipping syntax validation")
-	}
+	nixInstantiate := testutil.RequireTool(t, "nix-instantiate", testutil.RequireNix)
 
 	java := types.LanguageChoice{Name: "java", Version: "17", Extras: []string{"build_tool=both", "kotlin=true"}}
 	scalaSbt := types.LanguageChoice{Name: "scala", Extras: []string{"build_tool=sbt", "jdk_version=21"}}
@@ -763,10 +758,7 @@ func TestGenerateDevenvNix_JavaScriptSubproject(t *testing.T) {
 		t.Errorf("subproject eslint hook still uses the root-relative built-in binPath:\n%s", content)
 	}
 
-	nixInstantiate, err := exec.LookPath("nix-instantiate")
-	if err != nil {
-		t.Skip("nix-instantiate not available, skipping syntax validation")
-	}
+	nixInstantiate := testutil.RequireTool(t, "nix-instantiate", testutil.RequireNix)
 	path := filepath.Join(t.TempDir(), "devenv.nix")
 	if err := os.WriteFile(path, got.Content, 0o644); err != nil {
 		t.Fatalf("writing devenv.nix: %v", err)

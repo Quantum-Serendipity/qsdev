@@ -667,3 +667,297 @@ func TestLiteralVersionRe(t *testing.T) {
 		}
 	}
 }
+
+// TestDogfoodJob guards the CI job that runs scripts/dogfood.sh (U26-WS1):
+// qsdev check and a join regeneration of a `git archive HEAD` copy of this
+// repository must pass with no drift. The job uses the same SHA-pinned
+// harden-runner, checkout and setup-go steps as its siblings, with the
+// catalog's pins where the catalog has one, and does not persist the token.
+// It is not yet a required gate: no other job needs it, and it does not hide
+// a failure behind continue-on-error.
+func TestDogfoodJob(t *testing.T) {
+	t.Parallel()
+
+	var wf workflowFile
+	readRepoYAML(t, filepath.Join(".github", "workflows", "ci.yml"), &wf)
+	job, ok := wf.Jobs["dogfood"]
+	if !ok {
+		t.Fatal("ci.yml has no dogfood job")
+	}
+	if !slices.Equal(job.RunsOn, stringList{"ubuntu-latest"}) {
+		t.Errorf("dogfood runs-on = %v, want [ubuntu-latest]", job.RunsOn)
+	}
+	if job.ContinueOnError != "" {
+		t.Errorf("dogfood continue-on-error = %q; a drift must show as a failed job", job.ContinueOnError)
+	}
+	for name, other := range wf.Jobs {
+		if slices.Contains(other.Needs, "dogfood") {
+			t.Errorf("job %s needs dogfood; the dogfood gate is not required yet", name)
+		}
+	}
+
+	pins := map[string]ActionRef{}
+	for _, ref := range AllActionRefs() {
+		pins[ref.Owner+"/"+ref.Repo] = ref
+	}
+	var uses []string
+	runsDogfood := false
+	for i, s := range job.Steps {
+		step := fmt.Sprintf("dogfood step %d (%s)", i+1, s.Name)
+		if strings.TrimSpace(s.Run) == "make dogfood" {
+			runsDogfood = true
+		}
+		if s.Uses == "" {
+			continue
+		}
+		if !shaPinnedUsesRe.MatchString(s.Uses) {
+			t.Errorf("%s: uses %q is not pinned to a commit SHA", step, s.Uses)
+			continue
+		}
+		path, sha, _ := strings.Cut(s.Uses, "@")
+		uses = append(uses, path)
+		if ref, ok := pins[path]; ok && ref.SHA != sha {
+			t.Errorf("%s: %s@%s, want the catalog pin %s", step, path, sha, ref.SHA)
+		}
+		if path == "actions/checkout" && s.With["persist-credentials"] != "false" {
+			t.Errorf("%s: checkout persist-credentials = %q, want false", step, s.With["persist-credentials"])
+		}
+		if path == "actions/setup-go" && s.With["go-version-file"] != "go.mod" {
+			t.Errorf("%s: setup-go go-version-file = %q, want go.mod", step, s.With["go-version-file"])
+		}
+	}
+	wantUses := []string{"step-security/harden-runner", "actions/checkout", "actions/setup-go"}
+	if !slices.Equal(uses, wantUses) {
+		t.Errorf("dogfood actions = %v, want %v", uses, wantUses)
+	}
+	if !runsDogfood {
+		t.Error("no dogfood step runs `make dogfood`")
+	}
+}
+
+// readDogfoodScript returns scripts/dogfood.sh.
+func readDogfoodScript(t *testing.T) string {
+	t.Helper()
+
+	b, err := os.ReadFile(filepath.Join(repoRoot, "scripts", "dogfood.sh"))
+	if err != nil {
+		t.Fatalf("reading scripts/dogfood.sh: %v", err)
+	}
+	return strings.ReplaceAll(string(b), "\r\n", "\n")
+}
+
+// scriptIndex returns the offset of the first line of script, ignoring
+// comments, that contains want, or -1.
+func scriptIndex(script, want string) int {
+	off := 0
+	for _, line := range strings.SplitAfter(script, "\n") {
+		if !strings.HasPrefix(strings.TrimSpace(line), "#") {
+			if i := strings.Index(line, want); i >= 0 {
+				return off + i
+			}
+		}
+		off += len(line)
+	}
+	return -1
+}
+
+// dogfoodResetRe matches dogfood.sh's loop over the three-way-merged JSON
+// files it resets to exactly what qsdev generates.
+var dogfoodResetRe = regexp.MustCompile(`(?m)^for merged in ([^;]+); do$`)
+
+// TestDogfoodScript_ResetsMergedJSON pins that scripts/dogfood.sh resets the
+// three-way-merged JSON files after the join and before its drift check.
+// join keeps entries it no longer generates in those files as user content
+// and qsdev check accepts them, so without the reset a stale hook or allow
+// rule (U26-01) would pass the gate.
+func TestDogfoodScript_ResetsMergedJSON(t *testing.T) {
+	t.Parallel()
+
+	script := readDogfoodScript(t)
+	m := dogfoodResetRe.FindStringSubmatchIndex(script)
+	if m == nil {
+		t.Fatal("dogfood.sh has no `for merged in ...; do` reset loop")
+	}
+	files := strings.Fields(script[m[2]:m[3]])
+	for _, want := range []string{".claude/settings.json", ".mcp.json"} {
+		if !slices.Contains(files, want) {
+			t.Errorf("dogfood.sh does not reset %s (resets %v)", want, files)
+		}
+	}
+	if !strings.Contains(script[m[0]:], `qsdev repair --reset --file "$merged"`) {
+		t.Error("dogfood.sh's reset loop does not run `qsdev repair --reset --file \"$merged\"`")
+	}
+	join := scriptIndex(script, "qsdev init --mode join --quiet")
+	drift := scriptIndex(script, "git status --porcelain")
+	if join < 0 || drift < 0 || join >= m[0] || m[0] >= drift {
+		t.Errorf("dogfood.sh must reset the merged files after the join (at %d) and before the drift check (at %d); reset at %d", join, drift, m[0])
+	}
+
+	// The reset files are human-edited (three-way-merge), so the committed
+	// manifest of machine-owned files, when there is one, must not list them.
+	manifest, err := os.ReadFile(filepath.Join(repoRoot, ".qsdev-generated.sha256"))
+	if err != nil && !errors.Is(err, fs.ErrNotExist) {
+		t.Fatal(err)
+	}
+	for _, f := range files {
+		if _, err := os.Stat(filepath.Join(repoRoot, filepath.FromSlash(f))); err != nil {
+			t.Errorf("dogfood.sh resets %s, which the repository does not have: %v", f, err)
+		}
+		if strings.Contains(string(manifest), "  "+f+"\n") {
+			t.Errorf("dogfood.sh resets %s, but it is machine-owned (in the manifest), not three-way-merged", f)
+		}
+	}
+}
+
+// TestDogfoodScript_CanonicalOrigin pins how scripts/dogfood.sh picks the
+// origin remote of its copy. Generated files derive from it
+// (.cosign/policy.yaml names the image repository and signing identity), so
+// a copy without the canonical origin would report drift, or pass with a
+// non-enforcing policy. The order is DOGFOOD_ORIGIN, the upstream remote (a
+// fork's checkout), then origin, and with none the script fails before it
+// builds anything.
+func TestDogfoodScript_CanonicalOrigin(t *testing.T) {
+	t.Parallel()
+
+	script := readDogfoodScript(t)
+	steps := []string{
+		`origin=${DOGFOOD_ORIGIN:-}`,
+		`remote get-url upstream`,
+		`remote get-url origin`,
+		`if [ -z "$origin" ]; then`,
+		`exit 1`,
+		`mktemp -d`,
+		`git remote add origin "$origin"`,
+		`qsdev check`,
+	}
+	from, prevStep := 0, "the start"
+	for _, step := range steps {
+		i := scriptIndex(script[from:], step)
+		if i < 0 {
+			t.Errorf("dogfood.sh has no %q after %q", step, prevStep)
+			continue
+		}
+		from, prevStep = from+i+len(step), step
+	}
+}
+
+// dogfoodRmRe matches a command line that removes files.
+var dogfoodRmRe = regexp.MustCompile(`(^|[\s;&|(])rm\s`)
+
+// TestDogfoodScript_CleanupScopedToMktemp pins that scripts/dogfood.sh
+// removes nothing but its own mktemp directory, from its EXIT trap, and keeps
+// that directory when DOGFOOD_KEEP=1 (for inspecting a failure, and for agents
+// that may not delete files).
+func TestDogfoodScript_CleanupScopedToMktemp(t *testing.T) {
+	t.Parallel()
+
+	script := readDogfoodScript(t)
+	if scriptIndex(script, `tmp=$(mktemp -d)`) < 0 {
+		t.Error("dogfood.sh does not create its directory with `tmp=$(mktemp -d)`")
+	}
+	var removals []string
+	for _, line := range strings.Split(script, "\n") {
+		code := strings.TrimSpace(line)
+		if !strings.HasPrefix(code, "#") && dogfoodRmRe.MatchString(code) {
+			removals = append(removals, code)
+		}
+	}
+	if want := []string{`rm -rf -- "$tmp"`}; !slices.Equal(removals, want) {
+		t.Errorf("dogfood.sh removal commands = %q, want exactly %q", removals, want)
+	}
+
+	start := scriptIndex(script, "cleanup() {")
+	if start < 0 {
+		t.Fatal("dogfood.sh has no cleanup() function")
+	}
+	end := strings.Index(script[start:], "\n}\n")
+	if end < 0 {
+		t.Fatal("dogfood.sh's cleanup() function is not closed")
+	}
+	body := script[start : start+end]
+	keep, rm := strings.Index(body, `"${DOGFOOD_KEEP:-}" = 1`), strings.Index(body, `rm -rf -- "$tmp"`)
+	if keep < 0 || rm < 0 || keep > rm {
+		t.Errorf("dogfood.sh's cleanup() must test DOGFOOD_KEEP=1 before removing $tmp:\n%s", body)
+	}
+	trap, mk := scriptIndex(script, "trap cleanup EXIT"), scriptIndex(script, `tmp=$(mktemp -d)`)
+	if trap < 0 || trap < mk {
+		t.Error("dogfood.sh must set `trap cleanup EXIT` after creating $tmp")
+	}
+}
+
+// makeTargetRe matches a Makefile rule line and captures its target.
+var makeTargetRe = regexp.MustCompile(`^([A-Za-z0-9_.-]+):`)
+
+// readMakeRecipes returns each Makefile target's prerequisites and recipe
+// lines (without the leading tab), in order.
+func readMakeRecipes(t *testing.T) map[string][]string {
+	t.Helper()
+
+	b, err := os.ReadFile(filepath.Join(repoRoot, "Makefile"))
+	if err != nil {
+		t.Fatalf("reading Makefile: %v", err)
+	}
+	recipes := map[string][]string{}
+	target := ""
+	for _, line := range strings.Split(strings.ReplaceAll(string(b), "\r\n", "\n"), "\n") {
+		switch m := makeTargetRe.FindStringSubmatch(line); {
+		case m != nil:
+			target = m[1]
+			recipes[target] = append(recipes[target], strings.Fields(line[len(m[0]):])...)
+		case strings.HasPrefix(line, "\t") && target != "":
+			recipes[target] = append(recipes[target], strings.TrimPrefix(line, "\t"))
+		case !strings.HasPrefix(line, "\t"):
+			target = ""
+		}
+	}
+	return recipes
+}
+
+// TestMakefileTargets pins the maintainer entry points U26-WS1 adds, next to
+// the existing on-demand bench target:
+// `make dogfood` runs the CI gate's script, `make dev-install` installs a
+// plain source build from the vendored tree (into devenv's $GOPATH/bin, ahead
+// of the system qsdev the .mcp.json servers would otherwise run), and
+// `make clean` also removes the root-level binary `go build ./cmd/qsdev`
+// leaves behind.
+func TestMakefileTargets(t *testing.T) {
+	t.Parallel()
+
+	recipes := readMakeRecipes(t)
+	contains := func(target string, want ...string) {
+		t.Helper()
+		body, ok := recipes[target]
+		if !ok {
+			t.Errorf("Makefile has no %s target", target)
+			return
+		}
+		text := strings.Join(body, "\n")
+		for _, w := range want {
+			if !strings.Contains(text, w) {
+				t.Errorf("make %s recipe %q does not contain %q", target, text, w)
+			}
+		}
+	}
+	contains("dogfood", "scripts/dogfood.sh")
+	contains("dev-install", "GOWORK=off", "go install", "-mod=vendor", "./cmd/qsdev")
+	contains("bench", "go test", "-bench")
+
+	var removed []string
+	for _, line := range recipes["clean"] {
+		if f := strings.Fields(line); len(f) > 0 && f[0] == "rm" {
+			for _, arg := range f[1:] {
+				removed = append(removed, strings.TrimSuffix(strings.TrimPrefix(arg, "./"), "/"))
+			}
+		}
+	}
+	for _, want := range []string{"qsdev", "bin", "dist"} {
+		if !slices.Contains(removed, want) {
+			t.Errorf("make clean removes %v, want it to include %s", removed, want)
+		}
+	}
+	for _, target := range []string{"bench", "dogfood", "dev-install"} {
+		if !slices.Contains(recipes[".PHONY"], target) {
+			t.Errorf(".PHONY = %v, want it to include %s", recipes[".PHONY"], target)
+		}
+	}
+}

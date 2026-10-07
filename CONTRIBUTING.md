@@ -46,6 +46,61 @@ To add a development tool (for example `cosign`), run
 `qsdev devenv add-package <name>`, which adds it to `devenv.nix`; do not add a
 `devShells` output to `flake.nix`. `TestFlakeHasNoDevShells` enforces this.
 
+## Dogfooding
+
+This repository is a qsdev project, and its generated files (`devenv.nix`,
+`.claude/`, `.mcp.json`, `CLAUDE.md`, the generated workflows and docs) must be
+exactly what the qsdev in this tree generates. The CI `dogfood` job runs
+`make dogfood` (`scripts/dogfood.sh`). The script builds qsdev from source,
+copies the committed tree with `git archive HEAD` into a fresh repository with
+its own `HOME`, `TMPDIR` and `XDG_*`, and runs `qsdev check` and
+`qsdev init --mode join`. It then resets `.claude/settings.json` and
+`.mcp.json` with `qsdev repair --reset --file`, because join keeps entries
+qsdev no longer generates in those files as user content. Any failed check or
+any regenerated file that differs fails the job and prints the diff. Run it
+locally before opening a PR. It checks committed content only, so commit
+first. `DOGFOOD_KEEP=1 make dogfood` keeps the temporary copy for inspection.
+
+Generated files derive from the repository URL (`.cosign/policy.yaml` names the
+image repository and signing identity), so the check gives the copy the
+canonical repository as its origin: `DOGFOOD_ORIGIN` if set, else your
+`upstream` remote, else `origin`. It fails if there is none. Working from a
+fork, add an `upstream` remote for the canonical repository or run
+`DOGFOOD_ORIGIN=https://github.com/Quantum-Serendipity/qsdev.git make dogfood`.
+
+qsdev reads the org overlay (`~/.config/qsdev/defaults.yaml`) from your
+account's home whatever `HOME` is, so the script warns when that file has
+settings: your result can then differ from CI.
+
+**A PR that changes generated output also regenerates the repository.** Use a
+plain source build. `devenv.nix` records the generating version, and the
+dogfood check builds without ldflags or VCS stamping, so its version is `dev`.
+A release binary, `make build` or a stamped build would show as drift.
+
+```bash
+GOWORK=off go build -mod=vendor -buildvcs=false -o bin/qsdev-dev ./cmd/qsdev
+bin/qsdev-dev init --update
+bin/qsdev-dev repair --reset --file .claude/settings.json
+bin/qsdev-dev repair --reset --file .mcp.json
+```
+
+Change the configuration only through qsdev commands (`qsdev enable`,
+`qsdev devenv add-package`, `qsdev devenv add-overlay`, ...), which record it in
+`.qsdev.yaml`. `devenv.local.nix` is per-developer and never committed.
+`init --update` keeps hand edits to `.claude/settings.json` and `.mcp.json` as
+user content; `qsdev repair --reset --file <file>` regenerates the file from
+scratch, which is why the steps above reset both. Commit the result, then run
+`make dogfood`.
+
+**Run the MCP servers from this tree.** `.mcp.json` starts the
+`agent-postmortem` and `version-sentinel` servers with
+`qsdev mcp serve --module`, which the installed qsdev may not support yet. Run
+`make dev-install` inside the devenv shell. It installs a source build into
+devenv's `$GOPATH/bin`, which comes before the system qsdev on `PATH`. Re-run
+it after pulling changes to the MCP server. The `github` server takes its token
+from the gh CLI, so run `gh auth login` once. Inside the devenv shell,
+`claude mcp list` should then show every server connected.
+
 ### Bumping OpenGrep
 
 The prebuilt OpenGrep CLI is packaged in `nix/opengrep/default.nix` (qsdev

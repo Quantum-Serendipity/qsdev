@@ -17,6 +17,9 @@ const (
 	ciWorkflowFile = "ci.yml"
 	nixSandboxJob  = "nix-sandbox"
 	skipReportCmd  = "go run ./internal/testutil/cmd/skipreport"
+	// installNixScript installs the checksum-pinned official Nix release;
+	// the repository's Actions allowlist admits no Nix action.
+	installNixScript = ".github/scripts/install-nix.sh"
 )
 
 // nixSandboxSwitches are the switches the nix-sandbox job provisions the
@@ -97,12 +100,16 @@ func TestCIRunsToolSuites(t *testing.T) {
 		if job.If != "" || mayContinueOnError(job.ContinueOnError) {
 			t.Errorf("%s job has if: %q, continue-on-error: %q; a required check must always run and fail", nixSandboxJob, job.If, job.ContinueOnError)
 		}
-		if !hasStepUsing(job, ActionInstallNix.String()) {
-			t.Errorf("%s does not install Nix with the catalog pin %s", nixSandboxJob, ActionInstallNix)
+		install := findStep(t, nixSandboxJob, job, "installs the pinned Nix release", installNixScript)
+		if install.If != "" {
+			t.Errorf("%s Nix install step has if: %q; it must run whenever the job does", nixSandboxJob, install.If)
 		}
 		findStep(t, nixSandboxJob, job, "lifts the AppArmor user-namespace restriction",
 			"sysctl", "kernel.apparmor_restrict_unprivileged_userns=0")
 		findStep(t, nixSandboxJob, job, "builds the flake's packages", "nix build", ".#qsdev", ".#ll-restrict", ".#seccomp-filter")
+		if stepIndex(job, installNixScript) > stepIndex(job, "nix build", ".#qsdev") {
+			t.Errorf("%s builds the flake before installing Nix", nixSandboxJob)
+		}
 		findStep(t, nixSandboxJob, job, "checks the flake", "nix flake check")
 		findStep(t, nixSandboxJob, job, "pins the nixpkgs registry entry to flake.lock",
 			"nix registry add nixpkgs", "flake.lock")
@@ -178,14 +185,4 @@ func runsAfterFailure(cond string) bool {
 		c = strings.TrimSpace(strings.TrimSuffix(inner, "}}"))
 	}
 	return c == "!cancelled()" || c == "always()"
-}
-
-// hasStepUsing reports whether a step of job uses exactly the action ref.
-func hasStepUsing(job workflowJob, ref string) bool {
-	for _, s := range job.Steps {
-		if s.Uses == ref {
-			return true
-		}
-	}
-	return false
 }

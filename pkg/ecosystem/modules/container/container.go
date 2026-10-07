@@ -267,11 +267,15 @@ var containerCLIs = []string{"docker", "podman"}
 // legacy spelling of " *" and match nothing here.
 //
 // These globs are a best-effort first layer: they match the common spellings
-// only, and a path-normalized spelling of the host root such as
-// "-v //:/host" or "-v /.:/host" gets past them. No hook parses container
-// mounts today; only the sandbox, when enabled, backs these rules up. An argv
-// check is a planned block-destructive.py item of the U11 remediation design.
-var containerEscapeArgs = []string{
+// only (see hostRootVolumeArgs), and a path spelling of the host root they do
+// not list ("-v ///:/host", "-v /../:/host") gets past them. No hook parses
+// container mounts today; only the sandbox, when enabled, backs these rules
+// up. An argv check is a planned block-destructive.py item of the U11
+// remediation design.
+var containerEscapeArgs = slices.Concat(isolationEscapeArgs, hostRootVolumeArgs(), hostRootMountArgs)
+
+// isolationEscapeArgs are the escape arguments other than host-root mounts.
+var isolationEscapeArgs = []string{
 	"*--privileged*",
 	"*--cap-add*",
 	"*seccomp=unconfined*",
@@ -291,21 +295,39 @@ var containerEscapeArgs = []string{
 	"*--userns host*",
 	"*docker.sock*",
 	"*podman.sock*",
-	"* -v /:/*",
-	"* -v=/:/*",
-	"* -v/:/*",
-	"*--volume /:/*",
-	"*--volume=/:/*",
-	"* -v \"/:/*",
-	"* -v '/:/*",
-	"* -v=\"/:/*",
-	"* -v='/:/*",
-	"*--volume \"/:/*",
-	"*--volume '/:/*",
-	"*--volume=\"/:/*",
-	"*--volume='/:/*",
-	"* -v / *",
-	"*--volume / *",
+}
+
+// volumeFlagSpellings are the ways -v/--volume is given its value: as the
+// next word, after "=", or glued to -v.
+var volumeFlagSpellings = []string{" -v ", " -v=", " -v", "--volume ", "--volume="}
+
+// hostRootSpellings are the spellings of the host root a mount source can
+// take: / itself (quoted or not) and its path-normalized forms, each of
+// which names exactly / and so matches no other mount.
+var hostRootSpellings = []struct{ path, quote string }{
+	{"/", ""}, {"/", `"`}, {"/", "'"},
+	{"//", ""}, {"/.", ""}, {"/./", ""},
+}
+
+// hostRootVolumeArgs returns the -v/--volume escape globs: for every flag
+// spelling and host-root spelling, the bind form (source then ":/" and the
+// absolute container path) and the single-path form (the host root alone,
+// followed by the image).
+func hostRootVolumeArgs() []string {
+	var args []string
+	for _, flag := range volumeFlagSpellings {
+		for _, root := range hostRootSpellings {
+			args = append(args,
+				"*"+flag+root.quote+root.path+":/*",
+				"*"+flag+root.quote+root.path+root.quote+" *")
+		}
+	}
+	return args
+}
+
+// hostRootMountArgs are the --mount escape globs: a bind whose source is /,
+// wherever the source key sits in the mount spec.
+var hostRootMountArgs = []string{
 	"*source=/,*",
 	"*src=/,*",
 	"*,source=/ *",

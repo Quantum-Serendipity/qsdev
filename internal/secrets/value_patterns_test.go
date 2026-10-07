@@ -2,6 +2,7 @@ package secrets_test
 
 import (
 	"regexp"
+	"strings"
 	"testing"
 
 	"github.com/Quantum-Serendipity/qsdev/internal/secrets"
@@ -140,4 +141,88 @@ func TestPrivateKeyHeaderPattern_IsCanonEntry(t *testing.T) {
 		}
 	}
 	t.Error("canon has no private-key entry")
+}
+
+// canonEntry returns the compiled canon entry named name.
+func canonEntry(t *testing.T, name string) *regexp.Regexp {
+	t.Helper()
+	for _, vp := range secrets.ValuePatterns {
+		if vp.Name == name {
+			return regexp.MustCompile(vp.Regex)
+		}
+	}
+	t.Fatalf("canon has no %s entry", name)
+	return nil
+}
+
+// TestValuePatterns_SlackWebhookInContext pins that the slack-webhook entry
+// still finds a webhook wherever it sits in text, and that its leading
+// boundary is zero-width: the match is exactly the URL, so the log redactor
+// and the scan-secrets hook replace or report nothing around it.
+func TestValuePatterns_SlackWebhookInContext(t *testing.T) {
+	t.Parallel()
+	re := canonEntry(t, "slack-webhook")
+	webhook := "https://hooks.slack.com/services/T0" + "1AB2CD3" + "/B0" + "4EF5GH6" + "/" + strings.Repeat("Ab1", 8)
+	tests := []struct {
+		name, text, want string
+	}{
+		{"whole input", webhook, webhook},
+		{"start of line", webhook + " is the alert channel", webhook},
+		{"start of a later line", "config:\n" + webhook + "\n", webhook},
+		{"mid-line", "posting the alert to " + webhook + " now", webhook},
+		{"inside double quotes", `url = "` + webhook + `"`, webhook},
+		{"inside single quotes", "URL = '" + webhook + "'", webhook},
+		{"after =", "SLACK_WEBHOOK_URL=" + webhook, webhook},
+		{"JSON value", `{"webhook":"` + webhook + `"}`, webhook},
+		{"in parentheses", "(" + webhook + ")", webhook},
+		// \b needs a non-word byte or the input start before https, so a
+		// URL glued onto a preceding word is not a webhook URL here.
+		{"glued to a preceding word", "x" + webhook, ""},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			if got := re.FindString(tt.text); got != tt.want {
+				t.Errorf("FindString(%q) = %q, want %q", tt.text, got, tt.want)
+			}
+		})
+	}
+}
+
+// codeQLUnanchoredURLRe and codeQLAnchorRe restate CodeQL's
+// go/regex/missing-regexp-anchor heuristic (isInterestingUnanchoredRegexpString
+// in github/codeql go/ql/src/Security/CWE-020/MissingRegexpAnchor.ql): a
+// pattern made only of host-like characters that ends in a common TLD, plus an
+// optional path, is reported unless it contains ^, $, \A or \z anywhere. The
+// query's (?![a-z0-9]) after the TLD is implied by this whole-string match.
+var (
+	codeQLUnanchoredURLRe = regexp.MustCompile(`(?i)^[():|?a-z0-9\-\\./]+[.](?:com|org|edu|gov|uk|net|io)(?:[/#?():]\S*)?$`)
+	codeQLAnchorRe        = regexp.MustCompile(`\$|\^|\\A|\\z`)
+)
+
+// codeQLReportsUnanchoredURL reports whether CodeQL's heuristic flags re.
+func codeQLReportsUnanchoredURL(re string) bool {
+	return codeQLUnanchoredURLRe.MatchString(re) && !codeQLAnchorRe.MatchString(re)
+}
+
+// TestValuePatterns_NoUnanchoredURLAlert keeps the canon clear of CodeQL's
+// missing-anchor alert. The canon's patterns detect credentials anywhere in
+// text, so a URL-shaped one cannot be anchored to the whole input; it carries
+// a zero-width (?:^|\b) boundary instead, which the query accepts.
+func TestValuePatterns_NoUnanchoredURLAlert(t *testing.T) {
+	t.Parallel()
+	// The pre-fix slack-webhook entry, which CodeQL reported: proves the
+	// restated heuristic is not vacuous.
+	if !codeQLReportsUnanchoredURL(`https://hooks\.slack\.com/services/T[A-Za-z0-9]+/B[A-Za-z0-9]+/[A-Za-z0-9]+`) {
+		t.Fatal("the restated CodeQL heuristic does not flag the pattern CodeQL reported")
+	}
+	// A bare \b is no anchor to the query.
+	if !codeQLReportsUnanchoredURL(`\bhttps://hooks\.slack\.com/services/T[A-Za-z0-9]+`) {
+		t.Error("the restated CodeQL heuristic accepts a bare \\b, which the query does not")
+	}
+	for _, vp := range secrets.ValuePatterns {
+		if codeQLReportsUnanchoredURL(vp.Regex) {
+			t.Errorf("%s regex %q matches a URL host with no anchor; CodeQL reports go/regex/missing-regexp-anchor", vp.Name, vp.Regex)
+		}
+	}
 }

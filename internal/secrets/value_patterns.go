@@ -66,8 +66,14 @@ var ValuePatterns = []ValuePattern{
 	{Name: "openai", Regex: `sk-(proj|svcacct|admin)-[A-Za-z0-9_-]{20,}|sk-[A-Za-z0-9]{20}T3BlbkFJ[A-Za-z0-9]{20}`},
 	// PyPI API tokens.
 	{Name: "pypi", Regex: `pypi-[A-Za-z0-9_-]{50,}`},
-	// Slack incoming-webhook URLs.
-	{Name: "slack-webhook", Regex: `https://hooks\.slack\.com/services/T[A-Za-z0-9]+/B[A-Za-z0-9]+/[A-Za-z0-9]+`},
+	// Slack incoming-webhook URLs, found anywhere in text. The leading
+	// (?:^|\b) is zero-width, so the match is still exactly the URL: \b
+	// starts it at a token boundary (line start, whitespace, a quote, '=').
+	// The ^ alternative is redundant for matching but is what CodeQL's
+	// go/regex/missing-regexp-anchor takes as an anchor; a bare \b is not,
+	// and this detector must not be anchored to the whole input
+	// (TestValuePatterns_NoUnanchoredURLAlert).
+	{Name: "slack-webhook", Regex: `(?:^|\b)https://hooks\.slack\.com/services/T[A-Za-z0-9]+/B[A-Za-z0-9]+/[A-Za-z0-9]+`},
 	// Docker Hub personal access tokens.
 	{Name: "docker", Regex: `dckr_pat_[A-Za-z0-9_-]{20,}`},
 	// Hugging Face access tokens.

@@ -98,8 +98,8 @@ DEFAULT_PATTERNS: list[str] = [
     r'sk-(proj|svcacct|admin)-[A-Za-z0-9_-]{20,}|sk-[A-Za-z0-9]{20}T3BlbkFJ[A-Za-z0-9]{20}',
     # PyPI API tokens
     r'pypi-[A-Za-z0-9_-]{50,}',
-    # Slack incoming webhooks
-    r'https://hooks\.slack\.com/services/T[A-Za-z0-9]+/B[A-Za-z0-9]+/[A-Za-z0-9]+',
+    # Slack incoming webhooks; the zero-width (?:^|\b) keeps the match the bare URL
+    r'(?:^|\b)https://hooks\.slack\.com/services/T[A-Za-z0-9]+/B[A-Za-z0-9]+/[A-Za-z0-9]+',
     # Docker Hub personal access tokens
     r'dckr_pat_[A-Za-z0-9_-]{20,}',
     # Hugging Face access tokens

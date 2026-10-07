@@ -17,7 +17,9 @@ const (
 	packagingScript   = "nix/opengrep/test-packaging.sh"
 	hashesOnlyCommand = packagingScript + " --hashes-only"
 	hashesOnlyIf      = "${{ !cancelled() && matrix.os == 'ubuntu-latest' }}"
-	installNixAction  = "cachix/install-nix-action@"
+	// installNixScript installs the pinned, checksum-verified official Nix
+	// release; the repository's Actions allowlist admits no Nix action.
+	installNixScript = ".github/scripts/install-nix.sh"
 )
 
 // opengrepLegs is every runner the derivation must build on: one per
@@ -106,7 +108,7 @@ func checkSteps(steps []ciStep) []string {
 			problems = append(problems, fmt.Sprintf("step %d of %s sets continue-on-error", i, opengrepJob))
 		}
 		switch run := strings.TrimSpace(s.Run); {
-		case strings.HasPrefix(s.Uses, installNixAction):
+		case run == installNixScript && s.If == nil:
 			installAt = i
 		case run == packagingScript && s.If == nil:
 			buildAt = i
@@ -115,7 +117,7 @@ func checkSteps(steps []ciStep) []string {
 		}
 	}
 	if installAt < 0 {
-		problems = append(problems, fmt.Sprintf("job %s does not use %s", opengrepJob, strings.TrimSuffix(installNixAction, "@")))
+		problems = append(problems, fmt.Sprintf("job %s has no unconditional step running %s", opengrepJob, installNixScript))
 	}
 	if buildAt < 0 {
 		problems = append(problems, fmt.Sprintf("job %s has no unconditional step running %s", opengrepJob, packagingScript))
@@ -178,7 +180,8 @@ func TestOpengrepPackagingWiredInCI_RejectsMutations(t *testing.T) {
 		{"arm leg dropped", "          - ubuntu-24.04-arm\n", ""},
 		{"leg excluded", "          - macos-15-intel\n", "          - macos-15-intel\n        exclude:\n          - os: macos-15-intel\n"},
 		{"fixed runner", "    runs-on: ${{ matrix.os }}\n", "    runs-on: ubuntu-latest\n"},
-		{"nix install removed", "        uses: " + installNixAction, "        uses: example/not-nix@"},
+		{"nix install removed", "        run: " + installNixScript + "\n", "        run: echo skipped\n"},
+		{"nix install made conditional", "        run: " + installNixScript + "\n", "        run: " + installNixScript + "\n        if: false\n"},
 		{"curl of latest release", buildRun, buildRun + "      - run: curl -fsSLO https://github.com/opengrep/opengrep/releases/latest/download/opengrep_manylinux_x86\n"},
 		{"duplicated version env", buildRun, buildRun + "        env:\n          OPENGREP_VERSION: 1.0.0\n"},
 	}

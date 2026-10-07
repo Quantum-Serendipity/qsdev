@@ -1,8 +1,11 @@
 package scripts_test
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"fmt"
+	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -17,39 +20,79 @@ import (
 // module proxy request is made.
 
 // fakeGH answers `gh api repos/<owner>/<repo>/releases?per_page=100` from
-// $FAKE_UPSTREAM/github/<owner>_<repo>.json and fails like a 404 otherwise.
+// $FAKE_UPSTREAM/github/<owner>_<repo>.json and
+// `gh api repos/<owner>/<repo>/tags?per_page=100` from
+// $FAKE_UPSTREAM/github/<owner>_<repo>.tags.json, and fails like a 404
+// otherwise.
 const fakeGH = `#!/bin/sh
 [ "$1" = "api" ] || { echo "unexpected gh call: $*" >&2; exit 2; }
 path="${2#repos/}"
-repo="${path%/releases?per_page=100}"
-[ "$repo" != "$path" ] || { echo "unexpected gh api path: $2" >&2; exit 2; }
-f="$FAKE_UPSTREAM/github/$(echo "$repo" | tr / _).json"
+case "$path" in
+  */releases\?per_page=100) repo="${path%/releases?per_page=100}" suffix=json ;;
+  */tags\?per_page=100) repo="${path%/tags?per_page=100}" suffix=tags.json ;;
+  *) echo "unexpected gh api path: $2" >&2; exit 2 ;;
+esac
+f="$FAKE_UPSTREAM/github/$(echo "$repo" | tr / _).$suffix"
 [ -f "$f" ] || { echo "HTTP 404" >&2; exit 1; }
 cat "$f"
 `
 
-// fakeProxyCurl answers https://proxy.golang.org/<module>/@v/list and
-// .../@v/<version>.info from $FAKE_UPSTREAM/goproxy/<module with / as _>/
-// and fails like ` + "`curl -f`" + ` on a 404 (exit 22) otherwise.
-const fakeProxyCurl = `#!/bin/sh
+// fakeUpstreamCurl answers https://proxy.golang.org/<module>/@v/list and
+// .../@v/<version>.info from $FAKE_UPSTREAM/goproxy/<module with / as _>/,
+// and https://releases.nixos.org/nix/<path> from $FAKE_UPSTREAM/nix/<path>
+// (a HEAD request, -I, answers with a Last-Modified header read from
+// <path>.lm). It fails like ` + "`curl -f`" + ` on a 404 (exit 22) otherwise.
+const fakeUpstreamCurl = `#!/bin/sh
 url=""
+head=false
 for a in "$@"; do
-  case "$a" in https://*) url="$a" ;; esac
+  case "$a" in
+    https://*) url="$a" ;;
+    --*) ;;
+    -*I*) head=true ;;
+  esac
 done
 case "$url" in
-  https://proxy.golang.org/*/@v/*) ;;
+  https://proxy.golang.org/*/@v/*)
+    rest="${url#https://proxy.golang.org/}"
+    mod="${rest%/@v/*}"
+    file="${rest##*/@v/}"
+    f="$FAKE_UPSTREAM/goproxy/$(echo "$mod" | tr / _)/$file"
+    ;;
+  https://releases.nixos.org/nix/*)
+    f="$FAKE_UPSTREAM/nix/${url#https://releases.nixos.org/nix/}"
+    ;;
   *) echo "unexpected curl url: $url" >&2; exit 6 ;;
 esac
-rest="${url#https://proxy.golang.org/}"
-mod="${rest%/@v/*}"
-file="${rest##*/@v/}"
-f="$FAKE_UPSTREAM/goproxy/$(echo "$mod" | tr / _)/$file"
 [ -f "$f" ] || exit 22
-cat "$f"
+if [ "$head" = true ]; then
+  printf 'HTTP/2 200\r\nlast-modified: %s\r\n\r\n' "$(cat "$f.lm")"
+else
+  cat "$f"
+fi
 `
 
 // bumpTools are the real binaries bump-tool-pins.sh may use.
 var bumpTools = []string{"bash", "sh", "jq", "mktemp", "mv", "rm", "cat", "tr"}
+
+// nixRelease is a Nix tag as upstream lists it. Its tarballs and their
+// published digests exist on the fake releases.nixos.org only when published
+// is set, and then only for systems (all of nixSystems when nil).
+type nixRelease struct {
+	version   string
+	age       time.Duration
+	published bool
+	systems   []string
+}
+
+// nixSystems are the systems .github/tool-versions.env pins a Nix tarball for.
+var nixSystems = []string{"x86_64-linux", "aarch64-linux", "aarch64-darwin", "x86_64-darwin"}
+
+// nixDigest is the fake published SHA-256 of a Nix release tarball.
+func nixDigest(version, system string) string {
+	sum := sha256.Sum256([]byte(version + " " + system))
+	return hex.EncodeToString(sum[:])
+}
 
 const bumpEnvFile = `# Tool versions.
 
@@ -79,7 +122,7 @@ func (r upstreamRelease) published(now time.Time) string {
 // runBump runs bump-tool-pins.sh against envFile with the given upstream
 // releases, newest first as the APIs list them, and returns its exit code,
 // combined output and the env file content afterwards.
-func runBump(t *testing.T, envFile string, gh, proxy map[string][]upstreamRelease) (int, string, string) {
+func runBump(t *testing.T, envFile string, gh, proxy map[string][]upstreamRelease, nix []nixRelease) (int, string, string) {
 	t.Helper()
 	if runtime.GOOS != "linux" && runtime.GOOS != "darwin" {
 		t.Skip("bump-tool-pins.sh runs on the Linux CI runner; it needs bash")
@@ -87,7 +130,7 @@ func runBump(t *testing.T, envFile string, gh, proxy map[string][]upstreamReleas
 	root := t.TempDir()
 	binDir := filepath.Join(root, "bin")
 	upstream := filepath.Join(root, "upstream")
-	for _, d := range []string{binDir, filepath.Join(upstream, "github"), filepath.Join(upstream, "goproxy")} {
+	for _, d := range []string{binDir, filepath.Join(upstream, "github"), filepath.Join(upstream, "goproxy"), filepath.Join(upstream, "nix")} {
 		if err := os.MkdirAll(d, 0o755); err != nil {
 			t.Fatal(err)
 		}
@@ -102,9 +145,10 @@ func runBump(t *testing.T, envFile string, gh, proxy map[string][]upstreamReleas
 		}
 	}
 	writeExec(t, filepath.Join(binDir, "gh"), fakeGH)
-	writeExec(t, filepath.Join(binDir, "curl"), fakeProxyCurl)
+	writeExec(t, filepath.Join(binDir, "curl"), fakeUpstreamCurl)
 
 	now := time.Now().UTC()
+	writeNixUpstream(t, filepath.Join(upstream, "github"), filepath.Join(upstream, "nix"), nix, now)
 	for repo, rels := range gh {
 		items := make([]string, 0, len(rels))
 		for _, r := range rels {
@@ -147,6 +191,37 @@ func runBump(t *testing.T, envFile string, gh, proxy map[string][]upstreamReleas
 		t.Fatal(rerr)
 	}
 	return code, string(out), string(after)
+}
+
+// writeNixUpstream serves rels as the tags of example/nix and, for the
+// published ones, their tarball digests on the fake releases.nixos.org, each
+// with a Last-Modified time of the release's age.
+func writeNixUpstream(t *testing.T, githubDir, nixDir string, rels []nixRelease, now time.Time) {
+	t.Helper()
+	if rels == nil {
+		return
+	}
+	tags := make([]string, 0, len(rels))
+	for _, r := range rels {
+		tags = append(tags, fmt.Sprintf(`{"name": %q}`, r.version))
+		if !r.published {
+			continue
+		}
+		dir := filepath.Join(nixDir, "nix-"+r.version)
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		systems := r.systems
+		if systems == nil {
+			systems = nixSystems
+		}
+		for _, sys := range systems {
+			f := filepath.Join(dir, "nix-"+r.version+"-"+sys+".tar.xz.sha256")
+			writeFile(t, f, nixDigest(r.version, sys))
+			writeFile(t, f+".lm", now.Add(-r.age).Format(http.TimeFormat))
+		}
+	}
+	writeFile(t, filepath.Join(githubDir, "example_nix.tags.json"), "["+strings.Join(tags, ",")+"]")
 }
 
 func writeExec(t *testing.T, path, content string) {
@@ -257,7 +332,95 @@ func TestBumpToolPins(t *testing.T) {
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			code, out, got := runBump(t, tc.envFile, tc.gh, tc.proxy)
+			code, out, got := runBump(t, tc.envFile, tc.gh, tc.proxy, nil)
+			if code != tc.wantCode {
+				t.Errorf("exit code = %d, want %d\noutput:\n%s", code, tc.wantCode, out)
+			}
+			if got != tc.wantEnv {
+				t.Errorf("env file after run:\n%s\nwant:\n%s\noutput:\n%s", got, tc.wantEnv, out)
+			}
+		})
+	}
+}
+
+// nixEnvFile renders a Nix pin block: NIX_VERSION and the digest of each
+// system's tarball for that version.
+func nixEnvFile(version string, systems ...string) string {
+	var b strings.Builder
+	b.WriteString("# source: nix-release example/nix\nNIX_VERSION=" + version + "\n")
+	for _, sys := range systems {
+		key := "NIX_SHA256_" + strings.ToUpper(strings.ReplaceAll(sys, "-", "_"))
+		fmt.Fprintf(&b, "\n# source: nix-sha256 %s\n%s=%s\n", sys, key, nixDigest(version, sys))
+	}
+	return b.String()
+}
+
+// TestBumpToolPinsNix covers the Nix installer pins: NIX_VERSION moves like
+// any other pin, but only to a tag whose tarballs releases.nixos.org has
+// published, aged from that publication, and every digest pinned below it
+// moves with it to the new release's published SHA-256.
+func TestBumpToolPinsNix(t *testing.T) {
+	t.Parallel()
+
+	current := nixEnvFile("2.34.8", nixSystems...)
+	tests := []struct {
+		name     string
+		envFile  string
+		nix      []nixRelease
+		wantCode int
+		wantEnv  string
+	}{
+		{
+			name:    "an aged release moves the version and every digest",
+			envFile: current,
+			nix:     []nixRelease{{version: "2.35.0", age: 5 * day, published: true}, {version: "2.34.8", age: 90 * day, published: true}},
+			wantEnv: nixEnvFile("2.35.0", nixSystems...),
+		},
+		{
+			name:    "a release inside the cooldown is held back",
+			envFile: current,
+			nix:     []nixRelease{{version: "2.35.0", age: day, published: true}},
+			wantEnv: current,
+		},
+		{
+			name:    "a tag with no published tarball is not a release",
+			envFile: current,
+			nix: []nixRelease{
+				{version: "2.36.0", age: 30 * day}, {version: "2.35.1", age: 4 * day, published: true}, {version: "2.35.1-rc1", age: 9 * day, published: true},
+			},
+			wantEnv: nixEnvFile("2.35.1", nixSystems...),
+		},
+		{
+			name:    "never downgrades",
+			envFile: current,
+			nix:     []nixRelease{{version: "2.33.9", age: 300 * day, published: true}},
+			wantEnv: current,
+		},
+		{
+			name:     "a missing digest fails without rewriting",
+			envFile:  current,
+			nix:      []nixRelease{{version: "2.35.0", age: 5 * day, published: true, systems: []string{"x86_64-linux"}}},
+			wantCode: 1,
+			wantEnv:  current,
+		},
+		{
+			name:     "a digest before the version fails",
+			envFile:  "# source: nix-sha256 x86_64-linux\nNIX_SHA256_X86_64_LINUX=" + nixDigest("2.34.8", "x86_64-linux") + "\n",
+			wantCode: 1,
+			wantEnv:  "# source: nix-sha256 x86_64-linux\nNIX_SHA256_X86_64_LINUX=" + nixDigest("2.34.8", "x86_64-linux") + "\n",
+		},
+		{
+			name:     "a v-prefixed Nix version fails",
+			envFile:  nixEnvFile("v2.34.8"),
+			nix:      []nixRelease{},
+			wantCode: 1,
+			wantEnv:  nixEnvFile("v2.34.8"),
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			code, out, got := runBump(t, tc.envFile, nil, nil, tc.nix)
 			if code != tc.wantCode {
 				t.Errorf("exit code = %d, want %d\noutput:\n%s", code, tc.wantCode, out)
 			}

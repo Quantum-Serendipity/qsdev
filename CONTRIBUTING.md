@@ -116,6 +116,13 @@ Each job that uses one loads that file into `$GITHUB_ENV` and references
 `${{ env.KEY }}`, and `TestToolVersionsSingleSource` fails if a workflow
 hard-codes one of these versions.
 
+Nix is pinned there too: `NIX_VERSION` and one `NIX_SHA256_<SYSTEM>` digest
+per runner platform. CI jobs install it with `.github/scripts/install-nix.sh`,
+which reads those pins, checks the official release tarball against its
+digest before extracting it, and runs the bundled installer. The repository's
+Actions allowlist admits no Nix action, and `TestWorkflowActionsAllowlisted`
+fails if a workflow uses an action outside that allowlist.
+
 `.github/workflows/tool-pins.yml` runs `scripts/bump-tool-pins.sh` every
 Monday. The script moves each pin to the newest exact release that is at least
 3 days old, never to an older one, and opens or updates a single PR from the

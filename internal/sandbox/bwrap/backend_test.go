@@ -153,7 +153,7 @@ func resolveSandboxShell(t *testing.T) (string, []sandbox.MountSpec) {
 	// Non-Nix host: expose the standard library/binary directories read-only so
 	// the shell and its dynamic dependencies resolve.
 	var mounts []sandbox.MountSpec
-	for _, dir := range []string{"/usr", "/lib", "/lib64", "/bin"} {
+	for _, dir := range hostSystemDirs {
 		if info, statErr := os.Stat(dir); statErr == nil && info.IsDir() {
 			mounts = append(mounts, sandbox.MountSpec{Source: dir, Target: dir, ReadOnly: true})
 		}
@@ -353,7 +353,7 @@ func TestBubblewrapBackend_E3_NestedUserNamespaceBlocked(t *testing.T) {
 
 	cfg := &sandbox.SandboxConfig{
 		HookCategory: sandbox.CategoryLinter,
-		Mounts:       mounts,
+		Mounts:       hostToolMounts(mounts, unshareBin),
 		Environment:  map[string]string{"PATH": "/nonexistent", "HOME": t.TempDir()},
 		HookCommand:  []string{unshareBin, "--user", "--", unshareBin, "--version"},
 	}
@@ -483,14 +483,15 @@ func TestRunHook_HookExitCodePreserved(t *testing.T) {
 
 // guardrailRun runs script under sh in a real sandbox of category cat with
 // project as the project directory; "$P" in script is replaced with it (the
-// hook environment allowlist would strip a variable).
-func guardrailRun(t *testing.T, cat sandbox.HookCategory, project, script string) (*sandbox.SandboxResult, error) {
+// hook environment allowlist would strip a variable). tools are the host
+// tools (see hostTool) script runs.
+func guardrailRun(t *testing.T, cat sandbox.HookCategory, project, script string, tools ...string) (*sandbox.SandboxResult, error) {
 	t.Helper()
 	backend, shPath, mounts := e3Backend(t)
 	cfg := &sandbox.SandboxConfig{
 		ProjectDir:   project,
 		HookCategory: cat,
-		Mounts:       mounts,
+		Mounts:       hostToolMounts(mounts, tools...),
 		Environment:  map[string]string{"PATH": "/nonexistent", "HOME": t.TempDir()},
 		HookCommand:  []string{shPath, "-c", strings.ReplaceAll(script, "$P", project)},
 	}
@@ -556,7 +557,8 @@ func TestRunHook_GuardrailDirectoryCannotBeSwapped(t *testing.T) {
 	}
 
 	res, err := guardrailRun(t, sandbox.CategoryGenerator, project,
-		hostCommand(t, "mv")+` "$P/.git" "$P/.git2" && exit 3; echo x > "$P/.git/objects-ok" || exit 4; exit 0`)
+		hostCommand(t, "mv")+` "$P/.git" "$P/.git2" && exit 3; echo x > "$P/.git/objects-ok" || exit 4; exit 0`,
+		hostTool(t, "mv"))
 	if err != nil {
 		t.Fatalf("RunHook: %v", err)
 	}
@@ -623,7 +625,7 @@ func TestRunHook_SymlinkedGuardrailRestored(t *testing.T) {
 	const evil = "repos: [{repo: local, hooks: [{id: x, entry: evil, language: system}]}]"
 
 	res, err := guardrailRun(t, sandbox.CategoryTestRunner, project,
-		rm+` -f "$P/.pre-commit-config.yaml" && echo "`+evil+`" > "$P/.pre-commit-config.yaml"`)
+		rm+` -f "$P/.pre-commit-config.yaml" && echo "`+evil+`" > "$P/.pre-commit-config.yaml"`, hostTool(t, "rm"))
 	if !errors.Is(err, sandbox.ErrGuardrailModified) {
 		t.Fatalf("RunHook = (exit %v, err %v, stderr %q), want ErrGuardrailModified", exitCodeOf(res), err, stderrOf(res))
 	}
@@ -663,7 +665,7 @@ func TestRunHook_DevenvStateWritable(t *testing.T) {
 				t.Fatal(err)
 			}
 			script := mkdir + ` -p "$P/` + rel + `/go/pkg/mod/cache/download" && echo x > "$P/` + rel + `/venv-marker"`
-			res, err := guardrailRun(t, cat, project, script)
+			res, err := guardrailRun(t, cat, project, script, hostTool(t, "mkdir"))
 			if err != nil {
 				t.Fatalf("RunHook: %v", err)
 			}
@@ -739,6 +741,42 @@ func hostCommand(t *testing.T, name string) string {
 	return p
 }
 
+// hostSystemDirs are the standard directories a host binary outside the Nix
+// store and its dynamic dependencies resolve from.
+var hostSystemDirs = []string{"/usr", "/lib", "/lib64", "/bin"}
+
+// hostToolMounts returns mounts plus the read-only mounts the sandbox needs
+// to run the host tools at paths (see hostTool). A tool under /nix/store
+// needs none, as BuildArgs mounts the store. Any other tool needs its own
+// directory and hostSystemDirs: it is resolved on the host PATH, so it can
+// live outside the store even when the sandbox shell does not (a Nix shell
+// on a distribution host resolves git to /usr/bin/git), and without them
+// it does not exist in the sandbox.
+func hostToolMounts(mounts []sandbox.MountSpec, paths ...string) []sandbox.MountSpec {
+	out := slices.Clone(mounts)
+	add := func(dir string) {
+		if info, err := os.Stat(dir); err != nil || !info.IsDir() {
+			return
+		}
+		for _, m := range out {
+			if dir == m.Target || strings.HasPrefix(dir, m.Target+"/") {
+				return
+			}
+		}
+		out = append(out, sandbox.MountSpec{Source: dir, Target: dir, ReadOnly: true})
+	}
+	for _, p := range paths {
+		if strings.HasPrefix(p, "/nix/store/") {
+			continue
+		}
+		for _, dir := range hostSystemDirs {
+			add(dir)
+		}
+		add(filepath.Dir(p))
+	}
+	return out
+}
+
 // TestRunHook_GitControlReadOnlyGitAddWorks: only git's code-executing
 // control files are read-only, so a formatter can still stage its output
 // while planting a hook or rewriting the config fails.
@@ -762,7 +800,7 @@ func TestRunHook_GitControlReadOnlyGitAddWorks(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			res, err := guardrailRun(t, sandbox.CategoryFormatter, project, tt.script)
+			res, err := guardrailRun(t, sandbox.CategoryFormatter, project, tt.script, git)
 			if err != nil {
 				t.Fatalf("RunHook: %v", err)
 			}
@@ -821,7 +859,9 @@ func TestRunHook_AuditLogTemplateWrites(t *testing.T) {
 	backend, shPath, mounts := e3Backend(t)
 	var path []string
 	for _, tool := range []string{"bash", "python3", "date", "mkdir"} {
-		path = append(path, filepath.Dir(hostTool(t, tool)))
+		p := hostTool(t, tool)
+		path = append(path, filepath.Dir(p))
+		mounts = hostToolMounts(mounts, p)
 	}
 
 	project := t.TempDir()

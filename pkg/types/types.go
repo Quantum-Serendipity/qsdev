@@ -211,6 +211,13 @@ type GeneratedFile struct {
 	Strategy       MergeStrategy `yaml:"strategy"        json:"strategy"`
 	SkipValidation bool          `yaml:"skip_validation" json:"skip_validation"`
 	Owner          string        `yaml:"owner,omitempty" json:"owner,omitempty"`
+	// HeldWith names the generated file (project-relative path) this file
+	// must change together with. When that file is not written in place (its
+	// update is kept back, or left in a sidecar for manual merge), this file's
+	// new content goes to a sidecar too instead of replacing it: devenv.yaml
+	// declares the flake inputs devenv.nix's options read, so writing one
+	// without the other would split the pair.
+	HeldWith string `yaml:"-" json:"-"`
 	// BaseContent, when non-nil, is the generator's own output for a file
 	// whose Content holds the merged bytes written to disk. State recording
 	// keeps it as the three-way merge base instead of Content. Generators

@@ -38,6 +38,7 @@ func (a *GeneratorAdapter) Produce(answers types.WizardAnswers) ([]types.Fragmen
 			Strategy:    f.Strategy,
 			Mode:        mode,
 			Owner:       f.Owner,
+			HeldWith:    f.HeldWith,
 			Provenance: types.FragmentProvenance{
 				Module:    a.name,
 				Timestamp: time.Now().UTC(),

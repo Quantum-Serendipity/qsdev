@@ -212,7 +212,7 @@ func (m *Module) DevenvYamlInputs(config ecosystem.ModuleConfig) []ecosystem.Dev
 	if version, err := pinnedVersion(config); err != nil || version == "" {
 		return nil
 	}
-	return []ecosystem.DevenvInput{{URL: nixpkgsTerraformInput, Follows: "nixpkgs"}}
+	return []ecosystem.DevenvInput{{URL: nixpkgsTerraformInput, Follows: "nixpkgs", Options: []string{"languages.terraform.version"}}}
 }
 
 // pinnedVersion returns the version the fragment pins: "" for OpenTofu (no

@@ -29,7 +29,11 @@ import (
 	"github.com/Quantum-Serendipity/qsdev/internal/mcpserve/projectctx"
 	"github.com/Quantum-Serendipity/qsdev/internal/mcpserve/spi"
 	"github.com/Quantum-Serendipity/qsdev/internal/mcpserve/tools"
+	"github.com/Quantum-Serendipity/qsdev/internal/mcpserve/tools/devenv"
 	"github.com/Quantum-Serendipity/qsdev/internal/selfprotect/canon"
+	"github.com/Quantum-Serendipity/qsdev/internal/selfprotect/cmdscan"
+	"github.com/Quantum-Serendipity/qsdev/internal/selfprotect/judge"
+	"github.com/Quantum-Serendipity/qsdev/internal/selfprotect/rules"
 	"github.com/Quantum-Serendipity/qsdev/pkg/branding"
 	"github.com/Quantum-Serendipity/qsdev/pkg/types"
 )
@@ -102,6 +106,9 @@ type serveOptions struct {
 	// trustedServers are the MCP server definitions configured into the binary,
 	// trusted for mcp.list health probes alongside the catalog's.
 	trustedServers map[string][]mcpregistry.LaunchSpec
+	// sensitive are the CLI's human-only commands (cmdutil.SensitiveCommands),
+	// which qsdev_nix_run refuses to run as self-protection's SP-014 does.
+	sensitive []cmdscan.CommandSpec
 }
 
 // CommandOption configures the serve command.
@@ -150,7 +157,9 @@ func Command(cmdOpts ...CommandOption) *cobra.Command {
 			"context surface and the framework adapters. The tools still run behind " +
 			"the full middleware chain and mcp.disabled_tools.",
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			return runServe(cmd.Context(), opts)
+			run := opts
+			run.sensitive = cmdutil.SensitiveCommands(cmd.Root())
+			return runServe(cmd.Context(), run)
 		},
 	}
 
@@ -239,6 +248,7 @@ func legacyModuleCommand(module string, run func(context.Context, serveOptions) 
 				transport: string(TransportStdio),
 				port:      defaultHTTPPort,
 				modules:   []string{module},
+				sensitive: cmdutil.SensitiveCommands(cmd.Root()),
 			})
 		},
 	}, cmdutil.ProfileMCPServer)
@@ -314,7 +324,7 @@ func runServe(ctx context.Context, opts serveOptions) error {
 	// Build the tool modules' registrations first, so an unknown --module fails
 	// startup before anything is served. The gated tools are included only
 	// when mountOptions selects them, from the operator's opt-ins: the flags,
-	// the env and the user-scope catalog, never the repository.
+	// the env and the user-scope catalog, never the project's qsdev config.
 	userScope, err := qsdevcatalog.LoadUserScope()
 	if err != nil {
 		return fmt.Errorf("loading the user defaults for the MCP tool opt-ins: %w", err)
@@ -335,8 +345,16 @@ func runServe(ctx context.Context, opts serveOptions) error {
 	if err != nil {
 		return err
 	}
-	toolOpts, err = withNixRunDenyRules(toolOpts, func() ([]string, error) {
-		return nixRunDenyRules(root, userScope, canon.ClaudeConfigDir)
+	toolOpts, err = withNixRunPolicy(toolOpts, func() (devenv.NixRunPolicy, error) {
+		deny, err := nixRunDenyRules(root, userScope, canon.ClaudeConfigDir)
+		if err != nil {
+			return devenv.NixRunPolicy{}, err
+		}
+		return devenv.NixRunPolicy{
+			DenyRules: deny,
+			AskRules:  userScope.AllPermissionAskRules(),
+			Judge:     nixRunJudge(root, opts.sensitive),
+		}, nil
 	})
 	if err != nil {
 		return err
@@ -528,9 +546,14 @@ func firstOptIn(sources ...optInSource) string {
 }
 
 // mountOptions decides which gated tools the server mounts, and logs each
-// decision once. Both tools are off unless the operator opts in, from a
-// source the repository does not control (a flag, the env, or the
-// mcp_serve section of the user-scope catalog):
+// decision once. Both tools are off unless the operator opts in, from a flag,
+// the env, or the mcp_serve section of the user-scope catalog, never from the
+// project's qsdev configuration (.qsdev.yaml, .qsdev/defaults.yaml). A
+// committed .mcp.json can still carry a flag or env opt-in for the qsdev
+// entry, and a committed devenv.nix or .envrc can export the env key. That
+// adds nothing to what either file can already do (run any command once the
+// user approves the project's MCP servers or allows direnv), so those two
+// approvals are the trust boundary for these opt-ins, as for the files:
 //
 //   - qsdev_nix_run starts processes on the host: --allow-nix-run,
 //     QSDEV_MCP_ALLOW_NIX_RUN or mcp_serve.allow_nix_run.
@@ -648,20 +671,31 @@ func mountCredentialVend(in mountInputs) (types.CredentialVendConfig, error) {
 	return committed, nil
 }
 
-// withNixRunDenyRules sets opts.NixRunDenyRules from load when qsdev_nix_run
-// is mounted, and leaves opts as is otherwise, so a server without the tool
-// reads nothing for it. A mounted tool whose rules cannot be loaded fails
+// withNixRunPolicy sets opts.NixRunPolicy from load when qsdev_nix_run is
+// mounted, and leaves opts as is otherwise, so a server without the tool
+// reads nothing for it. A mounted tool whose policy cannot be built fails
 // startup rather than running unchecked.
-func withNixRunDenyRules(opts tools.Options, load func() ([]string, error)) (tools.Options, error) {
+func withNixRunPolicy(opts tools.Options, load func() (devenv.NixRunPolicy, error)) (tools.Options, error) {
 	if !opts.NixRun {
 		return opts, nil
 	}
-	rules, err := load()
+	policy, err := load()
 	if err != nil {
-		return tools.Options{}, fmt.Errorf("building the Bash deny rules qsdev_nix_run is checked against: %w", err)
+		return tools.Options{}, fmt.Errorf("building the Bash policy qsdev_nix_run is checked against: %w", err)
 	}
-	opts.NixRunDenyRules = rules
+	opts.NixRunPolicy = policy
 	return opts, nil
+}
+
+// nixRunJudge returns the self-protection verdict qsdev_nix_run holds each
+// Bash command line it is equivalent to: the checks the selfprotect hook
+// applies to a Bash call run in the project root (judge.Evaluate), with
+// SP-014 blocking the CLI's human-only commands, sensitive.
+func nixRunJudge(root string, sensitive []cmdscan.CommandSpec) func(string) (string, string, bool) {
+	return func(line string) (string, string, bool) {
+		d, denied := judge.Evaluate(&rules.EvalContext{ToolName: "Bash", Command: line, CWD: root, SensitiveCommands: sensitive})
+		return d.RuleID, d.Reason, denied
+	}
 }
 
 // nixRunDenyRules returns the deny rules qsdev_nix_run checks each call

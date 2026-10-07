@@ -16,7 +16,7 @@
   packages = {{ nixPkgList .Packages }}{{ range .PackageExprs }} ++ [ {{ . }} ]{{ end }};
   env = {
 {{- range $key, $val := .EnvVars}}
-    {{ $key }} = {{ nixString $val }};
+    {{ nixIdent $key }} = {{ nixString $val }};
 {{- end}}
   };
 
@@ -34,14 +34,14 @@
 {{- end }}
 {{- range .LanguageFragments}}
 
-  # {{ .DisplayName }}
+  # {{ nixComment .DisplayName }}
 {{ .NixFragment | trimTrailingNewline }}
 {{- end}}
 {{- if .Services}}
 
   # Services
 {{- range .Services}}
-  services.{{ .NixName }} = {
+  services.{{ nixIdent .NixName }} = {
     enable = true;
 {{- range .ConfigLines}}
     {{ . }}
@@ -53,7 +53,7 @@
 
   # Service convenience scripts
 {{- range .ServiceScripts}}
-  scripts.{{ .Name }}.exec = {{ nixString .Exec }};
+  scripts.{{ nixIdent .Name }}.exec = {{ nixString .Exec }};
 {{- end}}
 {{- end}}
 {{- if .TaskScripts }}
@@ -94,7 +94,7 @@
       excludes = {{ nixStringList .Excludes }};
 {{- end }}
 {{- range .Settings }}
-      settings.{{ .Key }} = {{ nixString .Value }};
+      settings.{{ nixIdent .Key }} = {{ nixString .Value }};
 {{- end }}
     };
 {{- else }}

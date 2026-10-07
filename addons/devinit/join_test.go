@@ -55,7 +55,7 @@ func TestConfigToAnswers_MapsConfigFields(t *testing.T) {
 			Enabled: []string{"ripsecrets"},
 		},
 		Infrastructure: types.InfraConfig{
-			RegistryProxy: "https://proxy.example.com",
+			RegistryProxy: "https://proxy.corp.internal",
 		},
 	}
 
@@ -88,7 +88,7 @@ func TestConfigToAnswers_MapsConfigFields(t *testing.T) {
 	if answers.ProjectTypeProfile != "go-web" {
 		t.Errorf("ProjectTypeProfile = %q, want go-web", answers.ProjectTypeProfile)
 	}
-	if answers.Infrastructure.RegistryProxy != "https://proxy.example.com" {
+	if answers.Infrastructure.RegistryProxy != "https://proxy.corp.internal" {
 		t.Errorf("Infrastructure not mapped: %+v", answers.Infrastructure)
 	}
 	if !answers.Confirmed {

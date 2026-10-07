@@ -18,6 +18,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/Quantum-Serendipity/qsdev/addons/claudecode"
+	"github.com/Quantum-Serendipity/qsdev/addons/devenv"
 	"github.com/Quantum-Serendipity/qsdev/internal/claudesettings"
 	"github.com/Quantum-Serendipity/qsdev/internal/cmdutil"
 	qsdevconfig "github.com/Quantum-Serendipity/qsdev/internal/config"
@@ -69,6 +70,7 @@ func runEnable(cmd *cobra.Command, toolName string, opts enableOptions) error {
 	if err := requireJoined(projectRoot); err != nil {
 		return err
 	}
+	devenv.PrintProjectDefaults(cmd.OutOrStdout())
 
 	registry := toolreg.DefaultRegistry()
 	tool, isTool := registry.ByName(toolName)
@@ -535,6 +537,7 @@ func applyToolChange(projectRoot string, change toolChange, st types.GeneratedSt
 	sharedWritten := outcome.written
 	result.nixResult = outcome.nixResult
 	result.notices = append(result.notices, change.notices...)
+	result.notices = append(result.notices, outcome.held...)
 
 	writtenPaths := make(map[string]bool, len(sharedWritten))
 	for _, f := range sharedWritten {
@@ -621,6 +624,7 @@ func runDisable(cmd *cobra.Command, toolName string, opts disableOptions) error 
 	if err := requireJoined(projectRoot); err != nil {
 		return err
 	}
+	devenv.PrintProjectDefaults(cmd.OutOrStdout())
 
 	registry := toolreg.DefaultRegistry()
 	tool, ok := registry.ByName(toolName)

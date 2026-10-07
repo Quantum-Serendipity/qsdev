@@ -1,6 +1,7 @@
 package check
 
 import (
+	"github.com/Quantum-Serendipity/qsdev/internal/catalog"
 	"github.com/Quantum-Serendipity/qsdev/pkg/branding"
 )
 
@@ -36,4 +37,24 @@ func CheckOrgOverlay(ctx CheckContext) CheckResult {
 			" defaults pin' at your own terminal to approve that overlay for the project (--global for every project); " +
 			"otherwise find what sets it (an env file, a devenv import, a shell startup file) and remove it",
 	}
+}
+
+// CheckOrgOverlayLoaded reports an org overlay the catalog skipped
+// (ctx.OrgOverlayErr): one that fails to parse or tries to loosen the
+// built-in security floor. Every command that generates or changes the
+// project refuses to run past it, so it fails at high severity; it reports
+// nothing when the overlay applied or there is none.
+func CheckOrgOverlayLoaded(ctx CheckContext) []CheckResult {
+	if ctx.OrgOverlayErr == nil {
+		return nil
+	}
+	return []CheckResult{{
+		Category: CategoryConfigIntegrity,
+		Name:     "config_catalog",
+		Status:   StatusFail,
+		Severity: SeverityHigh,
+		Message:  catalog.LoadError(ctx.OrgOverlayErr).Error() + "; the org overlay is skipped",
+		Remediation: "Run '" + catalog.ValidateCommand() + "' and fix the defaults file it names; " +
+			branding.Get().AppName + " refuses to generate or change the project until it loads",
+	}}
 }

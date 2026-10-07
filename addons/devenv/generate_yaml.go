@@ -194,6 +194,9 @@ func generateDevenvYaml(ctx *genContext) (*types.GeneratedFile, error) {
 		Content:  []byte(content),
 		Mode:     fileutil.ModeReadWrite,
 		Strategy: types.Overwrite,
+		// Its module inputs are read by devenv.nix options: it is never
+		// rewritten while devenv.nix keeps a user's edits.
+		HeldWith: devenvNixPath,
 	}, nil
 }
 

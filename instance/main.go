@@ -157,24 +157,48 @@ func installGates(root *cobra.Command, load func() error) {
 
 // loadCatalog loads the defaults catalog (built-in, org and project layers).
 // catalog.Default caches its result, so later loads by the command reuse it.
+// When the catalog loaded only by skipping the org overlay (one that fails to
+// parse or loosens the built-in floor), it returns an orgOverlaySkippedError.
 func loadCatalog() error {
-	_, err := catalog.Default()
-	return err
+	if _, err := catalog.Default(); err != nil {
+		return err
+	}
+	if err := catalog.OrgOverlayError(); err != nil {
+		return orgOverlaySkippedError{err: err}
+	}
+	return nil
 }
+
+// orgOverlaySkippedError reports a catalog that loaded without the org
+// overlay, which catalog.Default skips when it alone fails.
+type orgOverlaySkippedError struct{ err error }
+
+func (e orgOverlaySkippedError) Error() string { return e.err.Error() }
+func (e orgOverlaySkippedError) Unwrap() error { return e.err }
 
 // installCatalogGate makes root fail every command that needs the defaults
 // catalog (cmdutil.CatalogRequired) with a wrapped error naming the repair
-// command when load fails, before the command runs. Once the gate passes the
-// catalog is cached as loaded, so the command's own catalog lookups cannot
-// fail. Commands that do not need it (hooks, the MCP server, global and
-// unlogged commands, catalog-optional ones) run regardless. It chains any
-// PersistentPreRunE root already has, as cmdutil.InstallHumanGate does.
+// command when load fails, before the command runs. A catalog that loaded
+// only by skipping the org overlay fails the same way, so nothing is
+// generated or changed without the org's policy (or past a file that tries
+// to loosen the floor); a read-only invocation (cmdutil.ReadOnlyInvocation)
+// changes nothing, so it runs on the built-in defaults with a warning. Once
+// the gate passes the catalog is cached as loaded, so the command's own
+// catalog lookups cannot fail. Commands that do not need it (hooks, the MCP
+// server, global and unlogged commands, catalog-optional ones) run
+// regardless. It chains any PersistentPreRunE root already has, as
+// cmdutil.InstallHumanGate does.
 func installCatalogGate(root *cobra.Command, load func() error) {
 	next := root.PersistentPreRunE
 	root.PersistentPreRunE = func(cmd *cobra.Command, args []string) error {
 		if cmdutil.CatalogRequired(cmd) {
 			if err := load(); err != nil {
-				return fmt.Errorf("%w (run '%s')", catalog.LoadError(err), catalog.ValidateCommand())
+				var skipped orgOverlaySkippedError
+				if !errors.As(err, &skipped) || !cmdutil.ReadOnlyInvocation(cmd) {
+					return fmt.Errorf("%w (run '%s')", catalog.LoadError(err), catalog.ValidateCommand())
+				}
+				_, _ = fmt.Fprintf(cmd.ErrOrStderr(), "Warning: ignoring %v; showing the built-in defaults without it (run '%s')\n",
+					skipped.err, catalog.ValidateCommand())
 			}
 		}
 		if next != nil {

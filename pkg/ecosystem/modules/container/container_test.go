@@ -662,6 +662,26 @@ func TestDenyRules(t *testing.T) {
 		{"docker run --rm -v ./repo:/repo alpine/git pull", false},
 		{"podman exec web git pull", false},
 		{`docker run -v "./data:/data" alpine`, false},
+		// Single-path host-root mounts in every flag spelling, and the
+		// path-normalized spellings of the host root.
+		{"docker run --volume=/ alpine", true},
+		{"docker run -v=/ alpine", true},
+		{"docker run -v/ alpine", true},
+		{"podman run -v=/ alpine", true},
+		{"podman run --volume=/ alpine", true},
+		{`docker run -v "/" alpine`, true},
+		{"docker run -v //:/x alpine", true},
+		{"docker run -v /.:/x alpine", true},
+		{"docker run -v /./:/x alpine", true},
+		{"podman run --volume=//:/x alpine", true},
+		{"podman run -v=/.:/x alpine", true},
+		{"docker run -v// alpine", true},
+		{"docker run -v /. alpine", true},
+		{"docker run -v /srv/app:/app alpine", false},
+		{"docker run -v=./data:/data alpine", false},
+		{"docker run -v /.cache:/cache alpine", false},
+		{"docker run -v /srv/./app:/app alpine", false},
+		{"docker run --volume=/srv alpine", false},
 	}
 	for _, tt := range tests {
 		t.Run(tt.cmd, func(t *testing.T) {

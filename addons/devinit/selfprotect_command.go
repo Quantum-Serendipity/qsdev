@@ -3,7 +3,6 @@ package devinit
 import (
 	"context"
 	"errors"
-	"fmt"
 	"io"
 	"os"
 	"path/filepath"
@@ -15,9 +14,9 @@ import (
 	"github.com/Quantum-Serendipity/qsdev/internal/projectctx"
 	"github.com/Quantum-Serendipity/qsdev/internal/selfprotect/canon"
 	"github.com/Quantum-Serendipity/qsdev/internal/selfprotect/cmdscan"
-	"github.com/Quantum-Serendipity/qsdev/internal/selfprotect/evasion"
 	"github.com/Quantum-Serendipity/qsdev/internal/selfprotect/gatedodge"
 	"github.com/Quantum-Serendipity/qsdev/internal/selfprotect/hookio"
+	"github.com/Quantum-Serendipity/qsdev/internal/selfprotect/judge"
 	"github.com/Quantum-Serendipity/qsdev/internal/selfprotect/rules"
 )
 
@@ -104,25 +103,13 @@ func evaluateSelfprotect(ctx context.Context, stdin io.Reader, stderr io.Writer,
 	evalCtx.ToolInput = call.ToolInput
 	evalCtx.SensitiveCommands = sensitive
 
-	// Parse the Bash command once here (memoized on evalCtx); the rules below
-	// reuse the same parse via ctx.ParsedCommands().
-	cmds, parseErr := evalCtx.ParsedCommands()
-	// Over the cap the rules below could outlast the deadline. This must be a
-	// deny, not a parse error: a parse error makes rules fall back to
-	// substring tests rather than deny.
-	if len(cmds) > hookio.MaxSimpleCommands {
-		hookio.WriteDeny(stderr, "SP-LIMIT", fmt.Sprintf("command has %d simple commands, more than the %d evaluated; split it up or write it to a script with the Write tool", len(cmds), hookio.MaxSimpleCommands))
-		return errSelfprotectDeny
+	if d, denied := judge.Evaluate(evalCtx); denied {
+		return writeDenial(stderr, d)
 	}
-	if blocked, category, reason := evasion.CheckParsed(call.ToolName, input.Command, input.FilePath, cmds, parseErr); blocked {
-		hookio.WriteEvasionDeny(stderr, category, reason)
-		return errSelfprotectDeny
-	}
-
-	verdict, matches := rules.Tier1Rules.EvaluateAll(evalCtx)
-	if verdict == rules.Deny {
-		hookio.WriteDeny(stderr, matches[0].Rule.ID, matches[0].Reason)
-		return errSelfprotectDeny
+	if cmdscan.IsNixRunTool(call.ToolName) {
+		if err := judgeNixRun(call, evalCtx.CWD, sensitive, stderr); err != nil {
+			return err
+		}
 	}
 
 	if edited := input.EditedContent(); isWriteOrEditTool(call.ToolName) && edited != "" {
@@ -142,13 +129,37 @@ func evaluateSelfprotect(ctx context.Context, stdin io.Reader, stderr io.Writer,
 		hookio.WriteDeny(stderr, ruleID, reason)
 		return errSelfprotectDeny
 	}
-	if blocked, ruleID, reason := detectBashGateDodge(evalCtx); blocked {
-		hookio.WriteDeny(stderr, ruleID, reason)
+	return nil
+}
+
+// writeDenial writes d to stderr in the hook's deny format and returns
+// errSelfprotectDeny.
+func writeDenial(stderr io.Writer, d judge.Denial) error {
+	if d.Evasion {
+		hookio.WriteEvasionDeny(stderr, d.RuleID, d.Reason)
+	} else {
+		hookio.WriteDeny(stderr, d.RuleID, d.Reason)
+	}
+	return errSelfprotectDeny
+}
+
+// judgeNixRun judges a call of the MCP server's nix_run tool as the Bash
+// command lines it is equivalent to (cmdscan.NixRunCommandLines), each run in
+// cwd, so the tool cannot do what a Bash call may not. The server holds each
+// call to the same checks before running it; judging it here as well keeps
+// the decision in the hook Claude Code consults for every tool. A tool_input
+// that cannot be read is denied.
+func judgeNixRun(call *hookio.ToolCall, cwd string, sensitive []cmdscan.CommandSpec, stderr io.Writer) error {
+	in, err := hookio.ParseNixRunInput(call.ToolInput)
+	if err != nil {
+		hookio.WriteError(stderr, err.Error())
 		return errSelfprotectDeny
 	}
-	if reason, blocked := rules.GitCodeExecution(evalCtx); blocked {
-		hookio.WriteDeny(stderr, rules.GitCodeExecutionRuleID, reason)
-		return errSelfprotectDeny
+	for _, line := range cmdscan.NixRunCommandLines(in.Installable, in.Args, in.Stdin) {
+		ctx := &rules.EvalContext{ToolName: "Bash", Command: line, CWD: cwd, SensitiveCommands: sensitive}
+		if d, denied := judge.Evaluate(ctx); denied {
+			return writeDenial(stderr, d)
+		}
 	}
 	return nil
 }

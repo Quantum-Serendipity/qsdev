@@ -15,38 +15,37 @@ import (
 
 	"github.com/Quantum-Serendipity/qsdev/internal/installer"
 	"github.com/Quantum-Serendipity/qsdev/internal/logging"
+	"github.com/Quantum-Serendipity/qsdev/internal/secrets"
 	"github.com/Quantum-Serendipity/qsdev/pkg/branding"
 )
 
-// secretPrefixes are well-known prefixes that indicate a value is likely a
-// secret token or API key.
-var secretPrefixes = []string{
+// genericSecretPrefixes are vendor-neutral prefixes that make a value of
+// 21-40 characters look like a hand-written token or key. They are a grading
+// heuristic, not credential shapes: vendor token shapes (GitHub, AWS,
+// Anthropic, ...) belong to the secrets.ValuePatterns canon, which
+// secretRedactor applies, and must not be repeated here.
+var genericSecretPrefixes = []string{
 	"sk-",
 	"sk_",
-	"ghp_",
-	"gho_",
 	"token_",
 	"key_",
 	"secret_",
 	"password_",
 }
 
-// sensitiveNamePattern matches env keys and CLI flag names whose literal value
-// is a credential. metadataNameSuffix excludes names that merely describe where
+// metadataNameSuffix excludes credential-named keys that merely describe where
 // or what the credential is (TOKEN_FILE, --secret-name, API_KEY_URL).
-var (
-	sensitiveNamePattern = regexp.MustCompile(`(?i)(secret|token|passw(or)?d|api[_-]?key|credential)`)
-	metadataNameSuffix   = regexp.MustCompile(`(?i)[_-](file|path|dir|url|uri|type|name|env|var|header)$`)
-)
+var metadataNameSuffix = regexp.MustCompile(`(?i)[_-](file|path|dir|url|uri|type|name|env|var|header)$`)
 
 // varRefPattern matches a ${VAR} (or ${VAR:-default}) reference that the MCP
 // client expands at launch; a reference is not a plaintext secret, but literal
 // text next to one still is.
 var varRefPattern = regexp.MustCompile(`\$\{[^}]*\}`)
 
-// secretRedactor is the shared credential value-shape detector (AKIA…, ghp_…,
-// github_pat_…, glpat-…, xox?-…, JWTs, PEM keys, URL userinfo, NAME=secret
-// pairs). A value it would redact contains a secret.
+// secretRedactor applies the shared credential value-shape canon
+// (secrets.ValuePatterns: cloud, forge and API-vendor tokens, JWTs, PEM keys)
+// plus URL userinfo and NAME=secret pairs. A value it would redact contains a
+// secret.
 var secretRedactor = sync.OnceValue(logging.NewRedactor)
 
 // hasPlaintextSecrets returns true if any env value, argument, header value or
@@ -70,7 +69,7 @@ func hasPlaintextSecrets(def *McpServerDefinition) bool {
 }
 
 // containsSecret reports whether any word of a composite value looks like a
-// secret, so "--token=ghp_..." and "Bearer ghp_..." are caught as well as a
+// secret, so "--token=<token>" and "Bearer <token>" are caught as well as a
 // bare token.
 func containsSecret(value string) bool {
 	if looksLikeSecret(value) {
@@ -137,10 +136,11 @@ func argsContainSecret(args []string) bool {
 	return false
 }
 
-// isLiteralCredential reports whether name denotes a credential and value is a
+// isLiteralCredential reports whether name denotes a credential, by the shared
+// secrets.IsSensitiveName canon the log redactor also uses, and value is a
 // literal (not a variable reference, path or URL) long enough to be one.
 func isLiteralCredential(name, value string) bool {
-	if !sensitiveNamePattern.MatchString(name) || metadataNameSuffix.MatchString(name) {
+	if !secrets.IsSensitiveName(name) || metadataNameSuffix.MatchString(name) {
 		return false
 	}
 	lit := strings.TrimSpace(varRefPattern.ReplaceAllString(value, ""))
@@ -170,7 +170,7 @@ func looksLikeSecret(value string) bool {
 	}
 
 	lower := strings.ToLower(lit)
-	for _, prefix := range secretPrefixes {
+	for _, prefix := range genericSecretPrefixes {
 		if strings.HasPrefix(lower, prefix) {
 			return true
 		}

@@ -28,3 +28,32 @@ func CredentialPaths() []string {
 		".config/helm/repositories.yaml",
 	}
 }
+
+// SecretFilePatterns returns the base-name globs of secret-material files:
+// dotenv files, private keys and certificates with their keys, keystores,
+// encrypted secrets, and the config and text formats secrets are stored in.
+// It is the single definition of what a secrets directory is guarded for, so
+// the generated Claude Code deny rules read-deny these files inside a
+// directory named secrets at any depth while source code in such a directory
+// (internal/secrets/*.go) stays readable. Each call returns a new slice, so
+// callers may modify the result.
+func SecretFilePatterns() []string {
+	return []string{
+		".env",
+		".env.*",
+		"*.env",
+		"*.key",
+		"*.pem",
+		"*.p12",
+		"*.pfx",
+		"*.jks",
+		"*.keystore",
+		"*.gpg",
+		"*.age",
+		"*.json",
+		"*.yaml",
+		"*.yml",
+		"*.toml",
+		"*.txt",
+	}
+}

@@ -151,7 +151,7 @@ func (m *Module) DevenvYamlInputs(config ecosystem.ModuleConfig) []ecosystem.Dev
 	if version, err := rubyVersion(config); err != nil || version == "" {
 		return nil
 	}
-	return []ecosystem.DevenvInput{{URL: nixpkgsRubyInput, Follows: "nixpkgs"}}
+	return []ecosystem.DevenvInput{{URL: nixpkgsRubyInput, Follows: "nixpkgs", Options: []string{"languages.ruby.version"}}}
 }
 
 // rubyVersion returns the normalized Ruby version from config ("" when unset),

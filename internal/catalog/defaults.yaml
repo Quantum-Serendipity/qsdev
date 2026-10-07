@@ -993,6 +993,10 @@ unset_vars:
     - PRIVATE_KEY
     - ENCRYPTION_KEY
 keep_vars:
+    # PATH is required, not a convenience: `devenv shell` runs a Nix-built bash
+    # (default PATH /no-such-path) whose devenv rcfile calls mktemp before it
+    # sources the environment that sets PATH. The devenv profile is still
+    # prepended, so its tools shadow host ones.
     - PATH
     - TERM
     - COLORTERM
@@ -1447,14 +1451,51 @@ permission_deny_rules:
         # Host-root mounts: the bind target follows "/:" and is an absolute
         # container path, hence "/:/*" (a trailing ":*" is the legacy " *"
         # suffix and would match nothing here); "-v / " mounts / with no
-        # explicit target. Best effort: path-normalized spellings of the
-        # host root ("-v //:/host", "-v /.:/host") get past these globs; the
-        # package guard hook and the sandbox are the backstop.
+        # explicit target. Every -v/--volume spelling (next word, "=",
+        # glued -v) is listed for / and its path-normalized forms //, /.
+        # and /./, each of which names only the host root. Best effort:
+        # spellings not listed ("-v ///:/host") get past these globs; the
+        # sandbox is the backstop.
         - "Bash(docker * -v /:/*)"
+        - "Bash(docker * -v=/:/*)"
+        - "Bash(docker * -v/:/*)"
         - "Bash(docker * --volume /:/*)"
         - "Bash(docker * --volume=/:/*)"
         - "Bash(docker * -v / *)"
+        - "Bash(docker * -v=/ *)"
+        - "Bash(docker * -v/ *)"
         - "Bash(docker * --volume / *)"
+        - "Bash(docker * --volume=/ *)"
+        - "Bash(docker * -v //:/*)"
+        - "Bash(docker * -v=//:/*)"
+        - "Bash(docker * -v//:/*)"
+        - "Bash(docker * --volume //:/*)"
+        - "Bash(docker * --volume=//:/*)"
+        - "Bash(docker * -v // *)"
+        - "Bash(docker * -v=// *)"
+        - "Bash(docker * -v// *)"
+        - "Bash(docker * --volume // *)"
+        - "Bash(docker * --volume=// *)"
+        - "Bash(docker * -v /.:/*)"
+        - "Bash(docker * -v=/.:/*)"
+        - "Bash(docker * -v/.:/*)"
+        - "Bash(docker * --volume /.:/*)"
+        - "Bash(docker * --volume=/.:/*)"
+        - "Bash(docker * -v /. *)"
+        - "Bash(docker * -v=/. *)"
+        - "Bash(docker * -v/. *)"
+        - "Bash(docker * --volume /. *)"
+        - "Bash(docker * --volume=/. *)"
+        - "Bash(docker * -v /./:/*)"
+        - "Bash(docker * -v=/./:/*)"
+        - "Bash(docker * -v/./:/*)"
+        - "Bash(docker * --volume /./:/*)"
+        - "Bash(docker * --volume=/./:/*)"
+        - "Bash(docker * -v /./ *)"
+        - "Bash(docker * -v=/./ *)"
+        - "Bash(docker * -v/./ *)"
+        - "Bash(docker * --volume /./ *)"
+        - "Bash(docker * --volume=/./ *)"
         - "Bash(docker * --mount *source=/,*)"
         - "Bash(podman * --privileged*)"
         - "Bash(podman * --pid=host*)"
@@ -1467,10 +1508,45 @@ permission_deny_rules:
         - "Bash(podman *podman.sock*)"
         - "Bash(podman *docker.sock*)"
         - "Bash(podman * -v /:/*)"
+        - "Bash(podman * -v=/:/*)"
+        - "Bash(podman * -v/:/*)"
         - "Bash(podman * --volume /:/*)"
         - "Bash(podman * --volume=/:/*)"
         - "Bash(podman * -v / *)"
+        - "Bash(podman * -v=/ *)"
+        - "Bash(podman * -v/ *)"
         - "Bash(podman * --volume / *)"
+        - "Bash(podman * --volume=/ *)"
+        - "Bash(podman * -v //:/*)"
+        - "Bash(podman * -v=//:/*)"
+        - "Bash(podman * -v//:/*)"
+        - "Bash(podman * --volume //:/*)"
+        - "Bash(podman * --volume=//:/*)"
+        - "Bash(podman * -v // *)"
+        - "Bash(podman * -v=// *)"
+        - "Bash(podman * -v// *)"
+        - "Bash(podman * --volume // *)"
+        - "Bash(podman * --volume=// *)"
+        - "Bash(podman * -v /.:/*)"
+        - "Bash(podman * -v=/.:/*)"
+        - "Bash(podman * -v/.:/*)"
+        - "Bash(podman * --volume /.:/*)"
+        - "Bash(podman * --volume=/.:/*)"
+        - "Bash(podman * -v /. *)"
+        - "Bash(podman * -v=/. *)"
+        - "Bash(podman * -v/. *)"
+        - "Bash(podman * --volume /. *)"
+        - "Bash(podman * --volume=/. *)"
+        - "Bash(podman * -v /./:/*)"
+        - "Bash(podman * -v=/./:/*)"
+        - "Bash(podman * -v/./:/*)"
+        - "Bash(podman * --volume /./:/*)"
+        - "Bash(podman * --volume=/./:/*)"
+        - "Bash(podman * -v /./ *)"
+        - "Bash(podman * -v=/./ *)"
+        - "Bash(podman * -v/./ *)"
+        - "Bash(podman * --volume /./ *)"
+        - "Bash(podman * --volume=/./ *)"
         - "Bash(podman * --mount *source=/,*)"
     # Prefix globs cannot enumerate every spelling of a destructive command,
     # so this set lists the common flag orders and short/long forms, plus the

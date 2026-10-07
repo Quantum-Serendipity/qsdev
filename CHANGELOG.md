@@ -8,6 +8,43 @@ All notable changes to qsdev are recorded in this file. The format is based on
 
 ### Changed
 
+- The MCP server's opt-in `qsdev_nix_run` tool is now held to what a Bash call
+  may do, not only to the Bash deny rules: a call whose Bash equivalent (the
+  `nix run` line, the program it runs, a `-c` script or stdin) self-protection
+  refuses (a write or delete of a protected file, a human-only `qsdev`
+  command, an evasion pattern), or that a Bash ask rule would ask about (a
+  package install through a shell), is refused before nix runs. The
+  selfprotect hook also judges `mcp__<server>__qsdev_nix_run` calls as those
+  Bash command lines.
+
+- Self-protection judges the PowerShell tool's human-only commands in the
+  words PowerShell passes a program: `qsdev 'teardown','--force'`,
+  `& qsdev teardown,--force`, `& qsdev @('teardown','--force')`, a splat,
+  `Start-Process qsdev -ArgumentList 'teardown','--force'` and
+  `[Diagnostics.Process]::Start('qsdev','teardown --force')` are now denied
+  (SP-014) as their Bash spellings are; before, the array syntax hid the
+  subcommand. A PowerShell line that sets or clears `CLAUDECODE` or a Claude
+  Code settings variable is denied (SP-008).
+
+- `qsdev devenv doctor` now runs `qsdev --version` on the `qsdev` the
+  project's Claude Code hooks find on PATH and fails `--check` when it does
+  not satisfy the project's `qsdev_version`, naming its path and version.
+  Before, it only looked the binary up, so a stale `qsdev` earlier on PATH,
+  which the fail-closed selfprotect hook would run, passed. A missing `qsdev`
+  now gets a PATH hint naming the running binary instead of "no nix package
+  is known for qsdev".
+
+- An org defaults file (`$QSDEV_ORG_CONFIG` or the pinned overlay) that fails
+  to load, for example because it tries to loosen the built-in security
+  floor, now stops every command that generates or changes the project:
+  `init`, `init --update`, `update`, `enable`, `disable`, `repair`,
+  `claude *` and `devenv *` exit non-zero naming the file and
+  `qsdev defaults validate`, and `qsdev check` fails `config_catalog` (high).
+  Before, they skipped the whole file (including its tightening entries),
+  generated from the built-in defaults and exited 0, recording the skip only
+  in the session log. Read-only invocations (`status`, `doctor`,
+  `--dry-run`) still run on the built-in defaults and print a warning.
+
 - `qsdev devenv doctor` enforces host version floors: devenv >= 2.1 (the
   `require_version` the generated `devenv.yaml` declares) and nix >= 2.4 (the
   first release with `nix profile` and flakes) are required, and python3 >=

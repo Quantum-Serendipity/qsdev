@@ -12,6 +12,7 @@ import (
 	"github.com/Quantum-Serendipity/qsdev/internal/mcphealth"
 	"github.com/Quantum-Serendipity/qsdev/internal/pkgmanager"
 	"github.com/Quantum-Serendipity/qsdev/internal/sysinfo"
+	"github.com/Quantum-Serendipity/qsdev/internal/termutil"
 	"github.com/Quantum-Serendipity/qsdev/pkg/branding"
 )
 
@@ -168,6 +169,9 @@ type ToolEntry struct {
 	Found      bool   `json:"found"`
 	Version    string `json:"version,omitempty"`
 	MinVersion string `json:"min_version,omitempty"`
+	// Constraint is the version constraint the tool must satisfy in place of
+	// MinVersion (see ToolCheck.Constraint).
+	Constraint string `json:"version_constraint,omitempty"`
 	VersionOK  bool   `json:"version_ok"`
 	Path       string `json:"path,omitempty"`
 	// InProject reports that the binary lies inside the project and was
@@ -185,20 +189,36 @@ type ToolEntry struct {
 func (t ToolEntry) problem() (string, bool) {
 	// The name, path and fix can come from repository content (a program a
 	// hook runs), so each is made safe for the terminal.
-	name, fix := terminalSafe(t.Name), terminalSafe(t.FixCommand)
+	name, fix := termutil.Safe(t.Name), termutil.Safe(t.FixCommand)
+	need := t.requirement()
 	switch {
 	case !t.Found:
 		return withFix(t.withReason("Install "+name), fix), true
-	case t.VersionOK || t.MinVersion == "":
+	case t.VersionOK || need == "":
 		return "", false
 	case t.Version == "" && t.InProject:
-		return t.withReason(fmt.Sprintf("%s at %s is inside the project, so doctor does not run it; verify it is >= %s",
-			name, terminalSafe(t.Path), t.MinVersion)), true
+		return t.withReason(fmt.Sprintf("%s at %s is inside the project, so doctor does not run it; verify it is %s",
+			name, termutil.Safe(t.Path), need)), true
 	case t.Version == "":
-		return t.withReason(fmt.Sprintf("Could not determine %s version (need >= %s)", name, t.MinVersion)), true
+		return t.withReason(fmt.Sprintf("Could not determine %s version (need %s)", name, need)), true
+	case t.Constraint != "":
+		return withFix(t.withReason(fmt.Sprintf("%s on PATH (%s, %s) does not satisfy the version the project requires (%s)",
+			name, termutil.Safe(t.Path), termutil.Safe(t.Version), termutil.Safe(t.Constraint))), fix), true
 	default:
-		return withFix(t.withReason(fmt.Sprintf("Upgrade %s to >= %s", name, t.MinVersion)), fix), true
+		return withFix(t.withReason(fmt.Sprintf("Upgrade %s to %s", name, need)), fix), true
 	}
+}
+
+// requirement is the version the tool must have: its constraint, or
+// ">= <MinVersion>", or "" when any version will do.
+func (t ToolEntry) requirement() string {
+	switch {
+	case t.Constraint != "":
+		return termutil.Safe(t.Constraint)
+	case t.MinVersion != "":
+		return ">= " + t.MinVersion
+	}
+	return ""
 }
 
 // withReason appends ", <RequiredBy>" to line when the tool has that reason.
@@ -280,6 +300,7 @@ func BuildReport(osInfo *sysinfo.OSInfo, checks []ToolStatus, qsdevVersion strin
 			Found:      ts.Installed,
 			Version:    ts.Version,
 			MinVersion: ts.MinVersion,
+			Constraint: ts.Constraint,
 			VersionOK:  ts.VersionOK,
 			Path:       ts.Path,
 			InProject:  ts.InProject,
@@ -315,8 +336,12 @@ func BuildReport(osInfo *sysinfo.OSInfo, checks []ToolStatus, qsdevVersion strin
 // manager gets an explicit note instead of an empty command. A tool required
 // for another reason (ToolStatus.RequiredBy) is not a prerequisite setup
 // installs, so it gets the advice of an optional tool. An installed tool
-// with an UpgradeHint (one setup cannot upgrade) gets that hint.
+// with an UpgradeHint (one setup cannot upgrade) gets that hint, and a tool
+// with a PathHint (the CLI's own binary) gets that hint whatever its state.
 func fixCommand(pm pkgmanager.PackageManager, family string, ts ToolStatus) string {
+	if ts.PathHint != "" {
+		return ts.PathHint
+	}
 	if ts.Installed && ts.UpgradeHint != "" {
 		return ts.UpgradeHint
 	}
@@ -474,11 +499,11 @@ func FormatReport(w io.Writer, r *Report, useColor bool) {
 			if p == "" {
 				p = "-"
 			}
-			p = terminalSafe(p)
+			p = termutil.Safe(p)
 			if t.RequiredBy != "" {
 				p += "  " + t.RequiredBy
 			}
-			fmt.Fprintf(w, "  %-14s %-8s %-11s %s\n", terminalSafe(t.Name), sym, terminalSafe(ver), p)
+			fmt.Fprintf(w, "  %-14s %-8s %-11s %s\n", termutil.Safe(t.Name), sym, termutil.Safe(ver), p)
 		}
 		fmt.Fprintln(w)
 	}
@@ -502,7 +527,7 @@ func FormatReport(w io.Writer, r *Report, useColor bool) {
 			if p == "" {
 				p = "-"
 			}
-			fmt.Fprintf(w, "  %-14s %-8s %-11s %s\n", terminalSafe(t.Name), sym, terminalSafe(ver), terminalSafe(p))
+			fmt.Fprintf(w, "  %-14s %-8s %-11s %s\n", termutil.Safe(t.Name), sym, termutil.Safe(ver), termutil.Safe(p))
 		}
 		fmt.Fprintln(w)
 	}
@@ -574,7 +599,7 @@ func formatMCPSection(w io.Writer, ms *MCPSection, okSym, warnSym, failSym strin
 		case MCPStatusMisconfigured:
 			sym = failSym
 		}
-		fmt.Fprintf(w, "  %-20s %s %s (%s)\n", terminalSafe(srv.Name), sym, srv.Status, srv.Transport)
+		fmt.Fprintf(w, "  %-20s %s %s (%s)\n", termutil.Safe(srv.Name), sym, srv.Status, srv.Transport)
 		for _, is := range srv.Issues {
 			isym := warnSym
 			if is.Severity == mcphealth.SeverityError {

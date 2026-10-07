@@ -134,6 +134,17 @@ claims:
     tests: [TestGenerateSettings_NoSandbox]
     tiers: [supply-chain-only, standard, full]
 
+  - id: nested-secret-files-read-denied
+    text: >-
+      inside a directory named `secrets` at any depth the secret-material
+      files of the internal/secrets canon (dotenv files, `*.key`, `*.pem`,
+      `*.p12`, `*.pfx`, keystores, and `*.json`, `*.yaml`, `*.yml`, `*.toml`
+      and `*.txt` files) are denied too. Source code in such a directory, such
+      as `internal/secrets/*.go`, stays readable.
+    files: [docs/security-architecture.md]
+    tests: [TestSecretsRuleAnchored, TestNestedSecretRules_FromCanon, TestSecretFilePatterns]
+    tiers: [standard, full]
+
   - id: enforce-always-not-liftable
     text: cannot be lifted with `qsdev session allow`
     files: [docs/security-architecture.md, docs/team-onboarding.md, docs/migration-guide.md]
@@ -247,10 +258,24 @@ claims:
     files: [docs/configuration-reference.md]
     tests:
       - TestNixRun_BashEquivalentDenied
-      - TestBashEquivalents
+      - TestNixRunCommandLines
       - TestFirstMatchingBashRule
       - TestNixRunDenyRules
-      - TestServeBuildsNixRunDenyRulesOnlyWhenMounted
+      - TestServeBuildsNixRunPolicyOnlyWhenMounted
+    tiers: []
+
+  - id: mcp-nix-run-selfprotect
+    text: >-
+      or when self-protection refuses one (a write to a protected file, a
+      human-only `qsdev` command, an evasion pattern). The selfprotect hook
+      judges `mcp__<server>__qsdev_nix_run` calls the same way.
+    files: [docs/configuration-reference.md]
+    tests:
+      - TestNixRun_PolicyRefusesWhatBashMayNot
+      - TestNixRunJudge
+      - TestSelfprotect_NixRunTool
+      - TestIsNixRunTool
+      - internal/selfprotect/judge.TestEvaluate
     tiers: []
 
   - id: mcp-http-bearer-token

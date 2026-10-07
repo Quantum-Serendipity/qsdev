@@ -339,7 +339,14 @@ requires a bearer token on every request:
 
 The token keeps other local accounts and web pages out. A process running as
 your user, an agent included, can read the token file, so the server still
-checks each `qsdev_nix_run` call against the Bash deny rules.
+holds each `qsdev_nix_run` call to what a Bash call may do. It judges the
+Bash command lines the call is equivalent to (the `nix run` line, the program
+the installable names with its arguments, a `-c` script and stdin) and
+refuses the call when a Bash deny rule matches one, when a Bash ask rule
+(package installs among them) would ask about one other than the `nix run`
+line, or when self-protection refuses one (a write to a protected file, a
+human-only `qsdev` command, an evasion pattern). The selfprotect hook judges
+`mcp__<server>__qsdev_nix_run` calls the same way.
 
 ### MCP credential vending
 
@@ -848,6 +855,24 @@ The file is found in the project enclosing the working directory (the
 directory holding `.qsdev.yaml` or the state directory), or in the working
 directory outside a project.
 
+Every command that generates `devenv.nix` from the catalog names the file in
+its plan: `qsdev init` (every mode, `--dry-run` included), `qsdev init
+--update`, `qsdev update`, `qsdev devenv init`, `qsdev devenv update`, the
+`qsdev devenv add-*` and `remove-*` commands, and `qsdev enable` and
+`qsdev disable`. The name is followed by each pre-commit hook the file
+adds: a new custom hook with the command it runs, a hook added to the
+always-on `security_hooks` list, and a hook added to a hook tier. Hooks the
+built-in catalog or your user defaults file already define are not listed.
+A value holding a control character (a carriage return, an ANSI escape) is
+shown quoted with it escaped, so the file cannot rewrite its own line.
+
+```text
+Project defaults: /path/to/project/.qsdev/defaults.yaml
+  adds pre-commit hook foo-hook (security_hooks)
+  adds pre-commit hook okhook (custom_hooks): ./check.sh
+  adds pre-commit hook okhook (hook_tiers.baseline): ./check.sh
+```
+
 #### Layer order and the security floor
 
 Catalog layers apply in the order **built-in, user, project**:
@@ -915,7 +940,7 @@ Key contents:
 - `permitted_unfree_packages: []` -- Empty allowlist
 - `permitted_insecure_packages: []` -- Empty allowlist
 - `clean.enabled: true` -- Strips environment on shell entry
-- `clean.keep: [TERM, HOME, USER, ...]` -- Minimal variable allowlist: the catalog `keep_vars`, then the non-secret selector variables of each selected cloud module (AWS: `AWS_PROFILE`, `AWS_REGION`, `AWS_DEFAULT_REGION`; GCP: `CLOUDSDK_ACTIVE_CONFIG_NAME`, `CLOUDSDK_CORE_PROJECT`, `GOOGLE_CLOUD_PROJECT`; Azure: `ARM_SUBSCRIPTION_ID`, `ARM_TENANT_ID`), sorted. A module can never keep a credential variable.
+- `clean.keep: [PATH, TERM, HOME, USER, ...]` -- Minimal variable allowlist: the catalog `keep_vars` (`PATH` is required: devenv's shell rcfile runs `mktemp` under a Nix bash whose default `PATH` is `/no-such-path` before it sets its own `PATH`; the devenv profile still comes first), then the non-secret selector variables of each selected cloud module (AWS: `AWS_PROFILE`, `AWS_REGION`, `AWS_DEFAULT_REGION`; GCP: `CLOUDSDK_ACTIVE_CONFIG_NAME`, `CLOUDSDK_CORE_PROJECT`, `GOOGLE_CLOUD_PROJECT`; Azure: `ARM_SUBSCRIPTION_ID`, `ARM_TENANT_ID`), sorted. A module can never keep a credential variable.
 
 ### `devenv.nix`
 

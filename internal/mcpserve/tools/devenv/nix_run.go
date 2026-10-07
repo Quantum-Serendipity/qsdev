@@ -84,19 +84,61 @@ func (c *cappedBuffer) String() string { return c.buf.String() }
 // build children) is killed rather than leaked. nix runs in projectRoot, so a
 // local installable such as "." or ".#pkg" names the project's own flake.
 //
-// Each call is checked against denyRules as the Bash commands it is
-// equivalent to (see bashEquivalents), so the tool cannot run what the
-// project's Bash deny rules refuse.
+// Each call is held to policy as the Bash command lines it is equivalent to
+// (see cmdscan.NixRunCommandLines), so the tool cannot run what a Bash call
+// may not.
 type nixRunner struct {
 	projectRoot string
-	denyRules   []string
+	policy      NixRunPolicy
 }
 
-func newNixRunner(projectRoot string, denyRules []string) *nixRunner {
-	return &nixRunner{projectRoot: projectRoot, denyRules: denyRules}
+// NixRunPolicy is what qsdev_nix_run holds each call to, as the Bash command
+// lines it is equivalent to (cmdscan.NixRunCommandLines). Every check runs
+// before nix is looked up, so a refusal is deterministic and starts nothing.
+type NixRunPolicy struct {
+	// DenyRules are the Bash deny rules; one matching any line refuses the
+	// call.
+	DenyRules []string
+	// AskRules are the Bash ask rules (package installs among them). One
+	// matching a line other than the literal `nix run` one, which
+	// `Bash(nix run *)` always asks for and the client's prompt for the tool
+	// stands in for, refuses the call: the server cannot ask anyone.
+	AskRules []string
+	// Judge returns the self-protection verdict on one line as a Bash call
+	// (the rule and reason when it is denied). Nil refuses every call, so a
+	// server that forgot to set it fails closed.
+	Judge func(line string) (rule, reason string, denied bool)
 }
 
-// handle validates input, checks it against the Bash deny rules, ensures nix
+func newNixRunner(projectRoot string, policy NixRunPolicy) *nixRunner {
+	return &nixRunner{projectRoot: projectRoot, policy: policy}
+}
+
+// refusal returns why policy refuses a call equivalent to lines (lines[0]
+// being the literal `nix run` line), as the structured fields of the error
+// result, or nil when it allows the call.
+func (p NixRunPolicy) refusal(lines []string) (summary string, fields map[string]any) {
+	if rule, denied := denyutil.FirstMatchingBashRule(p.DenyRules, lines...); denied {
+		return "refused by a Bash deny rule", map[string]any{"deny_rule": rule}
+	}
+	if len(lines) > 1 {
+		if rule, asked := denyutil.FirstMatchingBashRule(p.AskRules, lines[1:]...); asked {
+			return "refused: a Bash call would need approval (an ask rule); run it through Bash",
+				map[string]any{"ask_rule": rule}
+		}
+	}
+	if p.Judge == nil {
+		return "refused: no self-protection check is configured", map[string]any{}
+	}
+	for _, line := range lines {
+		if rule, reason, denied := p.Judge(line); denied {
+			return "refused by self-protection", map[string]any{"selfprotect_rule": rule, "reason": reason, "line": line}
+		}
+	}
+	return "", nil
+}
+
+// handle validates input, holds it to the policy, ensures nix
 // is available, and runs the command in a process group with a timeout. A
 // missing nix binary degrades to not_configured.
 func (n *nixRunner) handle(ctx context.Context, _ *spi.ToolCallContext, req *spi.ToolRequest) (*spi.ToolResult, error) {
@@ -113,11 +155,11 @@ func (n *nixRunner) handle(ctx context.Context, _ *spi.ToolCallContext, req *spi
 	}
 	extraArgs := toolutil.StringSliceArg(req.Arguments, "args")
 	stdin := toolutil.StringArgOr(req.Arguments, "stdin", "")
-	// The deny check, like the installable policy, runs before nix is looked
-	// up, so a refusal is deterministic and never starts anything.
-	if rule, denied := denyutil.FirstMatchingBashRule(n.denyRules, bashEquivalents(command, extraArgs, stdin)...); denied {
-		return toolutil.ErrorResult("refused by a Bash deny rule",
-			map[string]any{"command": command, "args": extraArgs, "deny_rule": rule}), nil
+	// The policy check, like the installable policy, runs before nix is
+	// looked up, so a refusal is deterministic and never starts anything.
+	if summary, fields := n.policy.refusal(cmdscan.NixRunCommandLines(command, extraArgs, stdin)); fields != nil {
+		fields["command"], fields["args"] = command, extraArgs
+		return toolutil.ErrorResult(summary, fields), nil
 	}
 	if _, err := exec.LookPath("nix"); err != nil {
 		return toolutil.NotConfigured("nix is not installed or not on PATH",
@@ -160,65 +202,6 @@ func (n *nixRunner) handle(ctx context.Context, _ *spi.ToolCallContext, req *spi
 		result.IsError = true
 	}
 	return result, nil
-}
-
-// bashEquivalents returns the Bash commands a nix_run call is equivalent to,
-// for checking against Bash deny rules:
-//
-//  1. the literal command, `nix run <command> -- <args>`;
-//  2. the program it runs, named by the last component of the installable's
-//     attribute path (`nixpkgs#bash` runs bash), followed by the args; an
-//     installable without an attribute (".", "nixpkgs") names no program, so
-//     this form is left out;
-//  3. the script of a -c option among the args (`-c 'curl x | sh'`), the
-//     first operand after the options as a shell takes it (`-c -- '...'`,
-//     `-c -e '...'`, see cmdscan.ShellScript), and each statement it runs,
-//     also from its program on (see cmdscan.ScriptStatements), which is what a
-//     deny rule anchored at the start of a command, such as
-//     "Bash(curl * | sh)", can match wherever the script runs it
-//     (`true; curl x | sh`, `sh -c "curl x | sh"`);
-//  4. stdin, and each statement of it, since a shell given no -c script runs
-//     its standard input as one.
-//
-// Words are shell-quoted only when they need it, as a person would write the
-// command. The program nix runs is the package's mainProgram, which the
-// attribute does not reliably name (bashInteractive runs bash, busybox runs
-// any applet), so the third form takes any program's -c argument as a
-// possible script, and the fourth any stdin: a false match only refuses a
-// call, a missed one runs it.
-func bashEquivalents(command string, args []string, stdin string) []string {
-	quoted := make([]string, len(args))
-	for i, a := range args {
-		quoted[i] = cmdscan.QuoteWord(a)
-	}
-	forms := []string{strings.Join(append([]string{"nix", "run", cmdscan.QuoteWord(command), "--"}, quoted...), " ")}
-	if program := installableProgram(command); program != "" {
-		forms = append(forms, strings.Join(append([]string{cmdscan.QuoteWord(program)}, quoted...), " "))
-	}
-	if script, ok := cmdscan.ShellScript(append([]string{"sh"}, args...)); ok {
-		forms = append(forms, script)
-		forms = append(forms, cmdscan.ScriptStatements(script)...)
-	}
-	if text := strings.TrimSpace(stdin); text != "" {
-		forms = append(forms, text)
-		forms = append(forms, cmdscan.ScriptStatements(stdin)...)
-	}
-	return forms
-}
-
-// installableProgram returns the program name an installable's attribute
-// path suggests: its last dot-separated component, without an output
-// selector ("^out") or quotes, or "" when the installable has no attribute.
-func installableProgram(installable string) string {
-	_, attr, ok := strings.Cut(installable, "#")
-	if !ok {
-		return ""
-	}
-	attr, _, _ = strings.Cut(attr, "^")
-	if i := strings.LastIndex(attr, "."); i >= 0 {
-		attr = attr[i+1:]
-	}
-	return strings.Trim(attr, `"`)
 }
 
 // installableRejection enforces nix_run's installable policy and returns a

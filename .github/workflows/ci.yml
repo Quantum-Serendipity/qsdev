@@ -102,6 +102,14 @@ jobs:
       - name: Test with planted project markers
         run: scripts/ci/planted-markers.sh
 
+      # XS-N5 (XS-WS6 F3): planted project markers in a shared directory
+      # never reach a project below it, run against the built binary.
+      - name: Root-hijack E3
+        run: |
+          go build -o "${RUNNER_TEMP}/qsdev" ./cmd/qsdev
+          scripts/e2e/root-hijack.sh "${RUNNER_TEMP}/qsdev" | tee "${RUNNER_TEMP}/root-hijack.log"
+          grep -qx 'root-hijack: ok' "${RUNNER_TEMP}/root-hijack.log"
+
   lint:
     runs-on: ubuntu-latest
     steps:

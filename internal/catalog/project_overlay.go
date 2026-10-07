@@ -2,6 +2,7 @@ package catalog
 
 import (
 	"bytes"
+	"cmp"
 	"errors"
 	"fmt"
 	"io"
@@ -163,8 +164,67 @@ func applyProjectOverlay(base, builtin *Catalog, ov *projectOverlay) (*Catalog, 
 	out.security.CustomHooks = addProjectCustomHooks(base, builtin, proj.security.CustomHooks, reject)
 	out.hookTiers.Tiers = addProjectHookTierMembers(out.hookTiers.Tiers, proj.hookTiers.Tiers, reject)
 	out.derivations.TierToCompliance = raiseProjectTierCompliance(out, builtin, proj.derivations.TierToCompliance, reject)
+	out.projectHooks = addedHooks(base, out)
 
 	return out, errs
+}
+
+// ProjectHook is a pre-commit hook the project defaults file adds to the
+// generated configuration.
+type ProjectHook struct {
+	ID string
+	// Entry is the command the hook runs, when the hook is a custom hook;
+	// empty for a hook defined elsewhere (a built-in or tool hook).
+	Entry string
+	// Section is where the file adds it: custom_hooks, security_hooks or
+	// hook_tiers.<tier>.
+	Section string
+}
+
+// ProjectOverlayHooks returns the pre-commit hooks the project defaults file
+// adds, sorted by id and section, so a plan can show what repository content
+// would install. Hooks the built-in defaults or the developer's org file
+// already define are not included. It is nil when no project file applied
+// or the file adds no hook.
+func (c *Catalog) ProjectOverlayHooks() []ProjectHook {
+	return slices.Clone(c.projectHooks)
+}
+
+// addedHooks returns the hooks out has that base lacks: custom hooks,
+// always-on security hooks and hook tier members.
+func addedHooks(base, out *Catalog) []ProjectHook {
+	entries := make(map[string]string, len(out.security.CustomHooks))
+	for _, h := range out.security.CustomHooks {
+		entries[h.ID] = h.Entry
+	}
+	var added []ProjectHook
+	add := func(section string, ids []string) {
+		for _, id := range ids {
+			added = append(added, ProjectHook{ID: id, Entry: entries[id], Section: section})
+		}
+	}
+	for _, h := range out.security.CustomHooks[len(base.security.CustomHooks):] {
+		add(sectionCustomHooks, []string{h.ID})
+	}
+	add(sectionSecurityHooks, missingFrom(base.security.Hooks.Default, out.security.Hooks.Default))
+	for tier, ids := range out.hookTiers.Tiers {
+		add(sectionHookTiers+"."+tier, missingFrom(base.hookTiers.Tiers[tier], ids))
+	}
+	slices.SortFunc(added, func(a, b ProjectHook) int {
+		return cmp.Or(cmp.Compare(a.ID, b.ID), cmp.Compare(a.Section, b.Section))
+	})
+	return added
+}
+
+// missingFrom returns the entries of ids that base lacks.
+func missingFrom(base, ids []string) []string {
+	var out []string
+	for _, id := range ids {
+		if !slices.Contains(base, id) {
+			out = append(out, id)
+		}
+	}
+	return out
 }
 
 // addProjectPresetDenySets adds the overlay's deny_sets to existing

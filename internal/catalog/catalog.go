@@ -28,6 +28,10 @@ type Catalog struct {
 	mcpServe        MCPServeOptIns
 	docsCorpus      DocsCorpusConfig
 
+	// projectHooks lists the pre-commit hooks the project defaults file
+	// added (see ProjectOverlayHooks); nil when no project file applied.
+	projectHooks []ProjectHook
+
 	// entryNodes holds, for a catalog parsed from a unified defaults file,
 	// the source YAML node of every entry of each top-level mapping section
 	// (section name -> entry name -> node). MergeCatalogs uses it to
@@ -93,7 +97,9 @@ func ProjectRoot() string {
 // parse or validate, Default does not fail: a broken overlay would otherwise
 // take down every command, including the `defaults validate/edit/reset`
 // commands that exist to repair it. The overlay is skipped with a warning
-// instead, and the error is kept for OrgOverlayError. Errors in the embedded
+// instead, and the error is kept for OrgOverlayError; the CLI's root catalog
+// gate then refuses every command that would generate or change something
+// without it, and check fails config_catalog. Errors in the embedded
 // or project-level catalog are still returned: the project file is policy
 // the repository declares, so one that fails to parse, tries to loosen the
 // defaults, or fails the trust rule (see ProjectConfigFile) stops the

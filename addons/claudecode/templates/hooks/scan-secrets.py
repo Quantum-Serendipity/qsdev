@@ -74,8 +74,9 @@ DEFAULT_PATTERNS: list[str] = [
     r'sk_(live|test)_[A-Za-z0-9]{20,}',
     # Stripe restricted keys
     r'rk_(live|test)_[A-Za-z0-9]{20,}',
-    # npm access tokens
-    r'npm_[A-Za-z0-9]{36,}',
+    # npm access tokens (exactly 36 characters, so a placeholder word written
+    # after a real token is not part of the match)
+    r'npm_[A-Za-z0-9]{36}',
     # JWT tokens (three base64url segments; the signature may be short or empty)
     r'eyJ[A-Za-z0-9_-]{10,}\.eyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]*',
     # PEM private keys, including encrypted keys and PGP secret key blocks

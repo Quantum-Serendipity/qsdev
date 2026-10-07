@@ -1,6 +1,7 @@
 package secrets
 
 import (
+	"path"
 	"slices"
 	"strings"
 	"testing"
@@ -53,6 +54,38 @@ func TestCredentialPaths_Shape(t *testing.T) {
 		case strings.Contains("/"+p+"/", "/../"), strings.HasSuffix(p, "/"):
 			t.Errorf("entry %q is not a clean relative path", p)
 		}
+	}
+}
+
+// TestSecretFilePatterns pins the secret-material file names a secrets
+// directory is guarded for: each is a single-segment glob, the required
+// credential and config shapes are present, and source code is not matched.
+func TestSecretFilePatterns(t *testing.T) {
+	t.Parallel()
+
+	got := SecretFilePatterns()
+	for _, want := range []string{".env", ".env.*", "*.env", "*.key", "*.pem", "*.p12", "*.pfx",
+		"*.json", "*.yaml", "*.yml", "*.toml", "*.txt"} {
+		if !slices.Contains(got, want) {
+			t.Errorf("SecretFilePatterns() lacks %q", want)
+		}
+	}
+	for _, p := range got {
+		if p == "" || strings.Contains(p, "/") || strings.Contains(p, `\`) {
+			t.Errorf("entry %q is not a single path segment", p)
+		}
+		if _, err := path.Match(p, ""); err != nil {
+			t.Errorf("entry %q is not a valid glob: %v", p, err)
+		}
+		for _, src := range []string{"patterns.go", "known_vars_test.go", "README.md", "doc.go"} {
+			if ok, _ := path.Match(p, src); ok {
+				t.Errorf("entry %q matches source file %s", p, src)
+			}
+		}
+	}
+	got[0] = "mutated"
+	if SecretFilePatterns()[0] == "mutated" {
+		t.Error("SecretFilePatterns returned a shared slice; mutating it changed the canon")
 	}
 }
 

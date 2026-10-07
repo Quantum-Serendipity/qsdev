@@ -115,7 +115,7 @@ The generated `devenv.yaml` enforces:
 - **`impure: false`** — Prevents the build from accessing anything outside the Nix store.
 - **`allow_unfree: false`** — Blocks unfree packages unless explicitly listed.
 - **`allow_broken: false`** — Blocks broken packages.
-- **`clean.enabled: true`** — Strips the shell environment on entry, keeping only a minimal allowlist (TERM, HOME, USER, SSH_AUTH_SOCK, etc.).
+- **`clean.enabled: true`** — Strips the shell environment on entry, keeping only a minimal allowlist (PATH, TERM, HOME, USER, SSH_AUTH_SOCK, etc.). `PATH` is kept because `devenv shell` starts a Nix-built bash, whose default `PATH` is `/no-such-path`, and devenv's own rcfile runs `mktemp` before it sources the environment that sets `PATH`; without it the shell cannot start. The devenv profile is prepended, so its tools shadow host ones, but host-only programs (`claude`, `qsdev`) stay reachable in the clean shell. Credentials are not affected: they are cleared by `unsetEnvVars`, not by `clean`.
 
 The generated `devenv.nix` additionally:
 
@@ -281,9 +281,14 @@ purpose is to return short-lived cloud credentials. The server does not mount
 `qsdev_nix_run` or `qsdev_credential_vend` without an operator opt-in that the
 project's qsdev configuration cannot set: a flag, an environment variable, or
 the `mcp_serve` section of the user defaults file, which a project defaults
-file is rejected for setting. An environment variable is trusted only as far
-as the shell the server starts from: a committed `devenv.nix` or `.envrc` can
-export one, as it can run any other code in that shell. Credential vending
+file is rejected for setting. A flag or environment variable is trusted only
+as far as whatever starts the server: a committed `.mcp.json` can add
+`--allow-nix-run` or an `env` entry to the qsdev server it launches, and a
+committed `devenv.nix` or `.envrc` can export the variable. Each of those
+files can already run any command once you approve the project's MCP servers
+in Claude Code or run `direnv allow`, so the opt-in gives a hostile
+repository nothing new, and those two approvals are the trust boundary for
+it. Credential vending
 also needs the committed `.qsdev.yaml` to enable `security.credential_vend`,
 whose allow-lists then limit it to the AWS roles, GCP service accounts, Azure
 scopes and managed identities they name; the committed block alone only logs a
@@ -489,9 +494,13 @@ lower:
 
 An org overlay that breaks the floor fails to load
 (`ErrOverlayLoosens`), naming the file and each field, instead of quietly
-generating a weaker `devenv.nix`; `qsdev defaults validate` reports it,
-and commands that read only the user scope fall back to the built-in
-catalog with a warning. The rules carry no exemption for a managed or
+generating a weaker `devenv.nix`; `qsdev defaults validate` reports it.
+The catalog then skips the whole file, so every command that generates or
+changes the project (`init`, `update`, `enable`, `disable`, `repair`,
+`claude *`, `devenv *`) refuses to run, `qsdev check` fails
+`config_catalog`, and only read-only invocations (`status`, `doctor`,
+`--dry-run`) and commands that read only the user scope fall back to the
+built-in catalog, with a warning. The rules carry no exemption for a managed or
 root-owned overlay: the built-in catalog satisfies them, so no legitimate
 distribution needs to un-strip a credential or drop a required hook. The
 committed project layer applies last and may only add, so a developer's
@@ -523,6 +532,56 @@ check fails when:
 
 A deleted or unparsable module also fails. Hooks and variables added on top
 pass, as does a disabled formatter or linter.
+
+## Repository Content as Untrusted Input
+
+A cloned repository is untrusted input. Nothing it commits may make qsdev
+generate a weaker or attacker-chosen configuration, write outside the
+project, or expose a gated tool, beyond what the user approves. Each part of
+this has a named acceptance test (`cmd/qsdev/untrusted_input_test.go`, unless
+noted):
+
+- **Project markers.** A `.qsdev/` data directory alone never marks a
+  project, the root walk stops at the enclosing git repository, and a marker
+  owned by another user or writable by everyone is ignored (see
+  [`.qsdev.yaml`](configuration-reference.md#qsdevyaml)). A planted
+  `.qsdev/defaults.yaml` above a fresh repository is not applied, and `init`
+  writes nothing above that repository. CI also runs
+  `scripts/e2e/root-hijack.sh` against the built binary.
+- **Project defaults.** A committed `.qsdev/defaults.yaml` may only tighten
+  (see [Project catalog defaults](#project-catalog-defaults)). A hook id that
+  is not a plain Nix identifier fails the load, naming the id, and nothing is
+  generated. Every command that generates `devenv.nix` from the catalog
+  (`init`, update, `devenv init`/`update`/`add-*`/`remove-*`, `enable`,
+  `disable`) lists every pre-commit hook the file adds, with its section
+  and entry, under `Project defaults: <path>`. A value holding a control or format character (a carriage return, an ANSI escape, a
+  bidi control) is shown quoted with it escaped, so the file cannot rewrite or
+  conceal its own preview line.
+- **Generated Nix.** `devenv.nix` is rendered from a template whose
+  identifier and comment interpolations (env keys, service and script names,
+  hook ids and setting names, section comments) go through functions that
+  fail the render on anything but a plain identifier or a single line.
+  Identifiers reject `a b`, `x;y`, a newline and a Nix keyword; a comment
+  rejects only a line break, since a Nix line comment ends only there and the
+  rest is inert, so the parse-tree test below accepts it only on a line
+  that is a comment up to it.
+  Values are escaped into Nix strings. The few interpolations that emit Nix
+  code (overlay paths, package expressions, ecosystem fragments, service
+  lines, qsdev-built hook entries and packages) come only from compiled
+  modules, the embedded or user-scope catalog, or escaped path literals. A
+  parse-tree test (`addons/devenv/devenv_nix_sinks_test.go`) fails on any
+  new interpolation outside that reviewed list.
+- **Gated MCP tools.** `qsdev_nix_run` and `qsdev_credential_vend` are not
+  mounted from the project's qsdev configuration alone, `qsdev_nix_run`
+  refuses commands the deny rules block, and plain loopback HTTP needs a
+  bearer token (`internal/mcpserve` `TestHTTPLoopback_RequiresToken`). See
+  [Credential vending is opt-in and allow-listed](#layer-12-policy-engine).
+
+**Residual.** A committed `.mcp.json` or `devenv.nix` can carry the gated
+tools' flag or environment opt-ins. This is accepted because either file can
+already run arbitrary commands, so the trust boundary stays Claude Code's
+project-server approval and `direnv allow`, which you should give only to a
+repository you trust.
 
 ## Project File Write Containment
 
@@ -665,6 +724,8 @@ Commands that represent bypass vectors — ways to circumvent the hook-gating �
 | Destructive Ops | `git push --force`, `rm -rf /`, `Read(./.env)` | ~6 |
 | Nix Bypass | `nix-env -i`, `cachix use` | ~8 |
 | Uncategorized | Per-ecosystem edge cases | ~14 |
+
+Secret stores are read-denied in two layers. The project's top-level `secrets/` directory is denied as a whole (`Read(/secrets/**)`), and inside a directory named `secrets` at any depth the secret-material files of the internal/secrets canon (dotenv files, `*.key`, `*.pem`, `*.p12`, `*.pfx`, keystores, and `*.json`, `*.yaml`, `*.yml`, `*.toml` and `*.txt` files) are denied too. Source code in such a directory, such as `internal/secrets/*.go`, stays readable.
 
 ### Permission Presets
 
@@ -910,7 +971,7 @@ Self-protection (Layer 14) and the permission deny rules match how a command is 
 | Computed paths | `d=.cla; echo x > ${d}ude/settings.json` (every Bash rule needs the literal path) | `qsdev check` detects the change afterwards for machine-owned generated files; prevention: none yet (planned: XS-WS3) |
 | Interpreters | `python3 -c "import os; os.remove('.cl'+'aude/settings.json')"` | `qsdev check` detects the change afterwards for machine-owned generated files; prevention: none yet (planned: XS-WS3) |
 | Git plumbing | `git update-index` / `checkout-index` rewriting a protected file without naming it, `>> .git/config`, `rm .git/hooks/pre-commit` | GIT-001 and the permission deny rules cover `git config`, `-c`, `--no-verify` and `--output`; the rest: none yet (planned: XS-WS3) |
-| PowerShell | `$p = -join [char[]](46,99,108,97,117,100,101); ri "$p\settings.json"` (a protected name built at run time), `& $c -Name x` (a command word computed at run time) | The PowerShell tool is judged in its own dialect. A line names a protected path when its text does (case-insensitively, with `\` or `/`, and also once quotes, backticks and `+` concatenation are removed), when the Bash mention scan does, or when a word of its commands reaches one through the same resolver the Bash rules use: globs (`.cla?de\settings.json`), symlinks, and the directory set by `Set-Location`, `Push-Location`, `cd` or the session. Such a line denies unless every command in it only reads: a read cmdlet (`Get-Content`, `Get-ChildItem`, `Select-String`, `Test-Path` and their aliases) or a read-only program use (`git diff`, `git log`, `rg`), with no write redirect and no `$(...)` subexpression. SP-003 reports the delete verbs (`Remove-Item`, `ri`, `del`, ...), and also denies deleting, moving or renaming a directory that holds `~/.claude` or another home-anchored location (`Remove-Item ~`, `$HOME`, `$env:USERPROFILE`, `..`). SP-009 denies `Stop-Process`, `spps`, `kill`, `taskkill` and `.Kill()` when the line names the CLI, `claude` or `gdev` as a word (also once concatenation is removed), or has a computed or glob word other than an `-Id`/`-PID` value. The evasion layer denies `iex`/`Invoke-Expression` (also as a computed call target such as `&('i'+'ex')`), an alias defined for either, `[...ScriptBlock]::Create`, `$ExecutionContext.InvokeCommand.NewScriptBlock`/`InvokeScript`, `pwsh`/`powershell -EncodedCommand` (any abbreviation, `-ec`, and the en dash, em dash or horizontal bar as the dash) and `Start-Process -Verb`; it re-checks the command line handed to `pwsh`/`powershell` (`-Command` or positional). Residual: a protected name, process name or eval verb never spelled out even after that normalisation (`[char]` arrays, `-join`, `-f`, `Join-Path`, a variable holding `iex`) gets through; so do `Get-Process \| Stop-Process` with no name and process termination through CIM or `wmic`; GIT-001, the shell-write half of SP-015 and the gate-dodge check on guarded config files still judge only the Bash tool (planned: U18-WS3). A non-read command that only mentions a protected path is denied (`Write-Host .claude/settings.json`, `gc .claude\settings.json \| ConvertFrom-Json`), a false positive accepted to fail closed |
+| PowerShell | `$p = -join [char[]](46,99,108,97,117,100,101); ri "$p\settings.json"` (a protected name built at run time), `& $c -Name x` (a command word computed at run time) | The PowerShell tool is judged in its own dialect. A line names a protected path when its text does (case-insensitively, with `\` or `/`, and also once quotes, backticks and `+` concatenation are removed), when the Bash mention scan does, or when a word of its commands reaches one through the same resolver the Bash rules use: globs (`.cla?de\settings.json`), symlinks, and the directory set by `Set-Location`, `Push-Location`, `cd` or the session. Such a line denies unless every command in it only reads: a read cmdlet (`Get-Content`, `Get-ChildItem`, `Select-String`, `Test-Path` and their aliases) or a read-only program use (`git diff`, `git log`, `rg`), with no write redirect and no `$(...)` subexpression. SP-003 reports the delete verbs (`Remove-Item`, `ri`, `del`, ...), and also denies deleting, moving or renaming a directory that holds `~/.claude` or another home-anchored location (`Remove-Item ~`, `$HOME`, `$env:USERPROFILE`, `..`). SP-009 denies `Stop-Process`, `spps`, `kill`, `taskkill` and `.Kill()` when the line names the CLI, `claude` or `gdev` as a word (also once concatenation is removed), or has a computed or glob word other than an `-Id`/`-PID` value. The evasion layer denies `iex`/`Invoke-Expression` (also as a computed call target such as `&('i'+'ex')`), an alias defined for either, `[...ScriptBlock]::Create`, `$ExecutionContext.InvokeCommand.NewScriptBlock`/`InvokeScript`, `pwsh`/`powershell -EncodedCommand` (any abbreviation, `-ec`, and the en dash, em dash or horizontal bar as the dash) and `Start-Process -Verb`; it re-checks the command line handed to `pwsh`/`powershell` (`-Command` or positional). SP-014 also reads a PowerShell line in the words PowerShell passes a native program: each element of an array argument is a word of its own (`qsdev 'teardown','--force'`, `& qsdev teardown,--force`), an array literal or splat (`@(...)`, `@a`) is computed and fails closed like `$Q teardown`, and a program named to `Start-Process`/`saps` (with `-ArgumentList` as an array or a string), `[Diagnostics.Process]::Start(...)` or `cmd /c` is invoked with the words that follow. SP-008 denies a PowerShell line that sets or clears `CLAUDECODE` or a Claude Code settings variable (`$env:CLAUDECODE=$null`, `Remove-Item Env:CLAUDECODE`, `[Environment]::SetEnvironmentVariable`), which the session would keep for the programs it starts later. Residual: a protected name, process name or eval verb never spelled out even after that normalisation (`[char]` arrays, `-join`, `-f`, `Join-Path`, a variable holding `iex`) gets through; so do `Get-Process \| Stop-Process` with no name and process termination through CIM or `wmic`; GIT-001, the shell-write half of SP-015 and the gate-dodge check on guarded config files still judge only the Bash tool (planned: U18-WS3). A non-read command that only mentions a protected path is denied (`Write-Host .claude/settings.json`, `gc .claude\settings.json \| ConvertFrom-Json`), a false positive accepted to fail closed |
 | Nested sessions | a `claude` session started from another directory, which loads that directory's project settings | SP-008 covers the flags and variables listed under Layer 14; the rest: none yet (planned: XS-WS4) |
 | Hook timeout | a command that keeps evaluation running past the hook timeout, which Claude Code treats as non-blocking | generated hooks: the self-protection run denies at its 7-second deadline, inside its 10-second registered timeout, and each Python hook blocks 2 seconds before its own; only a hand-written hook without such a deadline still lets the call through |
 | Missing binary | `qsdev` or `python3` not on the hook shell's `PATH`, so the hook exits 127, which Claude Code treats as non-blocking | generated hooks: the fail-closed wrapper turns any exit other than 0 or 2 into 2, a block; only a hand-written hook without the wrapper still lets the call through |

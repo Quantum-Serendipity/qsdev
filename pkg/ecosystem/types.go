@@ -99,6 +99,11 @@ func (c ModuleConfig) Extra(key, defaultVal string) string {
 type DevenvInput struct {
 	URL     string `yaml:"url"              json:"url"`
 	Follows string `yaml:"follows,omitempty" json:"follows,omitempty"`
+	// Options are the devenv options that read the input (the attribute
+	// devenv's config.lib.getInput names, e.g. "languages.go.version"). A
+	// module contributes the input only alongside a fragment that sets one of
+	// them, so devenv.yaml never declares an input devenv.nix does not use.
+	Options []string `yaml:"-" json:"-"`
 }
 
 // HookConfig represents a pre-commit hook configuration entry.

@@ -440,3 +440,30 @@ func PowerShellText(s string) (norm, loose string) {
 	}
 	return norm, b.String()
 }
+
+// PowerShellAsPOSIX renders PowerShell commands as a POSIX command line, one
+// command per line, in the words PowerShell passes a native program, for the
+// program-invocation scan (InvokedSpecs). PowerShell passes each element of
+// an array argument (`'a','b'`, `a,b`) as an argument of its own, so a comma
+// separates words; a quoted comma is split too, which only adds words, so
+// the scan errs towards a match. An array literal or splat (`@(...)`,
+// `@args`), whose elements the line computes, is the dynamic word "$_", as a
+// variable already is. A Start-Process or [Diagnostics.Process]::Start line
+// needs nothing more: the program it names followed by its argument list is
+// a mention the scan matches once the subcommand is written out.
+func PowerShellAsPOSIX(cmds []PSCommand) string {
+	var b strings.Builder
+	for _, c := range cmds {
+		b.WriteString(strings.ReplaceAll(c.Name, ",", " "))
+		for _, a := range c.Args {
+			b.WriteByte(' ')
+			if strings.HasPrefix(a, "@") {
+				b.WriteString("$_")
+				continue
+			}
+			b.WriteString(strings.ReplaceAll(a, ",", " "))
+		}
+		b.WriteByte('\n')
+	}
+	return b.String()
+}

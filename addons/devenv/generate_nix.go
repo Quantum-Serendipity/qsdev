@@ -34,12 +34,15 @@ func generateDevenvNix(ctx *genContext) (*types.GeneratedFile, error) {
 	}
 
 	return &types.GeneratedFile{
-		Path:     "devenv.nix",
+		Path:     devenvNixPath,
 		Content:  []byte(normalized),
 		Mode:     fileutil.ModeReadWrite,
 		Strategy: types.ManualMerge,
 	}, nil
 }
+
+// devenvNixPath is the project-relative path of the generated devenv.nix.
+const devenvNixPath = "devenv.nix"
 
 // renderDevenvNix renders the devenv.nix template as assembled from its
 // pieces, before normalizeNixModule groups repeated keys.

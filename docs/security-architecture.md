@@ -725,6 +725,8 @@ Commands that represent bypass vectors â€” ways to circumvent the hook-gating â€
 | Nix Bypass | `nix-env -i`, `cachix use` | ~8 |
 | Uncategorized | Per-ecosystem edge cases | ~14 |
 
+Secret stores are read-denied in two layers. The project's top-level `secrets/` directory is denied as a whole (`Read(/secrets/**)`), and inside a directory named `secrets` at any depth the secret-material files of the internal/secrets canon (dotenv files, `*.key`, `*.pem`, `*.p12`, `*.pfx`, keystores, and `*.json`, `*.yaml`, `*.yml`, `*.toml` and `*.txt` files) are denied too. Source code in such a directory, such as `internal/secrets/*.go`, stays readable.
+
 ### Permission Presets
 
 | Preset | Philosophy |

@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/Quantum-Serendipity/qsdev/internal/catalog"
+	"github.com/Quantum-Serendipity/qsdev/internal/secrets"
 	"github.com/Quantum-Serendipity/qsdev/pkg/denyutil"
 	"github.com/Quantum-Serendipity/qsdev/pkg/ecosystem"
 	"github.com/Quantum-Serendipity/qsdev/pkg/types"
@@ -268,13 +269,33 @@ func TestMutatingCommandsAsk(t *testing.T) {
 // project's top-level secrets/ directory without also blocking every nested
 // directory named secrets (such as internal/secrets/ source code), judged by
 // denyutil.MatchesPathRule, which models Claude Code's path-rule semantics.
+// Inside a secrets directory at any depth, the secret-material files of the
+// internal/secrets canon are denied too, while source code stays readable.
 func TestSecretsRuleAnchored(t *testing.T) {
 	t.Parallel()
 	cat, presets := generatedPresetPermissions(t)
-	const (
-		secretFile = "secrets/prod.env"
-		sourceFile = "internal/secrets/known_vars.go"
-	)
+	secretFiles := []string{
+		"secrets/prod.env",
+		"secrets/x",
+		"services/api/secrets/prod.env",
+		"deploy/secrets/tls.key",
+		"deploy/secrets/tls/server.pem",
+		"apps/web/secrets/.env",
+		"apps/web/secrets/.env.local",
+		"infra/secrets/client.p12",
+		"infra/secrets/client.pfx",
+		"infra/secrets/sa.json",
+		"infra/secrets/values.yaml",
+		"infra/secrets/values.yml",
+		"infra/secrets/creds.toml",
+		"infra/secrets/token.txt",
+	}
+	sourceFiles := []string{
+		"internal/secrets/known_vars.go",
+		"internal/secrets/patterns.go",
+		"internal/secrets/secretstest/samples.go",
+		"pkg/secrets/README.md",
+	}
 	for preset, p := range presets {
 		def, ok := cat.PermissionPreset(preset)
 		if !ok {
@@ -285,16 +306,43 @@ func TestSecretsRuleAnchored(t *testing.T) {
 		}
 		t.Run(preset, func(t *testing.T) {
 			t.Parallel()
-			if _, ok := firstPathMatch(p.deny, secretFile); !ok {
-				t.Errorf("no deny Read rule blocks %s", secretFile)
+			for _, f := range secretFiles {
+				if _, ok := firstPathMatch(p.deny, f); !ok {
+					t.Errorf("no deny Read rule blocks %s", f)
+				}
 			}
-			if r, ok := firstPathMatch(p.deny, sourceFile); ok {
-				t.Errorf("deny rule %s blocks %s", r, sourceFile)
-			}
-			if r, ok := firstPathMatch(p.ask, sourceFile); ok {
-				t.Errorf("ask rule %s blocks %s", r, sourceFile)
+			for _, f := range sourceFiles {
+				if r, ok := firstPathMatch(p.deny, f); ok {
+					t.Errorf("deny rule %s blocks %s", r, f)
+				}
+				if r, ok := firstPathMatch(p.ask, f); ok {
+					t.Errorf("ask rule %s blocks %s", r, f)
+				}
 			}
 		})
+	}
+}
+
+// TestNestedSecretRules_FromCanon pins that the nested secrets rules are
+// derived from the secrets canon, not a second list: every preset that
+// denies the top-level secrets/ directory denies each canon pattern inside
+// a secrets directory at any depth, and every such rule validates.
+func TestNestedSecretRules_FromCanon(t *testing.T) {
+	t.Parallel()
+	_, presets := generatedPresetPermissions(t)
+	for preset, p := range presets {
+		if !slices.Contains(p.deny, "Read(/secrets/**)") {
+			continue
+		}
+		for _, pat := range secrets.SecretFilePatterns() {
+			rule := "Read(/**/secrets/**/" + pat + ")"
+			if !slices.Contains(p.deny, rule) {
+				t.Errorf("preset %s lacks %s", preset, rule)
+			}
+			if err := denyutil.Validate(rule); err != nil {
+				t.Errorf("preset %s: %v", preset, err)
+			}
+		}
 	}
 }
 

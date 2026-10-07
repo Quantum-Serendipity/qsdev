@@ -5,10 +5,12 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"strings"
 	"testing"
 
 	"github.com/Quantum-Serendipity/qsdev/addons/devenv"
+	"github.com/Quantum-Serendipity/qsdev/internal/validation"
 )
 
 func TestBuildAnswersFromFlags(t *testing.T) {
@@ -90,25 +92,17 @@ func TestValidServices(t *testing.T) {
 }
 
 func TestValidLanguages(t *testing.T) {
-	expected := map[string]bool{
-		"go":         true,
-		"javascript": true,
-		"python":     true,
-		"rust":       true,
-		"java":       true,
-		"dotnet":     true,
-		"container":  true,
-		"terraform":  true,
-	}
+	t.Parallel()
 
 	languages := devenv.ExportValidLanguages
-	if len(languages) != len(expected) {
-		t.Fatalf("validLanguages has %d entries, want %d", len(languages), len(expected))
+	if want := validation.Languages(); !slices.Equal(languages, want) {
+		t.Fatalf("validLanguages = %v, want validation.Languages() = %v", languages, want)
 	}
-
-	for _, lang := range languages {
-		if !expected[lang] {
-			t.Errorf("unexpected language in validLanguages: %q", lang)
+	// aws, gcp and azure are registered modules that the core-only list
+	// used to reject (U08-02).
+	for _, lang := range []string{"aws", "gcp", "azure"} {
+		if !slices.Contains(languages, lang) {
+			t.Errorf("validLanguages is missing %q", lang)
 		}
 	}
 }

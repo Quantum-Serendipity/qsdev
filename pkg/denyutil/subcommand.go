@@ -109,15 +109,30 @@ func interspersedPatterns(prefix, op string) []string {
 //   - the space before a trailing `*` is literal, so "ls *" does not match
 //     "lsof".
 //
-// Unlike MatchesDenyRule, which deliberately widens a trailing " *" to a
+// Unlike Shadows, which deliberately widens a trailing " *" to a
 // token-boundary prefix, this matcher answers what Claude Code itself would
 // match, so tests can assert both what a rule blocks and what it leaves
 // allowed.
 func MatchesBashRule(rule, command string) bool {
 	tool, pattern := ParseToolPattern(rule)
-	if tool != "Bash" {
-		return false
-	}
+	return tool == "Bash" && matchesCommandPattern(pattern, command)
+}
+
+// MatchesPowerShellRule is MatchesBashRule for Claude Code's PowerShell tool:
+// it reports whether a "PowerShell(...)" rule matches command under the same
+// wildcard semantics, and never matches a Bash rule. As the docs state
+// ("Matching is case-insensitive"), pattern and command are compared with
+// case folded. Claude Code also canonicalizes common aliases (gci, ls, dir
+// for Get-ChildItem) before matching; that is not modelled, so callers must
+// write the cmdlet name in both the rule and the command.
+func MatchesPowerShellRule(rule, command string) bool {
+	tool, pattern := ParseToolPattern(rule)
+	return tool == "PowerShell" && matchesCommandPattern(strings.ToLower(pattern), strings.ToLower(command))
+}
+
+// matchesCommandPattern applies the documented wildcard semantics to one
+// rule pattern (the text inside the parentheses).
+func matchesCommandPattern(pattern, command string) bool {
 	if base, ok := strings.CutSuffix(pattern, ":*"); ok {
 		pattern = base + " *"
 	}
@@ -132,4 +147,24 @@ func MatchesBashRule(rule, command string) bool {
 		parts[i] = regexp.QuoteMeta(p)
 	}
 	return regexp.MustCompile(`(?s)^` + strings.Join(parts, `.*`) + `$`).MatchString(command)
+}
+
+// sampleToken stands in for each wildcard in a SampleCommand.
+const sampleToken = "x"
+
+// SampleCommand returns a concrete command that the Bash permission rule
+// matches, with each `*` (and a trailing ":*") replaced by a sample argument:
+// "Bash(npm -* install *)" yields "npm -x install x". It reports false for a
+// non-Bash rule or a Bash rule without a command. Checking another rule with
+// MatchesBashRule against the sample tells whether that rule also covers
+// commands the first one gates.
+func SampleCommand(rule string) (string, bool) {
+	tool, pattern := ParseToolPattern(rule)
+	if tool != "Bash" || pattern == "" {
+		return "", false
+	}
+	if base, ok := strings.CutSuffix(pattern, ":*"); ok {
+		pattern = base + " *"
+	}
+	return strings.ReplaceAll(pattern, "*", sampleToken), true
 }

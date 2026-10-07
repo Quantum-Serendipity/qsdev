@@ -98,5 +98,5 @@ Prefer 'qsdev update' which coordinates binary updates with config regeneration.
 	cmd.Flags().BoolVar(&noStrict, "no-strict", false, "Allow installing a release that has no signature bundle (escape hatch for dev/self-built releases)")
 
 	// Either spelling installs a binary whose signature was not verified.
-	return cmdutil.MarkSensitive(cmd, cmdutil.Sensitivity{Flags: map[string]bool{"no-strict": true, "strict": false}})
+	return cmdutil.MarkSensitive(cmdutil.MarkProfile(cmd, cmdutil.ProfileGlobal), cmdutil.Sensitivity{Flags: map[string]bool{"no-strict": true, "strict": false}})
 }

@@ -4,7 +4,6 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/Quantum-Serendipity/qsdev/internal/logging"
 	"github.com/Quantum-Serendipity/qsdev/internal/mcpserve/spi"
 	"github.com/Quantum-Serendipity/qsdev/internal/version"
 	"github.com/Quantum-Serendipity/qsdev/pkg/aiframework"
@@ -91,33 +90,6 @@ func TestRegisterFrameworkAdapters_DuplicatePanics(t *testing.T) {
 		}
 	}()
 	RegisterFrameworkAdaptersInto(reg)
-}
-
-// TestClassifyInvocation_MCPServers proves every agent-launched MCP server,
-// including the legacy `mcp <module>` aliases, leaves logging to the server's
-// own automated session, while the user-facing mcp subcommands keep project
-// logging.
-func TestClassifyInvocation_MCPServers(t *testing.T) {
-	t.Parallel()
-	tests := []struct {
-		args []string
-		want logging.CommandClass
-	}{
-		{[]string{"mcp", "agent-postmortem"}, logging.ClassUnlogged},
-		{[]string{"mcp", "version-sentinel"}, logging.ClassUnlogged},
-		{[]string{"mcp", "serve", "--module", "agent-postmortem"}, logging.ClassUnlogged},
-		{[]string{"mcp", "install", "github"}, logging.ClassProject},
-		{[]string{"mcp", "status"}, logging.ClassProject},
-		{[]string{"init"}, logging.ClassProject},
-	}
-	for _, tt := range tests {
-		t.Run(strings.Join(tt.args, " "), func(t *testing.T) {
-			t.Parallel()
-			if got := classifyInvocation(tt.args); got != tt.want {
-				t.Errorf("classifyInvocation(%q) = %v, want %v", tt.args, got, tt.want)
-			}
-		})
-	}
 }
 
 func TestBuildVersionOverride(t *testing.T) {

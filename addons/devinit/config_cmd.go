@@ -27,10 +27,11 @@ func configShowCmd() *cobra.Command {
 }
 
 func runConfigShow(cmd *cobra.Command) error {
-	projectRoot, err := cmdutil.ProjectRoot()
+	pc, err := cmdutil.Project(cmd)
 	if err != nil {
 		return err
 	}
+	projectRoot := pc.Root
 	b := branding.Get()
 	configPath := filepath.Join(projectRoot, b.ConfigFile)
 	data, err := os.ReadFile(configPath)
@@ -66,10 +67,11 @@ Use --write to apply the migration in place.`,
 }
 
 func runMigrate(cmd *cobra.Command, write bool) error {
-	projectRoot, err := cmdutil.ProjectRoot()
+	pc, err := cmdutil.Project(cmd)
 	if err != nil {
 		return err
 	}
+	projectRoot := pc.Root
 
 	cfgFile := branding.Get().ConfigFile
 	configPath := filepath.Join(projectRoot, cfgFile)

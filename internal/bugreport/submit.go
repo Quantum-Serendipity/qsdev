@@ -12,6 +12,7 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"github.com/Quantum-Serendipity/qsdev/internal/projectctx"
 	"github.com/Quantum-Serendipity/qsdev/pkg/branding"
 	"github.com/Quantum-Serendipity/qsdev/pkg/fileutil"
 )
@@ -133,15 +134,16 @@ func runePrefix(s string, n int) string {
 	return s[:n]
 }
 
-// SaveToFile writes the report to the app's home directory and returns the path.
+// SaveToFile writes the report to the per-user state directory
+// (projectctx.UserDirs) and returns the path.
 func SaveToFile(title, body string) (string, error) {
 	// No shared-temp fallback: a predictable path there could be pre-created
 	// or symlinked by another local user.
-	home, err := os.UserHomeDir()
+	dirs, err := projectctx.UserDirs()
 	if err != nil {
-		return "", fmt.Errorf("locating home directory for the bug report: %w", err)
+		return "", fmt.Errorf("locating the state directory for the bug report: %w", err)
 	}
-	dir := filepath.Join(home, "."+branding.Get().AppName)
+	dir := dirs.State
 	if err := os.MkdirAll(dir, fileutil.ModeDirDefault); err != nil {
 		return "", fmt.Errorf("creating report directory %s: %w", dir, err)
 	}

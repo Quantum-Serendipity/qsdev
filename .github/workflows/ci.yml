@@ -35,8 +35,13 @@ jobs:
         with:
           go-version-file: go.mod
 
+      - name: Load tool versions
+        # Single source of the tool versions below; see the file's header.
+        shell: bash
+        run: grep -E '^[A-Z][A-Z0-9_]*=' .github/tool-versions.env >> "$GITHUB_ENV"
+
       - name: Install gotestsum
-        run: go install gotest.tools/gotestsum@v1.13.0
+        run: go install gotest.tools/gotestsum@${{ env.GOTESTSUM_VERSION }}
 
       - name: Build
         run: go build ./...
@@ -104,10 +109,15 @@ jobs:
           fi
           go test -count=1 -v -run '^(TestArchitecture|TestBaselineMonotone)$' ./internal/archtest/
 
+      - name: Load tool versions
+        # Single source of the tool versions below; see the file's header.
+        shell: bash
+        run: grep -E '^[A-Z][A-Z0-9_]*=' .github/tool-versions.env >> "$GITHUB_ENV"
+
       - name: golangci-lint
         uses: golangci/golangci-lint-action@1e7e51e771db61008b38414a730f564565cf7c20 # v9.2.0
         with:
-          version: v2.12.2
+          version: ${{ env.GOLANGCI_LINT_VERSION }}
 
   vulncheck:
     runs-on: ubuntu-latest
@@ -125,8 +135,13 @@ jobs:
         with:
           go-version-file: go.mod
 
+      - name: Load tool versions
+        # Single source of the tool versions below; see the file's header.
+        shell: bash
+        run: grep -E '^[A-Z][A-Z0-9_]*=' .github/tool-versions.env >> "$GITHUB_ENV"
+
       - name: Install govulncheck
-        run: go install golang.org/x/vuln/cmd/govulncheck@v1.3.0
+        run: go install golang.org/x/vuln/cmd/govulncheck@${{ env.GOVULNCHECK_VERSION }}
 
       - name: Run govulncheck
         run: govulncheck ./...
@@ -158,18 +173,25 @@ jobs:
           VERIFY_ACTION_PINS: "1"
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-  # Runs the OpenGrep rule library through the engine: every shipped rule must
-  # parse (an unparsable rule is dropped with only a warning) and the
-  # annotated fixtures under rules/core/testdata must match, with zero
-  # findings on the safe fixtures. The unit-test job skips these checks
-  # because it has no scanner installed.
-  rules:
-    runs-on: ubuntu-latest
-    env:
-      OPENGREP_VERSION: "1.21.0"
-      # Release asset digest of opengrep_manylinux_x86 for OPENGREP_VERSION
-      # (also pinned in nix/opengrep/default.nix).
-      OPENGREP_SHA256: 9ed0ceee4a3a406d27d40894bcce85ea151be21e6d4b180689689224faff2a3e
+  # Builds the OpenGrep derivation (nix/opengrep) on every platform it
+  # advertises, smoke-tests the binary, and runs the rule library through it:
+  # every shipped rule must parse (an unparsable rule is dropped with only a
+  # warning) and the annotated fixtures under rules/core/testdata must match,
+  # with zero findings on the safe fixtures. The unit-test job skips these
+  # checks because it has no scanner installed. qsdev embeds this derivation
+  # into user projects, so a broken unpack, patchelf or hash fails here first.
+  # One leg also verifies the pinned release hash of every platform.
+  opengrep-nix:
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        os:
+          - ubuntu-latest
+          - ubuntu-24.04-arm
+          - macos-latest
+          - macos-15-intel
+    runs-on: ${{ matrix.os }}
     steps:
       - name: Harden Runner
         uses: step-security/harden-runner@9af89fc71515a100421586dfdb3dc9c984fbf411 # v2.19.4
@@ -186,19 +208,21 @@ jobs:
         with:
           go-version-file: go.mod
 
-      - name: Install OpenGrep (pinned, checksum-verified)
-        run: |
-          mkdir -p "$RUNNER_TEMP/opengrep"
-          curl -fsSL -o "$RUNNER_TEMP/opengrep/opengrep" \
-            "https://github.com/opengrep/opengrep/releases/download/v${OPENGREP_VERSION}/opengrep_manylinux_x86"
-          echo "${OPENGREP_SHA256}  $RUNNER_TEMP/opengrep/opengrep" | sha256sum --check --strict
-          chmod 0755 "$RUNNER_TEMP/opengrep/opengrep"
-          echo "$RUNNER_TEMP/opengrep" >> "$GITHUB_PATH"
-
-      - name: Validate rules and fixtures
-        run: go test -count=1 -run 'TestCoreRules_' -v ./rules/
+      # The official release tarball, checked against its pinned SHA-256 in
+      # .github/tool-versions.env before it runs; no third-party action.
+      - name: Install Nix
         env:
-          QSDEV_REQUIRE_RULE_SCANNER: "1"
+          GITHUB_TOKEN: ${{ github.token }}
+        run: .github/scripts/install-nix.sh
+
+      - name: Build OpenGrep and validate rules and fixtures
+        run: nix/opengrep/test-packaging.sh
+
+      # Runs even when the build above failed, so a version bump reports every
+      # platform's hash result at once instead of hiding three behind one.
+      - name: Verify every platform's release hash
+        if: ${{ !cancelled() && matrix.os == 'ubuntu-latest' }}
+        run: nix/opengrep/test-packaging.sh --hashes-only
 
   # Builds the MCP gateway image from build/docker/Dockerfile and runs the
   # container suite against it (size, version stamping, startup, auth). A stale
@@ -274,26 +298,31 @@ jobs:
       - name: Install Syft
         uses: anchore/sbom-action/download-syft@e22c389904149dbc22b58101806040fa8d37a610 # v0.24.0
 
+      - name: Load tool versions
+        # Single source of the tool versions below; see the file's header.
+        shell: bash
+        run: grep -E '^[A-Z][A-Z0-9_]*=' .github/tool-versions.env >> "$GITHUB_ENV"
+
       - name: Validate GoReleaser config
         uses: goreleaser/goreleaser-action@1a80836c5c9d9e5755a25cb59ec6f45a3b5f41a8 # v7.2.1
         with:
           distribution: goreleaser
-          # Exact pin: this binary runs with the release signing identity
-          # and tap tokens. Keep ci.yml and release.yml on the same version;
-          # Renovate's custom manager (renovate.json) bumps both.
-          # renovate: datasource=github-releases depName=goreleaser/goreleaser
-          version: v2.18.2
+          # Exact pin from .github/tool-versions.env, bumped by
+          # .github/workflows/tool-pins.yml: this binary runs with the release
+          # signing identity and tap tokens, and CI validates the same
+          # version the release runs (TestGoreleaserVersionPinned).
+          version: ${{ env.GORELEASER_VERSION }}
           args: check
 
       - name: Run GoReleaser (snapshot)
         uses: goreleaser/goreleaser-action@1a80836c5c9d9e5755a25cb59ec6f45a3b5f41a8 # v7.2.1
         with:
           distribution: goreleaser
-          # Exact pin: this binary runs with the release signing identity
-          # and tap tokens. Keep ci.yml and release.yml on the same version;
-          # Renovate's custom manager (renovate.json) bumps both.
-          # renovate: datasource=github-releases depName=goreleaser/goreleaser
-          version: v2.18.2
+          # Exact pin from .github/tool-versions.env, bumped by
+          # .github/workflows/tool-pins.yml: this binary runs with the release
+          # signing identity and tap tokens, and CI validates the same
+          # version the release runs (TestGoreleaserVersionPinned).
+          version: ${{ env.GORELEASER_VERSION }}
           args: release --snapshot --clean --skip=publish,sign
 
       - name: Upload snapshot artifacts

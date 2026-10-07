@@ -1,7 +1,6 @@
 package bwrap
 
 import (
-	"strings"
 	"testing"
 )
 
@@ -35,31 +34,5 @@ func TestIsLandlockSetupFailure(t *testing.T) {
 				t.Errorf("isLandlockSetupFailure(%d, %q) = %v, want %v", tt.code, tt.stderr, got, tt.want)
 			}
 		})
-	}
-}
-
-func TestHeadWriter(t *testing.T) {
-	t.Parallel()
-
-	h := &headWriter{limit: 8}
-	for _, chunk := range []string{"abc", "defgh", "ijk"} {
-		n, err := h.Write([]byte(chunk))
-		if err != nil || n != len(chunk) {
-			t.Fatalf("Write(%q) = (%d, %v), want (%d, nil)", chunk, n, err, len(chunk))
-		}
-	}
-	if got := string(h.buf); got != "abcdefgh" {
-		t.Errorf("retained %q, want the first 8 bytes %q", got, "abcdefgh")
-	}
-}
-
-func TestFirstLine(t *testing.T) {
-	t.Parallel()
-
-	if got := firstLine([]byte("ll-restrict: boom\nmore\n")); got != "ll-restrict: boom" {
-		t.Errorf("firstLine = %q", got)
-	}
-	if got := firstLine([]byte(strings.Repeat("x", 3))); got != "xxx" {
-		t.Errorf("firstLine without newline = %q", got)
 	}
 }

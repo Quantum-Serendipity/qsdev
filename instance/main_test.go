@@ -17,6 +17,7 @@ import (
 	"github.com/Quantum-Serendipity/qsdev/internal/catalog"
 	"github.com/Quantum-Serendipity/qsdev/internal/logging"
 	"github.com/Quantum-Serendipity/qsdev/internal/mcpserve/spi"
+	"github.com/Quantum-Serendipity/qsdev/internal/projectctx"
 	"github.com/Quantum-Serendipity/qsdev/pkg/branding"
 )
 
@@ -183,7 +184,7 @@ func buildDownstream(t *testing.T, version string) string {
 func TestDownstreamExample_NoUpdateNoticeWhenPiped(t *testing.T) {
 	bin := buildDownstream(t, "v0.1.0")
 	home := t.TempDir()
-	dir := filepath.Join(home, ".acmedev")
+	dir := filepath.Join(home, ".cache", "acmedev")
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -214,6 +215,8 @@ func TestDownstreamExample_NoUpdateNoticeWhenPiped(t *testing.T) {
 		"APPDATA="+filepath.Join(home, "AppData", "Roaming"),
 		"LOCALAPPDATA="+filepath.Join(home, "AppData", "Local"),
 		"XDG_CONFIG_HOME="+filepath.Join(home, ".config"),
+		"XDG_CACHE_HOME="+filepath.Join(home, ".cache"),
+		"XDG_STATE_HOME="+filepath.Join(home, ".local", "state"),
 		"ACMEDEV_LOG_DIR="+t.TempDir(),
 	)
 	var stderr bytes.Buffer
@@ -298,12 +301,18 @@ func TestStartUpdateCheck_NonInteractive(t *testing.T) {
 	})
 }
 
-// writeUpdateCache writes an update-check cache under home naming v9.9.9,
-// checked (and attempted) at checkedAt, and returns its path.
+// writeUpdateCache points the per-user cache directory below home and writes
+// an update-check cache there naming v9.9.9, checked (and attempted) at
+// checkedAt, and returns its path.
 func writeUpdateCache(t *testing.T, home string, checkedAt time.Time) string {
 	t.Helper()
 	b := branding.Get()
-	dir := filepath.Join(home, "."+b.AppName)
+	t.Setenv("XDG_CACHE_HOME", filepath.Join(home, ".cache"))
+	dirs, err := projectctx.UserDirs()
+	if err != nil {
+		t.Fatalf("locating the cache dir: %v", err)
+	}
+	dir := dirs.Cache
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		t.Fatalf("creating cache dir: %v", err)
 	}

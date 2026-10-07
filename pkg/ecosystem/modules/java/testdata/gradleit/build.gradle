@@ -1,0 +1,14 @@
+// Fixture for TestGradleProxyScriptKeepsProxy: project repositories the
+// qsdev proxy init script must replace with the proxy.
+repositories {
+    mavenCentral()
+    maven { url = 'https://jitpack.io' }
+}
+
+def qsdevRepoURLs = repositories.collect { it.url.toString() }
+
+tasks.register('showRepositories') {
+    doLast {
+        qsdevRepoURLs.each { println "QSDEV_REPO project ${it}" }
+    }
+}

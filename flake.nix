@@ -115,22 +115,18 @@
           };
 
           default = qsdev;
+
+          # Built on every system flake-utils evaluates (the derivation's
+          # meta.platforms); CI exercises it via nix/opengrep/test-packaging.sh.
+          opengrep = import ./nix/opengrep { inherit pkgs; };
         } // pkgs.lib.optionalAttrs pkgs.stdenv.isLinux {
           inherit (sandboxPkgs) ll-restrict;
           seccomp-filter = sandboxPkgs.seccomp-profiles.filter;
-          opengrep = import ./nix/opengrep { inherit pkgs; };
         };
 
-        devShells.default = pkgs.mkShell {
-          buildInputs = [
-            go
-            pkgs.git
-            pkgs.goreleaser
-            pkgs.golangci-lint
-            pkgs.gopls
-            pkgs.delve
-            pkgs.syft
-          ];
-        };
+        # No devShells: `devenv shell` (devenv.nix, pinned by devenv.lock) is the
+        # only development environment. Add dev tools there with
+        # `qsdev devenv add-package <name>`, not here.
+        # TestFlakeHasNoDevShells enforces this.
       });
 }

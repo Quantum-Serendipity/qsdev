@@ -1,10 +1,12 @@
 package bwrap
 
 import (
+	"path"
 	"path/filepath"
 
 	"github.com/Quantum-Serendipity/qsdev/internal/sandbox"
 	"github.com/Quantum-Serendipity/qsdev/internal/sandbox/denylist"
+	"github.com/Quantum-Serendipity/qsdev/internal/sandbox/shim"
 )
 
 // PrepareLandlockFlags builds the ll-restrict CLI flags for the given config.
@@ -26,6 +28,10 @@ func landlockFlags(cfg *sandbox.SandboxConfig) []string {
 
 	// System files.
 	flags = append(flags, "--ro", "/etc")
+
+	// The shim's directory: ll-restrict execs the shim, which then execs the
+	// hook, and ll-restrict denies EXECUTE on every path it is not given.
+	flags = append(flags, "--ro", path.Dir(shim.SandboxPath()))
 
 	// Tmp is always writable.
 	flags = append(flags, "--rw", "/tmp")

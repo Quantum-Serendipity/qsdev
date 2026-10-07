@@ -148,9 +148,11 @@ func hasCSources(projectRoot string) bool {
 }
 
 // DevenvPackages returns Nix packages required by the C/C++ module based
-// on the configured build system and optional build cache.
+// on the configured build system, package manager and optional build cache.
+// cppcheck and conan back CI steps, so they are provisioned here rather than
+// left to a pre-commit hook's package, which depends on the hook tier.
 func (m *Module) DevenvPackages(config ecosystem.ModuleConfig) []string {
-	var pkgs []string
+	pkgs := []string{"cppcheck"}
 
 	buildSystem := config.Extra("build_system", "")
 	switch buildSystem {
@@ -162,13 +164,14 @@ func (m *Module) DevenvPackages(config ecosystem.ModuleConfig) []string {
 		pkgs = append(pkgs, "gnumake")
 	}
 
+	if packageManager(config) == "conan" {
+		pkgs = append(pkgs, "conan")
+	}
+
 	if config.Extra(ecosystem.ExtraBuildCache, "") == "sccache" {
 		pkgs = append(pkgs, "sccache")
 	}
 
-	if len(pkgs) == 0 {
-		return nil
-	}
 	return pkgs
 }
 
@@ -298,10 +301,12 @@ func (m *Module) CICommands(config ecosystem.ModuleConfig) []ecosystem.CICommand
 	switch packageManager(config) {
 	case "conan":
 		// --lockfile is strict unless --lockfile-partial is given: any
-		// requirement the lockfile does not pin fails the command.
+		// requirement the lockfile does not pin fails the command. A clean
+		// runner has no default profile, without which every conan command
+		// fails; --exist-ok keeps an existing one.
 		cmds = append(cmds, ecosystem.CICommand{
 			Name:        "conan-lock-verify",
-			Command:     "conan lock create . --lockfile=conan.lock --lockfile-out=/dev/null",
+			Command:     "conan profile detect --exist-ok && conan lock create . --lockfile=conan.lock --lockfile-out=/dev/null",
 			Description: "Verify Conan lockfile is up to date",
 			Phase:       ecosystem.CIPhaseInstall,
 		})

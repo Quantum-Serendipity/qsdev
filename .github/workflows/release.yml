@@ -57,15 +57,20 @@ jobs:
         env:
           GPG_PRIVATE_KEY: ${{ secrets.GPG_PRIVATE_KEY }}
 
+      - name: Load tool versions
+        # Single source of the tool versions below; see the file's header.
+        shell: bash
+        run: grep -E '^[A-Z][A-Z0-9_]*=' .github/tool-versions.env >> "$GITHUB_ENV"
+
       - name: Run GoReleaser
         uses: goreleaser/goreleaser-action@1a80836c5c9d9e5755a25cb59ec6f45a3b5f41a8 # v7.2.1
         with:
           distribution: goreleaser
-          # Exact pin: this binary runs with the release signing identity
-          # and tap tokens. Keep ci.yml and release.yml on the same version;
-          # Renovate's custom manager (renovate.json) bumps both.
-          # renovate: datasource=github-releases depName=goreleaser/goreleaser
-          version: v2.18.2
+          # Exact pin from .github/tool-versions.env, bumped by
+          # .github/workflows/tool-pins.yml: this binary runs with the release
+          # signing identity and tap tokens, and CI validates the same
+          # version the release runs (TestGoreleaserVersionPinned).
+          version: ${{ env.GORELEASER_VERSION }}
           args: release --clean
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

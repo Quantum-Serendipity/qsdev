@@ -1,6 +1,7 @@
 package config
 
 import (
+	"slices"
 	"strings"
 	"testing"
 
@@ -695,5 +696,29 @@ func TestResolveConfig_PointerBoolNilVsFalse(t *testing.T) {
 	// when project sets it to false).
 	if result2.Config.Security.AgeGating == nil {
 		t.Error("expected age_gating to be non-nil")
+	}
+}
+
+func TestResolveConfig_ClaudePermissionsUnion(t *testing.T) {
+	t.Parallel()
+	org := &types.QsdevConfig{ClaudeCode: types.ClaudeCodeConfig{
+		Permissions: types.ClaudePermissionsConfig{Deny: []string{"Bash(terraform apply *)"}},
+	}}
+	project := &types.QsdevConfig{ClaudeCode: types.ClaudeCodeConfig{
+		Permissions: types.ClaudePermissionsConfig{
+			Allow: []string{"Bash(make *)"},
+			Deny:  []string{"Bash(terraform apply *)", "Bash(kubectl delete *)"},
+		},
+	}}
+	result, err := ResolveConfig(org, project, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := result.Config.ClaudeCode.Permissions
+	if !slices.Equal(got.Allow, []string{"Bash(make *)"}) {
+		t.Errorf("allow = %v, want [Bash(make *)]", got.Allow)
+	}
+	if !slices.Equal(got.Deny, []string{"Bash(terraform apply *)", "Bash(kubectl delete *)"}) {
+		t.Errorf("deny = %v, want the union of both layers", got.Deny)
 	}
 }

@@ -47,7 +47,7 @@ func (p *InfraProfile) generateSecurityDoc(in ProjectInputs) (types.GeneratedFil
 		BehavioralTool: string(p.Scanning.Behavioral),
 		CIProtection:   string(p.Scanning.CIProtection),
 		UpdateTool:     string(p.Updates.Type),
-		AgeGatingDays:  p.Updates.AgeGatingDays,
+		AgeGatingDays:  in.updateAgeDays(p.Updates.AgeGatingDays),
 		SBOMGenerator:  string(p.SBOM.Generator),
 		RegistryProxy:  registrySummary(in),
 		NixCache:       nixCacheSummary(in.Infrastructure),

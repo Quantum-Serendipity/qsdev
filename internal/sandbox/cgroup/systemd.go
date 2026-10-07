@@ -8,6 +8,7 @@ import (
 
 	"github.com/Quantum-Serendipity/qsdev/internal/sandbox"
 	"github.com/Quantum-Serendipity/qsdev/internal/sandbox/bwrap"
+	"github.com/Quantum-Serendipity/qsdev/internal/sandbox/shim"
 )
 
 // SystemdRunBackend implements sandbox.SandboxBackend using systemd-run --user
@@ -38,9 +39,11 @@ func (s *SystemdRunBackend) Tier() sandbox.DegradationTier {
 	return sandbox.TierSystemdRun
 }
 
-// BuildArgs constructs the systemd-run command arguments from a SandboxConfig.
-func BuildArgs(cfg *sandbox.SandboxConfig) []string {
-	return append(sandbox.SystemdScopeArgs(cfg.Resources), cfg.HookCommand...)
+// BuildArgs constructs the systemd-run command arguments from a SandboxConfig:
+// the scope, then the launcher argv (RunHook's shim) when given, then the hook.
+func BuildArgs(cfg *sandbox.SandboxConfig, launcher ...string) []string {
+	args := append(sandbox.SystemdScopeArgs(cfg.Resources), launcher...)
+	return append(args, cfg.HookCommand...)
 }
 
 // hookEnvironment returns the environment for systemd-run: the hook's filtered
@@ -59,7 +62,12 @@ func hookEnvironment(cfg *sandbox.SandboxConfig) []string {
 }
 
 // RunHook executes the hook command inside a systemd-run --user scope with
-// resource limits derived from the sandbox configuration.
+// resource limits derived from the sandbox configuration. The hook runs
+// through the shim (internal/sandbox/shim), the host's qsdev binary itself
+// since this tier has no namespace, which signals a sandbox.LaunchGuard just
+// before it execs the hook. A run that never reached the hook (systemd-run
+// could not reach the user bus, or start the scope) is returned as an error
+// wrapping sandbox.ErrSetupFailed, never as the hook's exit code.
 func (s *SystemdRunBackend) RunHook(ctx context.Context, cfg *sandbox.SandboxConfig) (*sandbox.SandboxResult, error) {
 	if len(cfg.HookCommand) == 0 {
 		return &sandbox.SandboxResult{ExitCode: 0, Tier: sandbox.TierSystemdRun}, nil
@@ -67,11 +75,22 @@ func (s *SystemdRunBackend) RunHook(ctx context.Context, cfg *sandbox.SandboxCon
 
 	setupStart := time.Now()
 
-	args := BuildArgs(cfg)
+	hostExe, err := shim.HostExecutable()
+	if err != nil {
+		return nil, fmt.Errorf("%w: %w", sandbox.ErrSetupFailed, err)
+	}
+	guard, err := sandbox.NewLaunchGuard()
+	if err != nil {
+		return nil, fmt.Errorf("%w: %w", sandbox.ErrSetupFailed, err)
+	}
+	defer func() { _ = guard.Close() }()
+	extraFiles, readyFD := guard.AppendChildFile(nil)
+	args := BuildArgs(cfg, shim.Argv(hostExe, readyFD)...)
 
 	sandboxOverhead := time.Since(setupStart)
 
 	cmd := exec.CommandContext(ctx, s.systemdRunPath, args...)
+	cmd.ExtraFiles = extraFiles
 	cfg.Attach(cmd)
 	cmd.Env = hookEnvironment(cfg)
 
@@ -79,9 +98,18 @@ func (s *SystemdRunBackend) RunHook(ctx context.Context, cfg *sandbox.SandboxCon
 		cmd.Dir = cfg.ProjectDir
 	}
 
-	result, err := sandbox.RunCommand(ctx, cmd, sandbox.TierSystemdRun)
+	result, err := sandbox.RunCommand(ctx, cmd, sandbox.TierSystemdRun, guard.StderrTap())
 	if err != nil {
-		return nil, fmt.Errorf("executing systemd-run: %w", err)
+		if ctx.Err() != nil {
+			return nil, fmt.Errorf("executing systemd-run: %w", err)
+		}
+		return nil, fmt.Errorf("%w: executing systemd-run: %w", sandbox.ErrSetupFailed, err)
+	}
+	if err := guard.Err(result.ExitCode, func() string { return "" }); err != nil {
+		if ctx.Err() != nil {
+			return nil, fmt.Errorf("executing systemd-run: %w", ctx.Err())
+		}
+		return nil, err
 	}
 	result.SandboxOverhead = sandboxOverhead
 	return result, nil

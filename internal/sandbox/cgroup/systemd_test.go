@@ -1,6 +1,7 @@
 package cgroup
 
 import (
+	"slices"
 	"testing"
 
 	"github.com/Quantum-Serendipity/qsdev/internal/sandbox"
@@ -181,5 +182,18 @@ func TestBuildArgs(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+// TestBuildArgs_Launcher: RunHook's shim argv sits between the scope and the
+// hook, so systemd-run starts the shim, which then execs the hook.
+func TestBuildArgs_Launcher(t *testing.T) {
+	t.Parallel()
+
+	cfg := &sandbox.SandboxConfig{HookCommand: []string{"lint", "-x"}}
+	got := BuildArgs(cfg, "/q", "sandbox", "shim", "--ready-fd", "3", "--")
+	want := []string{"--user", "--scope", "--quiet", "--", "/q", "sandbox", "shim", "--ready-fd", "3", "--", "lint", "-x"}
+	if !slices.Equal(got, want) {
+		t.Errorf("BuildArgs = %v, want %v", got, want)
 	}
 }

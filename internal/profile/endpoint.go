@@ -4,10 +4,14 @@ import (
 	"encoding/base64"
 	"errors"
 	"fmt"
+	"maps"
 	"net"
 	"net/url"
 	"regexp"
+	"slices"
 	"strings"
+
+	"github.com/Quantum-Serendipity/qsdev/pkg/ecosystem"
 )
 
 var (
@@ -29,6 +33,52 @@ var placeholderCacheNames = map[string]bool{"myorg": true, "my-org": true, "exam
 // cachixNameRe matches a Cachix cache name.
 var cachixNameRe = regexp.MustCompile(`^[a-z0-9][a-z0-9-]*$`)
 
+// checkInfraEndpoints validates the user-supplied registry proxy base URL,
+// its per-ecosystem overrides and paths, and the build cache URL. It is the
+// one implementation shared by a selected infra profile (Resolve) and a
+// project without one (ValidateInfra).
+func checkInfraEndpoints(base string, overrides, paths map[string]string, buildCacheURL string) []error {
+	var errs []error
+	add := func(err error) {
+		if err != nil {
+			errs = append(errs, err)
+		}
+	}
+	if base != "" {
+		if err := checkEndpointURL("infrastructure.registry_proxy", base); err != nil {
+			add(err)
+			base = "" // reported once; still check each path's own shape below
+		}
+	}
+	for _, eco := range slices.Sorted(maps.Keys(overrides)) {
+		add(checkEndpointURL("infrastructure.registry_proxy_overrides."+eco, overrides[eco]))
+	}
+	for _, eco := range slices.Sorted(maps.Keys(paths)) {
+		add(checkProxyPath("infrastructure.registry_proxy_paths."+eco, base, paths[eco]))
+	}
+	if buildCacheURL != "" {
+		add(checkEndpointURL("infrastructure.build_cache_url", buildCacheURL))
+	}
+	return errs
+}
+
+// checkProxyPath validates a per-ecosystem registry path: an absolute path
+// on the proxy host that, joined to base (when set), still yields a valid
+// endpoint. An empty path selects the built-in default and is not checked.
+func checkProxyPath(field, base, path string) error {
+	if path == "" {
+		return nil
+	}
+	joined, err := ecosystem.JoinProxyURL(base, path)
+	if err != nil {
+		return fmt.Errorf("%w: %s: %w", ErrInvalidEndpoint, field, err)
+	}
+	if base == "" {
+		return nil
+	}
+	return checkEndpointURL(field, joined)
+}
+
 // checkEndpointURL validates a user-supplied endpoint URL: absolute, https
 // (plain http only to a loopback host), without embedded credentials, and
 // not an example/placeholder host.
@@ -37,18 +87,20 @@ func checkEndpointURL(field, raw string) error {
 	if err != nil || u.Host == "" || (u.Scheme != "https" && u.Scheme != "http") {
 		return fmt.Errorf("%w: %s %q is not an absolute http(s) URL", ErrInvalidEndpoint, field, raw)
 	}
+	shown := u.Redacted() // never echo an embedded password
 	host := strings.ToLower(u.Hostname())
 	if u.Scheme == "http" && !isLoopbackHost(host) {
-		return fmt.Errorf("%w: %s %q uses plain http to a non-local host; use https", ErrInvalidEndpoint, field, raw)
+		return fmt.Errorf("%w: %s %q uses plain http to a non-local host; use https", ErrInvalidEndpoint, field, shown)
 	}
 	if u.User != nil {
-		return fmt.Errorf("%w: %s must not embed credentials; supply them through the environment", ErrInvalidEndpoint, field)
+		return fmt.Errorf("%w: %s must not embed credentials; supply them through the environment "+
+			"(the infra profile's AuthEnvVar token variable) instead", ErrInvalidEndpoint, field)
 	}
 	if isPlaceholderHost(host) {
-		return fmt.Errorf("%w: %s %q is an example host; set it to your organization's real endpoint", ErrPlaceholderEndpoint, field, raw)
+		return fmt.Errorf("%w: %s %q is an example host; set it to your organization's real endpoint", ErrPlaceholderEndpoint, field, shown)
 	}
 	if name, ok := strings.CutSuffix(host, ".cachix.org"); ok && placeholderCacheNames[name] {
-		return fmt.Errorf("%w: %s %q is the example Cachix cache; set it to your own cache", ErrPlaceholderEndpoint, field, raw)
+		return fmt.Errorf("%w: %s %q is the example Cachix cache; set it to your own cache", ErrPlaceholderEndpoint, field, shown)
 	}
 	return nil
 }

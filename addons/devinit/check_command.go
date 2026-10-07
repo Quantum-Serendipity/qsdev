@@ -69,10 +69,11 @@ dependencies.totals can pass (without one they fail as inconclusive).`,
 }
 
 func runCheck(cmd *cobra.Command, format check.OutputFormat, auditLevel check.AuditLevel, autoFix, scan bool) error {
-	projectRoot, err := cmdutil.ProjectRoot()
+	pc, err := cmdutil.Project(cmd)
 	if err != nil {
 		return err
 	}
+	projectRoot := pc.Root
 
 	// Build CheckContext.
 	ctx := check.CheckContext{
@@ -118,12 +119,14 @@ func runCheck(cmd *cobra.Command, format check.OutputFormat, auditLevel check.Au
 			answersErr = fmt.Errorf("deriving answers from %s: %w", cfgFile, answersErr)
 		}
 	}
-	// The committed hooks block is authoritative for the hook policy (init,
-	// join and update refresh it from .qsdev.yaml), so a policy committed
+	// The committed hooks block and claude_code.permissions are
+	// authoritative for the hook policy and the extra permission rules (init,
+	// join and update refresh them from .qsdev.yaml), so a policy committed
 	// after the answers were saved is what settings.json must enforce, and
 	// a checkout that has not run 'qsdev init --update' since fails.
 	if ctx.QsdevConfig != nil {
 		answers.HookPolicy = ctx.QsdevConfig.Hooks.Clone()
+		answers.ClaudePermissions = ctx.QsdevConfig.ClaudeCode.Permissions.Clone()
 	}
 
 	// Settle the answers against the committed config, as every generation
@@ -150,12 +153,14 @@ func runCheck(cmd *cobra.Command, format check.OutputFormat, auditLevel check.Au
 
 	// Deny rule conflict validation.
 	ctx.DenyRules = claudecode.AllBaseDenyRules()
+	ctx.AskRules = claudecode.AllBaseAskRules()
 	builtinSkills := claudecode.BuiltinSkillDefinitions()
 	ctx.SkillOps = make([]check.SkillOps, len(builtinSkills))
 	for i, s := range builtinSkills {
 		ctx.SkillOps[i] = check.SkillOps{
 			Name:         s.Name,
 			AllowedTools: s.AllowedTools,
+			PreApproved:  s.PreApproved,
 		}
 	}
 	ctx.ExpectedConflictKeys = claudecode.ExpectedConflicts()
@@ -176,6 +181,7 @@ func runCheck(cmd *cobra.Command, format check.OutputFormat, auditLevel check.Au
 	// seeded from the embedded templates so the judgement holds when the
 	// generator cannot run or the config turns Claude Code off.
 	ctx.GeneratedContent = claudecode.HookScriptContents()
+	ctx.GuardSupportFiles = []string{claudecode.HookLibPath}
 	for rel, f := range freshFiles {
 		ctx.GeneratedContent[rel] = f.Content
 	}

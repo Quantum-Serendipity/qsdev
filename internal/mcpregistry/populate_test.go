@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/Quantum-Serendipity/qsdev/internal/catalog"
+	"github.com/Quantum-Serendipity/qsdev/internal/mcpconfig"
 )
 
 func TestBuildDefault_RegistersKnownServers(t *testing.T) {
@@ -118,8 +119,8 @@ func TestScanMcpJSON_HappyPath(t *testing.T) {
 
 	dir := t.TempDir()
 
-	content := mcpJSONFile{
-		MCPServers: map[string]mcpJSONEntry{
+	content := mcpconfig.File{
+		MCPServers: map[string]mcpconfig.Server{
 			"test-server": {
 				Command: "npx",
 				Args:    []string{"@test/mcp-server"},
@@ -233,8 +234,8 @@ func TestScanMcpJSON_EmptyServers(t *testing.T) {
 
 	dir := t.TempDir()
 
-	content := mcpJSONFile{
-		MCPServers: map[string]mcpJSONEntry{},
+	content := mcpconfig.File{
+		MCPServers: map[string]mcpconfig.Server{},
 	}
 	data, err := json.Marshal(content)
 	if err != nil {

@@ -62,23 +62,40 @@ func (p *InfraProfile) applyNixCache(infra types.InfraConfig) {
 	}
 }
 
-// ResolveProjectInfrastructure validates the project's own infrastructure
-// settings when no infra profile is selected. Nothing is required, but a
-// configured Nix binary cache (infrastructure.nix_cache) is written into
-// devenv.nix and the nix.conf guide, so it gets the same checks as a
-// profile's: a real https URL or Cachix cache name plus its public key, no
-// placeholders. A bare Cachix cache name becomes its substituter URL.
-func ResolveProjectInfrastructure(infra types.InfraConfig) (types.InfraConfig, error) {
-	if infra.NixCacheURL() == "" {
-		return infra, nil
+// ValidateInfra checks a project's own infrastructure settings
+// (.qsdev.yaml infrastructure:) whether or not an infra profile is selected:
+// the registry proxy, its per-ecosystem overrides and paths, the build cache
+// URL and a configured Nix binary cache. Each error names the offending
+// field. "none" opts a component out and is not checked.
+func ValidateInfra(infra types.InfraConfig) []error {
+	errs := checkInfraEndpoints(infra.RegistryProxyBase(), infra.RegistryProxyOverrides, infra.RegistryProxyPaths, infra.BuildCacheURL)
+	if infra.NixCacheURL() != "" {
+		errs = append(errs, projectNixCache(infra).validateNixCache()...)
 	}
+	return errs
+}
+
+// projectNixCache returns a profile holding only the project's own Nix
+// cache, read as a Cachix cache name or a substituter URL.
+func projectNixCache(infra types.InfraConfig) *InfraProfile {
 	p := &InfraProfile{NixCache: NixCacheConfig{Type: NixCacheCachix}}
 	p.applyNixCache(infra)
-	if err := errors.Join(p.validateNixCache()...); err != nil {
-		return infra, fmt.Errorf("%w\nset infrastructure.nix_cache and nix_cache_public_key in .qsdev.yaml to your binary cache "+
-			"(or `qsdev init --nix-cache/--nix-cache-public-key`), or remove nix_cache", err)
+	return p
+}
+
+// ResolveProjectInfrastructure validates the project's own infrastructure
+// settings when no infra profile is selected (see ValidateInfra): its
+// endpoints are written into package-manager configs, devenv.nix and the
+// generated docs, so they get the same checks as a profile's. A bare Cachix
+// cache name becomes its substituter URL.
+func ResolveProjectInfrastructure(infra types.InfraConfig) (types.InfraConfig, error) {
+	if err := errors.Join(ValidateInfra(infra)...); err != nil {
+		return infra, fmt.Errorf("%w\nfix the named settings under `infrastructure:` in .qsdev.yaml "+
+			"(or `qsdev init --registry-proxy/--nix-cache/--nix-cache-public-key`), or remove them", err)
 	}
-	infra.NixCache, infra.NixCachePublicKey = p.NixCacheNixConfig()
+	if infra.NixCacheURL() != "" {
+		infra.NixCache, infra.NixCachePublicKey = projectNixCache(infra).NixCacheNixConfig()
+	}
 	return infra, nil
 }
 
@@ -96,31 +113,18 @@ func (p *InfraProfile) ConfigOnly() *InfraProfile {
 
 // validate checks the resolved endpoints; see Resolve.
 func (p *InfraProfile) validate(in ProjectInputs) error {
-	var errs []error
-	errs = append(errs, p.validateRegistry(in)...)
+	errs := checkInfraEndpoints(p.Registry.URL, p.Registry.Overrides, p.Registry.Paths, p.BuildCache.URL)
+	errs = append(errs, p.validateRegistry(in)) // errors.Join drops nil
 	errs = append(errs, p.validateNixCache()...)
-	if p.BuildCache.URL != "" {
-		if err := checkEndpointURL("infrastructure.build_cache_url", p.BuildCache.URL); err != nil {
-			errs = append(errs, err)
-		}
-	}
 	return errors.Join(errs...)
 }
 
-func (p *InfraProfile) validateRegistry(in ProjectInputs) []error {
-	var errs []error
-	if p.Registry.URL != "" {
-		if err := checkEndpointURL("infrastructure.registry_proxy", p.Registry.URL); err != nil {
-			errs = append(errs, err)
-		}
-	}
-	for _, eco := range slices.Sorted(maps.Keys(p.Registry.Overrides)) {
-		if err := checkEndpointURL("infrastructure.registry_proxy_overrides."+eco, p.Registry.Overrides[eco]); err != nil {
-			errs = append(errs, err)
-		}
-	}
+// validateRegistry checks a proxying profile has an endpoint for every
+// proxied ecosystem the project uses; checkInfraEndpoints checks the
+// endpoints themselves.
+func (p *InfraProfile) validateRegistry(in ProjectInputs) error {
 	if !p.Registry.IsProxy() {
-		return errs
+		return nil
 	}
 	var missing []string
 	for _, eco := range in.Ecosystems {
@@ -128,11 +132,11 @@ func (p *InfraProfile) validateRegistry(in ProjectInputs) []error {
 			missing = append(missing, eco)
 		}
 	}
-	if len(missing) > 0 {
-		errs = append(errs, fmt.Errorf("%w: the profile routes %s installs through its %s registry proxy, but infrastructure.registry_proxy is not set",
-			ErrEndpointNotConfigured, strings.Join(missing, ", "), p.Registry.Type))
+	if len(missing) == 0 {
+		return nil
 	}
-	return errs
+	return fmt.Errorf("%w: the profile routes %s installs through its %s registry proxy, but infrastructure.registry_proxy is not set",
+		ErrEndpointNotConfigured, strings.Join(missing, ", "), p.Registry.Type)
 }
 
 func (p *InfraProfile) validateNixCache() []error {

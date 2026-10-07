@@ -17,6 +17,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/Quantum-Serendipity/qsdev/internal/projectctx"
 	"github.com/Quantum-Serendipity/qsdev/pkg/fileutil"
 )
 
@@ -127,9 +128,13 @@ func zimArchiveName(slug string) string {
 // home directory is unknown (e.g. HOME unset in CI) rather than a
 // working-directory-relative path, and DocsCorpusManager then fails with
 // ErrDocsDataDirUnset instead of writing archives into the current directory.
+//
+// The corpus stays in the legacy directory: the generated .mcp.json of the
+// local-docs servers names the same path (catalog defaults.yaml), so moving
+// it to the per-user state directory is a generator change.
 func DefaultDocsDataDir() string {
-	home, err := os.UserHomeDir()
-	if err != nil || !filepath.IsAbs(home) {
+	home, err := projectctx.HomeDir()
+	if err != nil {
 		return ""
 	}
 	return filepath.Join(home, ".qsdev", "docs")

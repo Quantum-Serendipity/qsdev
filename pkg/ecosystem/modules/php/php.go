@@ -25,6 +25,7 @@ import (
 
 // Compile-time interface compliance checks.
 var _ ecosystem.EcosystemModule = (*Module)(nil)
+var _ ecosystem.ProxyKeyProvider = (*Module)(nil)
 var _ ecosystem.WizardFieldProvider = (*Module)(nil)
 var _ ecosystem.ManifestFileProvider = (*Module)(nil)
 
@@ -290,6 +291,10 @@ func (m *Module) CICommands(_ ecosystem.ModuleConfig) []ecosystem.CICommand {
 		},
 	}
 }
+
+// ProxyKey returns "composer": the generated Composer configuration adds
+// the registry proxy and disables packagist.org.
+func (m *Module) ProxyKey(_ ecosystem.ModuleConfig) string { return "composer" }
 
 // PackageManagers returns metadata about PHP's Composer package manager.
 func (m *Module) PackageManagers() []ecosystem.PackageManagerInfo {

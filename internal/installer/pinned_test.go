@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/Quantum-Serendipity/qsdev/internal/installer"
+	"github.com/Quantum-Serendipity/qsdev/pkg/ecosystem"
 )
 
 func TestIsExactSemver(t *testing.T) {
@@ -222,6 +223,29 @@ func TestNixProfileInstallCmd(t *testing.T) {
 			}
 			if slices.Contains(got, "--accept-flake-config") {
 				t.Errorf("command %q accepts the flake's nixConfig", got)
+			}
+		})
+	}
+}
+
+// TestPinnedReleaseAges_MatchEcosystemFloors pins qsdev's own global installs
+// to the release-age policy it generates for projects: npm at the catalog
+// baseline window and uv at the 7-day floor uv has always enforced.
+func TestPinnedReleaseAges_MatchEcosystemFloors(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name string
+		got  time.Duration
+		want time.Duration
+	}{
+		{"npm", installer.NpmMinReleaseAge, ecosystem.EffectiveReleaseAge(0, 0)},
+		{"uv", installer.UvMinReleaseAge, ecosystem.EffectiveReleaseAge(0, ecosystem.WeekMinReleaseAgeFloor)},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			if tt.got != tt.want {
+				t.Errorf("%s min release age = %v, want %v", tt.name, tt.got, tt.want)
 			}
 		})
 	}

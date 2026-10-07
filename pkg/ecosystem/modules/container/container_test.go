@@ -555,6 +555,11 @@ func TestDenyRules_BlocksEscapesForEveryRuntime(t *testing.T) {
 		"docker run --rm -v /:/host alpine",
 		"docker run --volume=/:/host alpine",
 		"docker run -v/:/host alpine",
+		"docker run -v /:/host alpine",
+		"podman run --volume /:/h:ro alpine",
+		"podman run -v=/:/host alpine",
+		"docker run -v / alpine",
+		"podman run --volume / alpine",
 		"docker run --mount type=bind,source=/,target=/host alpine",
 		"podman run --mount type=bind,src=/,dst=/host alpine",
 		"docker run --pid=host alpine",
@@ -567,6 +572,9 @@ func TestDenyRules_BlocksEscapesForEveryRuntime(t *testing.T) {
 		"docker build .",
 		"podman build .",
 		"docker run --rm -v ./src:/src alpine ls",
+		"docker run -v ./data:/data alpine",
+		"docker run -v /srv/data:/data alpine",
+		"docker run -v /data alpine",
 		"docker run --mount type=bind,source=/home/me/src,target=/src alpine",
 		"docker images -q",
 		"podman ps",
@@ -625,7 +633,7 @@ func TestHadolintConfigIsCreateOnly(t *testing.T) {
 
 func deniedBy(rules []string, cmd string) bool {
 	for _, r := range rules {
-		if denyutil.MatchesDenyRule(r, "Bash("+cmd+")") {
+		if denyutil.MatchesBashRule(r, cmd) {
 			return true
 		}
 	}

@@ -4,6 +4,8 @@ import (
 	"encoding/json"
 	"strings"
 	"testing"
+
+	"github.com/Quantum-Serendipity/qsdev/internal/mcpconfig"
 )
 
 func TestMergeMcpJson_AllUnmodified(t *testing.T) {
@@ -37,7 +39,7 @@ func TestMergeMcpJson_AllUnmodified(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	var parsed mcpJSON
+	var parsed mcpconfig.File
 	if err := json.Unmarshal(got, &parsed); err != nil {
 		t.Fatalf("result is not valid JSON: %v", err)
 	}
@@ -86,7 +88,7 @@ func TestMergeMcpJson_UserAddedServer(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	var parsed mcpJSON
+	var parsed mcpconfig.File
 	if err := json.Unmarshal(got, &parsed); err != nil {
 		t.Fatalf("result is not valid JSON: %v", err)
 	}
@@ -130,7 +132,7 @@ func TestMergeMcpJson_GeneratedServerUpdated(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	var parsed mcpJSON
+	var parsed mcpconfig.File
 	if err := json.Unmarshal(got, &parsed); err != nil {
 		t.Fatalf("result is not valid JSON: %v", err)
 	}
@@ -187,7 +189,7 @@ func TestMergeMcpJson_GeneratedServerRemoved(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	var parsed mcpJSON
+	var parsed mcpconfig.File
 	if err := json.Unmarshal(got, &parsed); err != nil {
 		t.Fatalf("result is not valid JSON: %v", err)
 	}
@@ -240,7 +242,7 @@ func TestMergeMcpJson_UserDeletedGeneratedServer(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	var parsed mcpJSON
+	var parsed mcpconfig.File
 	if err := json.Unmarshal(got, &parsed); err != nil {
 		t.Fatalf("result is not valid JSON: %v", err)
 	}
@@ -287,7 +289,7 @@ func TestMergeMcpJson_UserModifiedGeneratedServer(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	var parsed mcpJSON
+	var parsed mcpconfig.File
 	if err := json.Unmarshal(got, &parsed); err != nil {
 		t.Fatalf("result is not valid JSON: %v", err)
 	}
@@ -339,7 +341,7 @@ func TestMergeMcpJson_NewGeneratedServer(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	var parsed mcpJSON
+	var parsed mcpconfig.File
 	if err := json.Unmarshal(got, &parsed); err != nil {
 		t.Fatalf("result is not valid JSON: %v", err)
 	}
@@ -380,7 +382,7 @@ func TestMergeMcpJson_EmptyBase(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	var parsed mcpJSON
+	var parsed mcpconfig.File
 	if err := json.Unmarshal(got, &parsed); err != nil {
 		t.Fatalf("result is not valid JSON: %v", err)
 	}
@@ -421,7 +423,7 @@ func TestMergeMcpJson_EmptyServers(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	var parsed mcpJSON
+	var parsed mcpconfig.File
 	if err := json.Unmarshal(got, &parsed); err != nil {
 		t.Fatalf("result is not valid JSON: %v", err)
 	}
@@ -459,7 +461,7 @@ func TestMergeMcpJson_EmptyTheirsRecovery(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	var parsed mcpJSON
+	var parsed mcpconfig.File
 	if err := json.Unmarshal(got, &parsed); err != nil {
 		t.Fatalf("result is not valid JSON: %v", err)
 	}
@@ -519,7 +521,7 @@ func TestMergeMcpJson_HTTPTransportPreserved(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	var parsed mcpJSON
+	var parsed mcpconfig.File
 	if err := json.Unmarshal(got, &parsed); err != nil {
 		t.Fatalf("result is not valid JSON: %v", err)
 	}
@@ -587,21 +589,23 @@ func TestMergeMcpJson_OutputIsValidJSON(t *testing.T) {
 }
 
 // TestMergeMcpJson_PreservesPerServerUnknownFields guards DEFECT-6: an unmodeled
-// per-server field the user added (e.g. "headers") must survive when the
-// generator updates that server's modeled fields.
+// per-server field the user added must survive when the generator updates
+// that server's modeled fields. Headers are modeled (a headers edit is a user
+// change, see TestMergeMcpJson_HeadersEditIsUserChange), so the fixture uses a
+// field mcpconfig.Server does not declare.
 func TestMergeMcpJson_PreservesPerServerUnknownFields(t *testing.T) {
 	base := []byte(`{
   "mcpServers": {
     "github": {"command": "gh", "args": ["mcp"]}
   }
 }`)
-	// User added a headers block; modeled fields unchanged from base.
+	// User added an unmodeled field; modeled fields unchanged from base.
 	theirs := []byte(`{
   "mcpServers": {
     "github": {
       "command": "gh",
       "args": ["mcp"],
-      "headers": {"Authorization": "Bearer user-secret"}
+      "description": "my notes"
     }
   }
 }`)
@@ -629,12 +633,12 @@ func TestMergeMcpJson_PreservesPerServerUnknownFields(t *testing.T) {
 	if err := json.Unmarshal(servers["github"], &gh); err != nil {
 		t.Fatalf("github entry not valid JSON: %v", err)
 	}
-	if _, ok := gh["headers"]; !ok {
-		t.Errorf("per-server headers block dropped by merge: %s", got)
+	if _, ok := gh["description"]; !ok {
+		t.Errorf("per-server unmodeled field dropped by merge: %s", got)
 	}
 
 	// The generator's args update must still be applied.
-	var parsed mcpJSON
+	var parsed mcpconfig.File
 	if err := json.Unmarshal(got, &parsed); err != nil {
 		t.Fatalf("result is not valid JSON: %v", err)
 	}
@@ -672,5 +676,33 @@ func TestMergeMcpJson_PreservesSiblingTopLevelKeys(t *testing.T) {
 	}
 	if _, ok := top["mcpServers"]; !ok {
 		t.Errorf("mcpServers missing from merged output: %s", got)
+	}
+}
+
+// TestMergeMcpJson_HeadersEditIsUserChange: headers are a modeled field, so a
+// user edit to a generated remote server's headers is a modification that
+// the generator's update must not overwrite.
+func TestMergeMcpJson_HeadersEditIsUserChange(t *testing.T) {
+	t.Parallel()
+	base := []byte(`{"mcpServers":{"remote":{"type":"http","url":"https://mcp.example/a","headers":{"X-Api-Key":"${KEY}"}}}}`)
+	theirs := []byte(`{"mcpServers":{"remote":{"type":"http","url":"https://mcp.example/a","headers":{"X-Api-Key":"${MY_KEY}"}}}}`)
+	ours := []byte(`{"mcpServers":{"remote":{"type":"http","url":"https://mcp.example/b","headers":{"X-Api-Key":"${KEY}"}}}}`)
+
+	got, err := MergeMcpJson(base, theirs, ours)
+	if err != nil {
+		t.Fatalf("MergeMcpJson() error = %v", err)
+	}
+	var parsed struct {
+		MCPServers map[string]struct {
+			URL     string            `json:"url"`
+			Headers map[string]string `json:"headers"`
+		} `json:"mcpServers"`
+	}
+	if err := json.Unmarshal(got, &parsed); err != nil {
+		t.Fatalf("result is not valid JSON: %v", err)
+	}
+	s := parsed.MCPServers["remote"]
+	if s.URL != "https://mcp.example/a" || s.Headers["X-Api-Key"] != "${MY_KEY}" {
+		t.Errorf("user-edited headers not kept as a modification: %s", got)
 	}
 }

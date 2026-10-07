@@ -110,6 +110,10 @@
 {{- end}}
 {{- end}}
     # Specialized hooks (custom definitions)
+    # Each package is set at priority 999: a devenv language module that sets
+    # the same hook's package (100, or 500 via mkOverrideDefault) wins with its
+    # pinned toolchain, and git-hooks.nix's mkDefault (1000) built-in default
+    # is never evaluated. An equal priority throws "defined multiple times".
 {{- range .CustomHooks}}
     {{ nixHookID .ID }} = {
       enable = true;
@@ -125,8 +129,8 @@
       entry = {{ nixString .Entry }};
 {{- end }}
       language = {{ nixString .Language }};
-{{- if .Package }}
-      package = pkgs.{{ .Package }};
+{{- if .PackageExpr }}
+      package = lib.mkOverride 999 {{ .PackageExpr }};
 {{- end }}
 {{- if .Types}}
       types = {{ nixStringList .Types }};

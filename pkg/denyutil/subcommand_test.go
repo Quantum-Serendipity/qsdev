@@ -24,12 +24,46 @@ func TestMatchesBashRule(t *testing.T) {
 		{"Bash(* --help *)", "npm --help", false},
 		{"Read(ls *)", "ls", false},
 		{"Bash(a.b *)", "aXb c", false},
+		{"PowerShell(ls *)", "ls", false},
+		// ":*" is the legacy " *" only at the end of a pattern, so a rule
+		// meant to match text after a colon must end in "**" instead.
+		{"Bash(deno npm:*)", "deno npm:evil-cli", false},
+		{"Bash(deno npm:*)", "deno npm run", true},
+		{"Bash(deno *npm:**)", "deno run -A npm:evil-cli", true},
+		{"Bash(deno *npm:**)", "deno run main.ts", false},
 	}
 	for _, tt := range tests {
 		t.Run(tt.rule+"|"+tt.command, func(t *testing.T) {
 			t.Parallel()
 			if got := MatchesBashRule(tt.rule, tt.command); got != tt.want {
 				t.Errorf("MatchesBashRule(%q, %q) = %v, want %v", tt.rule, tt.command, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestMatchesPowerShellRule(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		rule, command string
+		want          bool
+	}{
+		{"PowerShell(Install-Module *)", "Install-Module Evil -Force", true},
+		{"PowerShell(Install-Module *)", "Install-Module", true},
+		{"PowerShell(Install-Module *)", "Install-ModuleX", false},
+		{"PowerShell(Get-ChildItem:*)", "Get-ChildItem -Recurse", true},
+		{"Bash(Install-Module *)", "Install-Module Evil", false},
+		// "Matching is case-insensitive" (code.claude.com/docs/en/permissions).
+		{"PowerShell(Install-Module *)", "install-module Evil", true},
+		{"PowerShell(Install-Module *)", "INSTALL-MODULE", true},
+		{"PowerShell(install-module *)", "Install-Module Evil", true},
+		{"PowerShell(Install-Module *)", "install-modulex", false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.rule+"|"+tt.command, func(t *testing.T) {
+			t.Parallel()
+			if got := MatchesPowerShellRule(tt.rule, tt.command); got != tt.want {
+				t.Errorf("MatchesPowerShellRule(%q, %q) = %v, want %v", tt.rule, tt.command, got, tt.want)
 			}
 		})
 	}
@@ -119,6 +153,38 @@ func TestSubcommandRules(t *testing.T) {
 				if matches(cmd) {
 					t.Errorf("rules over-match %q", cmd)
 				}
+			}
+		})
+	}
+}
+
+func TestSampleCommand(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		rule   string
+		want   string
+		wantOK bool
+	}{
+		{"Bash(npm install *)", "npm install x", true},
+		{"Bash(npm -* install *)", "npm -x install x", true},
+		{"Bash(deno outdated *-u*)", "deno outdated x-ux", true},
+		{"Bash(npm install)", "npm install", true},
+		{"Bash(ls:*)", "ls x", true},
+		{"Bash(*)", "x", true},
+		{"Read(./.env)", "", false},
+		{"Bash", "", false},
+		{"Bash()", "", false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.rule, func(t *testing.T) {
+			t.Parallel()
+			got, ok := SampleCommand(tt.rule)
+			if got != tt.want || ok != tt.wantOK {
+				t.Fatalf("SampleCommand(%q) = (%q, %v), want (%q, %v)", tt.rule, got, ok, tt.want, tt.wantOK)
+			}
+			// A sample must be matched by the rule it came from.
+			if ok && !MatchesBashRule(tt.rule, got) {
+				t.Errorf("MatchesBashRule(%q, %q) = false; the sample must match its own rule", tt.rule, got)
 			}
 		})
 	}

@@ -6,6 +6,8 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/Quantum-Serendipity/qsdev/internal/cmdutil"
+	"github.com/Quantum-Serendipity/qsdev/internal/projectctx"
 	"github.com/Quantum-Serendipity/qsdev/internal/shellintegration"
 	"github.com/Quantum-Serendipity/qsdev/pkg/branding"
 )
@@ -35,7 +37,9 @@ To install completions permanently, use "` + appName + ` completion install".`,
 		completionInstallCmd(),
 	)
 
-	return cmd
+	// Shell completion runs on every TAB press; logging it would evict the
+	// logs of real commands.
+	return cmdutil.MarkProfile(cmd, cmdutil.ProfileUnlogged)
 }
 
 func completionBashCmd() *cobra.Command {
@@ -112,7 +116,7 @@ SHELL environment variable.`,
 				return fmt.Errorf("could not determine RC file for shell %q", shell)
 			}
 
-			home, err := os.UserHomeDir()
+			home, err := projectctx.HomeDir()
 			if err != nil {
 				return fmt.Errorf("determining home directory: %w", err)
 			}
@@ -154,7 +158,7 @@ func detectShell() string {
 
 // defaultRCFile returns the conventional RC file path for the given shell.
 func defaultRCFile(shell string) string {
-	home, err := os.UserHomeDir()
+	home, err := projectctx.HomeDir()
 	if err != nil {
 		return ""
 	}

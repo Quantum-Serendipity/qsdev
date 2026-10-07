@@ -220,7 +220,7 @@ func TestPackageGuard_ExtractsOnlyRealInstalls(t *testing.T) {
 			cmd := exec.Command(python, "-c", pgDriver)
 			// PYTHONDONTWRITEBYTECODE keeps the import from writing a
 			// __pycache__ directory into the embedded templates tree.
-			cmd.Env = append(os.Environ(), "PYTHONDONTWRITEBYTECODE=1", "PG_PATH="+template, "PG_CMD="+tc.command)
+			cmd.Env = hookEnv(t, "PG_PATH="+template, "PG_CMD="+tc.command)
 			out, err := cmd.CombinedOutput()
 			if err != nil {
 				t.Fatalf("driver failed: %v\n%s", err, out)

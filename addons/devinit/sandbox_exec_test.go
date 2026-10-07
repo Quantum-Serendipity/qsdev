@@ -16,6 +16,7 @@ import (
 	"github.com/Quantum-Serendipity/qsdev/internal/exitcode"
 	"github.com/Quantum-Serendipity/qsdev/internal/sandbox"
 	"github.com/Quantum-Serendipity/qsdev/internal/sandbox/backendselect"
+	"github.com/Quantum-Serendipity/qsdev/internal/sandbox/shim"
 )
 
 // noSandboxProbe reports a host with no sandbox tooling, forcing the
@@ -311,6 +312,104 @@ func TestNamespaceHookCommand(t *testing.T) {
 				t.Errorf("got %v, want %v", got, tt.want)
 			}
 		})
+	}
+}
+
+// TestNamespaceHookCommand_SelfInvocation verifies a hook that runs qsdev
+// itself (here, the test binary, which is what os.Executable reports) is
+// rewritten to the copy the bubblewrap backend mounts at shim.SandboxPath(),
+// however the hook names it, while a different file at a hidden path is still
+// rejected (U19-03a).
+func TestNamespaceHookCommand_SelfInvocation(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("bubblewrap is Linux-only; the fixture relies on symlinks")
+	}
+	self, err := shim.HostExecutable()
+	if err != nil {
+		t.Fatal(err)
+	}
+	l := newStoreLayout(t)
+	link := filepath.Join(l.hostBin, "qsdev")
+	if err := os.Symlink(self, link); err != nil {
+		t.Fatal(err)
+	}
+	impostor := filepath.Join(l.hostBin, "qsdev-copy")
+	if err := os.WriteFile(impostor, []byte("\x7fELF"), 0o755); err != nil { //nolint:gosec // test executable
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", l.hostBin)
+
+	tests := []struct {
+		name    string
+		command []string
+		want    []string
+		wantErr bool
+	}{
+		{
+			name:    "absolute path of the running binary",
+			command: []string{self, "--version"},
+			want:    []string{shim.SandboxPath(), "--version"},
+		},
+		{
+			name:    "bare name found on PATH",
+			command: []string{"qsdev", "guard", "x"},
+			want:    []string{shim.SandboxPath(), "guard", "x"},
+		},
+		{
+			name:    "absolute symlink outside the sandbox",
+			command: []string{link},
+			want:    []string{shim.SandboxPath()},
+		},
+		{
+			name:    "a different file outside the sandbox is still rejected",
+			command: []string{impostor},
+			wantErr: true,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cfg := &sandbox.SandboxConfig{ProjectDir: l.project, HookCommand: tt.command}
+			got, err := namespaceHookCommand(cfg)
+			if tt.wantErr {
+				if err == nil {
+					t.Fatalf("expected an error, got %v", got)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if !slices.Equal(got, tt.want) {
+				t.Errorf("got %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
+// TestSandboxExec_SelfInvocationRunsInsideBwrap runs the test binary itself
+// (standing in for an installed qsdev outside /nix/store) as a hook under a
+// real bubblewrap sandbox: it must start from the backend's mount and exit 0.
+func TestSandboxExec_SelfInvocationRunsInsideBwrap(t *testing.T) {
+	caps := sandbox.ProbeCapabilitiesDefault(context.Background())
+	if backend, _ := backendselect.ResolveBackend(*caps); backend.Name() != "bubblewrap" {
+		t.Skip("bubblewrap backend not available on this host")
+	}
+	self, err := shim.HostExecutable()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if hint := shim.LinkageHint(self); hint != "" {
+		t.Skip(hint)
+	}
+
+	t.Setenv("CLAUDE_PROJECT_DIR", t.TempDir())
+	realProbe := func(context.Context) *sandbox.SystemCapabilities { return caps }
+	stdout, stderr, err := runSandboxExec(t, realProbe, "", "--", self, "-test.run=^$")
+	if err != nil {
+		t.Fatalf("exec failed: %v\nstdout: %s\nstderr: %s", err, stdout, stderr)
+	}
+	if !strings.Contains(stdout, "PASS") {
+		t.Errorf("stdout = %q, want the test binary's PASS", stdout)
 	}
 }
 

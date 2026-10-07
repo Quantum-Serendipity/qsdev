@@ -2,7 +2,9 @@ package profile
 
 import (
 	"slices"
+	"time"
 
+	"github.com/Quantum-Serendipity/qsdev/internal/catalog"
 	"github.com/Quantum-Serendipity/qsdev/pkg/ecosystem"
 	"github.com/Quantum-Serendipity/qsdev/pkg/types"
 )
@@ -27,14 +29,30 @@ type ProjectInputs struct {
 	// in (see ecosystem.AggregateCICommands); ProjectInputsFromAnswers
 	// leaves it empty.
 	CI []ecosystem.CIPhaseGroup
+	// MinReleaseAge is the release-age window of the project's compliance
+	// level (catalog age_gating_threshold_hours). Update tools delay PRs by
+	// at least this long; zero means unknown and keeps the profile's delay.
+	MinReleaseAge time.Duration
+}
+
+// updateAgeDays returns the update-PR delay in days for a profile (or
+// ecosystem override) delay of days: the larger of it and the compliance
+// window, so the tier never loosens a profile and a profile never loosens
+// the tier. An unknown window keeps days.
+func (in ProjectInputs) updateAgeDays(days int) int {
+	if in.MinReleaseAge <= 0 {
+		return days
+	}
+	return max(days, ecosystem.ReleaseAgeDays(in.MinReleaseAge))
 }
 
 // ProjectInputsFromAnswers derives ProjectInputs from the wizard answers: the
-// selected languages plus the manifests detected in the repository.
+// selected languages plus the manifests detected in the repository, and the
+// compliance level's release-age window.
 func ProjectInputsFromAnswers(answers types.WizardAnswers) ProjectInputs {
 	var ecos []string
 	for _, lang := range answers.Languages {
-		if key := languageEcosystem(lang.Name, lang.PackageManager); key != "" {
+		if key := languageEcosystem(lang); key != "" {
 			ecos = append(ecos, key)
 		}
 	}
@@ -60,15 +78,22 @@ func ProjectInputsFromAnswers(answers types.WizardAnswers) ProjectInputs {
 	}
 
 	slices.Sort(ecos)
-	return ProjectInputs{Ecosystems: slices.Compact(ecos), Infrastructure: answers.Infrastructure}
+	return ProjectInputs{
+		Ecosystems:     slices.Compact(ecos),
+		Infrastructure: answers.Infrastructure,
+		MinReleaseAge:  catalog.EffectiveAgeGate(answers.ComplianceLevel),
+	}
 }
 
-// languageEcosystem maps a language selection to its package ecosystem key.
-func languageEcosystem(name, packageManager string) string {
-	if key := ecosystem.ProxyKeyForLanguage(name, packageManager); key != "" {
+// languageEcosystem maps a language selection to its package ecosystem key:
+// the registry proxy key its module routes through (see
+// ecosystem.ProxyKeyProvider), or the language name for the container and
+// terraform ecosystems.
+func languageEcosystem(lang types.LanguageChoice) string {
+	if key := ecosystem.ProxyKeyForLanguage(lang); key != "" {
 		return key
 	}
-	switch name {
+	switch name := lang.Name; name {
 	case ecosystem.NameContainer, ecosystem.NameTerraform:
 		return name
 	default:

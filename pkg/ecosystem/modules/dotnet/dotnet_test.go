@@ -814,12 +814,13 @@ func TestPreCommitHooks(t *testing.T) {
 		t.Errorf("Language = %q, want %q", h.Language, "system")
 	}
 	// dotnet-format is not a git-hooks.nix built-in, so it must be a custom
-	// hook whose binary is resolved from a Nix package.
+	// hook whose binary is resolved from the languages.dotnet SDK.
 	if h.BuiltIn {
 		t.Error("BuiltIn should be false (dotnet-format is not a git-hooks.nix built-in)")
 	}
-	if h.NixPackage != "dotnet-sdk_10" {
-		t.Errorf("NixPackage = %q, want the default SDK %q", h.NixPackage, "dotnet-sdk_10")
+	if h.LanguagePackage != "dotnet" || h.NixPackage != "" {
+		t.Errorf("LanguagePackage = %q, NixPackage = %q; want the languages.dotnet SDK (%q) and no NixPackage",
+			h.LanguagePackage, h.NixPackage, "dotnet")
 	}
 	if h.Files != `\.(cs|fs)$` {
 		t.Errorf("Files = %q, want %q", h.Files, `\.(cs|fs)$`)
@@ -857,8 +858,7 @@ func TestDenyRules(t *testing.T) {
 		"mono nuget.exe install Evil",
 	}
 	for _, cmd := range denied {
-		op := "Bash(" + cmd + ")"
-		if !slices.ContainsFunc(rules, func(rule string) bool { return denyutil.MatchesDenyRule(rule, op) }) {
+		if !slices.ContainsFunc(rules, func(rule string) bool { return denyutil.MatchesBashRule(rule, cmd) }) {
 			t.Errorf("%q is not denied by %v", cmd, rules)
 		}
 	}
@@ -880,8 +880,7 @@ func TestDenyRules(t *testing.T) {
 		"dotnet package add Evil --project src/App/App.csproj",
 	}
 	for _, cmd := range allowed {
-		op := "Bash(" + cmd + ")"
-		if slices.ContainsFunc(rules, func(rule string) bool { return denyutil.MatchesDenyRule(rule, op) }) {
+		if slices.ContainsFunc(rules, func(rule string) bool { return denyutil.MatchesBashRule(rule, cmd) }) {
 			t.Errorf("%q should not be denied", cmd)
 		}
 	}
@@ -900,9 +899,10 @@ func TestReadDenyRules(t *testing.T) {
 }
 
 // TestPreCommitHooks_UsesProjectSDK guards the dotnet-format hook against a
-// fixed SDK: it must run the same SDK attribute as languages.dotnet, or it
-// cannot build net9/net10 targets or honour global.json, and it would add a
-// second colliding dotnet to the profile.
+// fixed SDK: it must run the SDK languages.dotnet pins, or it cannot build
+// net9/net10 targets or honour global.json, and it would add a second
+// colliding dotnet to the profile. Binding to the language package (rather
+// than recomputing the SDK attribute) keeps the two from drifting.
 func TestPreCommitHooks_UsesProjectSDK(t *testing.T) {
 	t.Parallel()
 	m := newModule()
@@ -912,12 +912,16 @@ func TestPreCommitHooks_UsesProjectSDK(t *testing.T) {
 		if err != nil {
 			t.Fatalf("DevenvNixFragment(%q) error: %v", version, err)
 		}
+		if !strings.Contains(frag, "  languages.dotnet = {\n    enable = true;\n    package = pkgs.dotnet-sdk_") {
+			t.Errorf("version %q: fragment does not pin the languages.dotnet SDK:\n%s", version, frag)
+		}
 		hooks := m.PreCommitHooks(cfg)
 		if len(hooks) != 1 {
 			t.Fatalf("PreCommitHooks() returned %d hooks, want 1", len(hooks))
 		}
-		if want := "package = pkgs." + hooks[0].NixPackage + ";"; !strings.Contains(frag, want) {
-			t.Errorf("version %q: hook uses pkgs.%s but the fragment is:\n%s", version, hooks[0].NixPackage, frag)
+		if hooks[0].LanguagePackage != "dotnet" || hooks[0].NixPackage != "" {
+			t.Errorf("version %q: hook LanguagePackage = %q, NixPackage = %q; want %q and none",
+				version, hooks[0].LanguagePackage, hooks[0].NixPackage, "dotnet")
 		}
 	}
 }

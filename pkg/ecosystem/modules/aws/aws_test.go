@@ -284,7 +284,7 @@ func TestDenyRules_GetSessionTokenArgless(t *testing.T) {
 
 	denied := func(op string) bool {
 		for _, rule := range rules {
-			if denyutil.MatchesDenyRule(rule, op) {
+			if denyutil.MatchesBashRule(rule, op) {
 				return true
 			}
 		}
@@ -292,9 +292,9 @@ func TestDenyRules_GetSessionTokenArgless(t *testing.T) {
 	}
 
 	mustDeny := []string{
-		"Bash(aws sts get-session-token)",
-		"Bash(aws sts get-session-token --duration-seconds 900)",
-		"Bash(aws sts get-session-token --serial-number arn:aws:iam::123:mfa/u --token-code 123456)",
+		"aws sts get-session-token",
+		"aws sts get-session-token --duration-seconds 900",
+		"aws sts get-session-token --serial-number arn:aws:iam::123:mfa/u --token-code 123456",
 	}
 	for _, op := range mustDeny {
 		if !denied(op) {
@@ -303,8 +303,8 @@ func TestDenyRules_GetSessionTokenArgless(t *testing.T) {
 	}
 
 	mustAllow := []string{
-		"Bash(aws s3 ls)",
-		"Bash(aws sts get-caller-identity)",
+		"aws s3 ls",
+		"aws sts get-caller-identity",
 	}
 	for _, op := range mustAllow {
 		if denied(op) {

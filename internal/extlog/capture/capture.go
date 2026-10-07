@@ -16,6 +16,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/Quantum-Serendipity/qsdev/internal/logging"
 	"github.com/Quantum-Serendipity/qsdev/pkg/branding"
 	"github.com/Quantum-Serendipity/qsdev/pkg/fileutil"
 )
@@ -122,19 +123,19 @@ func (w *CaptureWriter) Path() string {
 }
 
 // CaptureDir returns the appropriate capture directory for the current context.
-// Uses .<appname>/logs/capture/ in a project, or ~/.<appname>/logs/capture/
-// globally. It returns "" when there is no project and no home directory,
+// Uses .<appname>/logs/capture/ in a project, or the capture/ directory of the
+// global log tier (logging.GlobalLogDir, in the per-user state directory)
+// otherwise. It returns "" when there is no project and no global log tier,
 // rather than a predictable path under the shared temp directory.
 func CaptureDir(projectRoot string) string {
-	dotDir := "." + branding.Get().AppName
 	if projectRoot != "" {
-		return filepath.Join(projectRoot, dotDir, "logs", "capture")
+		return filepath.Join(projectRoot, "."+branding.Get().AppName, "logs", "capture")
 	}
-	home, err := os.UserHomeDir()
-	if err != nil || home == "" {
+	global := logging.GlobalLogDir()
+	if global == "" {
 		return ""
 	}
-	return filepath.Join(home, dotDir, "logs", "capture")
+	return filepath.Join(global, "capture")
 }
 
 // prune removes provider's capture files in dir that are older than

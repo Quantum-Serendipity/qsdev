@@ -6,6 +6,7 @@ import (
 	"io/fs"
 	"maps"
 	"os"
+	"path"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -65,15 +66,31 @@ func checkGeneratedFiles(ctx CheckContext) []CheckResult {
 		}}
 	}
 
-	return append(results, verifyGeneratedFiles(ctx.ProjectRoot, expected, guards, ctx.GeneratedContent)...)
+	return append(results, verifyGeneratedFiles(ctx.ProjectRoot, expected, guards, ctx.GuardSupportFiles, ctx.GeneratedContent)...)
 }
 
 // guardScripts returns the project hook scripts a PreToolUse hook runs: the
 // guards that decide whether an agent action is allowed. The role comes from
 // the hook registry's output, the generated settings, or, when those are not
 // available, the project's effective settings on disk. An unreadable settings
-// file yields no guards; its own check reports it.
+// file yields no guards; its own check reports it. When any guard is a Python
+// script, the guard support files (ctx.GuardSupportFiles) it loads are
+// guards too.
 func guardScripts(ctx CheckContext) []string {
+	guards := registeredGuards(ctx)
+	if slices.ContainsFunc(guards, func(g string) bool { return path.Ext(g) == ".py" }) {
+		for _, f := range ctx.GuardSupportFiles {
+			if !slices.Contains(guards, f) {
+				guards = append(guards, f)
+			}
+		}
+	}
+	return guards
+}
+
+// registeredGuards returns the project hook scripts a PreToolUse hook runs
+// (see guardScripts).
+func registeredGuards(ctx CheckContext) []string {
 	if len(ctx.ExpectedClaudeSettings) > 0 {
 		if expected, err := claudesettings.Parse(ctx.ExpectedClaudeSettings); err == nil {
 			return expected.Scripts(claudesettings.EventPreToolUse)
@@ -192,12 +209,13 @@ func projectConfigured(ctx CheckContext) bool {
 
 // verifyGeneratedFiles reports each expected file that was modified, deleted
 // or no longer parses. A modified or deleted guard (one of guards, see
-// guardScripts) is critical: with it gone, the agent actions it vets run
-// unchecked. A guard the generator writes (listed in generated) is judged
-// against that content, line endings aside, whether or not expected lists
-// it: the expected hashes come from the local state and the committed
-// manifest, and a change to the guard can re-hash or drop its entry.
-func verifyGeneratedFiles(projectRoot string, expected types.GeneratedState, guards []string, generated map[string][]byte) []CheckResult {
+// guardScripts, which support lists the guard support files of) is
+// critical: with it gone, the agent actions it vets run unchecked. A guard the
+// generator writes (listed in generated) is judged against that content, line
+// endings aside, whether or not expected lists it: the expected hashes come
+// from the local state and the committed manifest, and a change to the guard
+// can re-hash or drop its entry.
+func verifyGeneratedFiles(projectRoot string, expected types.GeneratedState, guards, support []string, generated map[string][]byte) []CheckResult {
 	statuses := state.CheckModified(expected, projectRoot)
 	for _, guard := range guards {
 		if content, ok := generated[guard]; ok {
@@ -243,11 +261,14 @@ func verifyGeneratedFiles(projectRoot string, expected types.GeneratedState, gua
 				FilePath:    relPath,
 				Remediation: "Run 'qsdev repair' or 'qsdev init --force' to regenerate it; machine-owned generated files are not edited by hand",
 			}
+			if storedFile.Strategy == types.Skip {
+				r.Remediation = skipModifiedRemediation(relPath)
+			}
 			if slices.Contains(guards, relPath) {
 				r.Severity = SeverityCritical
-				r.Message = fmt.Sprintf("Guard script %s, run by a PreToolUse hook, has been modified", relPath)
+				r.Message = fmt.Sprintf("%s has been modified", guardRole(relPath, support))
 				if generated[relPath] != nil {
-					r.Message = fmt.Sprintf("Guard script %s, run by a PreToolUse hook, differs from the version this qsdev generates", relPath)
+					r.Message = fmt.Sprintf("%s differs from the version this qsdev generates", guardRole(relPath, support))
 				}
 				r.Remediation = guardRemediation(relPath)
 			}
@@ -267,7 +288,7 @@ func verifyGeneratedFiles(projectRoot string, expected types.GeneratedState, gua
 			}
 			if slices.Contains(guards, relPath) {
 				r.Severity = SeverityCritical
-				r.Message = fmt.Sprintf("Guard script %s, run by a PreToolUse hook, has been deleted", relPath)
+				r.Message = fmt.Sprintf("%s has been deleted", guardRole(relPath, support))
 				r.Remediation = guardRemediation(relPath) + ", or 'qsdev check --auto-fix'"
 			}
 			results = append(results, remediate(r))
@@ -301,6 +322,16 @@ func verifyGeneratedFiles(projectRoot string, expected types.GeneratedState, gua
 	}
 
 	return append(results, checkGeneratedSyntax(projectRoot, statuses)...)
+}
+
+// guardRole names the guard at relPath for a result message: a guard script
+// a PreToolUse hook runs, or a support file (one of support) the Python guards
+// load.
+func guardRole(relPath string, support []string) string {
+	if slices.Contains(support, relPath) {
+		return fmt.Sprintf("Guard support file %s, loaded by every Python guard,", relPath)
+	}
+	return fmt.Sprintf("Guard script %s, run by a PreToolUse hook,", relPath)
 }
 
 // joinFirstRemediation prefixes a restore remediation in an un-joined
@@ -476,4 +507,12 @@ func ClaudeCodeConfigured(cfg *types.QsdevConfig, stateFile string) bool {
 	}
 	_, tracked := genState.Files[ClaudeSettingsRelPath]
 	return tracked
+}
+
+// skipModifiedRemediation tells the user how to fix an edited
+// skip-if-exists file: generation never writes over an existing one that
+// differs from what qsdev generated, so 'qsdev repair' and
+// 'qsdev init --force' keep the edit.
+func skipModifiedRemediation(path string) string {
+	return fmt.Sprintf("%s is created only when absent, so 'qsdev repair' and 'qsdev init --force' keep your edits; review the change and fix it by hand, or delete the file and run 'qsdev repair' to regenerate it", path)
 }

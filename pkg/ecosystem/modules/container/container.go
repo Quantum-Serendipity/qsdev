@@ -256,7 +256,14 @@ var containerCLIs = []string{"docker", "podman"}
 // privileged mode, host PID/network namespaces, container-engine socket
 // mounts, and mounting the host root filesystem (via -v/--volume or a
 // --mount bind whose source is /). They are matched anywhere in the command
-// so run, create, exec and `container run` are all covered.
+// so run, create, exec and `container run` are all covered. A host-root bind
+// is matched as "/:/" followed by the absolute container path; a trailing
+// ":*" would be Claude Code's legacy spelling of " *" and match nothing here.
+//
+// These globs are a best-effort first layer: they match the common spellings
+// only, and a path-normalized spelling of the host root such as "-v //:/host"
+// or "-v /.:/host" gets past them. The package guard hook and the sandbox
+// are the backstop for those.
 var containerEscapeArgs = []string{
 	"*--privileged*",
 	"*--pid=host*",
@@ -267,11 +274,13 @@ var containerEscapeArgs = []string{
 	"*--net host*",
 	"*docker.sock*",
 	"*podman.sock*",
-	"* -v /:*",
-	"* -v=/:*",
-	"* -v/:*",
-	"*--volume /:*",
-	"*--volume=/:*",
+	"* -v /:/*",
+	"* -v=/:/*",
+	"* -v/:/*",
+	"*--volume /:/*",
+	"*--volume=/:/*",
+	"* -v / *",
+	"*--volume / *",
 	"*source=/,*",
 	"*src=/,*",
 }

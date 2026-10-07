@@ -34,15 +34,26 @@ import (
 //     false), never a local one;
 //   - the client MCP policy is the committed one (see AdoptClientMCPPolicy),
 //     so an answers file that lacks or loosens it cannot make an always-on
-//     tool record a blocked server in the committed mcp_servers.
+//     tool record a blocked server in the committed mcp_servers;
+//   - the hooks block and claude_code.permissions are the committed ones, and
+//     are cleared when there is no .qsdev.yaml, so a rule the team removed
+//     (or one written into the answers file) never comes back through a
+//     regeneration from stale saved answers.
 //
 // An unreadable config is left to the caller's policy load and
 // SyncProjectConfig, which report it.
 func AdoptCommitted(projectRoot string, a *types.WizardAnswers) {
 	cfg, err := ParseQsdevConfig(filepath.Join(projectRoot, branding.Get().ConfigFile))
+	if errors.Is(err, fs.ErrNotExist) {
+		a.HookPolicy = types.HooksConfig{}
+		a.ClaudePermissions = types.ClaudePermissionsConfig{}
+		return
+	}
 	if err != nil {
 		return
 	}
+	a.HookPolicy = cfg.Hooks.Clone()
+	a.ClaudePermissions = cfg.ClaudeCode.Permissions.Clone()
 	if ClaudeCodeEnabled(cfg) {
 		a.ClaudeCode = true
 	}
@@ -103,7 +114,7 @@ func AnswersToConfig(answers types.WizardAnswers, binaryVersion string) types.Qs
 	// deliberate --claude-code=false / --devenv-only project back on for
 	// every teammate who joins.
 	enabled := answers.ClaudeCode
-	cfg.ClaudeCode = types.ClaudeCodeConfig{Enabled: &enabled}
+	cfg.ClaudeCode = types.ClaudeCodeConfig{Enabled: &enabled, Permissions: answers.ClaudePermissions.Clone()}
 	if answers.ClaudeCode {
 		cfg.ClaudeCode.PermissionLevel = answers.PermissionLevel
 		cfg.ClaudeCode.Skills = answers.Skills
@@ -139,8 +150,8 @@ func AnswersToConfig(answers types.WizardAnswers, binaryVersion string) types.Qs
 // PreserveCommittedPolicy carries into fresh, the .qsdev.yaml about to be
 // written for a re-created project (`qsdev init --force` or `--mode create`
 // over an existing file), the committed keys the answers cannot express or do
-// not own: the client block, the security bools, the hooks block, git
-// settings, the java and cloud blocks (which only .qsdev.yaml sets),
+// not own: the client block, the security bools, the hooks block,
+// claude_code.permissions, git settings, the java and cloud blocks (which only .qsdev.yaml sets),
 // tools.config and mcp.disabled_tools.
 // security.level keeps the stricter of the two, so re-creating a project never
 // silently drops its declared security floor or client policy.
@@ -156,6 +167,7 @@ func PreserveCommittedPolicy(fresh, committed *types.QsdevConfig) {
 	fresh.Security.Level = level
 	fresh.Client = cloneClient(committed.Client)
 	fresh.Hooks = committed.Hooks.Clone()
+	fresh.ClaudeCode.Permissions = committed.ClaudeCode.Permissions.Clone()
 	fresh.Git = committed.Git
 	fresh.Java = cloneJava(committed.Java)
 	fresh.Cloud = committed.Cloud
@@ -210,8 +222,9 @@ func WriteProjectConfig(projectRoot string, cfg types.QsdevConfig) error {
 //
 // Only answer-derived keys are replaced (tier, languages, services, packages,
 // overlays, claude_code and tool decisions); keys the answers do not carry
-// (qsdev_version, security, profile, infra_profile, hooks, infrastructure,
-// client, git, java, cloud, tools.config, mcp) are kept as committed. A project without .qsdev.yaml
+// (qsdev_version, security, profile, infra_profile, hooks,
+// claude_code.permissions, infrastructure, client, git, java, cloud,
+// tools.config, mcp) are kept as committed. A project without .qsdev.yaml
 // (e.g. a standalone `devenv init`) is left alone. The claude_code block is
 // replaced only when the answers configure Claude Code or the committed file
 // already disables it: answers that switch it off never disable it in the
@@ -254,6 +267,10 @@ func SyncProjectConfig(projectRoot string, answers types.WizardAnswers) error {
 	if answers.ClaudeCode || !ClaudeCodeEnabled(current) {
 		synced.ClaudeCode = fresh.ClaudeCode
 	}
+	// claude_code.permissions is team policy that only a hand edit of the
+	// committed file sets, like the hooks block: the answers file is local
+	// and agent-writable, so it never rewrites the committed rules.
+	synced.ClaudeCode.Permissions = current.ClaudeCode.Permissions.Clone()
 	synced.Tools.Enabled = fresh.Tools.Enabled
 	synced.Tools.Disabled = fresh.Tools.Disabled
 

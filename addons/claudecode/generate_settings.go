@@ -3,7 +3,9 @@ package claudecode
 import (
 	"encoding/json"
 	"fmt"
+	"strconv"
 	"strings"
+	"time"
 
 	"github.com/Quantum-Serendipity/qsdev/internal/catalog"
 	"github.com/Quantum-Serendipity/qsdev/internal/merge"
@@ -37,6 +39,10 @@ const (
 	ToolGatesAllowedEnv = "TOOL_GATES_ALLOWED"
 	ToolGatesDeniedEnv  = "TOOL_GATES_DENIED"
 )
+
+// PackageGuardMinAgeDaysEnv is the variable through which the package-guard
+// hook receives the compliance level's release-age window, in whole days.
+const PackageGuardMinAgeDaysEnv = "PACKAGE_GUARD_MIN_AGE_DAYS"
 
 // Permissions defines the permission rules for Claude Code.
 type Permissions struct {
@@ -92,6 +98,16 @@ func AllBaseDenyRules() []string {
 	return cat.AllPermissionDenyRules()
 }
 
+// AllBaseAskRules returns every rule the catalog gates behind ask. Exported
+// for qsdev check, which verifies no skill pre-approves any of them.
+func AllBaseAskRules() []string {
+	cat, err := catalog.Default()
+	if err != nil {
+		return nil
+	}
+	return cat.AllPermissionAskRules()
+}
+
 // ---------------------------------------------------------------------------
 // Permission preset builder
 // ---------------------------------------------------------------------------
@@ -108,6 +124,12 @@ func buildPermissions(preset PermissionPreset, answers types.WizardAnswers, regi
 	// them whether or not the Bash sandbox is enabled.
 	ecosystemDeny := collectEcosystemDenyRules(answers, registry)
 	ecosystemDeny = append(ecosystemDeny, readDenyPermissionRules(collectEcosystemReadDenyRules(answers, registry))...)
+
+	// A malformed committed rule is an error rather than being dropped, so a
+	// bad policy is reported instead of silently narrowing or widening access.
+	if errs := validation.CheckClaudePermissions(answers.ClaudePermissions); len(errs) > 0 {
+		return Permissions{}, errs[0]
+	}
 
 	presetName := string(preset)
 	presetDef, ok := cat.PermissionPreset(presetName)
@@ -151,28 +173,17 @@ func buildPermissions(preset PermissionPreset, answers types.WizardAnswers, regi
 			}
 		}
 
-	case PermissionPresetSupplyChainOnly:
-		// Supply-chain-only returns early with no defaultMode/disableBypass.
-		return Permissions{
-			Allow: []string{},
-			Deny:  sliceutil.Dedup(deny),
-			Ask:   sliceutil.Dedup(ask),
-		}, nil
-
-	case PermissionPresetCustom:
-		// Custom: allow only what's in ExtraAllowPatterns (not preset sets).
-		allow = cfg.ExtraAllowPatterns
-		deny = append(deny, cfg.ExtraDenyPatterns...)
-		return Permissions{
-			Allow: sliceutil.Dedup(allow),
-			Deny:  sliceutil.Dedup(deny),
-			Ask:   sliceutil.Dedup(ask),
-		}, nil
 	}
 
-	// For non-custom, non-supply-chain-only presets, append extra patterns from config.
+	// Every preset, custom and supply-chain-only included, takes the extras
+	// (addon config, then the committed claude_code.permissions block) and
+	// its catalog modes: custom and supply-chain-only allow nothing of their
+	// own, so custom's allow list is exactly the extras. The preset's ask and
+	// deny rules still take precedence over an extra allow.
 	allow = append(allow, cfg.ExtraAllowPatterns...)
+	allow = append(allow, answers.ClaudePermissions.Allow...)
 	deny = append(deny, cfg.ExtraDenyPatterns...)
+	deny = append(deny, answers.ClaudePermissions.Deny...)
 
 	perms := Permissions{
 		Allow: sliceutil.Dedup(allow),
@@ -321,6 +332,9 @@ func buildHookEnv(answers types.WizardAnswers) (map[string]string, error) {
 		setListEnv(env, ToolGatesAllowedEnv, answers.HookPolicy.ToolGates.Allowed)
 		setListEnv(env, ToolGatesDeniedEnv, answers.HookPolicy.ToolGates.Denied)
 	}
+	if answers.Hooks.SafetyBlock {
+		env[PackageGuardMinAgeDaysEnv] = strconv.Itoa(packageGuardMinAgeDays(catalog.EffectiveAgeGate(answers.ComplianceLevel)))
+	}
 	if len(env) == 0 {
 		return nil, nil
 	}
@@ -410,4 +424,12 @@ func GenerateSettings(answers types.WizardAnswers, registry *ecosystem.Registry,
 		Mode:     fileutil.ModeReadWrite,
 		Strategy: types.ThreeWayMerge,
 	}, nil
+}
+
+// packageGuardMinAgeDays returns the package guard's release-age gate in
+// days for a compliance window: the same gate npm and pnpm enforce, the
+// window raised to the 3-day floor the guard shipped with (D18), so a catalog
+// overlay with a shorter window never loosens it.
+func packageGuardMinAgeDays(window time.Duration) int {
+	return ecosystem.ReleaseAgeDays(ecosystem.EffectiveReleaseAge(window, ecosystem.DefaultMinReleaseAge))
 }

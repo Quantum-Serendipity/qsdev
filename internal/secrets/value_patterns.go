@@ -40,8 +40,10 @@ var ValuePatterns = []ValuePattern{
 	{Name: "stripe", Regex: `sk_(live|test)_[A-Za-z0-9]{20,}`},
 	// Stripe restricted keys.
 	{Name: "stripe-restricted", Regex: `rk_(live|test)_[A-Za-z0-9]{20,}`},
-	// npm access tokens.
-	{Name: "npm", Regex: `npm_[A-Za-z0-9]{36,}`},
+	// npm access tokens: exactly 36 characters (30 random, 6 checksum). An
+	// open-ended count would take a placeholder word written after a real
+	// token (`npm_<36>TODO`) into the match, and scan-secrets would skip it.
+	{Name: "npm", Regex: `npm_[A-Za-z0-9]{36}`},
 	// JSON Web Tokens (three base64url segments). The signature may be short or
 	// empty: a truncated log line or an unsigned alg:none token still carries
 	// the header and claims, which are the sensitive part.

@@ -106,6 +106,37 @@ func TestValuePatterns_Negatives(t *testing.T) {
 	}
 }
 
+// TestValuePatterns_FixedLengthMatch pins the entries whose token has a fixed
+// length: the match is the token alone, never the word written after it, so
+// a placeholder word (`npm_<36>TODO`) cannot drag a real token into the
+// scan-secrets placeholder filter.
+func TestValuePatterns_FixedLengthMatch(t *testing.T) {
+	t.Parallel()
+	npm := "npm_" + strings.Repeat("Ab1", 12)
+	tests := []struct {
+		pattern string
+		input   string
+		want    string
+	}{
+		{"npm", npm + "XXXX", npm},
+		{"npm", npm + "TODO", npm},
+		{"npm", npm + "Example", npm},
+		{"npm", npm, npm},
+	}
+	byName := make(map[string]*regexp.Regexp, len(secrets.ValuePatterns))
+	for _, vp := range secrets.ValuePatterns {
+		byName[vp.Name] = regexp.MustCompile(vp.Regex)
+	}
+	for _, tt := range tests {
+		t.Run(tt.pattern+"/"+tt.input, func(t *testing.T) {
+			t.Parallel()
+			if got := byName[tt.pattern].FindString(tt.input); got != tt.want {
+				t.Errorf("%s matched %q in %q, want %q", tt.pattern, got, tt.input, tt.want)
+			}
+		})
+	}
+}
+
 // TestCompiledValuePatterns_Memoized checks CompiledValuePatterns compiles once
 // and returns the canon in order.
 func TestCompiledValuePatterns_Memoized(t *testing.T) {

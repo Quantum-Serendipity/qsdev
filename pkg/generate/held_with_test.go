@@ -3,6 +3,7 @@ package generate_test
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/Quantum-Serendipity/qsdev/pkg/generate"
@@ -83,6 +84,9 @@ func TestWriteFiles_HeldWithFollowsPartner(t *testing.T) {
 				t.Errorf("devenv.yaml.new = %q (%v), want the generated content", sidecar, err)
 			case !tt.wantSidecar && err == nil:
 				t.Errorf("unexpected devenv.yaml.new: %q", sidecar)
+			}
+			if tt.wantSidecar && !strings.Contains(result.Summary(), "held with devenv.nix") {
+				t.Errorf("Summary() does not explain the held sidecar:\n%s", result.Summary())
 			}
 		})
 	}

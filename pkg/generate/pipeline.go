@@ -170,6 +170,7 @@ func (w *fileWriter) write(file types.GeneratedFile) {
 				return
 			}
 			fr.Action = ActionSidecar
+			fr.Note = decision.note
 			w.record(fr)
 			return
 		case decision.skip:
@@ -265,7 +266,9 @@ func (w *fileWriter) existingContent(file types.GeneratedFile, fullPath string) 
 		if err == nil && state.EqualText(existing, file.Content) {
 			return existingDecision{content: file.Content}, nil
 		}
-		return existingDecision{sidecar: true}, nil
+		return existingDecision{sidecar: true, note: fmt.Sprintf(
+			"held with %s, which kept your edits; merge %s together with %s",
+			file.HeldWith, file.Path+SidecarSuffix, file.HeldWith+SidecarSuffix)}, nil
 	}
 	switch file.Strategy {
 	case types.Overwrite, types.LibraryManaged:

@@ -940,7 +940,7 @@ Key contents:
 - `permitted_unfree_packages: []` -- Empty allowlist
 - `permitted_insecure_packages: []` -- Empty allowlist
 - `clean.enabled: true` -- Strips environment on shell entry
-- `clean.keep: [TERM, HOME, USER, ...]` -- Minimal variable allowlist: the catalog `keep_vars`, then the non-secret selector variables of each selected cloud module (AWS: `AWS_PROFILE`, `AWS_REGION`, `AWS_DEFAULT_REGION`; GCP: `CLOUDSDK_ACTIVE_CONFIG_NAME`, `CLOUDSDK_CORE_PROJECT`, `GOOGLE_CLOUD_PROJECT`; Azure: `ARM_SUBSCRIPTION_ID`, `ARM_TENANT_ID`), sorted. A module can never keep a credential variable.
+- `clean.keep: [PATH, TERM, HOME, USER, ...]` -- Minimal variable allowlist: the catalog `keep_vars` (`PATH` is required: devenv's shell rcfile runs `mktemp` under a Nix bash whose default `PATH` is `/no-such-path` before it sets its own `PATH`; the devenv profile still comes first), then the non-secret selector variables of each selected cloud module (AWS: `AWS_PROFILE`, `AWS_REGION`, `AWS_DEFAULT_REGION`; GCP: `CLOUDSDK_ACTIVE_CONFIG_NAME`, `CLOUDSDK_CORE_PROJECT`, `GOOGLE_CLOUD_PROJECT`; Azure: `ARM_SUBSCRIPTION_ID`, `ARM_TENANT_ID`), sorted. A module can never keep a credential variable.
 
 ### `devenv.nix`
 

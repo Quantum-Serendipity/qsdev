@@ -115,7 +115,7 @@ The generated `devenv.yaml` enforces:
 - **`impure: false`** — Prevents the build from accessing anything outside the Nix store.
 - **`allow_unfree: false`** — Blocks unfree packages unless explicitly listed.
 - **`allow_broken: false`** — Blocks broken packages.
-- **`clean.enabled: true`** — Strips the shell environment on entry, keeping only a minimal allowlist (TERM, HOME, USER, SSH_AUTH_SOCK, etc.).
+- **`clean.enabled: true`** — Strips the shell environment on entry, keeping only a minimal allowlist (PATH, TERM, HOME, USER, SSH_AUTH_SOCK, etc.). `PATH` is kept because `devenv shell` starts a Nix-built bash, whose default `PATH` is `/no-such-path`, and devenv's own rcfile runs `mktemp` before it sources the environment that sets `PATH`; without it the shell cannot start. The devenv profile is prepended, so its tools shadow host ones, but host-only programs (`claude`, `qsdev`) stay reachable in the clean shell. Credentials are not affected: they are cleared by `unsetEnvVars`, not by `clean`.
 
 The generated `devenv.nix` additionally:
 

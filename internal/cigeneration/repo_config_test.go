@@ -247,22 +247,38 @@ func TestNoRenovateConfig(t *testing.T) {
 var toolVersionsFile = filepath.Join(".github", "tool-versions.env")
 
 var (
-	// toolVersionLineRe is one KEY=vX.Y.Z assignment in tool-versions.env.
+	// toolVersionLineRe is one KEY=value assignment in tool-versions.env.
 	toolVersionLineRe = regexp.MustCompile(`^([A-Z][A-Z0-9_]*)=(.*)$`)
-	// toolSourceLineRe is the "# source:" annotation bump-tool-pins.sh reads.
-	toolSourceLineRe = regexp.MustCompile(`^# source: (github [\w.-]+/[\w.-]+|goproxy [\w.-]+(/[\w.-]+)*)$`)
+	// toolSourceLineRe is the "# source:" annotation bump-tool-pins.sh reads;
+	// it captures the source kind and its target.
+	toolSourceLineRe = regexp.MustCompile(`^# source: (github|goproxy|nix-release|nix-sha256) ([\w.-]+(?:/[\w.-]+)*)$`)
+	// nixVersionRe is an exact Nix release; Nix tags carry no leading v.
+	nixVersionRe = regexp.MustCompile(`^\d+\.\d+\.\d+$`)
+	// sha256HexRe is a SHA-256 digest in lower-case hex.
+	sha256HexRe = regexp.MustCompile(`^[0-9a-f]{64}$`)
 	// envRefRe is a ${{ env.NAME }} expression.
 	envRefRe = regexp.MustCompile(`\$\{\{\s*env\.([A-Za-z_][A-Za-z0-9_]*)\s*\}\}`)
 	// goInstallRe captures the version of a `go install pkg@version` command.
 	goInstallRe = regexp.MustCompile(`go install\s+[^\s@]+@(\$\{\{[^}]*\}\}|\S+)`)
 	// toolEnvRefRe is a whole-value ${{ env.NAME }} reference.
 	toolEnvRefRe = regexp.MustCompile(`^\$\{\{\s*env\.([A-Z][A-Z0-9_]*)\s*\}\}$`)
+	// workflowScriptRe is a repository CI script a step runs; such a script
+	// reads its pins from tool-versions.env itself.
+	workflowScriptRe = regexp.MustCompile(`\.github/scripts/[\w.-]+`)
+	// scriptPinKeyRe is a name in a CI script shaped like a tool pin key.
+	scriptPinKeyRe = regexp.MustCompile(`\b(?:[A-Z][A-Z0-9_]*_VERSION|NIX_SHA256_[A-Z0-9_]+)\b`)
 )
+
+// repoScriptsDir holds the scripts workflows run; they may read pins from
+// tool-versions.env but must not carry versions of their own.
+var repoScriptsDir = filepath.Join(repoRoot, ".github", "scripts")
 
 // readToolVersions parses tool-versions.env. Workflows append its assignment
 // lines to $GITHUB_ENV, which rejects anything but NAME=value, so every
-// non-comment line must be one, defined once, with an exact release and a
-// "# source:" line directly above it for the updater.
+// non-comment line must be one, defined once, with a "# source:" line
+// directly above it for the updater and a value of the shape that source
+// yields: an exact vX.Y.Z release, an exact X.Y.Z Nix release, or the SHA-256
+// of that Nix release's tarball for one system.
 func readToolVersions(t *testing.T) map[string]string {
 	t.Helper()
 
@@ -272,21 +288,22 @@ func readToolVersions(t *testing.T) map[string]string {
 	}
 	versions := map[string]string{}
 	prev := ""
+	nixRelease := false
 	for i, line := range strings.Split(strings.ReplaceAll(string(b), "\r\n", "\n"), "\n") {
 		switch m := toolVersionLineRe.FindStringSubmatch(line); {
 		case line == "" || strings.HasPrefix(line, "#"):
 		case m == nil:
 			t.Errorf("%s:%d: %q is neither a comment nor KEY=value", toolVersionsFile, i+1, line)
 		default:
+			where := fmt.Sprintf("%s:%d", toolVersionsFile, i+1)
 			if _, dup := versions[m[1]]; dup {
-				t.Errorf("%s:%d: %s is defined twice", toolVersionsFile, i+1, m[1])
+				t.Errorf("%s: %s is defined twice", where, m[1])
 			}
-			if !exactVersionRe.MatchString(m[2]) {
-				t.Errorf("%s:%d: %s=%q is not an exact release (want vX.Y.Z)", toolVersionsFile, i+1, m[1], m[2])
-			}
-			if !toolSourceLineRe.MatchString(prev) {
-				t.Errorf("%s:%d: %s has no \"# source: github <owner>/<repo>\" or \"# source: goproxy <module>\" line above it",
-					toolVersionsFile, i+1, m[1])
+			src := toolSourceLineRe.FindStringSubmatch(prev)
+			if src == nil {
+				t.Errorf("%s: %s has no \"# source: github|goproxy|nix-release|nix-sha256 <target>\" line above it", where, m[1])
+			} else {
+				nixRelease = checkToolPin(t, where, m[1], m[2], src[1], src[2], nixRelease)
 			}
 			versions[m[1]] = m[2]
 		}
@@ -296,6 +313,35 @@ func readToolVersions(t *testing.T) map[string]string {
 		t.Fatalf("%s defines no tool versions", toolVersionsFile)
 	}
 	return versions
+}
+
+// checkToolPin checks one pin's value against its source kind. nixSeen says
+// whether a nix-release pin came earlier; it returns the updated value.
+func checkToolPin(t *testing.T, where, key, value, kind, target string, nixSeen bool) bool {
+	t.Helper()
+
+	switch kind {
+	case "nix-release":
+		if !nixVersionRe.MatchString(value) {
+			t.Errorf("%s: %s=%q is not an exact Nix release (want X.Y.Z)", where, key, value)
+		}
+		return true
+	case "nix-sha256":
+		if !nixSeen {
+			t.Errorf("%s: %s comes before the nix-release pin its digest belongs to", where, key)
+		}
+		if !sha256HexRe.MatchString(value) {
+			t.Errorf("%s: %s=%q is not a lower-case hex SHA-256", where, key, value)
+		}
+		if want := "NIX_SHA256_" + strings.ToUpper(strings.ReplaceAll(target, "-", "_")); key != want {
+			t.Errorf("%s: %s pins the %s tarball; name it %s", where, key, target, want)
+		}
+	default:
+		if !exactVersionRe.MatchString(value) {
+			t.Errorf("%s: %s=%q is not an exact release (want vX.Y.Z)", where, key, value)
+		}
+	}
+	return nixSeen
 }
 
 type workflowStep struct {
@@ -372,23 +418,50 @@ func stepText(s workflowStep) string {
 	return b.String()
 }
 
+// markScriptPins marks the tool-versions keys each CI script in scripts
+// names as used, and fails on a pin-shaped name a script reads that
+// tool-versions.env does not define.
+func markScriptPins(t *testing.T, scripts map[string]bool, versions map[string]string, used map[string]bool) {
+	t.Helper()
+
+	for rel := range scripts {
+		b, err := os.ReadFile(filepath.Join(repoRoot, filepath.FromSlash(rel)))
+		if err != nil {
+			t.Errorf("a workflow runs %s, which cannot be read: %v", rel, err)
+			continue
+		}
+		for _, name := range scriptPinKeyRe.FindAllString(string(b), -1) {
+			if _, ok := versions[name]; ok {
+				used[name] = true
+			} else {
+				t.Errorf("%s reads %s, which %s does not define", rel, name, toolVersionsFile)
+			}
+		}
+	}
+}
+
 // TestToolVersionsSingleSource is the U26-02 regression test for the tool
 // pins no Dependabot ecosystem covers. Their versions live only in
 // tool-versions.env, which tool-pins.yml keeps current with a cooldown: no
 // `go install` or action `version:` input may carry a literal version, every
 // ${{ env.X }} must resolve (a tool-versions key only after the job loaded
-// the file), and every key must be used somewhere.
+// the file), and every key must be used somewhere, by a workflow or by a
+// .github/scripts script a workflow runs.
 func TestToolVersionsSingleSource(t *testing.T) {
 	t.Parallel()
 
 	versions := readToolVersions(t)
 	used := map[string]bool{}
+	scripts := map[string]bool{}
 	for file, wf := range readRepoWorkflows(t) {
 		for jobName, job := range wf.Jobs {
 			where := file + " job " + jobName
 			loaded := false
 			for i, s := range job.Steps {
 				step := fmt.Sprintf("%s step %d (%s)", where, i+1, s.Name)
+				for _, script := range workflowScriptRe.FindAllString(s.Run, -1) {
+					scripts[script] = true
+				}
 				for _, m := range goInstallRe.FindAllStringSubmatch(s.Run, -1) {
 					ref := toolEnvRefRe.FindStringSubmatch(m[1])
 					if ref == nil || versions[ref[1]] == "" {
@@ -420,6 +493,7 @@ func TestToolVersionsSingleSource(t *testing.T) {
 			}
 		}
 	}
+	markScriptPins(t, scripts, versions, used)
 	for key := range versions {
 		if !used[key] {
 			t.Errorf("%s: %s is used by no workflow; remove it", toolVersionsFile, key)
@@ -434,30 +508,40 @@ func literalVersionRe(version string) *regexp.Regexp {
 	return regexp.MustCompile(`(?:^|[^0-9.])v?` + regexp.QuoteMeta(strings.TrimPrefix(version, "v")) + `(?:$|[^0-9.])`)
 }
 
-// assertNoLiteralToolVersions scans the raw text of every workflow for the
-// pinned tool versions, so a literal version outside the structural checks
-// (`go run pkg@v1.2.3`, a release download URL, an env value) still fails.
+// assertNoLiteralToolVersions scans the raw text of every workflow and CI
+// script for the pinned tool versions and digests, so a literal pin outside
+// the structural checks (`go run pkg@v1.2.3`, a release download URL, an env
+// value, a hard-coded checksum) still fails.
 func assertNoLiteralToolVersions(t *testing.T, versions map[string]string) {
 	t.Helper()
 
-	entries, err := os.ReadDir(repoWorkflowsDir)
-	if err != nil {
-		t.Fatalf("reading %s: %v", repoWorkflowsDir, err)
-	}
-	for _, e := range entries {
-		if e.IsDir() {
+	var files []string
+	for _, dir := range []string{repoWorkflowsDir, repoScriptsDir} {
+		entries, err := os.ReadDir(dir)
+		if errors.Is(err, fs.ErrNotExist) && dir == repoScriptsDir {
 			continue
 		}
-		b, err := os.ReadFile(filepath.Join(repoWorkflowsDir, e.Name()))
 		if err != nil {
-			t.Fatalf("reading %s: %v", e.Name(), err)
+			t.Fatalf("reading %s: %v", dir, err)
 		}
+		for _, e := range entries {
+			if !e.IsDir() {
+				files = append(files, filepath.Join(dir, e.Name()))
+			}
+		}
+	}
+	for _, path := range files {
+		b, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatalf("reading %s: %v", path, err)
+		}
+		name := filepath.ToSlash(strings.TrimPrefix(path, repoRoot+string(filepath.Separator)))
 		for key, version := range versions {
 			re := literalVersionRe(version)
 			for i, line := range strings.Split(string(b), "\n") {
 				if re.MatchString(line) {
-					t.Errorf("%s:%d contains %s's version %s literally; use ${{ env.%s }} from %s",
-						e.Name(), i+1, key, version, key, toolVersionsFile)
+					t.Errorf("%s:%d contains %s's pin %s literally; read %s from %s",
+						name, i+1, key, version, key, toolVersionsFile)
 				}
 			}
 		}

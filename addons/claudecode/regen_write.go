@@ -212,18 +212,19 @@ func (p *regenPlan) write(f types.GeneratedFile, exists bool) {
 
 // applyRegenPlan performs the planned legacy cleanup and file writes.
 func applyRegenPlan(plan *regenPlan, projectRoot string, warn io.Writer) error {
-	for _, legacy := range plan.legacyRemovals {
-		if err := os.Remove(filepath.Join(projectRoot, legacy)); err != nil && !errors.Is(err, fs.ErrNotExist) {
-			_, _ = fmt.Fprintf(warn, "Warning: could not remove stale skill file %s: %v\n", legacy, err)
-		}
-	}
 	// Validate every write first so invalid content is refused before any
-	// file changes, as the init pipeline would refuse it.
+	// file changes (legacy removals included), as the init pipeline would
+	// refuse it.
 	for _, f := range plan.writes {
 		if !f.SkipValidation {
 			if err := generate.ValidateContent(f.Path, f.Content); err != nil {
 				return err
 			}
+		}
+	}
+	for _, legacy := range plan.legacyRemovals {
+		if err := fileutil.RemoveInRoot(projectRoot, filepath.FromSlash(legacy)); err != nil && !errors.Is(err, fs.ErrNotExist) {
+			_, _ = fmt.Fprintf(warn, "Warning: could not remove stale skill file %s: %v\n", legacy, err)
 		}
 	}
 	for _, f := range plan.writes {

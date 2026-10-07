@@ -2,13 +2,10 @@ package generate
 
 import (
 	"bytes"
-	"errors"
 	"fmt"
-	"io/fs"
 	"log/slog"
 	"os"
 	"path/filepath"
-	"runtime"
 	"strings"
 
 	"github.com/Quantum-Serendipity/qsdev/internal/merge"
@@ -45,23 +42,13 @@ func WriteFiles(files []types.GeneratedFile, opts PipelineOptions) (WriteResult,
 		return WriteResult{}, fmt.Errorf("project root is not a directory: %q", opts.ProjectRoot)
 	}
 
-	// Resolve the project root once for consistent symlink escape checks.
-	// On Windows, EvalSymlinks may normalize casing or resolve junctions.
-	resolvedRoot, err := filepath.EvalSymlinks(opts.ProjectRoot)
-	if err != nil {
-		return WriteResult{}, fmt.Errorf("resolving project root symlinks: %w", err)
-	}
-
 	if !opts.DryRun {
 		// Before the scripts are written, so a partial write never leaves
 		// one to be committed without its line-ending pin.
 		pinScriptLineEndings(opts.ProjectRoot, files)
 	}
 
-	w := &fileWriter{
-		opts:         opts,
-		resolvedRoot: resolvedRoot,
-	}
+	w := &fileWriter{opts: opts}
 	// A file held with a partner is decided after every partner, whose
 	// outcome it follows (see types.GeneratedFile.HeldWith).
 	for _, held := range []bool{false, true} {
@@ -76,9 +63,8 @@ func WriteFiles(files []types.GeneratedFile, opts PipelineOptions) (WriteResult,
 
 // fileWriter carries the per-call state of WriteFiles.
 type fileWriter struct {
-	opts         PipelineOptions
-	resolvedRoot string
-	result       WriteResult
+	opts   PipelineOptions
+	result WriteResult
 
 	// priorStates holds the project's recorded generation states, loaded on
 	// first use by a Skip or ManualMerge decision.
@@ -136,8 +122,9 @@ func (w *fileWriter) write(file types.GeneratedFile) {
 		return
 	}
 
-	// Verify the resolved path doesn't escape the project root via symlinks.
-	if err := checkWithinRoot(fullPath, w.resolvedRoot); err != nil {
+	// Verify the resolved path stays inside the project root and is not
+	// redirected into .git through a symlink, dry run included.
+	if _, err := fileutil.ResolveInRoot(w.opts.ProjectRoot, filepath.FromSlash(file.Path)); err != nil {
 		w.fail(fr, err)
 		return
 	}
@@ -205,7 +192,7 @@ func (w *fileWriter) write(file types.GeneratedFile) {
 	}
 
 	// Write atomically, confined to the project root: the write re-resolves
-	// symlinks itself, so a link swapped in after checkWithinRoot still cannot
+	// symlinks itself, so a link swapped in after the pre-check still cannot
 	// redirect it outside the project.
 	if err := fileutil.WriteFileAtomicInRoot(w.opts.ProjectRoot, filepath.FromSlash(file.Path), contentToWrite, mode); err != nil {
 		slog.Warn("file write failed", "path", file.Path, "error", err)
@@ -394,51 +381,12 @@ func restrictMode(generated, existing os.FileMode) os.FileMode {
 	return generated &^ (groupOther &^ existing)
 }
 
-// checkWithinRoot verifies that writing fullPath cannot land outside root
-// through a symlink. The longest existing ancestor of fullPath is resolved
-// (MkdirAll would follow a symlinked ancestor even when deeper directories do
-// not exist yet), and a symlinked leaf is resolved as well. Any resolution
-// error other than "does not exist" fails closed.
-func checkWithinRoot(fullPath, resolvedRoot string) error {
-	if li, err := os.Lstat(fullPath); err == nil && li.Mode()&os.ModeSymlink != 0 {
-		resolved, err := filepath.EvalSymlinks(fullPath)
-		if err != nil {
-			return fmt.Errorf("resolving symlink: %w", err)
-		}
-		if !pathHasPrefix(resolved, resolvedRoot) {
-			return errEscapesRoot
-		}
-	}
-
-	dir := filepath.Dir(fullPath)
-	for {
-		resolved, err := filepath.EvalSymlinks(dir)
-		if err == nil {
-			if !pathHasPrefix(resolved, resolvedRoot) {
-				return errEscapesRoot
-			}
-			return nil
-		}
-		if !errors.Is(err, fs.ErrNotExist) {
-			return fmt.Errorf("resolving %s: %w", dir, err)
-		}
-		parent := filepath.Dir(dir)
-		if parent == dir {
-			return fmt.Errorf("no existing ancestor for %s: %w", fullPath, err)
-		}
-		dir = parent
-	}
-}
-
 // isNonRegularLeaf reports whether fullPath itself (not following a symlink)
 // exists and is not a regular file.
 func isNonRegularLeaf(fullPath string) bool {
 	info, err := os.Lstat(fullPath)
 	return err == nil && !info.Mode().IsRegular()
 }
-
-// errEscapesRoot reports a write target that resolves outside the project.
-var errEscapesRoot = errors.New("resolved path escapes project root")
 
 // PreviewFiles returns a table-formatted string showing what would happen
 // if the given files were written. The state parameter is used to determine
@@ -485,19 +433,6 @@ func ValidateFiles(files []types.GeneratedFile) []ValidationResult {
 		results = append(results, vr)
 	}
 	return results
-}
-
-// pathHasPrefix checks whether resolved is under root, accounting for
-// filesystem separator boundaries and case-insensitive paths on Windows.
-func pathHasPrefix(resolved, root string) bool {
-	sep := string(filepath.Separator)
-	a := resolved + sep
-	b := root + sep
-	if runtime.GOOS == "windows" {
-		a = strings.ToLower(a)
-		b = strings.ToLower(b)
-	}
-	return strings.HasPrefix(a, b)
 }
 
 // containsPathTraversal checks whether a file path contains ".." components.

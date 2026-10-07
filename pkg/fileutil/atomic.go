@@ -13,7 +13,8 @@ import (
 	"github.com/Quantum-Serendipity/qsdev/pkg/branding"
 )
 
-// ErrOutsideRoot is returned by WriteFileAtomicInRoot when the destination,
+// ErrOutsideRoot is returned by ResolveInRoot (and so by
+// WriteFileAtomicInRoot and RemoveInRoot) when the destination,
 // after resolving symbolic links, lies outside the root directory, or when a
 // symbolic link redirects the write into a .git metadata directory.
 var ErrOutsideRoot = errors.New("path resolves outside root")
@@ -76,32 +77,20 @@ func linkTargetWithin(dir, target string) bool {
 }
 
 // WriteFileAtomicInRoot writes rel, a path relative to root, atomically with
-// the same semantics as WriteFileAtomic, but refuses to write outside root:
-// rel must be a local path, and if a symlinked parent directory or a symlinked
-// destination resolves outside root, it returns an error wrapping
-// ErrOutsideRoot and writes nothing. Use it for every project-relative write
-// so a repository cannot redirect writes (for example by committing a
-// symlinked .claude directory) to files outside the project.
+// the same semantics as WriteFileAtomic, but lands where ResolveInRoot says
+// and refuses to write outside root: if rel is not local, or a symlinked
+// parent directory or destination resolves outside root or redirects into
+// .git, it returns the ResolveInRoot error (wrapping ErrOutsideRoot) and
+// writes nothing. Use it for every project-relative write so a repository
+// cannot redirect writes (for example by committing a symlinked .claude
+// directory) to files outside the project.
 func WriteFileAtomicInRoot(root, rel string, content []byte, mode os.FileMode) error {
-	if !filepath.IsLocal(rel) {
-		return fmt.Errorf("writing %q under %s: %w", rel, root, ErrOutsideRoot)
-	}
-	resolvedRoot, err := filepath.EvalSymlinks(root)
+	target, err := ResolveInRoot(root, rel)
 	if err != nil {
-		return fmt.Errorf("resolving root %s: %w", root, err)
-	}
-	target, err := resolveWriteTarget(filepath.Join(root, rel))
-	if err != nil {
+		// Already names the path and root; callers add their own context.
 		return err
 	}
-	resolvedDir, err := resolveExistingPrefix(filepath.Dir(target))
-	if err != nil {
-		return err
-	}
-	if !isWithin(resolvedRoot, resolvedDir) || redirectsIntoGitDir(resolvedRoot, resolvedDir, filepath.Dir(rel)) {
-		return fmt.Errorf("writing %q under %s (resolves to %s): %w", rel, root, resolvedDir, ErrOutsideRoot)
-	}
-	return writeAtomic(filepath.Join(resolvedDir, filepath.Base(target)), content, mode)
+	return writeAtomic(target, content, mode)
 }
 
 // WriteNewFileInRoot creates rel, a path relative to root, with content and
@@ -241,6 +230,11 @@ func createTemp(dir string, mode os.FileMode) (*os.File, error) {
 // itself, or, when path is a symbolic link, the file it ultimately points to
 // (which may not exist yet), so the rename replaces the target and keeps the
 // link instead of replacing the link with a regular file.
+//
+// A relative link target is resolved against the symlink-resolved directory
+// holding the link, as the operating system does, not against its lexical
+// spelling: for a/link -> ../t with a -> sub/deep, the target is sub/t, not
+// t.
 func resolveWriteTarget(path string) (string, error) {
 	current := path
 	for range maxSymlinkHops {
@@ -256,7 +250,12 @@ func resolveWriteTarget(path string) (string, error) {
 			return "", fmt.Errorf("reading symlink %s: %w", current, err)
 		}
 		if !filepath.IsAbs(link) {
-			link = filepath.Join(filepath.Dir(current), link)
+			// The directory exists: Lstat of an entry inside it succeeded.
+			dir, err := filepath.EvalSymlinks(filepath.Dir(current))
+			if err != nil {
+				return "", fmt.Errorf("resolving directory of symlink %s: %w", current, err)
+			}
+			link = filepath.Join(dir, link)
 		}
 		current = link
 	}

@@ -734,7 +734,7 @@ func executeUpdatePlan(
 		// Same containment guarantee as generate.WriteFiles: never write
 		// through a symlink (or a crafted path) to outside the project.
 		if fp.Action != UpdateActionSkip {
-			if err := generate.ValidateDestination(projectRoot, fp.Path); err != nil {
+			if _, err := fileutil.ResolveInRoot(projectRoot, filepath.FromSlash(fp.Path)); err != nil {
 				return out, fmt.Errorf("refusing to write %s: %w", fp.Path, err)
 			}
 		}
@@ -747,7 +747,7 @@ func executeUpdatePlan(
 			if stop, err := out.writeValidated(projectRoot, fp, fp.NewContent, mode); stop {
 				return out, err
 			}
-			out.dropStaleSidecar(fp, absPath, opts.DryRun)
+			out.dropStaleSidecar(fp, projectRoot, opts.DryRun)
 
 		case UpdateActionHold:
 			if err := generate.ValidateContent(fp.Path, fp.NewContent); err != nil {
@@ -780,7 +780,7 @@ func executeUpdatePlan(
 			}
 
 		case UpdateActionRemove:
-			if err := os.Remove(absPath); err != nil && !errors.Is(err, fs.ErrNotExist) {
+			if err := fileutil.RemoveInRoot(projectRoot, filepath.FromSlash(fp.Path)); err != nil && !errors.Is(err, fs.ErrNotExist) {
 				out.failures = append(out.failures, fileFailure{Path: fp.Path, Err: fmt.Errorf("removing orphaned file: %w", err)})
 				continue
 			}
@@ -833,11 +833,11 @@ func (o *updateOutcome) writeHeldSidecar(projectRoot string, fp FileUpdatePlan, 
 // dropStaleSidecar removes the sidecar an earlier update left for a held file
 // now written in place. A failure is only reported: the file itself is
 // current.
-func (o *updateOutcome) dropStaleSidecar(fp FileUpdatePlan, absPath string, dryRun bool) {
+func (o *updateOutcome) dropStaleSidecar(fp FileUpdatePlan, projectRoot string, dryRun bool) {
 	if fp.HeldWith == "" || dryRun {
 		return
 	}
-	if err := update.CleanupSidecar(absPath + generate.SidecarSuffix); err != nil {
+	if err := update.CleanupSidecar(projectRoot, filepath.FromSlash(fp.Path+generate.SidecarSuffix)); err != nil {
 		o.failures = append(o.failures, fileFailure{Path: fp.Path + generate.SidecarSuffix, Err: fmt.Errorf("removing stale sidecar: %w", err)})
 	}
 }

@@ -354,7 +354,12 @@ func keepUserOwnedFiles(
 	app := branding.Get().AppName
 	write = make([]types.GeneratedFile, 0, len(files))
 	for _, f := range files {
-		if f.Strategy != types.Skip || generate.ValidateDestination(projectRoot, f.Path) != nil {
+		if f.Strategy != types.Skip {
+			write = append(write, f)
+			continue
+		}
+		if _, err := fileutil.ResolveInRoot(projectRoot, filepath.FromSlash(f.Path)); err != nil {
+			// Left to the write checks, which refuse it.
 			write = append(write, f)
 			continue
 		}
@@ -404,7 +409,7 @@ func noToolOutputError(toolName string, missing []toolreg.FileOwnership, answers
 func checkExclusiveWrites(projectRoot string, files []types.GeneratedFile, modStatus map[string]state.FileStatus, force bool) error {
 	var unsafe, foreignPaths []string
 	for _, f := range files {
-		if err := generate.ValidateDestination(projectRoot, f.Path); err != nil {
+		if _, err := fileutil.ResolveInRoot(projectRoot, filepath.FromSlash(f.Path)); err != nil {
 			unsafe = append(unsafe, err.Error())
 			continue
 		}
@@ -459,7 +464,7 @@ func planSharedFiles(
 	produced := make(map[string]bool, len(shared))
 	for _, f := range shared {
 		produced[f.Path] = true
-		if err := generate.ValidateDestination(projectRoot, f.Path); err != nil {
+		if _, err := fileutil.ResolveInRoot(projectRoot, filepath.FromSlash(f.Path)); err != nil {
 			return UpdatePlan{}, nil, fmt.Errorf("refusing to write outside the project: %w", err)
 		}
 	}
@@ -816,8 +821,11 @@ func planExclusiveRemoval(
 	var r exclusiveRemoval
 	var modified []string
 	for _, p := range paths {
-		if err := generate.ValidateDestination(projectRoot, p); err != nil {
-			return exclusiveRemoval{}, fmt.Errorf("refusing to remove a path outside the project: %w", err)
+		// Vet every path before apply removes the first one. A parent that
+		// cannot exist (behind a dangling symlink) is refused too, as it
+		// always was here.
+		if err := fileutil.CheckRemoveInRoot(projectRoot, filepath.FromSlash(p)); err != nil {
+			return exclusiveRemoval{}, fmt.Errorf("refusing to remove %s: %w", p, err)
 		}
 		info, err := os.Lstat(filepath.Join(projectRoot, p))
 		switch {
@@ -875,7 +883,7 @@ func (r exclusiveRemoval) apply(projectRoot string, st types.GeneratedState) ([]
 	var removed []string
 	pruneFrom := append([]string(nil), r.dirs...)
 	for _, p := range r.files {
-		if err := os.Remove(filepath.Join(projectRoot, p)); err != nil && !errors.Is(err, fs.ErrNotExist) {
+		if err := fileutil.RemoveInRoot(projectRoot, filepath.FromSlash(p)); err != nil && !errors.Is(err, fs.ErrNotExist) {
 			return removed, fmt.Errorf("removing %s: %w", p, err)
 		}
 		delete(st.Files, p)
@@ -891,10 +899,10 @@ func (r exclusiveRemoval) apply(projectRoot string, st types.GeneratedState) ([]
 }
 
 // pruneEmptyDirs removes dir and then each parent while they are empty,
-// stopping at the project root.
+// stopping at the project root. Removal is confined to the project.
 func pruneEmptyDirs(projectRoot, dir string) {
 	for dir != "." && dir != "" && dir != string(filepath.Separator) {
-		if err := os.Remove(filepath.Join(projectRoot, dir)); err != nil {
+		if err := fileutil.RemoveInRoot(projectRoot, filepath.FromSlash(dir)); err != nil {
 			return // not empty (or already gone): stop climbing
 		}
 		dir = filepath.Dir(dir)
@@ -924,7 +932,7 @@ func removeStaleSections(tool *toolreg.Tool, projectRoot string, change toolChan
 		case updated == nil:
 			continue
 		}
-		if err := generate.ValidateDestination(projectRoot, sf.Path); err != nil {
+		if _, err := fileutil.ResolveInRoot(projectRoot, filepath.FromSlash(sf.Path)); err != nil {
 			notices = append(notices, fmt.Sprintf("%s: not updated: %v", sf.Path, err))
 			continue
 		}

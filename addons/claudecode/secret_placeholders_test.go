@@ -127,6 +127,39 @@ func TestScanSecretsHook_PlaceholderIndicatorsTakeEffect(t *testing.T) {
 	}
 }
 
+// TestScanSecretsHook_FixedLengthTokenBeforePlaceholderWord pins R2: an npm
+// token is exactly 36 characters after npm_, so a placeholder word written
+// straight after a real token (`npm_<36>TODO`) must not be swallowed into the
+// match, where the placeholder filter would skip the real token with it.
+func TestScanSecretsHook_FixedLengthTokenBeforePlaceholderWord(t *testing.T) {
+	t.Parallel()
+	python, hook := scanSecretsHook(t)
+	token := "npm_" + strings.Repeat("Ab1", 12)
+	tests := []struct {
+		name     string
+		content  string
+		wantDeny bool
+	}{
+		{"token then XXXX", token + "XXXX", true},
+		{"token then TODO", token + "TODO", true},
+		{"token then DUMMY", token + "DUMMY", true},
+		{"token then SAMPLE", token + "SAMPLE", true},
+		{"token then Example", token + "Example", true},
+		{"token alone", token, true},
+		{"placeholder token", "npm_" + strings.Repeat("X", 36), false},
+		{"placeholder body then real tail", "npm_" + strings.Repeat("x", 32) + "Ab1c", false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			decision, reason := runScanSecretsWrite(t, python, hook, "main.go", "value := \""+tt.content+"\"\n")
+			if denied := decision == "deny"; denied != tt.wantDeny {
+				t.Errorf("denied = %v, want %v (reason %q)", denied, tt.wantDeny, reason)
+			}
+		})
+	}
+}
+
 // TestScanSecretsHook_DeniesEveryCanonSample runs the real hook on a Write of
 // every canon sample. It catches a canon entry Python re cannot compile:
 // get_patterns would drop it with only an audit-log line, and the shape would

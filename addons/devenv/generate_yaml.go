@@ -2,6 +2,7 @@ package devenv
 
 import (
 	"fmt"
+	"slices"
 	"sort"
 
 	"gopkg.in/yaml.v3"
@@ -15,7 +16,7 @@ import (
 const (
 	nixpkgsURL     = "github:NixOS/nixpkgs/nixpkgs-unstable"
 	gitHooksURL    = "github:cachix/git-hooks.nix"
-	requireVersion = ">=2.1"
+	requireVersion = ">=" + types.MinDevenv
 	yamlHeaderFmt  = "# %s init — security-hardened devenv configuration.\n# See https://devenv.sh/reference/yaml-options/ for all options.\n"
 )
 
@@ -71,13 +72,13 @@ func needsGitHooks(_ types.WizardAnswers, _ *ecosystem.Registry) bool {
 }
 
 // collectEcosystemInputs gathers DevenvYamlInputs from every selected module.
-func collectEcosystemInputs(answers types.WizardAnswers, registry *ecosystem.Registry) map[string]DevenvYamlInput {
-	if registry == nil {
+func (c *genContext) collectEcosystemInputs() map[string]DevenvYamlInput {
+	if c.modules == nil {
 		return nil
 	}
 	merged := make(map[string]DevenvYamlInput)
-	for _, lang := range answers.Languages {
-		mod, ok := registry.ByName(lang.Name)
+	for _, lang := range c.answers.Languages {
+		mod, ok := c.modules.ByName(lang.Name)
 		if !ok {
 			continue
 		}
@@ -85,8 +86,7 @@ func collectEcosystemInputs(answers types.WizardAnswers, registry *ecosystem.Reg
 		if !ok {
 			continue
 		}
-		cfg := ecosystem.ToModuleConfig(lang)
-		for _, inp := range yip.DevenvYamlInputs(cfg) {
+		for _, inp := range yip.DevenvYamlInputs(c.moduleConfig(mod)) {
 			key := inputKeyFromURL(inp.URL)
 			entry := DevenvYamlInput{
 				URL: inp.URL,
@@ -105,9 +105,47 @@ func collectEcosystemInputs(answers types.WizardAnswers, registry *ecosystem.Reg
 	return merged
 }
 
+// cleanKeep returns the devenv.yaml clean.keep list: the catalog keep_vars in
+// order, then the selector variables every selected module keeps
+// (ecosystem.EnvKeeper) that the catalog does not already list, sorted and
+// deduplicated so the output is stable.
+func (c *genContext) cleanKeep() []string {
+	keep := c.cat.KeepVars()
+	if c.modules == nil {
+		return keep
+	}
+	var extra []string
+	for _, lang := range c.answers.Languages {
+		mod, ok := c.modules.ByName(lang.Name)
+		if !ok {
+			continue
+		}
+		if keeper, ok := mod.(ecosystem.EnvKeeper); ok {
+			extra = append(extra, keeper.KeepEnvVars()...)
+		}
+	}
+	slices.Sort(extra)
+	for _, name := range slices.Compact(extra) {
+		if !slices.Contains(keep, name) {
+			keep = append(keep, name)
+		}
+	}
+	return keep
+}
+
 // GenerateDevenvYaml produces a security-hardened devenv.yaml from the wizard
 // answers and ecosystem registry.
 func GenerateDevenvYaml(answers types.WizardAnswers, registry *ecosystem.Registry) (*types.GeneratedFile, error) {
+	ctx, err := newGenContext(answers, registry)
+	if err != nil {
+		return nil, err
+	}
+	return generateDevenvYaml(ctx)
+}
+
+// generateDevenvYaml is GenerateDevenvYaml for an already-loaded context.
+func generateDevenvYaml(ctx *genContext) (*types.GeneratedFile, error) {
+	answers, registry := ctx.answers, ctx.modules
 	dy := DevenvYaml{
 		RequireVersion: requireVersion,
 		Inputs: map[string]DevenvYamlInput{
@@ -122,7 +160,7 @@ func GenerateDevenvYaml(answers types.WizardAnswers, registry *ecosystem.Registr
 		},
 		Clean: DevenvClean{
 			Enabled: true,
-			Keep:    defaultCleanKeep(),
+			Keep:    ctx.cleanKeep(),
 		},
 	}
 
@@ -137,7 +175,7 @@ func GenerateDevenvYaml(answers types.WizardAnswers, registry *ecosystem.Registr
 	}
 
 	// Merge ecosystem module inputs.
-	ecoInputs := collectEcosystemInputs(answers, registry)
+	ecoInputs := ctx.collectEcosystemInputs()
 	for k, v := range ecoInputs {
 		if _, exists := dy.Inputs[k]; !exists {
 			dy.Inputs[k] = v
@@ -156,6 +194,9 @@ func GenerateDevenvYaml(answers types.WizardAnswers, registry *ecosystem.Registr
 		Content:  []byte(content),
 		Mode:     fileutil.ModeReadWrite,
 		Strategy: types.Overwrite,
+		// Its module inputs are read by devenv.nix options: it is never
+		// rewritten while devenv.nix keeps a user's edits.
+		HeldWith: devenvNixPath,
 	}, nil
 }
 

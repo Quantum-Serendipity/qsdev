@@ -20,6 +20,7 @@ import (
 
 // Compile-time interface compliance checks.
 var _ ecosystem.EcosystemModule = (*Module)(nil)
+var _ ecosystem.ProxyKeyProvider = (*Module)(nil)
 var _ ecosystem.WizardFieldProvider = (*Module)(nil)
 var _ ecosystem.ManifestFileProvider = (*Module)(nil)
 var _ ecosystem.SASTModule = (*Module)(nil)
@@ -322,8 +323,8 @@ func (m *Module) DevenvNixFragment(config ecosystem.ModuleConfig) (string, error
 		if config.Extra(extraUVExcludeNewer, "") != "project" {
 			envVars = append(envVars, ecosystem.NixEnvVar{
 				Key:     "UV_EXCLUDE_NEWER",
-				Value:   ecosystem.NixString(uvCooldown),
-				Comment: "Ignore releases newer than 7 days when resolving (uv >= 0.9.17)",
+				Value:   ecosystem.NixString(uvExcludeNewer(config)),
+				Comment: fmt.Sprintf("Ignore releases newer than %d days when resolving (uv >= 0.9.17)", uvCooldownDays(config)),
 			})
 		}
 	default:
@@ -428,11 +429,19 @@ const pipConfigPath = "pip.conf"
 // cannot set require-hashes globally (see SecurityConfigs).
 const pipLockedInstallCommand = "pip install --require-hashes --only-binary :all: -r requirements.txt"
 
-// uvCooldown is the uv exclude-newer duration (ISO 8601, 7 days) applied to
-// uv projects that do not set their own. The same value must be used
-// everywhere: uv records it in uv.lock and treats a different setting as a
-// stale lockfile.
-const uvCooldown = "P7D"
+// uvCooldownDays is the uv release-age cooldown in whole days: the
+// compliance window, never below uv's historical 7-day floor (D18).
+func uvCooldownDays(config ecosystem.ModuleConfig) int {
+	return ecosystem.ReleaseAgeDays(config.ReleaseAge(ecosystem.WeekMinReleaseAgeFloor))
+}
+
+// uvExcludeNewer is the uv exclude-newer duration (ISO 8601 days) applied to
+// uv projects that do not set their own. The devenv shell and CI must use
+// the same value: uv records it in uv.lock and treats a different setting as
+// a stale lockfile.
+func uvExcludeNewer(config ecosystem.ModuleConfig) string {
+	return fmt.Sprintf("P%dD", uvCooldownDays(config))
+}
 
 // DevenvYamlInputs returns the extra flake input required for Python.
 //
@@ -444,7 +453,7 @@ const uvCooldown = "P7D"
 // the user pinned a version.
 func (m *Module) DevenvYamlInputs(_ ecosystem.ModuleConfig) []ecosystem.DevenvInput {
 	return []ecosystem.DevenvInput{
-		{URL: "github:cachix/nixpkgs-python", Follows: "nixpkgs"},
+		{URL: "github:cachix/nixpkgs-python", Follows: "nixpkgs", Options: []string{"languages.python.version"}},
 	}
 }
 
@@ -577,12 +586,12 @@ func (m *Module) CICommands(config ecosystem.ModuleConfig) []ecosystem.CICommand
 		// UV_EXCLUDE_NEWER or uv treats the lockfile as stale.
 		command := "uv sync --locked"
 		if config.Extra(extraUVExcludeNewer, "") != "project" {
-			command += " --exclude-newer " + uvCooldown
+			command += " --exclude-newer " + uvExcludeNewer(config)
 		}
 		cmds = append(cmds, ecosystem.CICommand{
 			Name:        "uv-sync",
 			Command:     command,
-			Description: "Install Python dependencies from an up-to-date uv lockfile with a 7-day age gate",
+			Description: fmt.Sprintf("Install Python dependencies from an up-to-date uv lockfile with a %d-day age gate", uvCooldownDays(config)),
 			Phase:       ecosystem.CIPhaseInstall,
 		})
 	case "poetry":
@@ -614,6 +623,16 @@ func (m *Module) CICommands(config ecosystem.ModuleConfig) []ecosystem.CICommand
 // in the devenv shell for every package manager.
 func (m *Module) DevenvPackages(_ ecosystem.ModuleConfig) []string {
 	return []string{"pip-audit"}
+}
+
+// ProxyKey returns "pypi" for pip, whose generated pip.conf points the
+// package index at the registry proxy. uv and Poetry read no qsdev-generated
+// index setting, so they are not routed and the project is warned instead.
+func (m *Module) ProxyKey(config ecosystem.ModuleConfig) string {
+	if config.PM("pip") == "pip" {
+		return "pypi"
+	}
+	return ""
 }
 
 // PackageManagers returns metadata about Python's package managers.

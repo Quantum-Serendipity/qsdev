@@ -72,7 +72,7 @@ func TestFilterHooksByTier_UnknownTier(t *testing.T) {
 	for _, tier := range []string{"full", "specialized", "Baseline"} {
 		t.Run(tier, func(t *testing.T) {
 			t.Parallel()
-			got, err := devenv.FilterHooksByTier([]string{"ripsecrets"}, tier)
+			got, err := devenv.FilterHooksByTier(catalog.MustDefault(), []string{"ripsecrets"}, tier)
 			if err == nil || !strings.Contains(err.Error(), "unknown hook tier") {
 				t.Errorf("FilterHooksByTier(%q) = %v, %v; want an unknown hook tier error", tier, got, err)
 			}
@@ -137,7 +137,7 @@ func TestHookTiersNameRealHooks(t *testing.T) {
 // mustFilterHooksByTier calls FilterHooksByTier and fails the test on error.
 func mustFilterHooksByTier(t *testing.T, hooks []string, tier string) []string {
 	t.Helper()
-	result, err := devenv.FilterHooksByTier(hooks, tier)
+	result, err := devenv.FilterHooksByTier(catalog.MustDefault(), hooks, tier)
 	if err != nil {
 		t.Fatalf("FilterHooksByTier(%v, %q): %v", hooks, tier, err)
 	}

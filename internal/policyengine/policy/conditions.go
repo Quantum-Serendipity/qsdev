@@ -9,6 +9,7 @@ import (
 	"slices"
 	"strings"
 
+	"github.com/Quantum-Serendipity/qsdev/internal/pathmatch"
 	"github.com/Quantum-Serendipity/qsdev/internal/selfprotect/cmdscan"
 )
 
@@ -155,7 +156,7 @@ func containsWordSequence(argv, want []string) bool {
 func commandWordMatches(word, want string) bool {
 	word = strings.ReplaceAll(word, `\`, "")
 	equal := func(a, b string) bool {
-		if caseInsensitiveFS() {
+		if pathmatch.CaseInsensitiveFS() {
 			return strings.EqualFold(a, b)
 		}
 		return a == b

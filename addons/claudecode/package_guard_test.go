@@ -97,6 +97,14 @@ func TestPackageGuard_ExtractsOnlyRealInstalls(t *testing.T) {
 		// timeout's own `-s <signal>` value flag still consumes its value, and the
 		// duration positional is still skipped, so the install is found.
 		{"timeout signal flag then install", `timeout -s TERM 10 npm install evil`, true, []string{"evil"}},
+		// The duration is any one word (R1): a fraction, inf, a sign, a blank.
+		{"timeout fractional duration", `timeout .5 npm install evil`, true, []string{"evil"}},
+		{"timeout inf duration", `timeout inf npm install evil`, true, []string{"evil"}},
+		{"timeout infinity duration", `timeout infinity pip install evil`, true, []string{"evil"}},
+		{"timeout signed duration", `timeout +5 npm install evil`, true, []string{"evil"}},
+		{"timeout blank-led duration", `timeout ' 5' npm install evil`, true, []string{"evil"}},
+		{"timeout kill-after then fraction", `timeout -k 1 .1 npm install evil`, true, []string{"evil"}},
+		{"timeout verbose then inf", `timeout -v inf npm install evil`, true, []string{"evil"}},
 		{"nested shell inside compound", `echo start && bash -c "cargo add serde"`, true, []string{"serde"}},
 
 		// M3 must NOT introduce false positives: a shell -c whose script only
@@ -220,7 +228,7 @@ func TestPackageGuard_ExtractsOnlyRealInstalls(t *testing.T) {
 			cmd := exec.Command(python, "-c", pgDriver)
 			// PYTHONDONTWRITEBYTECODE keeps the import from writing a
 			// __pycache__ directory into the embedded templates tree.
-			cmd.Env = append(os.Environ(), "PYTHONDONTWRITEBYTECODE=1", "PG_PATH="+template, "PG_CMD="+tc.command)
+			cmd.Env = hookEnv(t, "PG_PATH="+template, "PG_CMD="+tc.command)
 			out, err := cmd.CombinedOutput()
 			if err != nil {
 				t.Fatalf("driver failed: %v\n%s", err, out)

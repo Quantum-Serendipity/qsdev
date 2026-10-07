@@ -7,6 +7,7 @@ import (
 	"slices"
 	"strings"
 
+	"github.com/Quantum-Serendipity/qsdev/internal/pathmatch"
 	"github.com/Quantum-Serendipity/qsdev/internal/selfprotect/canon"
 	"github.com/Quantum-Serendipity/qsdev/internal/selfprotect/cmdscan"
 )
@@ -242,7 +243,7 @@ func globProtected(p string) bool {
 	if !isRooted(cleaned) {
 		return false
 	}
-	key := strings.Split(canon.PathKey(cleaned), "/")
+	key := strings.Split(pathmatch.Key(cleaned), "/")
 	for _, loc := range canon.ProtectedLocationKeys() {
 		if globReaches(key, loc) {
 			return true
@@ -501,6 +502,15 @@ func lineMentionsProtected(ctx *EvalContext) bool {
 }
 
 func scanMentionsProtected(ctx *EvalContext) bool {
+	if isPowerShell(ctx) {
+		return psMentionsProtected(ctx)
+	}
+	return posixMentionsProtected(ctx)
+}
+
+// posixMentionsProtected is the mention scan of the line read as POSIX shell.
+// PowerShell runs it too, since it can only add mentions there.
+func posixMentionsProtected(ctx *EvalContext) bool {
 	if containsProtectedPathStr(ctx.Command) || containsProtectedPathStr(looseText(ctx.Command)) {
 		return true
 	}
@@ -522,26 +532,43 @@ func scanMentionsProtected(ctx *EvalContext) bool {
 	return false
 }
 
-// bashMutatesProtected is the shared protected-mutation predicate behind the
-// Bash self-protection rules: the line references a protected path and either
+// shellMutatesProtected is the shared protected-mutation predicate behind the
+// shell self-protection rules: the line references a protected path and either
 // cannot be parsed (fail closed) or one of its commands mutates one (see
-// protectedMutation), a command deletes or replaces a directory holding a
-// home-anchored protected location (see replacesProtectedAncestor), or a
-// command relocates a protected location (see relocatesProtected). The result
-// is memoized on ctx.
-func bashMutatesProtected(ctx *EvalContext) bool {
+// protectedMutation; for PowerShell, psMutates), a command deletes or replaces
+// a directory holding a home-anchored protected location (see
+// replacesProtectedAncestor, over psScanned too for PowerShell), or a command relocates a protected location (see
+// relocatesProtected). The result is memoized on ctx.
+func shellMutatesProtected(ctx *EvalContext) bool {
 	if ctx.mutatesDone {
 		return ctx.mutates
 	}
 	ctx.mutatesDone = true
 	scs, err := ctx.scannedCommands()
-	if err != nil {
-		ctx.mutates = lineMentionsProtected(ctx) || unparsedRelocatesHome(ctx.Command)
-		return ctx.mutates
+	switch {
+	case isPowerShell(ctx):
+		ctx.mutates = (lineMentionsProtected(ctx) && psMutates(ctx)) || anchoredMutation(ctx, scs, err) ||
+			replacesProtectedAncestor(ctx.psScanned())
+	case err != nil:
+		ctx.mutates = lineMentionsProtected(ctx) || anchoredMutation(ctx, scs, err)
+	default:
+		ctx.mutates = (lineMentionsProtected(ctx) && protectedMutation(scs)) || anchoredMutation(ctx, scs, err)
 	}
-	ctx.mutates = (lineMentionsProtected(ctx) && protectedMutation(scs)) ||
-		replacesProtectedAncestor(scs) || relocatesProtected(ctx.Command, scs)
 	return ctx.mutates
+}
+
+// anchoredMutation is the part of the POSIX mutation analysis that needs no
+// named protected path: a command replacing a protected location's ancestor
+// or relocating one through the environment, or, for a line that cannot be
+// parsed, the CLI run with a home variable. For PowerShell it can only add
+// denies to the dialect's own analysis, which also runs the ancestor check
+// over its own delete, move and rename cmdlets (psScanned), since the POSIX
+// parse never names Remove-Item or Move-Item.
+func anchoredMutation(ctx *EvalContext, scs []scannedCommand, err error) bool {
+	if err != nil {
+		return unparsedRelocatesHome(ctx.Command)
+	}
+	return replacesProtectedAncestor(scs) || relocatesProtected(ctx.Command, scs)
 }
 
 // hasVerb reports whether the command invokes one of verbs, judged from the
@@ -1089,10 +1116,13 @@ func copiesFromArea(scs []scannedCommand, a protectedArea) bool {
 	return false
 }
 
-// bashMutatesArea is the Bash check behind an area-specific rule: fail closed
-// when an unparseable command mentions the area, else report whether a
-// command mutates it.
-func bashMutatesArea(ctx *EvalContext, a protectedArea) bool {
+// shellMutatesArea is the shell check behind an area-specific rule: fail
+// closed when an unparseable command mentions the area, else report whether a
+// command mutates it. PowerShell is judged in its own dialect.
+func shellMutatesArea(ctx *EvalContext, a protectedArea) bool {
+	if isPowerShell(ctx) {
+		return psMutatesArea(ctx, a)
+	}
 	scs, err := ctx.scannedCommands()
 	if err != nil {
 		return a.mentionedIn(ctx.Command)

@@ -11,10 +11,11 @@ import (
 type ExportMCPServerConfig = MCPServerConfig
 
 var (
-	ExportLoadManifest        = loadManifest
-	ExportDeploySkills        = deploySkills
-	ExportDeployRules         = deployRules
-	ExportLegacyFlatSkillPath = legacyFlatSkillPath
+	ExportLoadManifest           = loadManifest
+	ExportDeploySkills           = deploySkills
+	ExportDeployRules            = deployRules
+	ExportLegacyFlatSkillPath    = legacyFlatSkillPath
+	ExportPackageGuardMinAgeDays = packageGuardMinAgeDays
 )
 
 // ExportSaveAnswers exposes saveAnswers for external tests.
@@ -67,6 +68,13 @@ var ExportContains = slices.Contains[[]string, string]
 var ExportLoadQsdevOpsManifest = loadQsdevOpsManifest
 var ExportDeployOperationSkills = deployOperationSkills
 var ExportLoadAgentManifest = loadAgentManifest
+
+// ExportFrontmatterBlock and ExportToolListValue expose the template
+// frontmatter helpers for external tests.
+var (
+	ExportFrontmatterBlock = frontmatterBlock
+	ExportToolListValue    = toolListValue
+)
 var ExportDeployAgents = deployAgents
 var ExportLoadConsultingSkillManifest = loadConsultingSkillManifest
 var ExportDeployWorkflowSkills = deployWorkflowSkills
@@ -84,6 +92,9 @@ type ExportHookStatus = HookStatus
 
 // ExportDefaultSecretPatterns exposes DefaultSecretPatterns for external tests.
 var ExportDefaultSecretPatterns = DefaultSecretPatterns
+
+// ExportScanHeuristicPatterns exposes ScanHeuristicPatterns for external tests.
+var ExportScanHeuristicPatterns = ScanHeuristicPatterns
 
 // ExportConfigSecretPatterns exposes ConfigSecretPatterns for external tests.
 var ExportConfigSecretPatterns = ConfigSecretPatterns

@@ -1,6 +1,7 @@
 package claudecode_test
 
 import (
+	"slices"
 	"strings"
 	"testing"
 
@@ -414,5 +415,67 @@ func TestDeployRules_RustProject(t *testing.T) {
 	}
 	if !paths[".claude/rules/security-rules.md"] {
 		t.Error("missing security-rules.md")
+	}
+}
+
+// sideEffectingSkillTags are the manifest tags marking a library skill whose
+// workflow changes shared state (deployments, database schemas). Such skills
+// must be user-invoked only (U15-09).
+var sideEffectingSkillTags = []string{"ops", "deployment", "database"}
+
+// parseSkillFrontMatter extracts the YAML front-matter of a generated SKILL.md.
+func parseSkillFrontMatter(t *testing.T, path string, content []byte) (name string, disableModelInvocation bool) {
+	t.Helper()
+	parts := strings.SplitN(string(content), "---\n", 3)
+	if len(parts) < 3 || parts[0] != "" {
+		t.Fatalf("%s has no leading closed front-matter block", path)
+	}
+	var fm struct {
+		Name                   string `yaml:"name"`
+		DisableModelInvocation bool   `yaml:"disable-model-invocation"`
+	}
+	if err := yaml.Unmarshal([]byte(parts[1]), &fm); err != nil {
+		t.Fatalf("%s front-matter is not valid YAML: %v", path, err)
+	}
+	return fm.Name, fm.DisableModelInvocation
+}
+
+// TestSideEffectingSkillsNotModelInvocable guards U15-09: every library skill
+// tagged ops, deployment or database is user_only in the manifest and its
+// generated SKILL.md sets disable-model-invocation: true; every other library
+// skill stays model-invocable.
+func TestSideEffectingSkillsNotModelInvocable(t *testing.T) {
+	t.Parallel()
+	manifest, err := claudecode.ExportLoadManifest()
+	if err != nil {
+		t.Fatalf("loadManifest returned error: %v", err)
+	}
+
+	names := make([]string, len(manifest.Skills))
+	sideEffecting := make(map[string]bool, len(manifest.Skills))
+	for i, s := range manifest.Skills {
+		names[i] = s.Name
+		for _, tag := range s.Tags {
+			if slices.Contains(sideEffectingSkillTags, tag) {
+				sideEffecting[s.Name] = true
+			}
+		}
+		if s.UserOnly != sideEffecting[s.Name] {
+			t.Errorf("skill %q: manifest user_only=%v, want %v (tags %v)", s.Name, s.UserOnly, sideEffecting[s.Name], s.Tags)
+		}
+	}
+
+	files, err := claudecode.ExportDeploySkills(types.WizardAnswers{Skills: names})
+	if err != nil {
+		t.Fatalf("deploySkills returned error: %v", err)
+	}
+	if len(files) != len(names) {
+		t.Fatalf("deploySkills returned %d files, want %d", len(files), len(names))
+	}
+	for _, f := range files {
+		name, disabled := parseSkillFrontMatter(t, f.Path, f.Content)
+		if disabled != sideEffecting[name] {
+			t.Errorf("%s: disable-model-invocation=%v, want %v", f.Path, disabled, sideEffecting[name])
+		}
 	}
 }

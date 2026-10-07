@@ -1,6 +1,11 @@
 package check
 
-import "testing"
+import (
+	"strings"
+	"testing"
+
+	"github.com/Quantum-Serendipity/qsdev/pkg/denyutil"
+)
 
 func TestCheckDenyRuleConflicts_NoConflicts(t *testing.T) {
 	ctx := CheckContext{
@@ -138,8 +143,8 @@ func TestCheckDenyRuleConflicts_MixedExpectedAndUnexpected(t *testing.T) {
 	}
 }
 
-func TestCheckMatchesDenyRule_SameAsCoreLogic(t *testing.T) {
-	// Verify the check-local copy of matching logic behaves correctly.
+func TestDenyRuleConflicts_Shadows(t *testing.T) {
+	// The conflict check reports a deny rule that shadows a skill operation.
 	tests := []struct {
 		deny   string
 		op     string
@@ -154,9 +159,9 @@ func TestCheckMatchesDenyRule_SameAsCoreLogic(t *testing.T) {
 	}
 
 	for _, tc := range tests {
-		got := checkMatchesDenyRule(tc.deny, tc.op)
+		got := denyutil.Shadows(tc.deny, tc.op)
 		if got != tc.expect {
-			t.Errorf("checkMatchesDenyRule(%q, %q) = %v, want %v",
+			t.Errorf("denyutil.Shadows(%q, %q) = %v, want %v",
 				tc.deny, tc.op, got, tc.expect)
 		}
 	}
@@ -166,5 +171,114 @@ func TestCategoryDenyConflicts_DisplayName(t *testing.T) {
 	name := categoryDisplayName(CategoryDenyConflicts)
 	if name != "Deny Rule Conflicts" {
 		t.Errorf("categoryDisplayName(CategoryDenyConflicts) = %q, want %q", name, "Deny Rule Conflicts")
+	}
+}
+
+func TestCheckSkillPreApprovals(t *testing.T) {
+	t.Parallel()
+	askRules := []string{"Bash(npm install *)", "Bash(go get *)", "Bash(npm run *)"}
+	tests := []struct {
+		name        string
+		askRules    []string
+		skills      []SkillOps
+		wantStatus  CheckStatus
+		wantFails   int
+		wantMessage []string
+	}{
+		{
+			name:        "bare wildcard bypasses every ask rule",
+			askRules:    askRules,
+			skills:      []SkillOps{{Name: "add-tests", PreApproved: []string{"Bash(*)", "Read"}}},
+			wantStatus:  StatusFail,
+			wantFails:   3,
+			wantMessage: []string{`"add-tests"`, `"Bash(*)"`, `"Bash(npm install *)"`},
+		},
+		{
+			name:        "bare Bash tool is an unrestricted grant",
+			askRules:    askRules,
+			skills:      []SkillOps{{Name: "s", PreApproved: []string{"Bash"}}},
+			wantStatus:  StatusFail,
+			wantFails:   3,
+			wantMessage: []string{`"Bash"`, `"Bash(go get *)"`},
+		},
+		{
+			name:        "package manager wildcard bypasses its ask rules",
+			askRules:    askRules,
+			skills:      []SkillOps{{Name: "qsdev-add-dep", PreApproved: []string{"Bash(npm *)"}}},
+			wantStatus:  StatusFail,
+			wantFails:   2,
+			wantMessage: []string{`"Bash(npm *)"`, `"Bash(npm run *)"`},
+		},
+		{
+			name:       "prefix wildcard without a space bypasses ask",
+			askRules:   askRules,
+			skills:     []SkillOps{{Name: "s", PreApproved: []string{"Bash(npm i*)"}}},
+			wantStatus: StatusFail,
+			wantFails:  1,
+		},
+		{
+			name:       "read-only subcommand passes",
+			askRules:   askRules,
+			skills:     []SkillOps{{Name: "qsdev-add-dep", PreApproved: []string{"Bash(npm view *)", "Bash(go list *)"}}},
+			wantStatus: StatusPass,
+		},
+		{
+			name:       "non-Bash tool is ignored",
+			askRules:   askRules,
+			skills:     []SkillOps{{Name: "s", PreApproved: []string{"Read", "mcp__context7(*)", "Write"}}},
+			wantStatus: StatusPass,
+		},
+		{
+			name:       "agent tools are not pre-approvals",
+			askRules:   askRules,
+			skills:     []SkillOps{{Name: "security-reviewer", AllowedTools: []string{"Bash"}}},
+			wantStatus: StatusPass,
+		},
+		{
+			name:       "no ask rules skips",
+			skills:     []SkillOps{{Name: "s", PreApproved: []string{"Bash(*)"}}},
+			wantStatus: StatusSkip,
+		},
+		{
+			name:       "no skills skips",
+			askRules:   askRules,
+			wantStatus: StatusSkip,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			results := CheckSkillPreApprovals(CheckContext{AskRules: tt.askRules, SkillOps: tt.skills})
+			var fails []CheckResult
+			for _, r := range results {
+				if r.Category != CategoryDenyConflicts {
+					t.Errorf("result %q category = %s, want %s", r.Name, r.Category, CategoryDenyConflicts)
+				}
+				if r.Status == StatusFail {
+					fails = append(fails, r)
+					if r.Severity != SeverityHigh {
+						t.Errorf("fail %q severity = %s, want %s", r.Name, r.Severity, SeverityHigh)
+					}
+				}
+			}
+			if tt.wantStatus != StatusFail {
+				if len(results) != 1 || results[0].Status != tt.wantStatus || results[0].Name != "skill_preapproval" {
+					t.Fatalf("results = %+v, want one skill_preapproval %s result", results, tt.wantStatus)
+				}
+				return
+			}
+			if len(fails) != tt.wantFails || len(fails) != len(results) {
+				t.Fatalf("got %d fails of %d results, want %d: %+v", len(fails), len(results), tt.wantFails, results)
+			}
+			all := ""
+			for _, f := range fails {
+				all += f.Message + "\n"
+			}
+			for _, want := range tt.wantMessage {
+				if !strings.Contains(all, want) {
+					t.Errorf("messages %q do not name %s", all, want)
+				}
+			}
+		})
 	}
 }

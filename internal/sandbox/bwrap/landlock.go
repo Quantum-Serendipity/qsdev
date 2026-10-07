@@ -1,10 +1,12 @@
 package bwrap
 
 import (
+	"path"
 	"path/filepath"
 
 	"github.com/Quantum-Serendipity/qsdev/internal/sandbox"
 	"github.com/Quantum-Serendipity/qsdev/internal/sandbox/denylist"
+	"github.com/Quantum-Serendipity/qsdev/internal/sandbox/shim"
 )
 
 // PrepareLandlockFlags builds the ll-restrict CLI flags for the given config.
@@ -26,6 +28,10 @@ func landlockFlags(cfg *sandbox.SandboxConfig) []string {
 
 	// System files.
 	flags = append(flags, "--ro", "/etc")
+
+	// The shim's directory: ll-restrict execs the shim, which then execs the
+	// hook, and ll-restrict denies EXECUTE on every path it is not given.
+	flags = append(flags, "--ro", path.Dir(shim.SandboxPath()))
 
 	// Tmp is always writable.
 	flags = append(flags, "--rw", "/tmp")
@@ -73,14 +79,18 @@ func landlockFlags(cfg *sandbox.SandboxConfig) []string {
 // The original command is prefixed with: ll-restrict <flags> -- <original-cmd>
 // Returns the original command unchanged if ll-restrict is unavailable.
 func InjectLandlock(hookCmd []string, cfg *sandbox.SandboxConfig) []string {
-	flags := PrepareLandlockFlags(cfg)
-	if flags == nil {
+	return injectLandlock(hookCmd, cfg, sandbox.LLRestrictBin())
+}
+
+// injectLandlock is InjectLandlock with the helper path given, "" when it is
+// unavailable, so both branches are testable on any host.
+func injectLandlock(hookCmd []string, cfg *sandbox.SandboxConfig, llBin string) []string {
+	if llBin == "" {
 		return hookCmd
 	}
 
-	llBin := sandbox.LLRestrictBin()
 	result := []string{llBin}
-	result = append(result, flags...)
+	result = append(result, landlockFlags(cfg)...)
 	result = append(result, "--")
 	result = append(result, hookCmd...)
 	return result

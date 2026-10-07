@@ -10,6 +10,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/Quantum-Serendipity/qsdev/internal/testutil"
 	"github.com/Quantum-Serendipity/qsdev/rules"
 )
 
@@ -37,33 +38,29 @@ type scanReport struct {
 	} `json:"errors"`
 }
 
-// scannerCommand returns the argv prefix for an available OpenGrep-compatible
-// scanner (opengrep, or semgrep, which shares the rule format), or nil.
-func scannerCommand() []string {
-	if _, err := exec.LookPath("opengrep"); err == nil {
-		return []string{"opengrep", "scan"}
-	}
-	if _, err := exec.LookPath("semgrep"); err == nil {
-		// Scanning is semgrep's default command; some packagings (osemgrep)
-		// reject an explicit "scan" subcommand, so none is passed.
-		return []string{"semgrep", "--metrics=off", "--disable-version-check"}
-	}
-	return nil
+// scannerArgs is the argv after the binary for each OpenGrep-compatible
+// scanner testutil.RequireRuleScanner governs. Scanning is semgrep's default
+// command; some packagings (osemgrep) reject an explicit "scan" subcommand,
+// so none is passed to it.
+var scannerArgs = map[string][]string{
+	"opengrep": {"scan"},
+	"semgrep":  {"--metrics=off", "--disable-version-check"},
 }
 
-// requireScanner returns the scanner argv, skipping the test when none is
-// installed. CI sets QSDEV_REQUIRE_RULE_SCANNER so that a missing scanner
-// fails instead of silently skipping the rule checks.
+// requireScanner returns the argv prefix for the first available scanner of
+// testutil.RequireRuleScanner (opengrep, else semgrep, which shares the rule
+// format). Without one the test skips, or fails under the switch, which the
+// opengrep packaging check sets so the rule checks cannot silently vanish.
 func requireScanner(t *testing.T) []string {
 	t.Helper()
-	scanner := scannerCommand()
-	if scanner == nil {
-		if os.Getenv("QSDEV_REQUIRE_RULE_SCANNER") != "" {
-			t.Fatal("QSDEV_REQUIRE_RULE_SCANNER is set but neither opengrep nor semgrep is on PATH")
+	tools := testutil.RequireRuleScanner.Tools()
+	for _, tool := range tools {
+		if _, err := exec.LookPath(tool); err == nil {
+			return append([]string{tool}, scannerArgs[tool]...)
 		}
-		t.Skip("neither opengrep nor semgrep is available")
 	}
-	return scanner
+	testutil.Unavailable(t, testutil.RequireRuleScanner, "no rule scanner available (%s)", strings.Join(tools, ", "))
+	return nil
 }
 
 // ruleConfigArgs returns a --config argument for every deliverable rule file,

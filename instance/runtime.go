@@ -19,7 +19,6 @@ import (
 	// explicitly by RegisterFrameworkAdapters rather than self-registering from
 	// init(), so registration order is visible.
 	"github.com/Quantum-Serendipity/qsdev/internal/catalog"
-	"github.com/Quantum-Serendipity/qsdev/internal/cmdutil"
 	"github.com/Quantum-Serendipity/qsdev/internal/mcpserve/adapters"
 	"github.com/Quantum-Serendipity/qsdev/internal/mcpserve/spi"
 	"github.com/Quantum-Serendipity/qsdev/internal/version"
@@ -76,26 +75,30 @@ func buildVersionOverride(vi version.BuildInfo, overridden bool) (ver, commit st
 	return vi.Version, vi.Commit, true
 }
 
-// UseProjectDefaults points the catalog at the project enclosing the working
-// directory (or the working directory itself outside a project), so that
-// project's committed .qsdev/defaults.yaml applies on top of the built-in
-// defaults and under the user's own defaults file. The project file may only
-// add deny rules and hooks or raise compliance; anything else stops the
-// command with an error. Call it after SetBranding (the file's location
-// follows the app name) and before the command runs.
+// useProjectDefaults points the catalog at the project root the executing
+// command resolved (Runtime.initCommand), so that project's committed
+// .qsdev/defaults.yaml applies on top of the built-in defaults and under the
+// user's own defaults file: a Here-mode command (init, devenv init) takes the
+// working directory's layer, every other command the enclosing trusted
+// project's. The project file may only add deny rules and hooks or raise
+// compliance, and must pass the project trust rule (see
+// catalog.ProjectConfigFile); anything else stops the command with an error.
+// Nothing loads the catalog before the command is resolved; should something
+// have loaded it for another root, catalog.SetProjectRoot poisons it and
+// every catalog consumer fails closed.
 //
-// It also pins the org overlay (catalog.UseOrgConfigPin) to the one a human
-// approved with the sensitive 'defaults pin' command, or without a pin to the
-// account's home overlay, for every run: whether a human runs the CLI cannot
-// be told reliably (an agent can drop its session marker and fake a terminal),
-// so an agent's command, or a file it wrote that sets <EnvPrefix>ORG_CONFIG,
-// cannot point a regeneration at an overlay of its own.
-func UseProjectDefaults() {
-	root, err := cmdutil.ProjectRoot()
-	if err == nil {
-		catalog.SetProjectRoot(root)
-	} else {
-		root = ""
+// It also pins the org overlay (catalog.UseOrgConfigPin) for the same root
+// to the one a human approved with the sensitive 'defaults pin' command, or
+// without a pin to the account's home overlay, for every run: whether a
+// human runs the CLI cannot be told reliably (an agent can drop its session
+// marker and fake a terminal), so an agent's command, or a file it wrote that
+// sets <EnvPrefix>ORG_CONFIG, cannot point a regeneration at an overlay of its
+// own.
+func useProjectDefaults(root string) {
+	if err := catalog.SetProjectRoot(root); err != nil {
+		// The catalog is now poisoned: every consumer fails closed
+		// rather than applying another project's defaults.
+		slog.Warn("cannot apply project defaults", "root", root, "error", err)
 	}
 	pin, err := catalog.LoadOrgConfigPin(root)
 	if err != nil {

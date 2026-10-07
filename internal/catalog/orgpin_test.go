@@ -1,11 +1,14 @@
 package catalog
 
 import (
+	"bytes"
 	"errors"
 	"fmt"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/Quantum-Serendipity/qsdev/internal/userhome"
@@ -208,6 +211,14 @@ func TestRecordOrgConfigPin(t *testing.T) {
 	if pin, err := LoadOrgConfigPin(w.project); err != nil || pin.Path != w.other || pin.Global {
 		t.Errorf("project pin after an account-wide pin = %+v, %v; want %q kept", pin, err, w.other)
 	}
+	// W0N-14: with the variable unset the project's pin applies; check
+	// reports it as the overlay read, not as drift from the home overlay.
+	if drift := ProjectOrgConfigDrift(w.project); drift != "" {
+		t.Errorf("ProjectOrgConfigDrift with the variable unset = %q, want none", drift)
+	}
+	if src := ProjectOrgConfigSource(w.project); !strings.Contains(src, w.other) {
+		t.Errorf("ProjectOrgConfigSource with the variable unset = %q, want the pinned %s", src, w.other)
+	}
 	if pin, err := LoadOrgConfigPin(w.tmp); err != nil || !pin.Global || pin.Path != w.homeOverlay {
 		t.Errorf("pin of an unpinned directory = %+v, %v; want the account-wide %q", pin, err, w.homeOverlay)
 	}
@@ -274,5 +285,109 @@ func TestUnanchoredAccountReadsOrgConfig(t *testing.T) {
 	pinsHome = func() (string, error) { return "", errors.New("getent timed out") }
 	if pin, err := LoadOrgConfigPin(w.project); err == nil || pin.Unanchored {
 		t.Errorf("LoadOrgConfigPin after a failed lookup = %+v, %v; want an error, not an unanchored pin", pin, err)
+	}
+}
+
+// captureDriftWarnings records what PolicyOrgConfigFile logs: it re-arms the
+// once-per-process drift warning and sends the default logger to a buffer
+// until the test ends. Not parallel-safe: it sets package variables.
+func captureDriftWarnings(t *testing.T) *bytes.Buffer {
+	t.Helper()
+	var buf bytes.Buffer
+	orig := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&buf, nil)))
+	warnDrift = sync.Once{}
+	t.Cleanup(func() {
+		slog.SetDefault(orig)
+		warnDrift = sync.Once{}
+	})
+	return &buf
+}
+
+// TestOrgConfigDrift_UnsetEnvWithPinIsNotDrift pins W0N-14: with
+// <EnvPrefix>ORG_CONFIG unset the run names no overlay of its own, so a
+// recorded pin (to another overlay, or to none) is what applies, not drift
+// from the account's home overlay.
+func TestOrgConfigDrift_UnsetEnvWithPinIsNotDrift(t *testing.T) {
+	tests := []struct {
+		name string
+		pin  func(w pinWorld) OrgConfigPin
+	}{
+		{"project pin to another overlay", func(w pinWorld) OrgConfigPin {
+			return OrgConfigPin{Path: w.other, Recorded: true}
+		}},
+		{"account-wide pin to another overlay", func(w pinWorld) OrgConfigPin {
+			return OrgConfigPin{Path: w.other, Recorded: true, Global: true}
+		}},
+		{"pin to the home overlay", func(w pinWorld) OrgConfigPin {
+			return OrgConfigPin{Path: w.homeOverlay, Recorded: true}
+		}},
+		{"pin to no overlay", func(pinWorld) OrgConfigPin {
+			return OrgConfigPin{Recorded: true}
+		}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			w := newPinWorld(t)
+			if drift := OrgConfigDrift(w.project, tt.pin(w)); drift != "" {
+				t.Errorf("OrgConfigDrift with the variable unset = %q, want none", drift)
+			}
+		})
+	}
+}
+
+// TestPolicyOrgConfigFile_UnsetEnvReadsPinnedWithoutWarning pins the other
+// half of W0N-14: the catalog reads the pinned overlay, or none for a pin to
+// none, and logs no drift warning.
+func TestPolicyOrgConfigFile_UnsetEnvReadsPinnedWithoutWarning(t *testing.T) {
+	tests := []struct {
+		name string
+		pin  func(w pinWorld) OrgConfigPin
+		want func(w pinWorld) string
+	}{
+		{
+			name: "pinned overlay",
+			pin:  func(w pinWorld) OrgConfigPin { return OrgConfigPin{Path: w.other, Recorded: true} },
+			want: func(w pinWorld) string { return w.other },
+		},
+		{
+			name: "pinned to none",
+			pin:  func(pinWorld) OrgConfigPin { return OrgConfigPin{Recorded: true} },
+			want: func(pinWorld) string { return "" },
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			w := newPinWorld(t)
+			logs := captureDriftWarnings(t)
+			UseOrgConfigPin(w.project, tt.pin(w))
+			if got, want := PolicyOrgConfigFile(), tt.want(w); got != want {
+				t.Errorf("PolicyOrgConfigFile() = %q, want %q", got, want)
+			}
+			if logs.Len() != 0 {
+				t.Errorf("PolicyOrgConfigFile() logged %q, want no drift warning", logs.String())
+			}
+		})
+	}
+}
+
+// TestOrgConfigDrift_EnvNamingOtherOverlayStillDrifts pins that the W0N-14
+// change is limited to the unset variable: a variable naming an overlay other
+// than the pinned one still drifts, and the catalog reads the pinned overlay
+// with a warning.
+func TestOrgConfigDrift_EnvNamingOtherOverlayStillDrifts(t *testing.T) {
+	w := newPinWorld(t)
+	logs := captureDriftWarnings(t)
+	t.Setenv(branding.Get().EnvPrefix+"ORG_CONFIG", w.homeOverlay)
+	pin := OrgConfigPin{Path: w.other, Recorded: true}
+	if drift := OrgConfigDrift(w.project, pin); !strings.Contains(drift, w.homeOverlay) {
+		t.Errorf("OrgConfigDrift = %q, want drift naming %s", drift, w.homeOverlay)
+	}
+	UseOrgConfigPin(w.project, pin)
+	if got := PolicyOrgConfigFile(); got != w.other {
+		t.Errorf("PolicyOrgConfigFile() = %q, want the pinned %q", got, w.other)
+	}
+	if !strings.Contains(logs.String(), "ignoring the org overlay") {
+		t.Errorf("PolicyOrgConfigFile() logged %q, want the drift warning", logs.String())
 	}
 }

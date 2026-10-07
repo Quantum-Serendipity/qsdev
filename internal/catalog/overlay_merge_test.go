@@ -1,6 +1,7 @@
 package catalog
 
 import (
+	"slices"
 	"strings"
 	"testing"
 )
@@ -61,8 +62,9 @@ func TestLoadWithOrgOverride_PartialEntryKeepsOtherFields(t *testing.T) {
 	baseTool, _ := base.Tool("gitleaks")
 	baseStandard, _ := base.TierDef("standard")
 	baseStrict, _ := base.ComplianceLevel("strict")
-	if !baseStrict.ScriptBlocking {
-		t.Fatal("test precondition: embedded strict compliance must enable script blocking")
+	baseGoWeb, _ := base.ProjectProfile("go-web")
+	if !baseGoWeb.Direnv {
+		t.Fatal("test precondition: embedded go-web profile must enable direnv")
 	}
 
 	f := writeUnifiedFile(t, `
@@ -74,7 +76,10 @@ tiers:
     description: Org standard
 compliance:
   strict:
-    script_blocking: false
+    age_gating_threshold_hours: 500
+project_profiles:
+  go-web:
+    direnv: false
 `)
 	cat, err := Load(WithOrgConfigFile(f))
 	if err != nil {
@@ -95,11 +100,19 @@ compliance:
 		t.Errorf("standard tier = %+v, want overlay description on base fields %+v", standard, baseStandard)
 	}
 
-	strict, _ := cat.ComplianceLevel("strict")
-	if strict.ScriptBlocking {
-		t.Error("explicit script_blocking: false in the overlay must be honoured")
+	goWeb, _ := cat.ProjectProfile("go-web")
+	if goWeb.Direnv {
+		t.Error("explicit direnv: false in the overlay must be honoured")
 	}
-	if strict.AgeGatingThresholdHours != baseStrict.AgeGatingThresholdHours || len(strict.RequiredPreCommitHooks) == 0 {
+	if goWeb.Tier != baseGoWeb.Tier || len(goWeb.Services) != len(baseGoWeb.Services) {
+		t.Errorf("go-web profile lost base fields: got %+v, base %+v", goWeb, baseGoWeb)
+	}
+
+	strict, _ := cat.ComplianceLevel("strict")
+	if strict.AgeGatingThresholdHours != 500 {
+		t.Errorf("strict age gate = %d, want the overlay's 500", strict.AgeGatingThresholdHours)
+	}
+	if strict.ScriptBlocking != baseStrict.ScriptBlocking || !slices.Equal(strict.RequiredPreCommitHooks, baseStrict.RequiredPreCommitHooks) {
 		t.Errorf("strict compliance lost base fields: %+v", strict)
 	}
 }
@@ -211,8 +224,13 @@ func TestLoadWithOrgOverride_RejectsInvalidFiles(t *testing.T) {
 		},
 		{
 			name:    "unknown compliance hook",
-			content: "compliance:\n  strict:\n    required_pre_commit_hooks: [ripsecretz]\n",
+			content: "compliance:\n  strict:\n    required_pre_commit_hooks: [ripsecrets, gitleaks, semgrep, license-compliance, ripsecretz]\n",
 			wantErr: `unknown hook or tool "ripsecretz"`,
+		},
+		{
+			name:    "compliance hook typo drops a required hook",
+			content: "compliance:\n  strict:\n    required_pre_commit_hooks: [ripsecretz]\n",
+			wantErr: "cannot drop required hooks ripsecrets",
 		},
 		{
 			name:    "duplicate tier order",

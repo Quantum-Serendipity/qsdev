@@ -3,12 +3,13 @@ package toolcheck
 import (
 	"bytes"
 	"context"
+	"errors"
 	"os/exec"
 	"strings"
 	"time"
 
-	"github.com/Quantum-Serendipity/qsdev/internal/logging"
 	"github.com/Quantum-Serendipity/qsdev/internal/procexec"
+	"github.com/Quantum-Serendipity/qsdev/internal/projectctx"
 )
 
 const (
@@ -33,6 +34,9 @@ type Info struct {
 	// tool printed nothing to stdout. Parsers for tools whose version is not
 	// on the first line (or is printed as JSON) should use it.
 	Output string
+	// InProject reports that the binary lies inside the project, so it was
+	// not run and its version is unknown (see procexec.VersionProbe).
+	InProject bool
 }
 
 // LookPath resolves name on PATH without running it.
@@ -54,7 +58,7 @@ func Detect(ctx context.Context, name, versionArg string) Info {
 	// A binary inside the project (node_modules/.bin, a venv, a committed
 	// bin/) is project code; VersionProbe refuses it and the tool is
 	// reported found without a version.
-	cmd := procexec.VersionProbe(ctx, logging.ProbeBoundary(), path, versionArg)
+	cmd := procexec.VersionProbe(ctx, projectctx.ProbeBoundary(), path, versionArg)
 	cmd.WaitDelay = probeWaitDelay
 	stdout := &limitedBuffer{max: maxProbeOutput}
 	stderr := &limitedBuffer{max: maxProbeOutput}
@@ -62,7 +66,7 @@ func Detect(ctx context.Context, name, versionArg string) Info {
 	cmd.Stderr = stderr
 
 	if err := cmd.Run(); err != nil {
-		return Info{Found: true, Path: path}
+		return Info{Found: true, Path: path, InProject: errors.Is(err, procexec.ErrInsideProject)}
 	}
 
 	// Keep stdout and stderr apart so a warning printed on stderr cannot

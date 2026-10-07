@@ -1,10 +1,8 @@
 package bwrap
 
 import (
-	"bytes"
 	"context"
 	"fmt"
-	"io"
 	"log/slog"
 	"os"
 	"os/exec"
@@ -13,6 +11,7 @@ import (
 	"time"
 
 	"github.com/Quantum-Serendipity/qsdev/internal/sandbox"
+	"github.com/Quantum-Serendipity/qsdev/internal/sandbox/shim"
 )
 
 // BubblewrapBackend implements SandboxBackend using bubblewrap for namespace
@@ -74,9 +73,15 @@ func (b *BubblewrapBackend) Available() error {
 }
 
 // RunHook creates a bubblewrap sandbox, executes the hook, and returns the
-// result. A failure to establish the sandbox (bwrap cannot start, or the
-// ll-restrict helper fails before exec'ing the hook) is returned as an error
-// wrapping sandbox.ErrSetupFailed, never as the hook's exit code.
+// result. The hook runs through the in-sandbox shim (internal/sandbox/shim),
+// the host's qsdev binary mounted read-only at shim.SandboxPath(), which
+// signals a sandbox.LaunchGuard just before it execs the hook. A run that
+// never reached the hook (bwrap or ll-restrict failed, whatever exit code that
+// produced) is returned as an error wrapping sandbox.ErrSetupFailed, never as
+// the hook's exit code. A run after which a project guardrail path was
+// created or replaced returns an error wrapping sandbox.ErrGuardrailModified
+// instead of the hook's result, once the change is undone as far as possible
+// (sandbox.GuardrailSnapshot.Enforce).
 func (b *BubblewrapBackend) RunHook(ctx context.Context, cfg *sandbox.SandboxConfig) (*sandbox.SandboxResult, error) {
 	if len(cfg.HookCommand) == 0 {
 		return &sandbox.SandboxResult{ExitCode: 0, Tier: b.tier}, nil
@@ -84,10 +89,27 @@ func (b *BubblewrapBackend) RunHook(ctx context.Context, cfg *sandbox.SandboxCon
 
 	setupStart := time.Now()
 
+	// Taken before BuildArgs decides which guardrails exist to overlay, so a
+	// guardrail created in between is reported rather than left writable.
+	prepareWritableDirs(cfg)
+	guardrails, err := snapshotGuardrails(cfg)
+	if err != nil {
+		return nil, fmt.Errorf("%w: %w", sandbox.ErrSetupFailed, err)
+	}
+
 	args, err := BuildArgs(cfg, b.tier)
 	if err != nil {
 		return nil, fmt.Errorf("building sandbox args: %w", err)
 	}
+
+	hostExe, err := shim.HostExecutable()
+	if err != nil {
+		return nil, fmt.Errorf("%w: %w", sandbox.ErrSetupFailed, err)
+	}
+	// The shim mount is a trusted internal directive, like the deny masks, so
+	// it bypasses ValidateMountPath; BuildArgs keeps every configured bind
+	// off shim.SandboxRoot().
+	args = append(args, "--ro-bind", hostExe, shim.SandboxPath())
 
 	// Forbid nested user namespaces at the kernel level when this bwrap can
 	// (>= 0.8): seccomp cannot filter clone3's flags, so this is the only
@@ -106,23 +128,20 @@ func (b *BubblewrapBackend) RunHook(ctx context.Context, cfg *sandbox.SandboxCon
 	// Seccomp layer: pass the compiled BPF filter to bwrap through an inherited
 	// file descriptor when one is available (the Nix build injects the path via
 	// ldflags). This is a no-op in builds without a filter, so exec still runs.
-	extraFiles, seccompArgs := openSeccompFilter()
+	seccompFiles, seccompArgs := openSeccompFilter()
 	defer func() {
-		for _, f := range extraFiles {
+		for _, f := range seccompFiles {
 			_ = f.Close()
 		}
 	}()
 	args = append(args, seccompArgs...)
 
-	// Landlock layer: wrap the hook command with ll-restrict, but only when the
-	// tier claims Landlock. Probing sets that claim only when the helper reports
-	// a usable ABI; running the helper anyway on a host where Landlock is off
-	// (e.g. missing from the boot lsm= list) fails every hook.
-	hookCmd := cfg.HookCommand
-	if sandbox.TierClaimsLandlock(b.tier) {
-		hookCmd = InjectLandlock(cfg.HookCommand, cfg)
+	guard, err := sandbox.NewLaunchGuard()
+	if err != nil {
+		return nil, fmt.Errorf("%w: %w", sandbox.ErrSetupFailed, err)
 	}
-	landlockApplied := len(hookCmd) > len(cfg.HookCommand)
+	defer func() { _ = guard.Close() }()
+	extraFiles, hookCmd, landlockApplied := launchHook(cfg, b.tier, seccompFiles, guard)
 
 	// Honesty: if the selected tier advertises an LSM layer we could not apply
 	// (missing ll-restrict binary or BPF filter), say so loudly instead of
@@ -140,25 +159,57 @@ func (b *BubblewrapBackend) RunHook(ctx context.Context, cfg *sandbox.SandboxCon
 	cmd.ExtraFiles = extraFiles
 	cmd.Env = sandbox.EnvList(env)
 	cfg.Attach(cmd)
-	var taps []io.Writer
-	stderrHead := &headWriter{limit: stderrHeadLimit}
-	if landlockApplied {
-		taps = append(taps, stderrHead)
-	}
 
-	result, err := sandbox.RunCommand(ctx, cmd, b.tier, taps...)
+	result, err := sandbox.RunCommand(ctx, cmd, b.tier, guard.StderrTap())
 	if err != nil {
 		if ctx.Err() != nil {
 			return nil, fmt.Errorf("executing %s: %w", name, err)
 		}
 		return nil, fmt.Errorf("%w: executing %s: %w", sandbox.ErrSetupFailed, name, err)
 	}
-	if landlockApplied && isLandlockSetupFailure(result.ExitCode, stderrHead.buf) {
+	if err := guardrails.Enforce(); err != nil {
+		return nil, err
+	}
+	if err := guard.Err(result.ExitCode, func() string { return shim.LinkageHint(hostExe) }); err != nil {
+		if ctx.Err() != nil {
+			return nil, fmt.Errorf("executing %s: %w", name, ctx.Err())
+		}
+		return nil, err
+	}
+	if landlockApplied && isLandlockSetupFailure(result.ExitCode, guard.StderrHead()) {
 		return nil, fmt.Errorf("%w: ll-restrict exited %d: %s",
-			sandbox.ErrSetupFailed, result.ExitCode, firstLine(stderrHead.buf))
+			sandbox.ErrSetupFailed, result.ExitCode, sandbox.FirstLine(guard.StderrHead()))
 	}
 	result.SandboxOverhead = sandboxOverhead
 	return result, nil
+}
+
+// snapshotGuardrails records the project's guardrail paths when the hook
+// gets a writable view of them (guardrailsExposed). The read-only overlays
+// cover only the paths that exist, so the snapshot is what catches one
+// created, or a symlinked one replaced, while the hook runs. Without a
+// writable view the snapshot is empty and always verifies.
+func snapshotGuardrails(cfg *sandbox.SandboxConfig) (*sandbox.GuardrailSnapshot, error) {
+	if !guardrailsExposed(cfg) {
+		return &sandbox.GuardrailSnapshot{}, nil
+	}
+	return sandbox.SnapshotGuardrails(cfg.ProjectDir)
+}
+
+// launchHook returns bwrap's ExtraFiles, the argv bwrap runs after its "--"
+// and whether that argv applies Landlock. The guard's ready fd follows the files already passed (the optional
+// seccomp filter), so its number is computed, never fixed. The hook runs
+// through the shim, itself inside ll-restrict when the tier claims Landlock:
+// probing sets that claim only when the helper reports a usable ABI, and
+// running the helper anyway where Landlock is off would fail every hook.
+func launchHook(cfg *sandbox.SandboxConfig, tier sandbox.DegradationTier, files []*os.File, guard *sandbox.LaunchGuard) ([]*os.File, []string, bool) {
+	extraFiles, readyFD := guard.AppendChildFile(files)
+	shimCmd := append(shim.Argv(shim.SandboxPath(), readyFD), cfg.HookCommand...)
+	if !sandbox.TierClaimsLandlock(tier) {
+		return extraFiles, shimCmd, false
+	}
+	hookCmd := InjectLandlock(shimCmd, cfg)
+	return extraFiles, hookCmd, len(hookCmd) > len(shimCmd)
 }
 
 // openSeccompFilter opens the compiled BPF filter, when the build provides one
@@ -228,12 +279,6 @@ func (b *BubblewrapBackend) warnUnappliedLayers(landlockApplied, seccompApplied 
 		slog.Warn("sandbox tier advertises seccomp but no BPF filter is available; seccomp NOT applied",
 			"tier", b.tier.String())
 	}
-}
-
-// firstLine returns the first line of b, for error messages.
-func firstLine(b []byte) string {
-	line, _, _ := bytes.Cut(b, []byte("\n"))
-	return string(line)
 }
 
 var _ sandbox.SandboxBackend = (*BubblewrapBackend)(nil)

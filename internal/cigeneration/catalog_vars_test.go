@@ -79,7 +79,7 @@ func assertCoversCatalog[V any](t *testing.T, typeName string, verified map[stri
 	}
 	for _, name := range declared {
 		if _, ok := verified[name]; !ok {
-			t.Errorf("%s %s is declared but missing from the verification set, so it is never checked upstream", typeName, name)
+			t.Errorf("%s %s is declared but missing from the verification set, so no check iterates it", typeName, name)
 		}
 	}
 	for name := range verified {

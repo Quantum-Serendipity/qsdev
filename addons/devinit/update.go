@@ -14,6 +14,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/Quantum-Serendipity/qsdev/addons/claudecode"
+	"github.com/Quantum-Serendipity/qsdev/addons/devenv"
 	qsdevanswers "github.com/Quantum-Serendipity/qsdev/internal/answers"
 	"github.com/Quantum-Serendipity/qsdev/internal/claudesettings"
 	"github.com/Quantum-Serendipity/qsdev/internal/cmdutil"
@@ -70,6 +71,10 @@ const (
 	// UpdateActionUntrack stops tracking a file the generators no longer
 	// produce but leaves it on disk (the user modified or deleted it).
 	UpdateActionUntrack
+	// UpdateActionHold leaves a file whose partner is not written in place
+	// (see types.GeneratedFile.HeldWith) untouched and writes its new content
+	// to a .new sidecar beside it.
+	UpdateActionHold
 )
 
 // FileUpdatePlan describes the planned action for a single file during update.
@@ -82,6 +87,8 @@ type FileUpdatePlan struct {
 	OldContent []byte
 	NewMode    os.FileMode
 	Reason     string
+	// HeldWith is the generated file's partner; see types.GeneratedFile.
+	HeldWith string
 }
 
 // UpdatePlan holds the complete update plan for all files.
@@ -106,13 +113,31 @@ type updateOutcome struct {
 	dropped   map[string]bool // orphaned paths removed from disk or untracked
 	failures  []fileFailure
 	nixResult *update.NixUpdateResult
+	// held lists, per file kept back with its partner, the instructions for
+	// its sidecar.
+	held []string
 }
 
 func runUpdate(cmd *cobra.Command, opts UpdateOptions) error {
-	projectRoot, err := cmdutil.ProjectRoot()
+	return runUpdateWith(cmd, opts, nil)
+}
+
+// answersEdit changes the refreshed answers before an update regenerates
+// from them, and reports whether it changed anything.
+type answersEdit func(*types.WizardAnswers) (changed bool, err error)
+
+// runUpdateWith regenerates every file from the project's answers, as
+// update does, after applying edit (when non-nil) to them. The edit runs on
+// the answers already settled against .qsdev.yaml, so the settling cannot
+// undo it, and the edited answers are what is saved and synced to the
+// committed config. An edit that changes nothing ends the run before any
+// file is planned or written.
+func runUpdateWith(cmd *cobra.Command, opts UpdateOptions, edit answersEdit) error {
+	pc, err := cmdutil.Project(cmd)
 	if err != nil {
 		return err
 	}
+	projectRoot := pc.Root
 	if err := requireJoined(projectRoot); err != nil {
 		return err
 	}
@@ -121,6 +146,12 @@ func runUpdate(cmd *cobra.Command, opts UpdateOptions) error {
 	answers, err := loadAndRefreshForUpdate(cmd.Context(), cmd.ErrOrStderr(), projectRoot)
 	if err != nil {
 		return err
+	}
+	if edit != nil {
+		changed, err := edit(&answers)
+		if err != nil || !changed {
+			return err
+		}
 	}
 
 	// 2. Load stored state.
@@ -177,12 +208,17 @@ func runUpdate(cmd *cobra.Command, opts UpdateOptions) error {
 	// 7. Execute plan.
 	outcome, execErr := executeUpdatePlan(plan, projectRoot, opts)
 	reportUpdateFailures(cmd.ErrOrStderr(), outcome.failures)
+	warnUnlockedInputs(cmd.ErrOrStderr(), projectRoot, outcome.written)
 
 	// 8. If nix sidecar was created, show instructions.
 	if nixResult := outcome.nixResult; nixResult != nil && nixResult.Action == update.NixSidecarCreated {
 		fmt.Fprintln(cmd.OutOrStdout())
 		fmt.Fprintln(cmd.OutOrStdout(), nixResult.DiffOutput)
 		fmt.Fprintln(cmd.OutOrStdout(), nixResult.Message)
+	}
+	for _, msg := range outcome.held {
+		fmt.Fprintln(cmd.OutOrStdout())
+		fmt.Fprintln(cmd.OutOrStdout(), msg)
 	}
 
 	// 9. Save state and answers. This runs even when execution stopped
@@ -218,6 +254,27 @@ func runUpdate(cmd *cobra.Command, opts UpdateOptions) error {
 func reportUpdateFailures(w io.Writer, failures []fileFailure) {
 	for _, f := range failures {
 		fmt.Fprintf(w, "Warning: %s: %v\n", f.Path, f.Err)
+	}
+}
+
+// warnUnlockedInputs warns when a devenv.yaml written in this update declares
+// flake inputs the project's devenv.lock does not pin yet: devenv would lock
+// them to their current branch head on the next shell entry, a lock change to
+// review and commit like any other.
+func warnUnlockedInputs(w io.Writer, projectRoot string, written []types.GeneratedFile) {
+	for _, f := range written {
+		if f.Path != "devenv.yaml" {
+			continue
+		}
+		names, err := devenv.UnlockedInputs(projectRoot, f.Content)
+		switch {
+		case err != nil:
+			fmt.Fprintf(w, "Warning: could not compare devenv.yaml inputs with devenv.lock: %v\n", err)
+		case len(names) > 0:
+			fmt.Fprintf(w, "Warning: devenv.yaml now declares flake input(s) %s that devenv.lock does not pin yet.\n"+
+				"Run 'devenv update %s' in the project, review the devenv.lock change, and commit it.\n",
+				strings.Join(names, ", "), strings.Join(names, " "))
+		}
 	}
 }
 
@@ -261,21 +318,23 @@ func printUpdateSummary(w io.Writer, plan UpdatePlan, out updateOutcome) {
 }
 
 // loadAndRefreshForUpdate loads saved answers, refreshes ecosystem detection,
-// applies the committed security floor and client policy (warning on w about
-// any setting the floor raised), and augments enabled tools with inferred
-// entries.
+// adopts the committed choices (language versions included, see
+// qsdevconfig.AdoptCommitted), applies the committed security floor and
+// client policy (warning on w about any setting the floor raised), and
+// augments enabled tools with inferred entries.
 func loadAndRefreshForUpdate(ctx context.Context, w io.Writer, projectRoot string) (types.WizardAnswers, error) {
 	answers, err := loadAnswers(projectRoot)
 	if err != nil {
 		return types.WizardAnswers{}, err
 	}
-	// The committed choices come first: the policy and tool reconciliation
-	// below depend on whether Claude Code is configured.
-	qsdevconfig.AdoptCommitted(projectRoot, &answers)
-
-	// Refresh detection.
+	// Refresh detection first: adopting the committed language versions
+	// raises them to what the refreshed detection requires.
 	answers.Detected = host.detectProject(ctx, projectRoot)
 	answers.ProjectRoot = projectRoot
+
+	// The committed choices come next: the policy and tool reconciliation
+	// below depend on whether Claude Code is configured.
+	qsdevconfig.AdoptCommitted(projectRoot, &answers)
 
 	if err := applyCommittedPolicy(w, projectRoot, &answers); err != nil {
 		return types.WizardAnswers{}, err
@@ -354,6 +413,7 @@ func buildUpdatePlan(
 			Strategy:   f.Strategy,
 			NewContent: f.Content,
 			NewMode:    f.Mode,
+			HeldWith:   f.HeldWith,
 		}
 
 		fs, inState := modStatus[f.Path]
@@ -381,6 +441,11 @@ func buildUpdatePlan(
 
 		case types.Modified:
 			switch {
+			case fileHasContent(filepath.Join(projectRoot, f.Path), f.Content):
+				// The user accepted the generated content (e.g. moved a
+				// sidecar into place): nothing to preserve, so record it.
+				fp.Action = UpdateActionRegenerate
+				fp.Reason = "matches the generated content, tracking"
 			case f.Strategy == types.Skip:
 				// Skip-if-exists: once the user edits the file it is theirs;
 				// --force does not override the strategy.
@@ -433,7 +498,52 @@ func buildUpdatePlan(
 		plan.Files = append(plan.Files, fp)
 	}
 
+	holdPairedFiles(plan.Files, projectRoot, opts)
 	return plan
+}
+
+// holdPairedFiles re-plans every existing file that would be written in
+// place while the partner it is held with is not (types.GeneratedFile.HeldWith):
+// it is held instead, its new content going to a sidecar, so devenv.yaml
+// never gains flake inputs for options the devenv.nix in effect does not set.
+func holdPairedFiles(files []FileUpdatePlan, projectRoot string, opts UpdateOptions) {
+	for i := range files {
+		fp := &files[i]
+		if fp.HeldWith == "" || !writesInPlace(fp.Action) || !fileutil.FileExists(projectRoot, fp.Path) {
+			continue
+		}
+		for _, partner := range files {
+			if partner.Path == fp.HeldWith && !partnerWritesInPlace(partner, opts.Force) {
+				fp.Action = UpdateActionHold
+				fp.Reason = fmt.Sprintf("held with %s, which is not updated in place", partner.Path)
+			}
+		}
+	}
+}
+
+// writesInPlace reports whether action writes the file itself.
+func writesInPlace(action UpdateAction) bool {
+	switch action {
+	case UpdateActionRegenerate, UpdateActionCreate, UpdateActionMerge:
+		return true
+	}
+	return false
+}
+
+// partnerWritesInPlace reports whether fp's planned update replaces the file
+// itself. A sidecar action does so only for an unmodified (or new) file, or
+// a modified or deleted one under --force (see update.UpdateDevenvNix).
+func partnerWritesInPlace(fp FileUpdatePlan, force bool) bool {
+	if fp.Action != UpdateActionSidecar {
+		return writesInPlace(fp.Action)
+	}
+	switch fp.Status {
+	case types.Unmodified, types.New:
+		return true
+	case types.Modified, types.Deleted:
+		return force
+	}
+	return false
 }
 
 // planUntrackedFile plans a generated file that has no state entry. A missing
@@ -508,7 +618,7 @@ func planOrphans(
 	var plans []FileUpdatePlan
 	for _, path := range state.OrphanedFiles(storedState, newFiles) {
 		stored := storedState.Files[path]
-		if !updateOwnsOrphan(path, stored, answers, generatedOwners) {
+		if !updateOwnsOrphan(stored, answers, generatedOwners) {
 			continue
 		}
 
@@ -556,13 +666,9 @@ func planOrphans(
 // this update (generatedOwners): its output is then authoritative, so a file it
 // used to produce and no longer does was retired and is cleaned up here. When
 // the tool generated nothing (its addon is out of the generation scope, or it
-// yields no files at this tier) its tracked files are left alone. The
-// per-developer local config is created once by join and never regenerated.
-func updateOwnsOrphan(path string, stored types.FileState, answers types.WizardAnswers, generatedOwners map[string]bool) bool {
-	if stored.Owner != "" && answers.EnabledTools[stored.Owner] && !generatedOwners[stored.Owner] {
-		return false
-	}
-	return path != branding.Get().LocalConfig
+// yields no files at this tier) its tracked files are left alone.
+func updateOwnsOrphan(stored types.FileState, answers types.WizardAnswers, generatedOwners map[string]bool) bool {
+	return stored.Owner == "" || !answers.EnabledTools[stored.Owner] || generatedOwners[stored.Owner]
 }
 
 // readFileForMerge returns the base content for three-way merge from stored state.
@@ -601,6 +707,8 @@ func updateActionString(a UpdateAction) string {
 		return "remove"
 	case UpdateActionUntrack:
 		return "untrack"
+	case UpdateActionHold:
+		return "hold"
 	default:
 		return "unknown"
 	}
@@ -637,6 +745,16 @@ func executeUpdatePlan(
 				continue
 			}
 			if stop, err := out.writeValidated(projectRoot, fp, fp.NewContent, mode); stop {
+				return out, err
+			}
+			out.dropStaleSidecar(fp, absPath, opts.DryRun)
+
+		case UpdateActionHold:
+			if err := generate.ValidateContent(fp.Path, fp.NewContent); err != nil {
+				out.failures = append(out.failures, fileFailure{Path: fp.Path, Err: err})
+				continue
+			}
+			if err := out.writeHeldSidecar(projectRoot, fp, mode, opts.DryRun); err != nil {
 				return out, err
 			}
 
@@ -694,6 +812,34 @@ func (o *updateOutcome) writeValidated(projectRoot string, fp FileUpdatePlan, co
 	}
 	o.recordWrite(fp, content, mode)
 	return false, nil
+}
+
+// writeHeldSidecar writes a held file's new content beside it as
+// <path>.new and records the instructions to merge it with its partner.
+func (o *updateOutcome) writeHeldSidecar(projectRoot string, fp FileUpdatePlan, mode os.FileMode, dryRun bool) error {
+	sidecar := fp.Path + generate.SidecarSuffix
+	if !dryRun {
+		if err := fileutil.WriteFileAtomicInRoot(projectRoot, filepath.FromSlash(sidecar), fp.NewContent, mode); err != nil {
+			return fmt.Errorf("writing sidecar %s: %w", sidecar, err)
+		}
+	}
+	o.held = append(o.held, fmt.Sprintf(
+		"%s is held with %s, which kept your edits: its new version is in %s.\n"+
+			"Merge %s and %s together (accept both or neither), then run '%s init --update' again.",
+		fp.Path, fp.HeldWith, sidecar, sidecar, fp.HeldWith+generate.SidecarSuffix, branding.Get().AppName))
+	return nil
+}
+
+// dropStaleSidecar removes the sidecar an earlier update left for a held file
+// now written in place. A failure is only reported: the file itself is
+// current.
+func (o *updateOutcome) dropStaleSidecar(fp FileUpdatePlan, absPath string, dryRun bool) {
+	if fp.HeldWith == "" || dryRun {
+		return
+	}
+	if err := update.CleanupSidecar(absPath + generate.SidecarSuffix); err != nil {
+		o.failures = append(o.failures, fileFailure{Path: fp.Path + generate.SidecarSuffix, Err: fmt.Errorf("removing stale sidecar: %w", err)})
+	}
 }
 
 // recordWrite notes a file written with content and mode.

@@ -26,6 +26,7 @@ import (
 	"github.com/Quantum-Serendipity/qsdev/internal/mcpserve/spi"
 	"github.com/Quantum-Serendipity/qsdev/internal/mcpserve/tools/toolutil"
 	"github.com/Quantum-Serendipity/qsdev/internal/postmortem"
+	"github.com/Quantum-Serendipity/qsdev/internal/projectctx"
 	"github.com/Quantum-Serendipity/qsdev/pkg/ecosystem"
 )
 
@@ -204,7 +205,7 @@ func (m *module) root() (string, error) {
 	if dir := os.Getenv("CLAUDE_CONFIG_DIR"); dir != "" {
 		return filepath.Join(dir, "projects"), nil
 	}
-	home, err := os.UserHomeDir()
+	home, err := projectctx.HomeDir()
 	if err != nil {
 		return "", fmt.Errorf("locating the Claude projects directory: %w", err)
 	}

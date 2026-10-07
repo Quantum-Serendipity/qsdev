@@ -41,10 +41,11 @@ printed and the command fails, so a CI step cannot pass without checking.`,
 }
 
 func runOutdated(cmd *cobra.Command, opts outdated.OutdatedOptions) error {
-	projectRoot, err := cmdutil.ProjectRoot()
+	pc, err := cmdutil.Project(cmd)
 	if err != nil {
 		return err
 	}
+	projectRoot := pc.Root
 
 	// Determine detected ecosystems from answers.
 	// A missing answers file is fine (falls back below); a corrupt or

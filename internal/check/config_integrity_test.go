@@ -1,6 +1,7 @@
 package check
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -8,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/Quantum-Serendipity/qsdev/internal/config"
+	"github.com/Quantum-Serendipity/qsdev/pkg/branding"
 	"github.com/Quantum-Serendipity/qsdev/pkg/types"
 )
 
@@ -283,5 +285,76 @@ func TestCheckConfigIntegrity_MCPDisabledTools(t *testing.T) {
 				t.Errorf("failures = %v, want one mentioning %q", fails, tt.wantFail)
 			}
 		})
+	}
+}
+
+func TestCheckConfigIntegrity_InvalidRegistryProxyPath(t *testing.T) {
+	t.Parallel()
+	yaml := "version: 1\ninfrastructure:\n  registry_proxy: https://artifactory.corp.io\n" +
+		"  registry_proxy_paths:\n    npm: \"@attacker.io/npm/\"\n"
+	cfg, err := config.ParseQsdevConfigBytes([]byte(yaml))
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+
+	results := CheckConfigIntegrity(CheckContext{QsdevConfig: cfg})
+
+	for _, r := range results {
+		if r.Name == "config_validation" && r.Status == StatusFail &&
+			strings.Contains(r.Message, "infrastructure.registry_proxy_paths.npm") {
+			return
+		}
+	}
+	t.Errorf("expected a config_validation failure naming infrastructure.registry_proxy_paths.npm, got %+v", results)
+}
+
+func TestCatalogLoadFailure(t *testing.T) {
+	t.Parallel()
+
+	loadErr := errors.New("project defaults may only add or tighten: keep_vars")
+	got := CatalogLoadFailure(loadErr)
+
+	app := branding.Get().AppName
+	want := CheckResult{
+		Category: CategoryConfigIntegrity,
+		Name:     "config_catalog",
+		Status:   StatusFail,
+		Severity: SeverityCritical,
+	}
+	if got.Category != want.Category || got.Name != want.Name || got.Status != want.Status || got.Severity != want.Severity {
+		t.Errorf("CatalogLoadFailure = %s/%s/%s/%s, want %s/%s/%s/%s",
+			got.Category, got.Name, got.Status, got.Severity,
+			want.Category, want.Name, want.Status, want.Severity)
+	}
+	if wantMsg := "loading " + app + " defaults: " + loadErr.Error(); got.Message != wantMsg {
+		t.Errorf("Message = %q, want %q", got.Message, wantMsg)
+	}
+	if !strings.Contains(got.Remediation, app+" defaults validate") {
+		t.Errorf("Remediation %q does not name '%s defaults validate'", got.Remediation, app)
+	}
+}
+
+// TestToolRegistryFailure pins that a registry build error after the catalog
+// loaded is reported in the config_catalog slot without the defaults-file
+// wording, so its cause is not mislabeled as a rejected defaults file.
+func TestToolRegistryFailure(t *testing.T) {
+	t.Parallel()
+
+	buildErr := errors.New(`tool "x": unknown ownership "weird"`)
+	got := ToolRegistryFailure(buildErr)
+
+	if got.Category != CategoryConfigIntegrity || got.Name != "config_catalog" ||
+		got.Status != StatusFail || got.Severity != SeverityCritical {
+		t.Errorf("ToolRegistryFailure = %s/%s/%s/%s, want config_integrity/config_catalog/fail/critical",
+			got.Category, got.Name, got.Status, got.Severity)
+	}
+	if want := "building tool registry: " + buildErr.Error(); got.Message != want {
+		t.Errorf("Message = %q, want %q", got.Message, want)
+	}
+	if strings.Contains(got.Message, "defaults:") {
+		t.Errorf("Message %q blames the defaults file", got.Message)
+	}
+	if app := branding.Get().AppName; !strings.Contains(got.Remediation, app+" report bug") {
+		t.Errorf("Remediation %q does not name '%s report bug'", got.Remediation, app)
 	}
 }

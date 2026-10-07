@@ -8,7 +8,9 @@ import (
 	"net/http"
 	"os"
 	"os/exec"
+	"slices"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/charmbracelet/huh"
@@ -23,23 +25,49 @@ import (
 	"github.com/Quantum-Serendipity/qsdev/pkg/branding"
 )
 
+// ErrSetupIncomplete marks a setup run that left a selected tool missing or
+// below its minimum version, whether its install failed or "succeeded"
+// without the tool becoming usable.
+var ErrSetupIncomplete = errors.New("setup incomplete")
+
+// setupDeps is what setup needs from the host: its OS, the doctor checks
+// (run before installing and again to verify), and the installer.
+type setupDeps struct {
+	osInfo  *sysinfo.OSInfo
+	checks  func(ctx context.Context) []doctor.ToolStatus
+	install installFunc
+}
+
+// hostSetupDeps returns the setup dependencies for this host.
+func hostSetupDeps() setupDeps {
+	osInfo := sysinfo.DetectOS()
+	return setupDeps{
+		osInfo: osInfo,
+		checks: func(ctx context.Context) []doctor.ToolStatus {
+			return doctor.RunChecks(ctx, osInfo, doctor.DefaultChecks())
+		},
+		install: toolInstaller(osInfo),
+	}
+}
+
 // AutoSetupPrerequisites installs missing core prerequisites (nix, devenv, direnv)
 // non-interactively. It is called by the init/join flow when --yes is set to deliver
 // on the "one command and go" promise. Returns nil only if all prerequisites are
-// already present or were successfully installed; otherwise the error names every
-// prerequisite that is still missing.
+// already present or were installed and verified; otherwise the error names every
+// prerequisite that is still missing or below its minimum version.
 func AutoSetupPrerequisites(ctx context.Context, w io.Writer) error {
 	if os.Getenv(branding.Get().EnvPrefix+"SKIP_SETUP") == "1" {
 		return nil
 	}
+	return autoSetup(ctx, w, hostSetupDeps())
+}
 
-	osInfo := sysinfo.DetectOS()
-	checks := doctor.RunAllChecks(ctx, osInfo)
-
+// autoSetup is the core of AutoSetupPrerequisites.
+func autoSetup(ctx context.Context, w io.Writer, deps setupDeps) error {
 	coreTools := map[string]bool{"nix": true, "devenv": true, "direnv": true}
 	var missing []doctor.ToolStatus
-	for _, ts := range checks {
-		if coreTools[ts.Name] && needsSetup(ts) {
+	for _, ts := range deps.checks(ctx) {
+		if coreTools[ts.Name] && ts.NeedsSetup() {
 			missing = append(missing, ts)
 		}
 	}
@@ -49,7 +77,7 @@ func AutoSetupPrerequisites(ctx context.Context, w io.Writer) error {
 	}
 
 	// NixOS: prerequisites come from the system config, not imperative install.
-	if osInfo.Distro == "nixos" {
+	if deps.osInfo.Distro == "nixos" {
 		return fmt.Errorf("missing prerequisites on NixOS: %s; add them to your system configuration",
 			strings.Join(toolNames(missing), ", "))
 	}
@@ -58,10 +86,10 @@ func AutoSetupPrerequisites(ctx context.Context, w io.Writer) error {
 	var errs []error
 	if len(installable) > 0 {
 		_, _ = fmt.Fprintf(w, "Installing prerequisites: %s\n", strings.Join(installable, ", "))
-		errs = append(errs, installToolsInOrder(ctx, w, installable, osInfo))
+		errs = append(errs, installAndVerify(ctx, w, installable, deps.install, deps.checks))
 	}
 	if len(manual) > 0 {
-		errs = append(errs, fmt.Errorf("manual installation required for: %s", strings.Join(manual, ", ")))
+		errs = append(errs, fmt.Errorf("manual installation required for: %s", describeManual(missing, manual)))
 	}
 	if err := errors.Join(errs...); err != nil {
 		return err
@@ -111,9 +139,18 @@ func installPlan(selected []string) [][]string {
 	return levels
 }
 
-// needsSetup reports whether a doctor result calls for installation.
-func needsSetup(ts doctor.ToolStatus) bool {
-	return !ts.Installed || (ts.MinVersion != "" && !ts.VersionOK)
+// describeManual lists the tools named in manual, each installed one that
+// setup cannot upgrade followed by how to upgrade it (ToolStatus.UpgradeHint).
+func describeManual(missing []doctor.ToolStatus, manual []string) string {
+	parts := make([]string, len(manual))
+	for i, name := range manual {
+		parts[i] = name
+		if j := slices.IndexFunc(missing, func(ts doctor.ToolStatus) bool { return ts.Name == name }); j >= 0 &&
+			missing[j].Installed && missing[j].UpgradeHint != "" {
+			parts[i] += " (" + missing[j].UpgradeHint + ")"
+		}
+	}
+	return strings.Join(parts, ", ")
 }
 
 // partitionInstallable splits missing tools into those setup can install and
@@ -168,7 +205,11 @@ tools like Nix and Claude Code.
 Use --dry-run to preview what would be installed without making changes.
 Use --yes to skip the interactive confirmation prompt.`,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return runSetup(cmd, yes, dryRun)
+			ctx := cmd.Context()
+			if ctx == nil {
+				ctx = context.Background()
+			}
+			return runSetup(ctx, cmd.OutOrStdout(), yes, dryRun, hostSetupDeps())
 		},
 	}
 
@@ -178,19 +219,12 @@ Use --yes to skip the interactive confirmation prompt.`,
 	return cmd
 }
 
-func runSetup(cmd *cobra.Command, yes, dryRun bool) error {
-	ctx := cmd.Context()
-	if ctx == nil {
-		ctx = context.Background()
-	}
-	w := cmd.OutOrStdout()
-
-	osInfo := sysinfo.DetectOS()
-	checks := doctor.RunAllChecks(ctx, osInfo)
-
+// runSetup installs the missing tools deps.checks reports and verifies them.
+func runSetup(ctx context.Context, w io.Writer, yes, dryRun bool, deps setupDeps) error {
+	osInfo := deps.osInfo
 	var missing []doctor.ToolStatus
-	for _, ts := range checks {
-		if needsSetup(ts) {
+	for _, ts := range deps.checks(ctx) {
+		if ts.NeedsSetup() {
 			missing = append(missing, ts)
 		}
 	}
@@ -209,15 +243,18 @@ func runSetup(cmd *cobra.Command, yes, dryRun bool) error {
 
 	if len(installable) == 0 {
 		_, _ = fmt.Fprintln(w, "No auto-installable tools to set up.")
-		if len(notInstallable) > 0 {
-			_, _ = fmt.Fprintf(w, "Manual installation required for: %s\n", strings.Join(notInstallable, ", "))
-		}
-		return nil
+		return reportManual(w, missing, notInstallable)
 	}
 
 	// Dry-run mode.
 	if dryRun {
-		return printDryRun(w, installable, osInfo)
+		if err := printDryRun(w, installable, osInfo); err != nil {
+			return err
+		}
+		if len(notInstallable) > 0 {
+			_, _ = fmt.Fprintf(w, "Manual installation required for: %s\n", describeManual(missing, notInstallable))
+		}
+		return nil
 	}
 
 	// Auto-yes mode.
@@ -235,33 +272,98 @@ func runSetup(cmd *cobra.Command, yes, dryRun bool) error {
 		}
 	}
 
-	if !confirmed || len(selected) == 0 {
-		_, _ = fmt.Fprintln(w, "No tools selected for installation.")
-		return nil
+	if !confirmed {
+		selected = nil
 	}
-
-	// Install tools in dependency order. Failures are returned after the
-	// verification summary so the command still exits non-zero.
-	installErr := installToolsInOrder(ctx, w, selected, osInfo)
-
-	// Re-run checks and print verification summary.
-	_, _ = fmt.Fprintln(w)
-	_, _ = fmt.Fprintln(w, "Verifying installation...")
-	postChecks := doctor.RunAllChecks(ctx, osInfo)
-	printVerificationSummary(w, selected, postChecks)
-
-	// Offer shell integration if direnv was installed.
-	for _, name := range selected {
-		if name == "direnv" {
-			offerDirenvHook(w, osInfo)
-			break
+	// Tools setup will not install: those it cannot, then those deselected.
+	manual := slices.Clone(notInstallable)
+	for _, name := range installable {
+		if !slices.Contains(selected, name) {
+			manual = append(manual, name)
 		}
 	}
 
-	if installErr != nil {
-		return fmt.Errorf("setup incomplete: %w", installErr)
+	if len(selected) == 0 {
+		_, _ = fmt.Fprintln(w, "No tools selected for installation.")
+		return reportManual(w, missing, manual)
+	}
+
+	err := installAndVerify(ctx, w, selected, deps.install, deps.checks)
+
+	// Offer shell integration if direnv was installed.
+	if slices.Contains(selected, "direnv") {
+		offerDirenvHook(w, osInfo)
+	}
+	return errors.Join(err, reportManual(w, missing, manual))
+}
+
+// reportManual prints the tools in manual, which setup is leaving to the
+// user, and returns an error wrapping ErrSetupIncomplete when any of them
+// is required: setup must not succeed while a required tool is still
+// missing or below its floor.
+func reportManual(w io.Writer, missing []doctor.ToolStatus, manual []string) error {
+	if len(manual) == 0 {
+		return nil
+	}
+	_, _ = fmt.Fprintf(w, "Manual installation required for: %s\n", describeManual(missing, manual))
+	required := slices.DeleteFunc(slices.Clone(manual), func(name string) bool {
+		i := slices.IndexFunc(missing, func(ts doctor.ToolStatus) bool { return ts.Name == name })
+		return i < 0 || !missing[i].Required
+	})
+	if len(required) == 0 {
+		return nil
+	}
+	return fmt.Errorf("%w: manual installation required for: %s", ErrSetupIncomplete, describeManual(missing, required))
+}
+
+// installAndVerify installs selected in dependency order, then re-runs the
+// checks and verifies every selected tool is present at a version meeting
+// its floor. An install command exiting 0 is not success on its own: the
+// error wraps ErrSetupIncomplete when any install failed or any selected
+// tool did not verify.
+func installAndVerify(ctx context.Context, w io.Writer, selected []string, install installFunc, recheck func(context.Context) []doctor.ToolStatus) error {
+	installErr := runInstallPlan(ctx, w, selected, install)
+
+	_, _ = fmt.Fprintln(w)
+	_, _ = fmt.Fprintln(w, "Verifying installation...")
+	verifyErr := verifyInstalled(selected, recheck(ctx))
+	if verifyErr == nil {
+		_, _ = fmt.Fprintf(w, "Verified: %s\n", strings.Join(selected, ", "))
+	} else {
+		_, _ = fmt.Fprintf(w, "Not verified:\n%v\n", verifyErr)
+	}
+
+	if err := errors.Join(installErr, verifyErr); err != nil {
+		return fmt.Errorf("%w: %w", ErrSetupIncomplete, err)
 	}
 	return nil
+}
+
+// pathHint is the remedy for a tool installed but not resolvable on PATH.
+const pathHint = "open a new shell or add ~/.nix-profile/bin to PATH"
+
+// verifyInstalled checks each selected tool against post, the doctor
+// results re-run after installing. It returns an error joining one line per
+// tool that is missing, below its floor, or of unknown version.
+func verifyInstalled(selected []string, post []doctor.ToolStatus) error {
+	var errs []error
+	for _, name := range selected {
+		i := slices.IndexFunc(post, func(ts doctor.ToolStatus) bool { return ts.Name == name })
+		switch {
+		case i < 0:
+			errs = append(errs, fmt.Errorf("  %s: not verified (no check for it)", name))
+		case !post[i].Installed:
+			errs = append(errs, fmt.Errorf("  %s: not found on PATH; if it was installed, %s", name, pathHint))
+		case !post[i].NeedsSetup():
+			// Verified.
+		case post[i].Version == "":
+			errs = append(errs, fmt.Errorf("  %s: could not determine its version (need >= %s)", name, post[i].MinVersion))
+		default:
+			errs = append(errs, fmt.Errorf("  %s: still below minimum %s (found %s); if a newer one was installed, %s",
+				name, post[i].MinVersion, post[i].Version, pathHint))
+		}
+	}
+	return errors.Join(errs...)
 }
 
 // printNixOSInstructions prints declarative Nix package expressions for NixOS users.
@@ -389,12 +491,12 @@ func promptSetupSelection(tools []string) (selected []string, confirmed bool, er
 // installFunc installs a single tool by name.
 type installFunc func(ctx context.Context, w io.Writer, name string) error
 
-// installToolsInOrder installs tools in dependency order using the system
-// package manager or a tool-specific installer. It returns an error joining
-// every tool that failed or was skipped because a dependency failed.
-func installToolsInOrder(ctx context.Context, w io.Writer, selected []string, osInfo *sysinfo.OSInfo) error {
-	pm := pkgmanager.DetectPackageManager(osInfo)
-	install := func(ctx context.Context, w io.Writer, name string) error {
+// toolInstaller returns the installFunc for this host: a tool-specific
+// installer for nix, devenv and claude, and the system package manager
+// (detected on first use) for the rest.
+func toolInstaller(osInfo *sysinfo.OSInfo) installFunc {
+	pm := sync.OnceValue(func() pkgmanager.PackageManager { return pkgmanager.DetectPackageManager(osInfo) })
+	return func(ctx context.Context, w io.Writer, name string) error {
 		switch name {
 		case "nix":
 			return installNix(ctx, w)
@@ -403,10 +505,9 @@ func installToolsInOrder(ctx context.Context, w io.Writer, selected []string, os
 		case "claude":
 			return installClaude(ctx, w)
 		default:
-			return installWithPM(ctx, w, name, osInfo.Family, pm)
+			return installWithPM(ctx, w, name, osInfo.Family, pm())
 		}
 	}
-	return runInstallPlan(ctx, w, selected, install)
 }
 
 // runInstallPlan installs the selected tools level by level. A failed tool
@@ -619,33 +720,6 @@ func installClaude(ctx context.Context, w io.Writer) error {
 		return fmt.Errorf("installing Claude Code with npm: %w", err)
 	}
 	return nil
-}
-
-// printVerificationSummary re-checks installed tools and prints results.
-func printVerificationSummary(w io.Writer, installed []string, checks []doctor.ToolStatus) {
-	installedSet := make(map[string]bool, len(installed))
-	for _, name := range installed {
-		installedSet[name] = true
-	}
-
-	var successes, failures []string
-	for _, ts := range checks {
-		if !installedSet[ts.Name] {
-			continue
-		}
-		if ts.Installed && ts.VersionOK {
-			successes = append(successes, ts.Name)
-		} else {
-			failures = append(failures, ts.Name)
-		}
-	}
-
-	if len(successes) > 0 {
-		_, _ = fmt.Fprintf(w, "Successfully installed: %s\n", strings.Join(successes, ", "))
-	}
-	if len(failures) > 0 {
-		_, _ = fmt.Fprintf(w, "Failed or not verified: %s\n", strings.Join(failures, ", "))
-	}
 }
 
 // offerDirenvHook prints instructions for adding direnv hook to the shell RC file.

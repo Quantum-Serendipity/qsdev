@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"io/fs"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"runtime"
 	"slices"
@@ -17,6 +16,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/Quantum-Serendipity/qsdev/internal/state"
+	"github.com/Quantum-Serendipity/qsdev/internal/testutil"
 	"github.com/Quantum-Serendipity/qsdev/internal/toolreg"
 	"github.com/Quantum-Serendipity/qsdev/pkg/types"
 )
@@ -35,7 +35,7 @@ func initLifecycleProject(t *testing.T) string {
 	if lifecycleTemplate.dir == "" {
 		t.Fatal("initialising the lifecycle project template failed in an earlier test")
 	}
-	dir := t.TempDir()
+	dir := testutil.IsolatedDir(t)
 	if err := os.CopyFS(dir, os.DirFS(lifecycleTemplate.dir)); err != nil {
 		t.Fatalf("copying the lifecycle project template: %v", err)
 	}
@@ -79,11 +79,7 @@ func removeLifecycleTemplate() {
 func runLifecycleCmd(t *testing.T, dir string, cmd *cobra.Command, args ...string) (string, error) {
 	t.Helper()
 	t.Setenv("QSDEV_SKIP_SETUP", "1")
-	origDir, _ := os.Getwd()
-	defer func() { _ = os.Chdir(origDir) }()
-	if err := os.Chdir(dir); err != nil {
-		t.Fatalf("chdir: %v", err)
-	}
+	t.Chdir(dir)
 	var buf bytes.Buffer
 	cmd.SetOut(&buf)
 	cmd.SetErr(&buf)
@@ -145,7 +141,7 @@ func loadProjectAnswers(t *testing.T, dir string) types.WizardAnswers {
 
 // assertSharedFilesWellFormed checks every shared file is in its own format:
 // JSON files parse, CLAUDE.md carries no raw MCP JSON, and devenv.nix carries
-// no Markdown and parses as Nix when nix-instantiate is available.
+// no Markdown and parses as Nix (see assertNixParses).
 func assertSharedFilesWellFormed(t *testing.T, dir string) {
 	t.Helper()
 	for _, rel := range []string{".mcp.json", ".claude/settings.json"} {
@@ -171,11 +167,7 @@ func assertSharedFilesWellFormed(t *testing.T, dir string) {
 			t.Errorf("devenv.nix contains a Markdown line: %q", line)
 		}
 	}
-	if nixInstantiate, err := exec.LookPath("nix-instantiate"); err == nil {
-		if out, err := exec.Command(nixInstantiate, "--parse", filepath.Join(dir, "devenv.nix")).CombinedOutput(); err != nil {
-			t.Errorf("devenv.nix does not parse: %v\n%s", err, out)
-		}
-	}
+	assertNixParses(t, dir)
 }
 
 // TestLifecycle_SharedContentMatchesFileFormat is the F027 regression: tools
@@ -544,7 +536,7 @@ func TestLifecycle_EveryToolRoundTrip(t *testing.T) {
 	template := initLifecycleProject(t)
 	for _, tool := range toolreg.DefaultRegistry().All() {
 		t.Run(tool.Name, func(t *testing.T) {
-			dir := t.TempDir()
+			dir := testutil.IsolatedDir(t)
 			if err := os.CopyFS(dir, os.DirFS(template)); err != nil {
 				t.Fatalf("copying project: %v", err)
 			}
@@ -627,7 +619,7 @@ func TestLifecycle_SembleOptInOnly(t *testing.T) {
 		}
 	})
 	t.Run("opt-in opt-outs survive, always-on is kept", func(t *testing.T) {
-		dir := t.TempDir()
+		dir := testutil.IsolatedDir(t)
 		if err := os.WriteFile(filepath.Join(dir, "go.mod"), []byte("module example.com/lc\n\ngo 1.24\n"), 0o644); err != nil {
 			t.Fatal(err)
 		}
@@ -647,7 +639,7 @@ func TestLifecycle_SembleOptInOnly(t *testing.T) {
 		}
 	})
 	t.Run("always-on opt-out flag is rejected", func(t *testing.T) {
-		dir := t.TempDir()
+		dir := testutil.IsolatedDir(t)
 		if err := os.WriteFile(filepath.Join(dir, "go.mod"), []byte("module example.com/lc\n\ngo 1.24\n"), 0o644); err != nil {
 			t.Fatal(err)
 		}

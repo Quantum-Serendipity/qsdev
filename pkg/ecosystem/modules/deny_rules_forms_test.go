@@ -58,6 +58,7 @@ func TestDenyRules_InstallForms(t *testing.T) {
 				`Bash(Rscript -e 'remotes::install_github("attacker/pkg")')`,
 				`Bash(R -q -e "renv::install('evil')")`,
 				`Bash(Rscript -e 'pak::pak("attacker/pkg")')`, `Bash(R -e 'update.packages(ask = FALSE)')`,
+				`Bash(R -q -e 'pak::lockfile_create()')`,
 			},
 			allowed: []string{`Bash(Rscript -e "renv::restore()")`, `Bash(Rscript -e "testthat::test_dir('tests')")`},
 		},
@@ -69,6 +70,10 @@ func TestDenyRules_InstallForms(t *testing.T) {
 				"PowerShell(Install-Script Evil)", "PowerShell(Install-Package Evil)",
 				"Bash(pwsh -c Install-PSResource Evil)", "Bash(pwsh -NoProfile -Command Save-Module Evil)",
 				"PowerShell(Update-Module Pester)", "Bash(pwsh -c Update-PSResource Pester)",
+				"PowerShell(Get-Date; Install-Module Evil)", "PowerShell(INSTALL-MODULE Evil)",
+				"PowerShell(Find-Module Evil | Install-Module)", "PowerShell(Get-Date && Install-Module Evil)",
+				"PowerShell(Get-Date\nInstall-Module Evil)", "PowerShell(isres Evil)",
+				"Bash(env X=1 pwsh -c Install-Module Evil)",
 			},
 			allowed: []string{"PowerShell(Invoke-ScriptAnalyzer -Path .)", "Bash(pwsh -Command Invoke-Pester)"},
 		},
@@ -107,22 +112,14 @@ func TestDenyRules_InstallForms(t *testing.T) {
 				t.Fatalf("module %q provides no deny rules", tt.module)
 			}
 			rules := drp.DenyRules(ecosystem.ModuleConfig{})
-			denied := func(op string) bool {
-				for _, r := range rules {
-					if denyutil.MatchesDenyRule(r, op) {
-						return true
-					}
-				}
-				return false
-			}
 			for _, op := range tt.denied {
-				if !denied(op) {
+				if _, ok := denyutil.FirstMatch(rules, op); !ok {
 					t.Errorf("%s is not denied by %v", op, rules)
 				}
 			}
 			for _, op := range tt.allowed {
-				if denied(op) {
-					t.Errorf("%s is unexpectedly denied by %v", op, rules)
+				if rule, ok := denyutil.FirstMatch(rules, op); ok {
+					t.Errorf("%s is unexpectedly denied by %q", op, rule)
 				}
 			}
 		})

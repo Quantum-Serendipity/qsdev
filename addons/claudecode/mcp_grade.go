@@ -67,10 +67,11 @@ Registry servers the project does not configure are graded only with --all or
 when named explicitly, and are marked as not configured.`,
 		Args: cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			projectRoot, err := cmdutil.ProjectRoot()
+			pc, err := cmdutil.Project(cmd)
 			if err != nil {
 				return err
 			}
+			projectRoot := pc.Root
 
 			configured, err := mcpregistry.ScanMcpJSON(projectRoot)
 			if err != nil {

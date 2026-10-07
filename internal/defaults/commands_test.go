@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	"github.com/Quantum-Serendipity/qsdev/internal/catalog"
+	"github.com/Quantum-Serendipity/qsdev/pkg/branding"
 )
 
 func TestSectionFromUnified(t *testing.T) {
@@ -174,9 +175,7 @@ func TestValidate_RejectsHostileHookID(t *testing.T) {
 	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	prev := catalog.ProjectRoot()
-	catalog.SetProjectRoot(root)
-	t.Cleanup(func() { catalog.SetProjectRoot(prev) })
+	useProjectRoot(t, root)
 
 	cmd := validateCmd()
 	var stdout, stderr bytes.Buffer
@@ -188,5 +187,46 @@ func TestValidate_RejectsHostileHookID(t *testing.T) {
 	}
 	if !strings.Contains(stderr.String(), "invalid hook id") {
 		t.Errorf("stderr = %q, want it to contain %q", stderr.String(), "invalid hook id")
+	}
+}
+
+// useProjectRoot points a freshly reset catalog at the project root for the
+// duration of the test. Tests using it must not run in parallel.
+func useProjectRoot(t *testing.T, root string) {
+	t.Helper()
+	catalog.ResetDefault()
+	t.Cleanup(catalog.ResetDefault)
+	if err := catalog.SetProjectRoot(root); err != nil {
+		t.Fatalf("SetProjectRoot(%q): %v", root, err)
+	}
+}
+
+// `defaults validate` fails on an org overlay that would keep a stripped
+// credential, naming the variable (XS-N1: it used to report the file valid).
+// Not parallel: it sets the environment and the catalog's project root.
+func TestValidate_DefaultsValidateRejectsLooseningOverlay(t *testing.T) {
+	useProjectRoot(t, t.TempDir())
+	overlay := filepath.Join(t.TempDir(), "defaults.yaml")
+	content := "security_hooks: [check-merge-conflicts]\nkeep_vars: [PATH, GITHUB_TOKEN, AWS_SECRET_ACCESS_KEY]\n"
+	if err := os.WriteFile(overlay, []byte(content), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv(branding.Get().EnvPrefix+"ORG_CONFIG", overlay)
+
+	cmd := validateCmd()
+	var stdout, stderr bytes.Buffer
+	cmd.SetOut(&stdout)
+	cmd.SetErr(&stderr)
+	cmd.SetArgs(nil)
+	if err := cmd.Execute(); err == nil {
+		t.Fatalf("defaults validate succeeded, want error; stdout: %s", stdout.String())
+	}
+	for _, want := range []string{"GITHUB_TOKEN", "AWS_SECRET_ACCESS_KEY", overlay} {
+		if !strings.Contains(stderr.String(), want) {
+			t.Errorf("stderr = %q, want it to name %q", stderr.String(), want)
+		}
+	}
+	if strings.Contains(stdout.String(), "is valid") {
+		t.Errorf("stdout = %q, must not report the file valid", stdout.String())
 	}
 }

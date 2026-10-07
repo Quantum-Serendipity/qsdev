@@ -5,12 +5,14 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
 	"github.com/Quantum-Serendipity/qsdev/addons/claudecode"
 	"github.com/Quantum-Serendipity/qsdev/internal/answers"
 	qsdevconfig "github.com/Quantum-Serendipity/qsdev/internal/config"
+	"github.com/Quantum-Serendipity/qsdev/internal/testutil"
 	"github.com/Quantum-Serendipity/qsdev/pkg/branding"
 	"github.com/Quantum-Serendipity/qsdev/pkg/types"
 )
@@ -227,12 +229,10 @@ func settingsHasSelfprotect(t *testing.T, dir string) bool {
 }
 
 // claudeInitProject runs `claude init --yes` in a fresh project with its own
-// HOME and returns the project directory.
+// isolated user directories and returns the project directory.
 func claudeInitProject(t *testing.T) string {
 	t.Helper()
-	t.Setenv("HOME", t.TempDir())
-	dir := t.TempDir()
-	chdir(t, dir)
+	dir := testutil.Project(t, testutil.ProjectOptions{})
 	mustRunClaude(t, "init", "--yes")
 	return dir
 }
@@ -352,6 +352,70 @@ func TestClaudeUpdate_KeepsCommittedTier(t *testing.T) {
 			}
 			if saved.Tier != tt.committed {
 				t.Errorf("answers tier = %q, want committed %q", saved.Tier, tt.committed)
+			}
+		})
+	}
+}
+
+// TestClaudeUpdate_PermissionsFollowCommittedConfig verifies `claude update`
+// takes claude_code.permissions from the committed .qsdev.yaml, never from
+// the local, agent-writable answers file: a rule only the saved answers carry
+// (one the team removed, or one written in by an agent) is dropped, and a rule
+// committed after the answers were saved is added.
+func TestClaudeUpdate_PermissionsFollowCommittedConfig(t *testing.T) {
+	const (
+		stale     = "Bash(curl *)"
+		committed = "Bash(make lint)"
+	)
+	tests := []struct {
+		name   string
+		config string // .qsdev.yaml content; empty means no file
+		want   []string
+	}{
+		{"committed rule replaces stale one",
+			"version: 1\nclaude_code:\n  permissions:\n    allow:\n      - \"" + committed + "\"\n",
+			[]string{committed}},
+		{"no committed file drops stale rule", "", nil},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			dir := claudeInitProject(t)
+			a, err := answers.LoadPrimary(dir)
+			if err != nil {
+				t.Fatalf("loading answers: %v", err)
+			}
+			a.ClaudePermissions = types.ClaudePermissionsConfig{Allow: []string{stale}}
+			if err := answers.SavePrimary(dir, a); err != nil {
+				t.Fatal(err)
+			}
+			if tt.config != "" {
+				cfgPath := filepath.Join(dir, branding.Get().ConfigFile)
+				if err := os.WriteFile(cfgPath, []byte(tt.config), 0o644); err != nil {
+					t.Fatal(err)
+				}
+				markJoined(t, dir)
+			}
+
+			mustRunClaude(t, "update", "--force")
+
+			var s claudecode.SettingsJSON
+			if err := json.Unmarshal([]byte(readFile(t, filepath.Join(dir, settingsRel))), &s); err != nil {
+				t.Fatalf("parsing settings.json: %v", err)
+			}
+			if slices.Contains(s.Permissions.Allow, stale) {
+				t.Errorf("settings.json allow still has %s, which only the saved answers carry", stale)
+			}
+			for _, w := range tt.want {
+				if !slices.Contains(s.Permissions.Allow, w) {
+					t.Errorf("settings.json allow lacks committed %s: %v", w, s.Permissions.Allow)
+				}
+			}
+			saved, err := answers.LoadPrimary(dir)
+			if err != nil {
+				t.Fatalf("loading answers: %v", err)
+			}
+			if slices.Contains(saved.ClaudePermissions.Allow, stale) {
+				t.Errorf("saved answers still carry %s", stale)
 			}
 		})
 	}

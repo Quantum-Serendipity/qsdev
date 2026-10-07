@@ -9,6 +9,7 @@ import (
 	"fastcat.org/go/gdev/addons/bootstrap/textedit"
 	"github.com/spf13/cobra"
 
+	"github.com/Quantum-Serendipity/qsdev/internal/projectctx"
 	"github.com/Quantum-Serendipity/qsdev/pkg/branding"
 	"github.com/Quantum-Serendipity/qsdev/pkg/fileutil"
 )
@@ -26,7 +27,7 @@ type CompletionInstaller struct {
 	// BinaryName is the name of the CLI binary (e.g. "qsdev").
 	BinaryName string
 	// HomeDir is the user's home directory, used to derive completion file
-	// paths. If empty, os.UserHomeDir() is used.
+	// paths. If empty, projectctx.HomeDir() is used.
 	HomeDir string
 }
 
@@ -38,7 +39,7 @@ func (c *CompletionInstaller) Install(rootCmd *cobra.Command, shell string, rcFi
 	home := c.HomeDir
 	if home == "" {
 		var err error
-		home, err = os.UserHomeDir()
+		home, err = projectctx.HomeDir()
 		if err != nil {
 			return fmt.Errorf("determining home directory: %w", err)
 		}

@@ -28,93 +28,91 @@ import sys
 if __name__ == "__main__" and not (getattr(sys.flags, "safe_path", False) or sys.flags.isolated):
     del sys.path[0]
 
+import importlib.util
 import json
 import os
 import re
-import threading
-from datetime import datetime, timezone
-from pathlib import Path
 
-# U17-WS7: moves to qsdev_hooklib
-# Oldest interpreter the hook supports (Go: types.MinHookPython). Below it,
-# block (exit 2) instead of crashing with exit 1, which Claude Code treats as
-# a non-blocking error.
-_MIN_PYTHON = (3, 9)
-if sys.version_info < _MIN_PYTHON:
-    print(f"credential-scan requires Python {'.'.join(map(str, _MIN_PYTHON))}+ "
-          f"(found {sys.version.split()[0]}); blocking to fail closed.", file=sys.stderr)
+# Shared hook library (.claude/hooks/_qsdev_hooklib.py: audit log, deadline
+# watchdog, interpreter floor). It is loaded by explicit path, so this
+# directory never goes back on sys.path, and without bytecode, so no
+# __pycache__ lands in the project. Missing or broken, it blocks the call
+# (fail closed); below the minimum Python, its import exits 2.
+sys.dont_write_bytecode = True
+try:
+    _lib_spec = importlib.util.spec_from_file_location(
+        "_qsdev_hooklib", os.path.join(os.path.dirname(os.path.abspath(__file__)), "_qsdev_hooklib.py"))
+    lib = importlib.util.module_from_spec(_lib_spec)
+    _lib_spec.loader.exec_module(lib)
+    # What this hook uses: an empty or stale library blocks here, not with an
+    # AttributeError (exit 1, which Claude Code lets through) mid-evaluation.
+    lib.arm_deadline, lib.audit_log  # noqa: B018
+except Exception as _exc:
+    print(f"credential-scan: hook library unavailable ({_exc}); blocking (fail closed)", file=sys.stderr)
     sys.exit(2)
 
-# U17-WS7: moves to qsdev_hooklib
-# Internal deadline: the hook's registered settings.json timeout minus 2s.
-# Claude Code lets the tool call through when a hook times out, so the
-# watchdog blocks first. QSDEV_HOOK_DEADLINE_MS can only shorten it. Known
-# limit: a C-level regex match that holds the GIL cannot be interrupted by
-# any in-process watchdog.
+# Internal deadline (lib.arm_deadline): the hook's registered settings.json
+# timeout minus 2s, so the watchdog blocks before Claude Code's timeout lets
+# the call through.
 _HOOK_DEADLINE_S = 8
 
-
-def _deadline_seconds() -> float:
-    """The effective deadline: _HOOK_DEADLINE_S, or QSDEV_HOOK_DEADLINE_MS
-    when that is shorter."""
-    try:
-        return min(float(_HOOK_DEADLINE_S), int(os.environ.get("QSDEV_HOOK_DEADLINE_MS", "")) / 1000)
-    except ValueError:
-        return float(_HOOK_DEADLINE_S)
-
-
-def _arm_deadline() -> None:
-    """Start a daemon watchdog that blocks (exit 2) once the deadline passes."""
-    seconds = _deadline_seconds()
-
-    def expire() -> None:
-        sys.stderr.write(f"credential-scan: evaluation exceeded {seconds:g}s deadline; blocking (fail closed)\n")
-        sys.stderr.flush()
-        os._exit(2)
-
-    timer = threading.Timer(seconds, expire)
-    timer.daemon = True
-    timer.start()
-
+# Checked in every file: the credential token shapes of the qsdev canon
+# (internal/secrets ValuePatterns, in canon order), then the scan-only
+# assignment heuristics (addons/claudecode ScanHeuristicPatterns). Kept equal to
+# the Go side by TestSecretPatterns_MatchPythonHook; every canon entry must
+# compile in both Go RE2 and Python re.
 DEFAULT_PATTERNS: list[str] = [
     # AWS access key IDs (long-term AKIA and temporary STS ASIA)
     r'(AKIA|ASIA)[0-9A-Z]{16}',
-    # AWS secret/session token assignments
-    r'(?i)aws[_-]?(secret[_-]?access[_-]?key|session[_-]?token)\s*[=:]\s*[A-Za-z0-9/+=]{20,}',
     # GitHub classic, OAuth, user-to-server, server and refresh tokens
     r'gh[pousr]_[A-Za-z0-9_]{36,}',
-    # GitLab personal access tokens
-    r'glpat-[A-Za-z0-9_-]{20,}',
-    # Generic API key assignments
-    r"""["']?[Aa](pi|PI)[_-]?[Kk](ey|EY)["']?\s*[=:]\s*["'][A-Za-z0-9_-]{20,}["']""",
-    # PEM private keys, including encrypted keys and PGP secret key blocks
-    r'-----BEGIN ((RSA|EC|DSA|OPENSSH|ENCRYPTED|PGP) )?PRIVATE KEY( BLOCK)?-----',
-    # JWT tokens (three base64url segments)
-    r'eyJ[A-Za-z0-9_-]{10,}\.eyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}',
-    # Database connection strings with credentials
-    r"""(mongodb(\+srv)?|postgres(ql)?|mysql|redis)://[^\s"':]+:[^\s"'@]+@[^\s"']{5,}""",
-    # Slack API tokens
-    r'xox[bprase]-[A-Za-z0-9-]{10,}',
-    # Stripe secret keys
-    r'sk_(live|test)_[A-Za-z0-9]{20,}',
-    # SendGrid API keys
-    r'SG\.[A-Za-z0-9_-]{22}\.[A-Za-z0-9_-]{43}',
-    # Generic secret/password assignments; the key may be quoted (JSON)
-    r"""(?i)(password|passwd|secret|token|credential)["']?\s*[=:]\s*["'][^\s"']{8,}["']""",
     # GitHub fine-grained personal access tokens
     r'github_pat_[A-Za-z0-9_]{22,}',
-    # Anthropic API keys
+    # GitLab personal access tokens
+    r'glpat-[A-Za-z0-9_-]{20,}',
+    # Stripe secret keys
+    r'sk_(live|test)_[A-Za-z0-9]{20,}',
+    # Stripe restricted keys
+    r'rk_(live|test)_[A-Za-z0-9]{20,}',
+    # npm access tokens (exactly 36 characters, so a placeholder word written
+    # after a real token is not part of the match)
+    r'npm_[A-Za-z0-9]{36}',
+    # JWT tokens (three base64url segments; the signature may be short or empty)
+    r'eyJ[A-Za-z0-9_-]{10,}\.eyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]*',
+    # PEM private keys, including encrypted keys and PGP secret key blocks
+    r'-----BEGIN [A-Z0-9 ]*PRIVATE KEY(?: BLOCK)?-----',
+    # Azure storage account keys in connection strings
+    r'AccountKey=[A-Za-z0-9+/=]{44,}',
+    # Google API keys
+    r'AIza[0-9A-Za-z_-]{35}',
+    # Database connection strings with credentials
+    r"""(mongodb(\+srv)?|postgres(ql)?|mysql|redis)://[^\s"':]+:[^\s"'@]+@[^\s"']{5,}""",
+    # HashiCorp Vault service, batch and recovery tokens
+    r'hv[sbr]\.[A-Za-z0-9_-]{24,}',
+    # Slack API tokens
+    r'xox[bprase]-[A-Za-z0-9-]{10,}',
+    # SendGrid API keys
+    r'SG\.[A-Za-z0-9_-]{22}\.[A-Za-z0-9_-]{43}',
+    # Anthropic API and admin keys
     r'sk-ant-[A-Za-z0-9_-]{20,}',
     # OpenAI API keys (project, service-account, admin and legacy)
     r'sk-(proj|svcacct|admin)-[A-Za-z0-9_-]{20,}|sk-[A-Za-z0-9]{20}T3BlbkFJ[A-Za-z0-9]{20}',
-    # Google API keys
-    r'AIza[0-9A-Za-z_-]{35}',
-    # npm access tokens
-    r'npm_[A-Za-z0-9]{36}',
     # PyPI API tokens
     r'pypi-[A-Za-z0-9_-]{50,}',
-    # Slack incoming webhooks
-    r'https://hooks\.slack\.com/services/T[A-Za-z0-9]+/B[A-Za-z0-9]+/[A-Za-z0-9]+',
+    # Slack incoming webhooks; the zero-width (?:^|\b) keeps the match the bare URL
+    r'(?:^|\b)https://hooks\.slack\.com/services/T[A-Za-z0-9]+/B[A-Za-z0-9]+/[A-Za-z0-9]+',
+    # Docker Hub personal access tokens
+    r'dckr_pat_[A-Za-z0-9_-]{20,}',
+    # Hugging Face access tokens
+    r'hf_[A-Za-z0-9]{30,}',
+    # age secret keys
+    r'AGE-SECRET-KEY-1[0-9A-Z]{58}',
+    # Heuristic: AWS secret/session token assignments
+    r'(?i)aws[_-]?(secret[_-]?access[_-]?key|session[_-]?token)\s*[=:]\s*[A-Za-z0-9/+=]{20,}',
+    # Heuristic: generic API key assignments
+    r"""["']?[Aa](pi|PI)[_-]?[Kk](ey|EY)["']?\s*[=:]\s*["'][A-Za-z0-9_-]{20,}["']""",
+    # Heuristic: generic secret/password assignments; the key may be quoted (JSON)
+    r"""(?i)(password|passwd|secret|token|credential)["']?\s*[=:]\s*["'][^\s"']{8,}["']""",
 ]
 
 # Unquoted `KEY=value` / `key: value` assignments, checked only in dotenv and
@@ -145,32 +143,6 @@ PLACEHOLDER_INDICATORS: tuple[str, ...] = (
     'INSERT_', 'TODO', 'XXXX', 'SAMPLE', 'DUMMY', 'TEST_KEY',
 )
 
-AUDIT_LOG: Path = Path(
-    os.environ.get("CLAUDE_PROJECT_DIR", ".")
-) / ".claude" / "logs" / "hook-audit.jsonl"
-
-
-AUDIT_LOG_MAX_BYTES = 10 * 1024 * 1024
-
-
-def audit_log(entry: dict) -> None:
-    """Append a JSON entry to the audit log. Never raises. The file is created
-    0600 and rotated to <name>.1 once it exceeds AUDIT_LOG_MAX_BYTES."""
-    try:
-        AUDIT_LOG.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
-        try:
-            if AUDIT_LOG.stat().st_size > AUDIT_LOG_MAX_BYTES:
-                os.replace(AUDIT_LOG, AUDIT_LOG.with_name(AUDIT_LOG.name + ".1"))
-        except FileNotFoundError:
-            pass
-        entry["timestamp"] = datetime.now(timezone.utc).isoformat()
-        fd = os.open(AUDIT_LOG, os.O_WRONLY | os.O_APPEND | os.O_CREAT, 0o600)
-        with os.fdopen(fd, "a") as f:
-            f.write(json.dumps(entry) + "\n")
-    except OSError:
-        pass  # Audit logging must not interrupt hook decisions.
-
-
 def get_patterns(file_path: str) -> list[re.Pattern]:
     """Compile default + extra patterns from environment, plus the config
     assignment patterns when file_path is a dotenv or config file."""
@@ -188,7 +160,7 @@ def get_patterns(file_path: str) -> list[re.Pattern]:
         try:
             compiled.append(re.compile(p))
         except re.error as err:
-            audit_log({"event": "pattern_compile_error", "hook": "credential-scan", "pattern": p, "error": str(err)})
+            lib.audit_log({"event": "pattern_compile_error", "hook": "credential-scan", "pattern": p, "error": str(err)})
     return compiled
 
 
@@ -224,11 +196,11 @@ def written_content(tool_name: str, tool_input: dict) -> tuple[str, str]:
 
 
 def main() -> None:
-    _arm_deadline()
+    lib.arm_deadline("credential-scan", _HOOK_DEADLINE_S)
     try:
         input_data = json.load(sys.stdin)
     except (json.JSONDecodeError, ValueError) as e:
-        audit_log({"event": "parse_error", "hook": "credential-scan", "error": str(e)})
+        lib.audit_log({"event": "parse_error", "hook": "credential-scan", "error": str(e)})
         print(f"credential scan error: {e}", file=sys.stderr)
         sys.exit(2)
 
@@ -254,7 +226,7 @@ def main() -> None:
 
             redacted = matched_text[:8] + "..." if len(matched_text) > 8 else matched_text
 
-            audit_log({
+            lib.audit_log({
                 "event": "deny",
                 "hook": "credential-scan",
                 "tool": tool_name,
@@ -278,7 +250,7 @@ def main() -> None:
             print(json.dumps(result))
             sys.exit(0)
 
-    audit_log({
+    lib.audit_log({
         "event": "allow",
         "hook": "credential-scan",
         "tool": tool_name,

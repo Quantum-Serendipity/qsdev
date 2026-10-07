@@ -22,6 +22,9 @@ var (
 	cmdInstance     = []string{"cmd", "instance"}
 	projectctxOwner = []string{"internal/projectctx"}
 	singletonOwners = []string{"instance", "internal/projectctx"}
+	// mcpregistryOwner is the only package that may start or dial a
+	// configured MCP server: ProbeAll probes only what PlanProbes trusts.
+	mcpregistryOwner = []string{"internal/mcpregistry"}
 )
 
 // symbolTable holds the "one way to do X" bans of architecture §5.
@@ -40,6 +43,10 @@ var symbolTable = []symbolBan{
 	{ID: "config-parseqsdevconfig", Pkg: "internal/config", Name: "ParseQsdevConfig", Owners: []string{"internal/projectmodel"}},
 	{ID: "os-stderr", Pkg: "os", Name: "Stderr", Owners: []string{"cmd", "instance", "internal/procexec"}},
 	{ID: "test-os-chdir", Pkg: "os", Name: "Chdir", Tests: true},
+	{ID: "test-os-unsetenv", Pkg: "os", Name: "Unsetenv", Tests: true},
+	{ID: "mcphealth-checkall", Pkg: "internal/mcphealth", Name: "CheckAll", Owners: mcpregistryOwner},
+	{ID: "mcphealth-checkserver", Pkg: "internal/mcphealth", Name: "CheckServer", Owners: mcpregistryOwner},
+	{ID: "mcphealth-probetarget", Pkg: "internal/mcphealth", Name: "ProbeTarget", Owners: mcpregistryOwner},
 }
 
 // panicOwners may panic: procexec's forbid-exec guard is a test-only trap

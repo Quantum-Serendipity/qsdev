@@ -2,11 +2,13 @@ package procexec
 
 import (
 	"context"
+	"errors"
 	"go/ast"
 	"go/parser"
 	"go/token"
 	"maps"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"runtime"
 	"slices"
@@ -203,6 +205,22 @@ func TestForbidExec_VersionProbe(t *testing.T) {
 	}
 }
 
+// TestVersionProbe_InsideProjectSentinel verifies only a refusal for lying
+// inside the project carries ErrInsideProject, so callers can tell "not run
+// because it is project code" from any other failure.
+func TestVersionProbe_InsideProjectSentinel(t *testing.T) {
+	project := t.TempDir()
+	outside := touch(t, filepath.Join(t.TempDir(), "bin", "tool"))
+	inside := touch(t, filepath.Join(project, ".venv", "bin", "python3"))
+
+	if err := VersionProbe(context.Background(), project, inside, "--version").Err; !errors.Is(err, ErrInsideProject) {
+		t.Errorf("in-project probe Err = %v, want ErrInsideProject", err)
+	}
+	if err := VersionProbe(context.Background(), project, outside, "--help").Err; err == nil || errors.Is(err, ErrInsideProject) {
+		t.Errorf("bad-flag probe Err = %v, want a non-ErrInsideProject error", err)
+	}
+}
+
 func TestLocalProbes_DeclaredOnce(t *testing.T) {
 	t.Parallel()
 	if len(localProbes) == 0 {
@@ -256,5 +274,50 @@ func TestLocalProbes_DeclaredOnce(t *testing.T) {
 	}
 	if literals != 1 {
 		t.Errorf("found %d []localProbe literals, want exactly 1 (localProbes)", literals)
+	}
+}
+
+// TestProcexecLookPath proves LookPath resolves the way exec.LookPath does:
+// a bare name through PATH, a path containing a separator directly, and a
+// name PATH lacks to an error wrapping exec.ErrNotFound.
+func TestProcexecLookPath(t *testing.T) {
+	dir := t.TempDir()
+	name := "qsdev-lookpath-probe"
+	file := name
+	if runtime.GOOS == "windows" {
+		file += ".exe"
+	}
+	tool := filepath.Join(dir, file)
+	if err := os.WriteFile(tool, []byte("#!/bin/sh\n"), 0o755); err != nil { //nolint:gosec // executable test fixture
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", dir)
+
+	tests := []struct {
+		name    string
+		file    string
+		want    string
+		wantErr error
+	}{
+		{"bare name via PATH", name, tool, nil},
+		{"absolute path", tool, tool, nil},
+		{"missing bare name", "qsdev-lookpath-absent", "", exec.ErrNotFound},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := LookPath(tt.file)
+			if tt.wantErr != nil {
+				if !errors.Is(err, tt.wantErr) {
+					t.Fatalf("LookPath(%q) error = %v, want %v", tt.file, err, tt.wantErr)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("LookPath(%q): %v", tt.file, err)
+			}
+			if got != tt.want {
+				t.Errorf("LookPath(%q) = %q, want %q", tt.file, got, tt.want)
+			}
+		})
 	}
 }

@@ -2,6 +2,7 @@ package version
 
 import (
 	"fmt"
+	"regexp"
 	"runtime"
 	"runtime/debug"
 	"strings"
@@ -12,7 +13,35 @@ var (
 	commit  = "none"
 	date    = "unknown"
 	builtBy = "manual"
+
+	// gatewayImageDigest is the index digest of the gateway image the
+	// release workflow published for this version, stamped by GoReleaser.
+	// Empty for development and snapshot builds, and for the image's own
+	// binary, which cannot contain its own digest.
+	gatewayImageDigest = ""
 )
+
+// imageDigestRe is an OCI content digest as the release workflow's docker
+// manifest push prints it.
+var imageDigestRe = regexp.MustCompile(`^sha256:[0-9a-f]{64}$`)
+
+// IsImageDigest reports whether d is a well-formed sha256 OCI content digest
+// ("sha256:" and 64 lower-case hex digits).
+func IsImageDigest(d string) bool {
+	return imageDigestRe.MatchString(d)
+}
+
+// GatewayImageDigest returns the gateway image index digest stamped into
+// this build, or "" when none was stamped or the stamped value is not a
+// well-formed digest (a malformed stamp is ignored rather than producing an
+// unpullable image reference).
+func GatewayImageDigest() string {
+	d := strings.TrimSpace(gatewayImageDigest)
+	if !IsImageDigest(d) {
+		return ""
+	}
+	return d
+}
 
 type BuildInfo struct {
 	Version   string `json:"version"`

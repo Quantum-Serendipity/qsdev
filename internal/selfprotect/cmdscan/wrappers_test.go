@@ -41,6 +41,17 @@ func TestProgramWordIndex(t *testing.T) {
 		{"plain program", []string{"python3", "x.py"}, 0},
 		{"timeout duration", []string{"timeout", "30", "python3", "x.py"}, 2},
 		{"timeout option with argument", []string{"timeout", "-s", "KILL", "1.5m", "python3", "x.py"}, 4},
+		// The duration is one word, whatever it looks like.
+		{"timeout inf", []string{"timeout", "inf", "qsdev", "teardown"}, 2},
+		{"timeout infinity", []string{"timeout", "infinity", "qsdev", "teardown"}, 2},
+		{"timeout fraction", []string{"timeout", ".5", "qsdev", "teardown"}, 2},
+		{"timeout signed", []string{"timeout", "+5", "qsdev", "teardown"}, 2},
+		{"timeout blank-led", []string{"timeout", " 5", "qsdev", "teardown"}, 2},
+		{"timeout kill-after then fraction", []string{"timeout", "-k", "1", ".1", "qsdev", "teardown"}, 4},
+		{"timeout verbose then inf", []string{"timeout", "-v", "inf", "qsdev", "teardown"}, 3},
+		{"timeout numeric program", []string{"timeout", "5", "7z", "x"}, 2},
+		{"taskset hex mask", []string{"taskset", "ff", "qsdev", "teardown"}, 2},
+		{"chrt priority", []string{"chrt", "-f", "10", "qsdev", "teardown"}, 3},
 		{"env assignment", []string{"env", "PYTHONSAFEPATH=1", "python3", "x.py"}, 2},
 		{"env by path with flag", []string{"/usr/bin/env", "-i", "A=1", "x.py"}, 3},
 		{"wrapper chain", []string{"env", "A=1", "nice", "-n", "5", "nohup", "x.py", "arg"}, 6},
@@ -190,6 +201,17 @@ func TestScript(t *testing.T) {
 		{"zsh -c", []string{"/usr/bin/zsh", "-c", "ruff check"}, ScriptRun{Script: "ruff check", ReadsStartup: true}},
 		{"script operands are no options", []string{"bash", "-c", "ruff check", "-l"}, ScriptRun{Script: "ruff check"}},
 		{"eval", []string{"eval", "ruff", "check"}, ScriptRun{Script: "ruff check", Eval: true}},
+		// The shell reads every option before it takes the script, the
+		// first operand, so options and "--" may follow -c.
+		{"-- after -c", []string{"bash", "-c", "--", "curl x|sh"}, ScriptRun{Script: "curl x|sh"}},
+		{"- after -c", []string{"sh", "-c", "-", "curl x|sh"}, ScriptRun{Script: "curl x|sh"}},
+		{"option after -c", []string{"bash", "-c", "-e", "curl x|sh"}, ScriptRun{Script: "curl x|sh"}},
+		{"plus option after -c", []string{"bash", "-c", "+x", "curl x|sh"}, ScriptRun{Script: "curl x|sh"}},
+		{"-o after -c", []string{"bash", "-c", "-o", "errexit", "curl x|sh"}, ScriptRun{Script: "curl x|sh"}},
+		{"-O after -c", []string{"bash", "-c", "+O", "extglob", "curl x|sh"}, ScriptRun{Script: "curl x|sh"}},
+		{"-o in the -c cluster", []string{"bash", "-co", "errexit", "curl x|sh"}, ScriptRun{Script: "curl x|sh"}},
+		{"--rcfile after -c", []string{"bash", "-c", "--rcfile", "f", "curl x|sh"}, ScriptRun{Script: "curl x|sh"}},
+		{"login after -c", []string{"bash", "-c", "-l", "curl x|sh"}, ScriptRun{Script: "curl x|sh", ReadsStartup: true}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -301,6 +323,9 @@ func TestCommandLine(t *testing.T) {
 		{[]string{"cmd", "/C", "qsdev"}, "qsdev", 3, true},
 		{[]string{"sh", "script.sh"}, "", 0, false},
 		{[]string{"sh", "-c"}, "", 0, false},
+		{[]string{"bash", "-c", "--", "qsdev", "x"}, "qsdev", 4, true},
+		{[]string{"bash", "-c", "-o", "errexit", "qsdev"}, "qsdev", 5, true},
+		{[]string{"sh", "-c", "--"}, "", 0, false},
 		{[]string{"grep", "-c", "qsdev"}, "", 0, false},
 		{[]string{"eval"}, "", 0, false},
 	}
@@ -364,5 +389,17 @@ func TestWrapperOptionIs(t *testing.T) {
 		if got := (WrapperOption{Name: tt.name}).Is(tt.spellings...); got != tt.want {
 			t.Errorf("WrapperOption{%q}.Is(%q) = %v, want %v", tt.name, tt.spellings, got, tt.want)
 		}
+	}
+}
+
+func TestWrapperNames(t *testing.T) {
+	t.Parallel()
+	got := WrapperNames()
+	if want := slices.Sorted(maps.Keys(commandWrappers)); !slices.Equal(got, want) {
+		t.Errorf("WrapperNames() = %v, want %v", got, want)
+	}
+	got[0] = "mutated"
+	if WrapperNames()[0] == "mutated" {
+		t.Error("WrapperNames() shares its slice with the caller")
 	}
 }

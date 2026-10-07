@@ -33,6 +33,15 @@ var (
 	// ExportDefaultProjectProfileRegistry exposes DefaultProjectProfileRegistry for external tests.
 	ExportDefaultProjectProfileRegistry = DefaultProjectProfileRegistry
 
+	// ExportNewProjectProfiles exposes newProjectProfiles for external tests.
+	ExportNewProjectProfiles = newProjectProfiles
+
+	// ExportProjectProfiles exposes projectProfiles for external tests.
+	ExportProjectProfiles = projectProfiles
+
+	// ExportInitialize exposes the addon's initialize hook for external tests.
+	ExportInitialize = initialize
+
 	// ExportProfileToAnswers exposes ProfileToAnswers for external tests.
 	ExportProfileToAnswers = ProfileToAnswers
 

@@ -3,6 +3,7 @@ package instance
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -15,8 +16,10 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/Quantum-Serendipity/qsdev/internal/catalog"
+	"github.com/Quantum-Serendipity/qsdev/internal/exitcode"
 	"github.com/Quantum-Serendipity/qsdev/internal/logging"
 	"github.com/Quantum-Serendipity/qsdev/internal/mcpserve/spi"
+	"github.com/Quantum-Serendipity/qsdev/internal/projectctx"
 	"github.com/Quantum-Serendipity/qsdev/pkg/branding"
 )
 
@@ -48,6 +51,8 @@ func TestDefaultRuntime(t *testing.T) {
 	prevArgs := os.Args
 	t.Cleanup(func() { os.Args = prevArgs })
 	os.Args = []string{"app", "--debug", "status"}
+	catalog.ResetDefault()
+	t.Cleanup(catalog.ResetDefault)
 
 	rt := DefaultRuntime()
 	if again := DefaultRuntime(); again != rt {
@@ -63,8 +68,10 @@ func TestDefaultRuntime(t *testing.T) {
 	if n := len(spi.DefaultRegistry().All()); n == 0 {
 		t.Error("no framework adapters registered")
 	}
-	if catalog.ProjectRoot() == "" {
-		t.Error("project defaults root not set")
+	// The project defaults layer comes from the executing command's resolved
+	// root (Runtime.initCommand), never from a walk before argv is parsed.
+	if root := catalog.ProjectRoot(); root != "" {
+		t.Errorf("DefaultRuntime set the project defaults root %q before any command was resolved", root)
 	}
 	if rt.logsCmd == nil || rt.logsCmd.Name() != "logs" {
 		t.Errorf("runtime logs command = %v, want logs", rt.logsCmd)
@@ -183,7 +190,7 @@ func buildDownstream(t *testing.T, version string) string {
 func TestDownstreamExample_NoUpdateNoticeWhenPiped(t *testing.T) {
 	bin := buildDownstream(t, "v0.1.0")
 	home := t.TempDir()
-	dir := filepath.Join(home, ".acmedev")
+	dir := filepath.Join(home, ".cache", "acmedev")
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -214,6 +221,8 @@ func TestDownstreamExample_NoUpdateNoticeWhenPiped(t *testing.T) {
 		"APPDATA="+filepath.Join(home, "AppData", "Roaming"),
 		"LOCALAPPDATA="+filepath.Join(home, "AppData", "Local"),
 		"XDG_CONFIG_HOME="+filepath.Join(home, ".config"),
+		"XDG_CACHE_HOME="+filepath.Join(home, ".cache"),
+		"XDG_STATE_HOME="+filepath.Join(home, ".local", "state"),
 		"ACMEDEV_LOG_DIR="+t.TempDir(),
 	)
 	var stderr bytes.Buffer
@@ -298,12 +307,18 @@ func TestStartUpdateCheck_NonInteractive(t *testing.T) {
 	})
 }
 
-// writeUpdateCache writes an update-check cache under home naming v9.9.9,
-// checked (and attempted) at checkedAt, and returns its path.
+// writeUpdateCache points the per-user cache directory below home and writes
+// an update-check cache there naming v9.9.9, checked (and attempted) at
+// checkedAt, and returns its path.
 func writeUpdateCache(t *testing.T, home string, checkedAt time.Time) string {
 	t.Helper()
 	b := branding.Get()
-	dir := filepath.Join(home, "."+b.AppName)
+	t.Setenv("XDG_CACHE_HOME", filepath.Join(home, ".cache"))
+	dirs, err := projectctx.UserDirs()
+	if err != nil {
+		t.Fatalf("locating the cache dir: %v", err)
+	}
+	dir := dirs.Cache
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		t.Fatalf("creating cache dir: %v", err)
 	}
@@ -323,4 +338,30 @@ func writeUpdateCache(t *testing.T, home string, checkedAt time.Time) string {
 		t.Fatalf("writing cache: %v", err)
 	}
 	return path
+}
+
+// TestReportError_EmptyMessageWritesNothing pins that an error with an empty
+// message (a blocking hook's exit status, whose reason the hook already wrote
+// on stderr) adds nothing to stderr, not even a blank line.
+func TestReportError_EmptyMessageWritesNothing(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name string
+		err  error
+		want string
+	}{
+		{name: "empty message", err: &exitcode.Error{Code: 2}, want: ""},
+		{name: "message", err: exitcode.New(2, "qsdev sandbox: setup failed"), want: "qsdev sandbox: setup failed\n"},
+		{name: "plain error", err: errors.New("boom"), want: "boom\n"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			var buf bytes.Buffer
+			reportError(&buf, tt.err)
+			if got := buf.String(); got != tt.want {
+				t.Errorf("reportError wrote %q, want %q", got, tt.want)
+			}
+		})
+	}
 }

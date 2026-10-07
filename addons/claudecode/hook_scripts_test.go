@@ -2,6 +2,7 @@ package claudecode_test
 
 import (
 	"bytes"
+	"cmp"
 	"encoding/json"
 	"errors"
 	"maps"
@@ -20,6 +21,19 @@ import (
 	claudecode "github.com/Quantum-Serendipity/qsdev/addons/claudecode"
 	"github.com/Quantum-Serendipity/qsdev/pkg/types"
 )
+
+// hookEnv returns the environment a test runs a hook with: the test's own,
+// with bytecode writing off and HOME, USERPROFILE, CLAUDE_PROJECT_DIR and
+// CLAUDE_AUDIT_DIR pointed at fresh temp dirs, so no hook writes to the
+// developer's real ~/.claude or into the templates tree. extra entries
+// override these defaults (the last value of a variable wins).
+func hookEnv(t *testing.T, extra ...string) []string {
+	t.Helper()
+	home := t.TempDir()
+	env := append(os.Environ(), "PYTHONDONTWRITEBYTECODE=1", "HOME="+home, "USERPROFILE="+home,
+		"CLAUDE_PROJECT_DIR="+t.TempDir(), "CLAUDE_AUDIT_DIR="+t.TempDir())
+	return append(env, extra...)
+}
 
 // runHookScript executes a shipped Python hook template with the given
 // PreToolUse payload on stdin and returns its permissionDecision ("allow" when
@@ -41,8 +55,7 @@ func runHookScript(t *testing.T, script string, payload map[string]any, env ...s
 	}
 	cmd := exec.Command(python, path)
 	cmd.Stdin = strings.NewReader(string(in))
-	cmd.Env = append(os.Environ(), "PYTHONDONTWRITEBYTECODE=1")
-	cmd.Env = append(cmd.Env, env...)
+	cmd.Env = hookEnv(t, env...)
 	out, err := cmd.Output()
 	if exitErr, ok := errors.AsType[*exec.ExitError](err); ok && exitErr.ExitCode() == 2 {
 		return "error"
@@ -255,6 +268,156 @@ func TestBlockDestructiveHook(t *testing.T) {
 				t.Errorf("decision = %q, want %q", got, tc.want)
 			}
 		})
+	}
+}
+
+// TestBlockDestructive_WrapperIndirection guards U17-07: a destructive
+// command run through an exec wrapper from the shared hook library's table
+// (a lock, a repeat timer, a terminal multiplexer, a chroot) is the command
+// itself, while the wrapper's own non-executing forms stay allowed.
+func TestBlockDestructive_WrapperIndirection(t *testing.T) {
+	t.Parallel()
+	env := []string{"CLAUDE_PROJECT_DIR=/qsdev-hook-test/project"} // HOME: a fresh temp dir
+	cases := []struct {
+		command string
+		want    string
+	}{
+		{`flock /tmp/l rm -rf ~`, "deny"},
+		{`watch rm -rf ~`, "deny"},
+		{`script -c "rm -rf ~"`, "deny"},
+		{`screen -dm rm -rf ~`, "deny"},
+		{`tmux new -d 'rm -rf ~'`, "deny"},
+		{`chroot / rm -rf /home`, "deny"},
+		{`chroot / rm -rf /`, "deny"},
+		{`sudo -h host rm -rf ~`, "deny"},
+		{`script /dev/null -c 'rm -rf ~'`, "deny"},
+		{`script -q /dev/null -c 'rm -rf ~'`, "deny"},
+		{`flock /tmp/l -n -c 'rm -rf ~'`, "deny"},
+		{`tmux new-s -d 'rm -rf ~'`, "deny"},
+		{`tmux new-w 'rm -rf ~'`, "deny"},
+		{`tmux split 'rm -rf ~'`, "deny"},
+		{`tmux ls \; new -d 'rm -rf ~'`, "deny"},
+		{`tmux run-shell 'rm -rf ~'`, "deny"},
+		{`tmux run 'rm -rf ~'`, "deny"},
+		{`tmux if-shell true 'rm -rf ~'`, "deny"},
+		{`tmux display-popup 'rm -rf ~'`, "deny"},
+		{`screen -X exec rm -rf ~`, "deny"},
+		{`screen -X screen rm -rf ~`, "deny"},
+		{`screen -S work -X screen -t t rm -rf ~`, "deny"},
+		{`screen -x s -X exec rm -rf ~`, "deny"},
+		{`screen -r s -X exec rm -rf ~`, "deny"},
+		{`screen -Q exec rm -rf ~`, "deny"},
+		// screen -R creates the session, running the command, when none matches.
+		{`screen -R s rm -rf ~`, "deny"},
+		{`screen -dRR s rm -rf ~`, "deny"},
+		{`screen -xRR s rm -rf ~`, "deny"},
+		{`screen -D -RR s rm -rf ~`, "deny"},
+		{`script -qc 'screen -R s rm -rf ~' /dev/null`, "deny"},
+		// Keys and shell commands handed to tmux by other subcommands.
+		{`tmux send-keys 'rm -rf ~' Enter`, "deny"},
+		{`tmux send -t x 'rm -rf ~' Enter`, "deny"},
+		{`tmux set -g default-command 'rm -rf ~'`, "deny"},
+		{`tmux bind x new-window 'rm -rf ~'`, "deny"},
+		{`tmux bind-key x run-shell 'rm -rf ~'`, "deny"},
+		{`tmux command-prompt -I 'rm -rf ~'`, "deny"},
+		{`tmux set-hook -g session-created 'run-shell "rm -rf ~"'`, "deny"},
+		{`screen -R`, "allow"},
+		{`screen -dRR s`, "allow"},
+		{`screen -r s`, "allow"},
+		{`tmux send-keys ls Enter`, "allow"},
+		{`tmux set -g status off`, "allow"},
+		{`tmux attach -t s`, "allow"},
+		{`screen -X quit`, "allow"},
+		{`script -q /dev/null -c ls`, "allow"},
+		{`tmux ls`, "allow"},
+		{`screen -r`, "allow"},
+		{`watch ls`, "allow"},
+		{`flock /tmp/l ls`, "allow"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.command, func(t *testing.T) {
+			t.Parallel()
+			payload := map[string]any{"tool_name": "Bash", "tool_input": map[string]any{"command": tc.command}}
+			if got := runHookScript(t, "block-destructive.py", payload, env...); got != tc.want {
+				t.Errorf("decision = %q, want %q", got, tc.want)
+			}
+		})
+	}
+}
+
+// TestBlockDestructive_TimeoutDuration guards R1: timeout's DURATION is any
+// one word, not only one that starts with a digit. GNU timeout takes a
+// fraction, a sign, inf/infinity and leading blanks, and options may come
+// before it, so the command after it is judged in every shell tool.
+func TestBlockDestructive_TimeoutDuration(t *testing.T) {
+	t.Parallel()
+	env := []string{"CLAUDE_PROJECT_DIR=/qsdev-hook-test/project"}
+	cases := []struct {
+		command string
+		want    string
+	}{
+		{`timeout 5 rm -rf /`, "deny"},
+		{`timeout .5 rm -rf /`, "deny"},
+		{`timeout inf git push --force origin main`, "deny"},
+		{`timeout infinity git push --force origin main`, "deny"},
+		{`timeout +5 rm -rf /`, "deny"},
+		{`timeout ' 5' rm -rf /`, "deny"},
+		{`timeout -k 1 .1 rm -rf /`, "deny"},
+		{`timeout -v inf rm -rf /`, "deny"},
+		{`timeout inf ls`, "allow"},
+		{`timeout .5 git push origin main`, "allow"},
+	}
+	for _, tool := range []string{"Bash", "PowerShell", "Monitor"} {
+		for _, tc := range cases {
+			t.Run(tool+"/"+tc.command, func(t *testing.T) {
+				t.Parallel()
+				input := map[string]any{"command": tc.command, "description": "d"}
+				payload := map[string]any{"tool_name": tool, "tool_input": input}
+				if got := runHookScript(t, "block-destructive.py", payload, env...); got != tc.want {
+					t.Errorf("decision = %q, want %q", got, tc.want)
+				}
+			})
+		}
+	}
+}
+
+// TestBlockDestructive_SystemDirs pins that a recursive delete of a
+// top-level system directory is denied whatever HOME is (a temp dir, a root
+// container's /root, macOS /Users/..., Linux /home/...), directly or through
+// a wrapper, while a delete inside one stays allowed.
+func TestBlockDestructive_SystemDirs(t *testing.T) {
+	t.Parallel()
+	homes := []string{"", "/root", "/Users/qsdev-hook-test", "/home/qsdev-hook-test"}
+	cases := []struct {
+		command string
+		want    string
+	}{
+		{`rm -rf /home`, "deny"},
+		{`chroot / rm -rf /home`, "deny"},
+		{`rm -rf /etc`, "deny"},
+		{`rm -rf /usr/`, "deny"},
+		{`rm -rf /var/*`, "deny"},
+		{`rm -rf /Users`, "deny"},
+		{`rm -rf /root`, "deny"},
+		{`rm -rf C:/Windows`, "deny"},
+		{`sudo rm -rf /opt`, "deny"},
+		{`rm -rf /opt/app/cache`, "allow"},
+		{`rm -rf /var/tmp/qsdev-build`, "allow"},
+	}
+	for _, home := range homes {
+		for _, tc := range cases {
+			t.Run(cmp.Or(home, "tempdir")+"/"+tc.command, func(t *testing.T) {
+				t.Parallel()
+				env := []string{"CLAUDE_PROJECT_DIR=/qsdev-hook-test/project"}
+				if home != "" {
+					env = append(env, "HOME="+home, "USERPROFILE="+home)
+				}
+				payload := map[string]any{"tool_name": "Bash", "tool_input": map[string]any{"command": tc.command}}
+				if got := runHookScript(t, "block-destructive.py", payload, env...); got != tc.want {
+					t.Errorf("decision = %q, want %q", got, tc.want)
+				}
+			})
+		}
 	}
 }
 
@@ -666,7 +829,7 @@ func TestPythonHooks_LoadOnPython39(t *testing.T) {
 			}
 			cmd := exec.Command(python39, script, "session_checkpoint")
 			cmd.Stdin = strings.NewReader(`{"tool_name":"qsdev-none","tool_input":{}}`)
-			cmd.Env = append(os.Environ(), "PYTHONDONTWRITEBYTECODE=1", "CLAUDE_PROJECT_DIR="+t.TempDir(), "CLAUDE_AUDIT_DIR="+t.TempDir())
+			cmd.Env = hookEnv(t)
 			if out, err := cmd.CombinedOutput(); err != nil {
 				t.Errorf("python%s %s: %v\n%s", types.MinHookPython, filepath.Base(script), err, out)
 			}
@@ -706,7 +869,7 @@ m = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(m)
 print(json.dumps(` + tc.expr + `))`
 			cmd := exec.Command(python, "-c", driver)
-			cmd.Env = append(os.Environ(), "PYTHONDONTWRITEBYTECODE=1", "HOOK_PATH="+path)
+			cmd.Env = hookEnv(t, "HOOK_PATH="+path)
 			out, err := cmd.Output()
 			if err != nil {
 				t.Fatalf("driver failed: %v", err)
@@ -828,8 +991,7 @@ func TestHookDeadline_Denies(t *testing.T) {
 		}
 		env := func(t *testing.T, deadlineMS string) []string {
 			t.Helper()
-			return append(os.Environ(), "PYTHONDONTWRITEBYTECODE=1", "QSDEV_HOOK_DEADLINE_MS="+deadlineMS,
-				"CLAUDE_PROJECT_DIR="+t.TempDir(), "CLAUDE_AUDIT_DIR="+t.TempDir(), "HOME="+t.TempDir())
+			return hookEnv(t, "QSDEV_HOOK_DEADLINE_MS="+deadlineMS)
 		}
 
 		t.Run(script+"/stalled stdin blocks", func(t *testing.T) {
@@ -870,7 +1032,7 @@ func TestHookDeadline_Denies(t *testing.T) {
 spec = importlib.util.spec_from_file_location('h', os.environ['HOOK_PATH'])
 m = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(m)
-print(json.dumps([m._deadline_seconds(), m._HOOK_DEADLINE_S]))`
+print(json.dumps([m.lib.deadline_seconds(m._HOOK_DEADLINE_S), m._HOOK_DEADLINE_S]))`
 			for _, tc := range []struct {
 				ms   string
 				want func(declared float64) float64
@@ -996,23 +1158,15 @@ func TestBlockDestructive_UnknownBranchForcePushDenied(t *testing.T) {
 	}
 }
 
-// TestPythonHooks_MinPythonMatchesGo pins each fail-closed Python hook's
-// in-script interpreter floor to types.MinHookPython (D20), the single floor
-// the Go side checks against. U17-WS7 moves the guard into qsdev_hooklib.
+// TestPythonHooks_MinPythonMatchesGo pins the in-script interpreter floor
+// every Python hook gets from the shared hook library to types.MinHookPython
+// (D20), the single floor the Go side checks against.
 func TestPythonHooks_MinPythonMatchesGo(t *testing.T) {
 	t.Parallel()
-	want := "_MIN_PYTHON = (" + strings.Join(strings.Split(types.MinHookPython, "."), ", ") + ")"
-	for _, script := range slices.Sorted(maps.Keys(failClosedPythonHooks(t))) {
-		t.Run(script, func(t *testing.T) {
-			t.Parallel()
-			src, err := os.ReadFile(filepath.Join("templates", "hooks", script))
-			if err != nil {
-				t.Fatal(err)
-			}
-			if !strings.Contains(string(src), "\n"+want+"\n") {
-				t.Errorf("%s does not declare %q", script, want)
-			}
-		})
+	want := "MIN_PYTHON = (" + strings.Join(strings.Split(types.MinHookPython, "."), ", ") + ")"
+	src := claudecode.HookScriptContents()[claudecode.HookLibPath]
+	if !strings.Contains(string(src), "\n"+want+"\n") {
+		t.Errorf("%s does not declare %q", claudecode.HookLibPath, want)
 	}
 }
 
@@ -1024,8 +1178,8 @@ func TestPythonHooks_ScrubSysPathFirst(t *testing.T) {
 	t.Parallel()
 	importRe := regexp.MustCompile(`(?m)^[ \t]*(?:import|from)[ \t]+([A-Za-z_][A-Za-z0-9_.]*)`)
 	for rel, content := range claudecode.HookScriptContents() {
-		if path.Ext(rel) != ".py" {
-			continue
+		if path.Ext(rel) != ".py" || rel == claudecode.HookLibPath {
+			continue // the library is loaded by path, never run as a script
 		}
 		t.Run(path.Base(rel), func(t *testing.T) {
 			t.Parallel()
@@ -1046,17 +1200,20 @@ func TestPythonHooks_ScrubSysPathFirst(t *testing.T) {
 // module planted beside it. Python puts a script's directory first on
 // sys.path, so a committed .claude/hooks/json.py would otherwise replace the
 // stdlib json and could make an unchanged guard exit 0 for every call. Each
-// hook runs from a copy of the hooks directory holding a module, named after
-// every module the hook imports, that exits 7 on import.
+// hook runs from a copy of the hooks directory, beside the shared hook
+// library it loads, holding a module that exits 7 on import, named after
+// every module the hook or the library imports.
 func TestPythonHooks_IgnorePlantedModules(t *testing.T) {
 	t.Parallel()
 	python, err := exec.LookPath("python3")
 	if err != nil {
 		t.Skip("python3 not available; skipping hook behaviour test")
 	}
-	importRe := regexp.MustCompile(`(?m)^(?:import|from)\s+([A-Za-z_][A-Za-z0-9_]*)`)
-	for rel, content := range claudecode.HookScriptContents() {
-		if path.Ext(rel) != ".py" {
+	importRe := regexp.MustCompile(`(?m)^[ \t]*(?:import|from)\s+([A-Za-z_][A-Za-z0-9_]*)`)
+	contents := claudecode.HookScriptContents()
+	lib := contents[claudecode.HookLibPath]
+	for rel, content := range contents {
+		if path.Ext(rel) != ".py" || rel == claudecode.HookLibPath {
 			continue
 		}
 		t.Run(path.Base(rel), func(t *testing.T) {
@@ -1066,8 +1223,11 @@ func TestPythonHooks_IgnorePlantedModules(t *testing.T) {
 			if err := os.WriteFile(script, content, 0o755); err != nil {
 				t.Fatal(err)
 			}
+			if err := os.WriteFile(filepath.Join(dir, path.Base(claudecode.HookLibPath)), lib, 0o644); err != nil {
+				t.Fatal(err)
+			}
 			var planted []string
-			for _, m := range importRe.FindAllSubmatch(content, -1) {
+			for _, m := range importRe.FindAllSubmatch(slices.Concat(content, []byte("\n"), lib), -1) {
 				name := string(m[1])
 				if name == "sys" || slices.Contains(planted, name) {
 					continue
@@ -1083,7 +1243,7 @@ func TestPythonHooks_IgnorePlantedModules(t *testing.T) {
 			cmd := exec.Command(python, script)
 			cmd.Dir = dir
 			cmd.Stdin = strings.NewReader("not json")
-			cmd.Env = append(os.Environ(), "PYTHONDONTWRITEBYTECODE=1", "PYTHONSAFEPATH=", "HOME="+dir, "CLAUDE_AUDIT_DIR="+dir)
+			cmd.Env = hookEnv(t, "PYTHONSAFEPATH=", "HOME="+dir, "USERPROFILE="+dir, "CLAUDE_AUDIT_DIR="+dir)
 			out, err := cmd.CombinedOutput()
 			if exitErr, ok := errors.AsType[*exec.ExitError](err); ok && exitErr.ExitCode() == 7 {
 				t.Errorf("%s imported a module planted beside it (exit 7)\n%s", rel, out)

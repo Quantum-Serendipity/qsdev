@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/Quantum-Serendipity/qsdev/internal/catalog"
+	"github.com/Quantum-Serendipity/qsdev/internal/testutil"
 	"github.com/Quantum-Serendipity/qsdev/internal/validation"
 	"github.com/Quantum-Serendipity/qsdev/pkg/ecosystem"
 	"github.com/Quantum-Serendipity/qsdev/pkg/types"
@@ -173,10 +174,7 @@ func TestGenerateDevenvNix_DefinesEachKeyOnce(t *testing.T) {
 // normalizing drops the unused ones).
 func TestGenerateDevenvNix_NormalizePreservesAST(t *testing.T) {
 	t.Parallel()
-	nixInstantiate, err := exec.LookPath("nix-instantiate")
-	if err != nil {
-		t.Skip("nix-instantiate not available")
-	}
+	nixInstantiate := testutil.RequireTool(t, "nix-instantiate", testutil.RequireNix)
 	cases := matrixCases(t)
 	cases["hostile-env"] = types.WizardAnswers{
 		ProjectName: "matrix",
@@ -248,7 +246,8 @@ func TestGenerateDevenvNix_UserEnvOverridesModuleEnv(t *testing.T) {
 			t.Errorf("%s = %q, want %q", path, attrs[path], want)
 		}
 	}
-	if nixInstantiate, err := exec.LookPath("nix-instantiate"); err == nil {
+	t.Run("nix-parse", func(t *testing.T) {
+		nixInstantiate := testutil.RequireTool(t, "nix-instantiate", testutil.RequireNix)
 		path := filepath.Join(t.TempDir(), "devenv.nix")
 		if err := os.WriteFile(path, got.Content, 0o644); err != nil {
 			t.Fatal(err)
@@ -256,7 +255,7 @@ func TestGenerateDevenvNix_UserEnvOverridesModuleEnv(t *testing.T) {
 		if out, err := exec.Command(nixInstantiate, "--parse", path).CombinedOutput(); err != nil {
 			t.Fatalf("devenv.nix does not parse: %v\n%s", err, out)
 		}
-	}
+	})
 }
 
 // TestLockFileAudit_WatchesEcosystemLockFiles is the W068 regression: the
@@ -319,4 +318,119 @@ func TestLockFileAudit_WatchesEcosystemLockFiles(t *testing.T) {
 			}
 		})
 	}
+}
+
+// TestHookBinaryMatchesLanguagePin guards U10-09, the hook half of U10-08 and
+// U10-01's packages entry: a formatter hook bound to its devenv language runs
+// config.languages.<lang>.package, the toolchain the shell pins from the
+// project's own version file, and adds no second, unpinned pkgs.<lang> to
+// packages. Each case runs the --yes path: Detect, FillDefaults, render.
+func TestHookBinaryMatchesLanguagePin(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name  string
+		files map[string]string
+		lang  string
+		entry string // the hook's exact rendered entry
+		// toolchain matches the language's nixpkgs toolchain attribute. It
+		// may appear only inside languages.<lang>.package, never from a hook.
+		toolchain *regexp.Regexp
+	}{
+		{
+			name:      "zig 0.13.0",
+			files:     map[string]string{"build.zig.zon": ".{\n    .name = .app,\n    .minimum_zig_version = \"0.13.0\",\n}\n"},
+			lang:      "zig",
+			entry:     `"${config.languages.zig.package}/bin/zig fmt --check"`,
+			toolchain: regexp.MustCompile(`pkgs\.zig\b`),
+		},
+		{
+			name:      "elixir",
+			files:     map[string]string{"mix.exs": "defmodule App.MixProject do\nend\n"},
+			lang:      "elixir",
+			entry:     `"${config.languages.elixir.package}/bin/mix format --check-formatted"`,
+			toolchain: regexp.MustCompile(`pkgs\.elixir\b`),
+		},
+		{
+			name:      "dart",
+			files:     map[string]string{"pubspec.yaml": "name: app\n"},
+			lang:      "dart",
+			entry:     `"${config.languages.dart.package}/bin/dart format --set-exit-if-changed"`,
+			toolchain: regexp.MustCompile(`pkgs\.dart\b`),
+		},
+		{
+			name:      "dotnet 8",
+			files:     map[string]string{"App.csproj": "<Project Sdk=\"Microsoft.NET.Sdk\" />\n", "global.json": `{"sdk": {"version": "8.0.100"}}`},
+			lang:      "dotnet",
+			entry:     `"${config.languages.dotnet.package}/bin/dotnet format --verify-no-changes"`,
+			toolchain: regexp.MustCompile(`pkgs\.dotnet-sdk\w*`),
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			dir := t.TempDir()
+			for name, content := range tt.files {
+				if err := os.WriteFile(filepath.Join(dir, name), []byte(content), 0o644); err != nil {
+					t.Fatal(err)
+				}
+			}
+			reg := ecosystem.DefaultRegistry()
+			answers := types.WizardAnswers{ProjectName: "pin", HookTier: "enhanced"}
+			answers.FillDefaults(reg.DetectWithEnvironment(dir).Project, catalog.MustDefault())
+			lc := slices.IndexFunc(answers.Languages, func(l types.LanguageChoice) bool { return l.Name == tt.lang })
+			if lc < 0 {
+				t.Fatalf("language %q not detected; got %+v", tt.lang, answers.Languages)
+			}
+			got, err := GenerateDevenvNix(answers, reg)
+			if err != nil {
+				t.Fatalf("GenerateDevenvNix: %v", err)
+			}
+			content := string(got.Content)
+
+			if want := "entry = " + tt.entry + ";"; !strings.Contains(content, want) {
+				t.Errorf("devenv.nix lacks %q", want)
+			}
+			if want := "package = lib.mkOverride 999 config.languages." + tt.lang + ".package;"; !strings.Contains(content, want) {
+				t.Errorf("devenv.nix lacks %q", want)
+			}
+			for line := range strings.Lines(content) {
+				if strings.HasPrefix(line, "  packages = ") && tt.toolchain.MatchString(line) {
+					t.Errorf("packages names the toolchain %s outside the language pin: %s", tt.toolchain, line)
+				}
+			}
+
+			// The language's own package expression (zig's tryEval fallback
+			// names pkgs.zig) is the only place the toolchain may appear.
+			mod, _ := reg.ByName(tt.lang)
+			frag, err := mod.DevenvNixFragment(ecosystem.ToModuleConfig(answers.Languages[lc]))
+			if err != nil {
+				t.Fatalf("DevenvNixFragment: %v", err)
+			}
+			pin := languagePackageExpr(frag, tt.lang)
+			if tt.lang == "zig" && !strings.Contains(pin, "pkgs.zig_0_13") {
+				t.Errorf("Detect did not carry minimum_zig_version 0.13.0 into languages.zig.package: %q", pin)
+			}
+			if got, want := len(tt.toolchain.FindAllString(content, -1)), len(tt.toolchain.FindAllString(pin, -1)); got != want {
+				t.Errorf("devenv.nix names %s %d times, want %d (only in languages.%s.package = %s)",
+					tt.toolchain, got, want, tt.lang, pin)
+			}
+			if t.Failed() {
+				t.Logf("devenv.nix:\n%s", content)
+			}
+		})
+	}
+}
+
+// languagePackageExpr returns the languages.<lang>.package expression a
+// module's fragment sets, in the dotted or block form, or "".
+func languagePackageExpr(frag, lang string) string {
+	for line := range strings.Lines(frag) {
+		line = strings.TrimSpace(line)
+		for _, prefix := range []string{"languages." + lang + ".package = ", "package = "} {
+			if expr, ok := strings.CutPrefix(line, prefix); ok {
+				return strings.TrimSuffix(expr, ";")
+			}
+		}
+	}
+	return ""
 }

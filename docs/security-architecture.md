@@ -40,17 +40,19 @@ qsdev's defense model spans supply chain, environment, and agent security. Layer
 
 ### Layer 1: Age-Gating
 
-New package versions are blocked for a configurable period after publication. This provides a window for the community to discover and report compromised releases before they enter your project.
+New package versions are blocked for a period after publication. This provides a window for the community to discover and report compromised releases before they enter your project. The period is the compliance level's release-age window (3 days for `baseline`, 7 for `enhanced`, 14 for `strict`); yarn, bun and uv keep their 7-day minimum. See [Release-age window](configuration-reference.md#release-age-window) for each package manager's setting.
 
-| Infrastructure Profile | Minimum Release Age | Update Tool |
-|------------------------|--------------------:|-------------|
-| `consulting-default` | 3 days (4320 min) | Renovate |
-| `startup-github` | None (0 days) | Dependabot |
-| `enterprise` | 7 days | Renovate |
+Update tools delay PRs by the larger of the infrastructure profile's delay and the level's window:
 
-For pnpm workspaces, age-gating is additionally enforced at install time via `minimumReleaseAge: 4320` in `pnpm-workspace.yaml`.
+| Infrastructure Profile | Profile delay | At `baseline` / `enhanced` / `strict` | Update Tool |
+|------------------------|--------------:|--------------------:|-------------|
+| `consulting-default` | 3 days | 3 / 7 / 14 days | Renovate |
+| `startup-github` | none | 3 / 7 / 14 days | Dependabot |
+| `enterprise` | 7 days | 7 / 7 / 14 days | Renovate |
 
-For npm projects, the generated `.npmrc` sets `min-release-age=3` (days). npm only honours that setting from 11.10.0 on; older npm, such as the npm 10 bundled with Node.js 22, reads it as an unknown key and ignores it. The generated `devenv.nix` therefore sets `languages.javascript.npm.package` to an npm that is at least 11.10 (the npm output of `nodejs-slim_24`, or of the project's Node.js when that is newer), whatever Node.js major the project uses, and takes Node.js itself from the matching `nodejs-slim` package so its bundled npm is not also on `PATH`. The `npm` output of `nodejs-slim` needs nixpkgs 26.05 or later, and the npm it carries only reaches 11.10 from Node.js 24.14.1 on, so an existing project whose `devenv.lock` pins an older nixpkgs should run `qsdev init --update`, which regenerates `devenv.nix` and refreshes the lock. `qsdev check` probes the `npm` on `PATH` and fails (high severity) when it is older than 11.10.0; run it inside the devenv shell. When `npm` is not on `PATH` the probe is skipped.
+For pnpm workspaces, age-gating is additionally enforced at install time via `minimumReleaseAge` in `pnpm-workspace.yaml` (4320 minutes at `baseline`).
+
+For npm projects, the generated `.npmrc` sets `min-release-age` to the window in days (3 at `baseline`). npm only honours that setting from 11.10.0 on; older npm, such as the npm 10 bundled with Node.js 22, reads it as an unknown key and ignores it. The generated `devenv.nix` therefore sets `languages.javascript.npm.package` to an npm that is at least 11.10 (the npm output of `nodejs-slim_24`, or of the project's Node.js when that is newer), whatever Node.js major the project uses, and takes Node.js itself from the matching `nodejs-slim` package so its bundled npm is not also on `PATH`. The `npm` output of `nodejs-slim` needs nixpkgs 26.05 or later, and the npm it carries only reaches 11.10 from Node.js 24.14.1 on, so an existing project whose `devenv.lock` pins an older nixpkgs should run `qsdev init --update`, which regenerates `devenv.nix` and refreshes the lock. `qsdev check` probes the `npm` on `PATH` and fails (high severity) when it is older than 11.10.0; run it inside the devenv shell. When `npm` is not on `PATH` the probe is skipped.
 
 ### Layer 2: Install Script Blocking
 
@@ -113,7 +115,7 @@ The generated `devenv.yaml` enforces:
 - **`impure: false`** — Prevents the build from accessing anything outside the Nix store.
 - **`allow_unfree: false`** — Blocks unfree packages unless explicitly listed.
 - **`allow_broken: false`** — Blocks broken packages.
-- **`clean.enabled: true`** — Strips the shell environment on entry, keeping only a minimal allowlist (TERM, HOME, USER, SSH_AUTH_SOCK, etc.).
+- **`clean.enabled: true`** — Strips the shell environment on entry, keeping only a minimal allowlist (PATH, TERM, HOME, USER, SSH_AUTH_SOCK, etc.). `PATH` is kept because `devenv shell` starts a Nix-built bash, whose default `PATH` is `/no-such-path`, and devenv's own rcfile runs `mktemp` before it sources the environment that sets `PATH`; without it the shell cannot start. The devenv profile is prepended, so its tools shadow host ones, but host-only programs (`claude`, `qsdev`) stay reachable in the clean shell. Credentials are not affected: they are cleared by `unsetEnvVars`, not by `clean`.
 
 The generated `devenv.nix` additionally:
 
@@ -273,19 +275,46 @@ A relative path is taken relative to that directory, symlinks are resolved
 before the check, and the directory walk does not follow symlinks. The
 version-sentinel tools read only inside the project root.
 
-**Credential vending is opt-in and allow-listed.** `qsdev_credential_vend`
-is the only MCP tool whose output skips secret redaction, because its whole
-purpose is to return short-lived cloud credentials. The server mounts it only
-when the committed `.qsdev.yaml` enables `security.credential_vend`, and then
-vends only the AWS roles, GCP service accounts, Azure scopes and managed
-identities its allow-lists name. AWS `GetSessionToken`, which returns
-credentials carrying the ambient IAM user's full permissions, needs its own
-`aws.allow_session_token`. `.qsdev.local.yaml` cannot set the block, and
-self-protection (GD-001) blocks an agent edit that widens it. `qsdev_nix_run`
-starts its children with the server's credential-bearing variables removed,
-so `env` inside a Nix package cannot print them, and is not mounted in gateway
-mode unless the operator passes `--gateway-allow-nix-run`. See
-[MCP credential vending](configuration-reference.md#mcp-credential-vending).
+**Credential vending is opt-in and allow-listed.** `qsdev_credential_vend` is
+the only MCP tool whose output skips secret redaction, because its whole
+purpose is to return short-lived cloud credentials. The server does not mount
+`qsdev_nix_run` or `qsdev_credential_vend` without an operator opt-in that the
+project's qsdev configuration cannot set: a flag, an environment variable, or
+the `mcp_serve` section of the user defaults file, which a project defaults
+file is rejected for setting. A flag or environment variable is trusted only
+as far as whatever starts the server: a committed `.mcp.json` can add
+`--allow-nix-run` or an `env` entry to the qsdev server it launches, and a
+committed `devenv.nix` or `.envrc` can export the variable. Each of those
+files can already run any command once you approve the project's MCP servers
+in Claude Code or run `direnv allow`, so the opt-in gives a hostile
+repository nothing new, and those two approvals are the trust boundary for
+it. Credential vending
+also needs the committed `.qsdev.yaml` to enable `security.credential_vend`,
+whose allow-lists then limit it to the AWS roles, GCP service accounts, Azure
+scopes and managed identities they name; the committed block alone only logs a
+warning. AWS `GetSessionToken`, which returns credentials carrying the ambient
+IAM user's full permissions, needs its own `aws.allow_session_token`.
+`.qsdev.local.yaml` cannot set the block, and self-protection (GD-001) blocks
+an agent edit that widens it. `qsdev_nix_run` starts its children with the
+server's credential-bearing variables removed, so `env` inside a Nix package
+cannot print them. In gateway and standalone mode each tool also needs its
+`--gateway-allow-*` flag, and gateway credential vending without an agent
+allow-list (`QSDEV_GATEWAY_AGENTS`) is refused at startup. See [MCP server
+opt-ins](configuration-reference.md#mcp-server-opt-ins).
+
+**Plain loopback HTTP needs a bearer token.** An MCP server on HTTP without
+mTLS binds only loopback, where any local process, another account's
+included, can connect. It therefore generates a random token per launch,
+writes it to a `0600` file in a `0700` directory under the user state
+directory (removed on shutdown), and answers `401` to every request that
+does not send it as `Authorization: Bearer <token>`, comparing in constant
+time. Only a standalone server's `/health` is exempt. The loopback Host and
+Origin check against DNS rebinding still runs in front of it. Under mTLS
+the client certificate is the authentication instead. `--http-no-auth`
+drops the token, and the server then mounts neither `qsdev_nix_run` nor
+`qsdev_credential_vend`. The token does not keep out a process running as
+the same user, which can read the file; see
+[MCP server over HTTP](configuration-reference.md#mcp-server-over-http).
 
 **No guardrail writes through MCP.** `qsdev_cc_config_render` only previews
 the `.claude/settings.json` and `.mcp.json` that qsdev would generate. It
@@ -434,9 +463,125 @@ an existing hook (a custom hook id cannot reuse a built-in hook or tool
 name), change an MCP server's command, touch tools, tiers,
 compliance definitions, allow or ask rules, or lower compliance. A file that
 tries is rejected with an error naming each violation, and the command
-stops. The project layer is applied beneath the developer's own user
-defaults file, so a repository cannot override the user's policy. See the
+stops. See the
 [configuration reference](configuration-reference.md#qsdevdefaultsyaml).
+
+### Catalog security floor
+
+Catalog layers apply in the order built-in, user (the org overlay:
+`~/.config/qsdev/defaults.yaml` or the pinned `$QSDEV_ORG_CONFIG` file),
+project. The built-in catalog sets a security floor that no layer can
+lower:
+
+- `security_hooks` (ripsecrets, check-added-large-files,
+  no-commit-to-branch, ...) and `unset_vars` (the credentials stripped from
+  the dev shell) only ever grow: a user or project list is added to the
+  built-in one, never substituted for it.
+- `keep_vars` may not keep a variable that `unset_vars` strips.
+- A built-in compliance level keeps its `order` and is never weakened: it
+  keeps every required pre-commit hook, its age gate may not shrink, and
+  script blocking, the Claude audit log and license scanning stay on, and
+  its Claude permission preset may not get less strict.
+  `mcp_server_policy` and `sbom_policy` have no strictness order and are
+  not compared.
+- A built-in tier never maps to a compliance level of lower order, nor to
+  a new level that is weaker than its built-in one in any of those ways.
+- The built-in hook tiers stay first in `hook_tier_order`, in order, and
+  no always-on hook (`security_hooks`, `custom_hooks`) moves to a higher
+  hook tier, where `devenv.nix` would drop it at lower security levels.
+- A required hook must be a tool or an always-on hook; a hook listed only
+  in `hook_tiers` is never enabled, so it cannot satisfy a level.
+
+An org overlay that breaks the floor fails to load
+(`ErrOverlayLoosens`), naming the file and each field, instead of quietly
+generating a weaker `devenv.nix`; `qsdev defaults validate` reports it.
+The catalog then skips the whole file, so every command that generates or
+changes the project (`init`, `update`, `enable`, `disable`, `repair`,
+`claude *`, `devenv *`) refuses to run, `qsdev check` fails
+`config_catalog`, and only read-only invocations (`status`, `doctor`,
+`--dry-run`) and commands that read only the user scope fall back to the
+built-in catalog, with a warning. The rules carry no exemption for a managed or
+root-owned overlay: the built-in catalog satisfies them, so no legitimate
+distribution needs to un-strip a credential or drop a required hook. The
+committed project layer applies last and may only add, so a developer's
+own file can neither weaken the floor nor erase the project's additions.
+
+`devenv.nix` is human-edited, so the generated-file checks do not compare
+it. `qsdev check` holds it to the floor separately (`devenv_security_floor`,
+high severity). It regenerates `devenv.nix` from the project's settings
+with the effective catalog (built-in, the user's file, the committed
+project policy; the floor above means the user's file can only add to what
+the other two demand), then reads the git hooks, their settings and
+`unsetEnvVars` of the on-disk `devenv.nix` and `devenv.local.nix`
+statically. A hook the local file sets to anything but `true` is disabled,
+and a local `unsetEnvVars` set through `lib.mkForce` replaces the list. The
+check fails when:
+
+- a security hook the generated file enables (an always-on hook, a custom
+  hook, or one the compliance level requires) is no longer enabled;
+- a variable the generated file strips is no longer stripped;
+- a setting of one of those hooks (its `entry`, `files`, `excludes`, ...)
+  or a setting for every hook (such as `git-hooks.excludes`) differs from
+  the generated file, so a hook cannot be neutralised by a no-op entry or
+  an exclude of every file;
+- a module cannot be verified statically: it sets `imports`, `config` or
+  `disabledModules`, names an attribute through interpolation, or builds
+  `unsetEnvVars` from anything but string lists, `++`,
+  `options.unsetEnvVars.default` and priority wrappers such as
+  `lib.mkForce` (so `builtins.filter` over the list fails).
+
+A deleted or unparsable module also fails. Hooks and variables added on top
+pass, as does a disabled formatter or linter.
+
+## Repository Content as Untrusted Input
+
+A cloned repository is untrusted input. Nothing it commits may make qsdev
+generate a weaker or attacker-chosen configuration, write outside the
+project, or expose a gated tool, beyond what the user approves. Each part of
+this has a named acceptance test (`cmd/qsdev/untrusted_input_test.go`, unless
+noted):
+
+- **Project markers.** A `.qsdev/` data directory alone never marks a
+  project, the root walk stops at the enclosing git repository, and a marker
+  owned by another user or writable by everyone is ignored (see
+  [`.qsdev.yaml`](configuration-reference.md#qsdevyaml)). A planted
+  `.qsdev/defaults.yaml` above a fresh repository is not applied, and `init`
+  writes nothing above that repository. CI also runs
+  `scripts/e2e/root-hijack.sh` against the built binary.
+- **Project defaults.** A committed `.qsdev/defaults.yaml` may only tighten
+  (see [Project catalog defaults](#project-catalog-defaults)). A hook id that
+  is not a plain Nix identifier fails the load, naming the id, and nothing is
+  generated. Every command that generates `devenv.nix` from the catalog
+  (`init`, update, `devenv init`/`update`/`add-*`/`remove-*`, `enable`,
+  `disable`) lists every pre-commit hook the file adds, with its section
+  and entry, under `Project defaults: <path>`. A value holding a control or format character (a carriage return, an ANSI escape, a
+  bidi control) is shown quoted with it escaped, so the file cannot rewrite or
+  conceal its own preview line.
+- **Generated Nix.** `devenv.nix` is rendered from a template whose
+  identifier and comment interpolations (env keys, service and script names,
+  hook ids and setting names, section comments) go through functions that
+  fail the render on anything but a plain identifier or a single line.
+  Identifiers reject `a b`, `x;y`, a newline and a Nix keyword; a comment
+  rejects only a line break, since a Nix line comment ends only there and the
+  rest is inert, so the parse-tree test below accepts it only on a line
+  that is a comment up to it.
+  Values are escaped into Nix strings. The few interpolations that emit Nix
+  code (overlay paths, package expressions, ecosystem fragments, service
+  lines, qsdev-built hook entries and packages) come only from compiled
+  modules, the embedded or user-scope catalog, or escaped path literals. A
+  parse-tree test (`addons/devenv/devenv_nix_sinks_test.go`) fails on any
+  new interpolation outside that reviewed list.
+- **Gated MCP tools.** `qsdev_nix_run` and `qsdev_credential_vend` are not
+  mounted from the project's qsdev configuration alone, `qsdev_nix_run`
+  refuses commands the deny rules block, and plain loopback HTTP needs a
+  bearer token (`internal/mcpserve` `TestHTTPLoopback_RequiresToken`). See
+  [Credential vending is opt-in and allow-listed](#layer-12-policy-engine).
+
+**Residual.** A committed `.mcp.json` or `devenv.nix` can carry the gated
+tools' flag or environment opt-ins. This is accepted because either file can
+already run arbitrary commands, so the trust boundary stays Claude Code's
+project-server approval and `direnv allow`, which you should give only to a
+repository you trust.
 
 ## Project File Write Containment
 
@@ -468,7 +613,7 @@ in your home or cache directories are not confined to the project.
 
 The self-protection layer (Layer 14) runs as the first PreToolUse hook. It evaluates before package-guard, credential-scan, and all other hooks, so the guardrail-tampering spellings it recognises are rejected before any other hook logic executes.
 
-The security hooks fail closed. They are self-protection, package-guard, credential-scan, destructive-prevention, file-boundary, tool-gates and `qsdev enforce`. Each needs `python3` 3.9 or newer and `qsdev` on the `PATH` that Claude Code runs hooks with. A hook that cannot start (missing interpreter or binary), crashes, or runs on an older Python blocks every tool call it matches, with the reason on stderr, rather than letting the call through. Each Python hook also stops itself 2 seconds before its registered timeout and blocks the call, because Claude Code lets a call through when a hook times out. `qsdev devenv doctor` warns when `python3` is older than 3.9. A blocked call whose reason says "could not run" means `python3` or `qsdev` is missing.
+The security hooks fail closed. They are self-protection, package-guard, credential-scan, destructive-prevention, file-boundary, tool-gates and `qsdev enforce`. Each needs `python3` 3.9 or newer and `qsdev` on the `PATH` that Claude Code runs hooks with. A hook that cannot start (missing interpreter or binary), crashes, or runs on an older Python blocks every tool call it matches, with the reason on stderr, rather than letting the call through. Each Python hook also stops itself 2 seconds before its registered timeout and blocks the call, because Claude Code lets a call through when a hook times out. In a project whose hooks run these programs, `qsdev devenv doctor` requires `python3` 3.9 or newer and every other program the hooks look up on `PATH` (resolved on the `PATH` of the shell doctor runs in), and `doctor --check` fails while one is missing or too old. An in-project virtualenv interpreter is not run; doctor reads its version from `pyvenv.cfg`. A blocked call whose reason says "could not run" means `python3` or `qsdev` is missing.
 
 **Status:** the hook sandbox is experimental and not yet enableable from the CLI (planned opt-in `--claude-hooks sandbox`, Linux/Nix builds). No generated hook is wrapped in it today. `qsdev sandbox exec -- CMD` runs a command you invoke by hand with restricted filesystem access, network, and syscalls, degrading by the kernel features available:
 
@@ -580,6 +725,8 @@ Commands that represent bypass vectors — ways to circumvent the hook-gating �
 | Nix Bypass | `nix-env -i`, `cachix use` | ~8 |
 | Uncategorized | Per-ecosystem edge cases | ~14 |
 
+Secret stores are read-denied in two layers. The project's top-level `secrets/` directory is denied as a whole (`Read(/secrets/**)`), and inside a directory named `secrets` at any depth the secret-material files of the internal/secrets canon (dotenv files, `*.key`, `*.pem`, `*.p12`, `*.pfx`, keystores, and `*.json`, `*.yaml`, `*.yml`, `*.toml` and `*.txt` files) are denied too. Source code in such a directory, such as `internal/secrets/*.go`, stays readable.
+
 ### Permission Presets
 
 | Preset | Philosophy |
@@ -642,7 +789,7 @@ vulnerability scanner or CI runner protection. It has two jobs:
   and `npm install` never fail on audit results — so the `npm audit` step is
   what makes moderate-or-higher advisories fail CI for npm projects.
   The modules add these audit tools (`cargo-audit`, `pip-audit`,
-  `bundler-audit`, `syft`, `grype`, `govulncheck`) to the
+  `bundler-audit`, `syft`, `grype`, `govulncheck`, `osv-scanner`) to the
   `devenv.nix` packages, so they are on the shell's PATH locally and in CI.
   A drifted or missing lock entry therefore fails CI before anything builds.
   Other lock-enforcing installs include `stack build --lock-file=error-on-write`,
@@ -654,9 +801,11 @@ vulnerability scanner or CI runner protection. It has two jobs:
   `pipefail` (`helm template | kubeconform`), loops fail when any item fails
   (`bash -n` on each `*.sh` file, `luarocks install --only-deps` on each
   rockspec), and scanners that only report are made to fail (PSScriptAnalyzer
-  error findings and parse errors; sbt-dependency-check at CVSS 7 and above).
-  Tools that are not nixpkgs packages are provisioned by the job itself: the sbt security
-  plugins through `sbt --addPluginSbtFile`, and a pinned PSScriptAnalyzer from
+  error findings and parse errors). sbt projects are scanned by
+  osv-scanner over their `build.sbt.lock` files, converted with `jq` to
+  osv-scanner's custom lockfile format, which fails on any known vulnerability.
+  Tools that are not nixpkgs packages are provisioned by the job itself: the
+  sbt-dependency-lock plugin through `sbt --addPluginSbtFile`, and a pinned PSScriptAnalyzer from
   PSGallery. Commands that only apply to one package manager or project shape
   are emitted only for it: the sbt tasks for sbt builds (not Mill), the renv
   steps for renv projects (`renv.lock`), the LuaRocks install for rockspec
@@ -822,7 +971,7 @@ Self-protection (Layer 14) and the permission deny rules match how a command is 
 | Computed paths | `d=.cla; echo x > ${d}ude/settings.json` (every Bash rule needs the literal path) | `qsdev check` detects the change afterwards for machine-owned generated files; prevention: none yet (planned: XS-WS3) |
 | Interpreters | `python3 -c "import os; os.remove('.cl'+'aude/settings.json')"` | `qsdev check` detects the change afterwards for machine-owned generated files; prevention: none yet (planned: XS-WS3) |
 | Git plumbing | `git update-index` / `checkout-index` rewriting a protected file without naming it, `>> .git/config`, `rm .git/hooks/pre-commit` | GIT-001 and the permission deny rules cover `git config`, `-c`, `--no-verify` and `--output`; the rest: none yet (planned: XS-WS3) |
-| PowerShell | `Remove-Item .claude\settings.json`, `Stop-Process -Name qsdev` (PowerShell text is parsed as POSIX shell) | none yet (planned: XS-WS4) |
+| PowerShell | `$p = -join [char[]](46,99,108,97,117,100,101); ri "$p\settings.json"` (a protected name built at run time), `& $c -Name x` (a command word computed at run time) | The PowerShell tool is judged in its own dialect. A line names a protected path when its text does (case-insensitively, with `\` or `/`, and also once quotes, backticks and `+` concatenation are removed), when the Bash mention scan does, or when a word of its commands reaches one through the same resolver the Bash rules use: globs (`.cla?de\settings.json`), symlinks, and the directory set by `Set-Location`, `Push-Location`, `cd` or the session. Such a line denies unless every command in it only reads: a read cmdlet (`Get-Content`, `Get-ChildItem`, `Select-String`, `Test-Path` and their aliases) or a read-only program use (`git diff`, `git log`, `rg`), with no write redirect and no `$(...)` subexpression. SP-003 reports the delete verbs (`Remove-Item`, `ri`, `del`, ...), and also denies deleting, moving or renaming a directory that holds `~/.claude` or another home-anchored location (`Remove-Item ~`, `$HOME`, `$env:USERPROFILE`, `..`). SP-009 denies `Stop-Process`, `spps`, `kill`, `taskkill` and `.Kill()` when the line names the CLI, `claude` or `gdev` as a word (also once concatenation is removed), or has a computed or glob word other than an `-Id`/`-PID` value. The evasion layer denies `iex`/`Invoke-Expression` (also as a computed call target such as `&('i'+'ex')`), an alias defined for either, `[...ScriptBlock]::Create`, `$ExecutionContext.InvokeCommand.NewScriptBlock`/`InvokeScript`, `pwsh`/`powershell -EncodedCommand` (any abbreviation, `-ec`, and the en dash, em dash or horizontal bar as the dash) and `Start-Process -Verb`; it re-checks the command line handed to `pwsh`/`powershell` (`-Command` or positional). SP-014 also reads a PowerShell line in the words PowerShell passes a native program: each element of an array argument is a word of its own (`qsdev 'teardown','--force'`, `& qsdev teardown,--force`), an array literal or splat (`@(...)`, `@a`) is computed and fails closed like `$Q teardown`, and a program named to `Start-Process`/`saps` (with `-ArgumentList` as an array or a string), `[Diagnostics.Process]::Start(...)` or `cmd /c` is invoked with the words that follow. SP-008 denies a PowerShell line that sets or clears `CLAUDECODE` or a Claude Code settings variable (`$env:CLAUDECODE=$null`, `Remove-Item Env:CLAUDECODE`, `[Environment]::SetEnvironmentVariable`), which the session would keep for the programs it starts later. Residual: a protected name, process name or eval verb never spelled out even after that normalisation (`[char]` arrays, `-join`, `-f`, `Join-Path`, a variable holding `iex`) gets through; so do `Get-Process \| Stop-Process` with no name and process termination through CIM or `wmic`; GIT-001, the shell-write half of SP-015 and the gate-dodge check on guarded config files still judge only the Bash tool (planned: U18-WS3). A non-read command that only mentions a protected path is denied (`Write-Host .claude/settings.json`, `gc .claude\settings.json \| ConvertFrom-Json`), a false positive accepted to fail closed |
 | Nested sessions | a `claude` session started from another directory, which loads that directory's project settings | SP-008 covers the flags and variables listed under Layer 14; the rest: none yet (planned: XS-WS4) |
 | Hook timeout | a command that keeps evaluation running past the hook timeout, which Claude Code treats as non-blocking | generated hooks: the self-protection run denies at its 7-second deadline, inside its 10-second registered timeout, and each Python hook blocks 2 seconds before its own; only a hand-written hook without such a deadline still lets the call through |
 | Missing binary | `qsdev` or `python3` not on the hook shell's `PATH`, so the hook exits 127, which Claude Code treats as non-blocking | generated hooks: the fail-closed wrapper turns any exit other than 0 or 2 into 2, a block; only a hand-written hook without the wrapper still lets the call through |

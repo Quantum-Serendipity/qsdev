@@ -62,7 +62,11 @@ func TestSymbolRules(t *testing.T) {
 	})
 	// Comments, strings, test files and same-named methods on local
 	// variables must add nothing beyond the entries above.
-	if n := len(got) - countRule(got, "init-non-module") - countRule(got, "test-os-chdir"); n != 7 {
+	n := len(got) - countRule(got, "init-non-module") - countRule(got, "test-os-chdir") - countRule(got, "test-os-unsetenv")
+	for _, r := range mcphealthProbeRules {
+		n -= countRule(got, r)
+	}
+	if n != 7 {
 		t.Errorf("got %d symbol-ban entries, want 7: %v", n, got)
 	}
 }
@@ -93,6 +97,18 @@ func TestChdirInTests(t *testing.T) {
 	}
 }
 
+func TestUnsetenvInTests(t *testing.T) {
+	t.Parallel()
+	got := Collect(loadSymbolFixture(t), symbolRules())
+	wantViolations(t, got, []violationCase{
+		{"test file calls", Key{"test-os-unsetenv", "internal/writer"}, 1},
+		{"non-test file ignored", Key{"test-os-unsetenv", "internal/procexec"}, 0},
+	})
+	if n := countRule(got, "test-os-unsetenv"); n != 1 {
+		t.Errorf("got %d test-os-unsetenv entries, want 1: %v", n, got)
+	}
+}
+
 func countRule(s Set, rule string) int {
 	n := 0
 	for k := range s {
@@ -101,4 +117,28 @@ func countRule(s Set, rule string) int {
 		}
 	}
 	return n
+}
+
+var mcphealthProbeRules = []string{"mcphealth-checkall", "mcphealth-checkserver", "mcphealth-probetarget"}
+
+// TestSymbolBan_McphealthProbeOnlyFromMcpregistry: only mcpregistry, behind
+// PlanProbes' trust gate, may start or dial a configured MCP server.
+func TestSymbolBan_McphealthProbeOnlyFromMcpregistry(t *testing.T) {
+	t.Parallel()
+	got := Collect(loadSymbolFixture(t), symbolRules())
+	wantViolations(t, got, []violationCase{
+		{"planted CheckServer via alias and method value", Key{"mcphealth-checkserver", "internal/doctor"}, 2},
+		{"planted CheckAll", Key{"mcphealth-checkall", "internal/doctor"}, 1},
+		{"planted ProbeTarget", Key{"mcphealth-probetarget", "internal/doctor"}, 1},
+		{"mcpregistry owns CheckAll", Key{"mcphealth-checkall", "internal/mcpregistry"}, 0},
+		{"mcpregistry owns ProbeTarget", Key{"mcphealth-probetarget", "internal/mcpregistry"}, 0},
+		{"unqualified call in mcphealth ignored", Key{"mcphealth-checkserver", "internal/mcphealth"}, 0},
+	})
+	total := 0
+	for _, r := range mcphealthProbeRules {
+		total += countRule(got, r)
+	}
+	if total != 3 {
+		t.Errorf("got %d mcphealth probe entries, want 3 (test files exempt): %v", total, got)
+	}
 }

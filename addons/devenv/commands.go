@@ -40,8 +40,10 @@ func statePath() string {
 // overlay cannot crash the binary before any command runs.
 func validServices() []string { return validation.Services() }
 
-// validLanguages returns the canonical core language list for shell completion.
-func validLanguages() []string { return validation.CoreLanguages() }
+// validLanguages returns every supported language. It backs add/remove
+// validation, the "valid languages" error message and shell completion, so
+// all three accept the same set. Resolved on use, like validServices.
+func validLanguages() []string { return validation.Languages() }
 
 func devenvCmd() *cobra.Command {
 	cmd := &cobra.Command{
@@ -86,10 +88,11 @@ func initCmd() *cobra.Command {
 		Short: "Initialize a security-hardened devenv environment",
 		Long:  "Generate devenv.yaml, devenv.nix, and security configuration files for the current project.",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			projectRoot, err := cmdutil.JoinedProjectRoot()
+			pc, err := cmdutil.JoinedProject(cmd)
 			if err != nil {
 				return err
 			}
+			projectRoot := pc.Root
 
 			// Check for existing devenv.nix unless --force is set.
 			if !force {
@@ -98,6 +101,8 @@ func initCmd() *cobra.Command {
 					return fmt.Errorf("devenv.nix already exists; use --force to overwrite")
 				}
 			}
+
+			PrintProjectDefaults(cmd.OutOrStdout())
 
 			// Detect project characteristics.
 			detected := detect.Detect(cmd.Context(), projectRoot)
@@ -153,7 +158,7 @@ func initCmd() *cobra.Command {
 	cmd.Flags().BoolVar(&nixHardeningGuide, "nix-hardening-guide", false, "Generate docs/nix-conf-hardening.md with system-level Nix security recommendations")
 	cmd.Flags().StringVar(&profileName, "profile", "", "Infrastructure profile (consulting-default, startup-github, enterprise)")
 
-	return cmd
+	return cmdutil.MarkRootHere(cmd)
 }
 
 func updateCmd() *cobra.Command {
@@ -167,10 +172,11 @@ func updateCmd() *cobra.Command {
 		Short: "Regenerate devenv files from saved answers",
 		Long:  "Re-run generation using previously saved wizard answers, incorporating any detection changes.",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			projectRoot, err := cmdutil.JoinedProjectRoot()
+			pc, err := cmdutil.JoinedProject(cmd)
 			if err != nil {
 				return err
 			}
+			projectRoot := pc.Root
 
 			// Load saved answers.
 			answers, err := loadAnswers(projectRoot)
@@ -249,10 +255,11 @@ func makeAddCmd(spec itemSpec) *cobra.Command {
 		Args:              argsValidator,
 		ValidArgsFunction: cmdutil.CompleteFrom(spec.validArgs),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			projectRoot, err := cmdutil.JoinedProjectRoot()
+			pc, err := cmdutil.JoinedProject(cmd)
 			if err != nil {
 				return err
 			}
+			projectRoot := pc.Root
 
 			// Validate all arguments before loading state.
 			if spec.validate != nil {
@@ -354,10 +361,11 @@ func makeRemoveCmd(spec itemSpec) *cobra.Command {
 		Args:              argsValidator,
 		ValidArgsFunction: cmdutil.CompleteFrom(spec.validArgs),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			projectRoot, err := cmdutil.JoinedProjectRoot()
+			pc, err := cmdutil.JoinedProject(cmd)
 			if err != nil {
 				return err
 			}
+			projectRoot := pc.Root
 
 			answers, err := loadAnswers(projectRoot)
 			if err != nil {
@@ -471,30 +479,9 @@ func languageSpec(add bool) itemSpec {
 			}
 			return nil
 		},
-		contains: func(a *types.WizardAnswers, name string) bool {
-			for _, lang := range a.Languages {
-				if lang.Name == name {
-					return true
-				}
-			}
-			return false
-		},
-		add: func(a *types.WizardAnswers, name string) {
-			a.Languages = append(a.Languages, types.LanguageChoice{Name: name})
-		},
-		remove: func(a *types.WizardAnswers, name string) bool {
-			found := false
-			var kept []types.LanguageChoice
-			for _, lang := range a.Languages {
-				if lang.Name == name {
-					found = true
-				} else {
-					kept = append(kept, lang)
-				}
-			}
-			a.Languages = kept
-			return found
-		},
+		contains: func(a *types.WizardAnswers, name string) bool { return a.HasLanguage(name) },
+		add:      func(a *types.WizardAnswers, name string) { a.AddLanguage(name) },
+		remove:   func(a *types.WizardAnswers, name string) bool { return a.RemoveLanguage(name) },
 	}
 	if add {
 		s.use = "add-language <name>"
@@ -648,6 +635,7 @@ func regenerateAndPersist(cmd *cobra.Command, answers types.WizardAnswers, opts 
 	if err := settleAgainstCommitted(cmd.ErrOrStderr(), opts.projectRoot, &answers); err != nil {
 		return nil, err
 	}
+	PrintProjectDefaults(cmd.OutOrStdout())
 	registry := ecosystem.DefaultRegistry()
 	gen := NewDevenvGenerator(registry, WithProfileRegistry(profile.DefaultProfileRegistry()))
 	files, err := gen.Generate(answers)

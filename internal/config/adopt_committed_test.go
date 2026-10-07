@@ -155,3 +155,84 @@ func TestAdoptCommitted_ClientMCPPolicy(t *testing.T) {
 		})
 	}
 }
+
+// TestAdoptCommitted_PolicyBlocks verifies the hooks block and
+// claude_code.permissions always come from the committed .qsdev.yaml: the
+// agent-writable answers file can neither keep a rule the committed file
+// lacks nor survive the committed file's removal.
+func TestAdoptCommitted_PolicyBlocks(t *testing.T) {
+	t.Parallel()
+	stale := types.WizardAnswers{
+		HookPolicy:        types.HooksConfig{ToolGates: types.ToolGatesConfig{Allowed: []string{"*"}}},
+		ClaudePermissions: types.ClaudePermissionsConfig{Allow: []string{"Bash(curl *)"}},
+	}
+	tests := []struct {
+		name      string
+		config    string // .qsdev.yaml content; empty means no file
+		wantGates []string
+		wantAllow []string
+	}{
+		{"committed blocks adopted",
+			"version: 1\nhooks:\n  tool_gates:\n    denied: [WebFetch]\nclaude_code:\n  permissions:\n    allow: [\"Bash(make lint)\"]\n",
+			nil, []string{"Bash(make lint)"}},
+		{"committed file without blocks clears them", "version: 1\n", nil, nil},
+		{"no committed file clears them", "", nil, nil},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			root := t.TempDir()
+			writeCommittedConfig(t, root, tt.config)
+			a := stale
+			a.HookPolicy = stale.HookPolicy.Clone()
+			a.ClaudePermissions = stale.ClaudePermissions.Clone()
+			AdoptCommitted(root, &a)
+			if !slices.Equal(a.HookPolicy.ToolGates.Allowed, tt.wantGates) {
+				t.Errorf("HookPolicy.ToolGates.Allowed = %v, want %v", a.HookPolicy.ToolGates.Allowed, tt.wantGates)
+			}
+			if !slices.Equal(a.ClaudePermissions.Allow, tt.wantAllow) {
+				t.Errorf("ClaudePermissions.Allow = %v, want %v", a.ClaudePermissions.Allow, tt.wantAllow)
+			}
+		})
+	}
+}
+
+// TestAdoptCommitted_LanguageVersions verifies a regeneration from stale saved
+// answers keeps the language version .qsdev.yaml pins (the self-regeneration
+// that rewrote this repository's Go 1.26.7 pin to 1.26.3), raised to what the
+// project's go.mod requires, and that only the committed file lowers a pin.
+func TestAdoptCommitted_LanguageVersions(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name     string
+		config   string // .qsdev.yaml content; empty means no file
+		answers  string // saved answers' go version
+		detected string // go.mod go directive
+		want     string
+	}{
+		{"committed newer pin kept over stale answers",
+			"version: 2\nlanguages:\n  - name: go\n    version: 1.26.7\n", "1.26.3", "1.26.3", "1.26.7"},
+		{"committed lower pin is the team's choice",
+			"version: 2\nlanguages:\n  - name: go\n    version: 1.25.4\n", "1.26.7", "1.24", "1.25.4"},
+		{"committed pin raised to go.mod",
+			"version: 2\nlanguages:\n  - name: go\n    version: 1.25.4\n", "1.25.4", "1.26.7", "1.26.7"},
+		{"unpinned committed language keeps answers",
+			"version: 2\nlanguages:\n  - name: go\n", "1.26.3", "1.24", "1.26.3"},
+		{"no config still raised to go.mod", "", "1.26.3", "1.26.7", "1.26.7"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			root := t.TempDir()
+			writeCommittedConfig(t, root, tt.config)
+			a := types.WizardAnswers{
+				Detected:  types.DetectedProject{HasGoMod: true, GoVersion: tt.detected},
+				Languages: []types.LanguageChoice{{Name: "go", Version: tt.answers}},
+			}
+			AdoptCommitted(root, &a)
+			if got := a.Languages[0].Version; got != tt.want {
+				t.Errorf("go version = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}

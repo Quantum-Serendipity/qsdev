@@ -10,6 +10,7 @@ package procexec
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -65,6 +66,21 @@ func CommandContext(ctx context.Context, name string, args ...string) *exec.Cmd 
 	guard(name, args)
 	return exec.CommandContext(ctx, name, args...) //nolint:gosec // argv is an explicit array; no shell interpolation
 }
+
+// LookPath is exec.LookPath: it resolves a bare name through PATH and checks
+// a name containing a path separator directly. It starts nothing, so the
+// forbid-exec guard does not apply.
+func LookPath(file string) (string, error) {
+	path, err := exec.LookPath(file)
+	if err != nil {
+		return "", fmt.Errorf("procexec: %w", err)
+	}
+	return path, nil
+}
+
+// ErrInsideProject marks a version probe VersionProbe refused because the
+// binary lies inside the project.
+var ErrInsideProject = errors.New("binary is inside the project; it would run project code")
 
 // versionFlags are the arguments VersionProbe accepts.
 var versionFlags = []string{"--version", "version", "-v"}
@@ -137,7 +153,7 @@ func checkOutsideProject(project, absPath string) error {
 	}
 	for _, p := range []string{absPath, resolved} {
 		if isUnder(projectInfo, filepath.Dir(p)) {
-			return fmt.Errorf("procexec: version probe binary %q is inside the project %s; it would run project code", absPath, project)
+			return fmt.Errorf("procexec: version probe binary %q under %s: %w", absPath, project, ErrInsideProject)
 		}
 	}
 	return nil

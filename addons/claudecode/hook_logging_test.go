@@ -3,14 +3,18 @@ package claudecode_test
 import (
 	"bufio"
 	"encoding/json"
+	"io/fs"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"runtime"
 	"strings"
 	"testing"
+	"time"
 
 	claudecode "github.com/Quantum-Serendipity/qsdev/addons/claudecode"
+	"github.com/Quantum-Serendipity/qsdev/internal/selfprotect/canon"
 	"github.com/Quantum-Serendipity/qsdev/pkg/types"
 )
 
@@ -34,8 +38,7 @@ func runLoggingHook(t *testing.T, interpreter, script string, payload any, env [
 	}
 	cmd := exec.Command(interpreter, append([]string{path}, args...)...)
 	cmd.Stdin = strings.NewReader(string(in))
-	cmd.Env = append(os.Environ(), "PYTHONDONTWRITEBYTECODE=1")
-	cmd.Env = append(cmd.Env, env...)
+	cmd.Env = hookEnv(t, env...)
 	out, err := cmd.Output()
 	if err != nil {
 		t.Fatalf("%s failed: %v (stdout %q)", script, err, out)
@@ -94,7 +97,7 @@ func TestAuditLogHook_MetadataOnly(t *testing.T) {
 		}
 	}
 
-	matches, err := filepath.Glob(filepath.Join(project, ".claude", "logs", "audit-*.jsonl"))
+	matches, err := filepath.Glob(filepath.Join(project, filepath.FromSlash(canon.HookLogDir), "audit-*.jsonl"))
 	if err != nil || len(matches) != 1 {
 		t.Fatalf("audit log files = %v (%v), want one", matches, err)
 	}
@@ -137,7 +140,7 @@ func TestSembleAnalyticsHook(t *testing.T) {
 	other := map[string]any{"tool_name": "Read", "tool_input": map[string]any{"file_path": "x"}}
 	runLoggingHook(t, "sh", "semble-analytics.sh", other, env)
 
-	_, entries := readJSONLines(t, filepath.Join(project, ".qsdev", "analytics", "semble-searches.jsonl"))
+	_, entries := readJSONLines(t, filepath.Join(project, filepath.FromSlash(canon.HookLogDir), "semble-searches.jsonl"))
 	if len(entries) != len(queries) {
 		t.Fatalf("entries = %d, want %d", len(entries), len(queries))
 	}
@@ -219,5 +222,113 @@ func TestSOC2AuditHook_Registration(t *testing.T) {
 	}
 	if find("PermissionDenied", "permission_denied") == nil {
 		t.Error("PermissionDenied not logged")
+	}
+}
+
+// TestHookTemplates_LogUnderHookLogDir pins that every generated hook that
+// writes a project-local log writes it under canon.HookLogDir: the hook
+// sandbox keeps only that directory writable inside the read-only .claude and
+// project data directory, so a log anywhere else would silently stop being
+// written once hooks are sandboxed.
+func TestHookTemplates_LogUnderHookLogDir(t *testing.T) {
+	t.Parallel()
+
+	shellLogDir := regexp.MustCompile(`(?m)^LOG_DIR="\$\{CLAUDE_PROJECT_DIR:-\.\}/([^"]+)"`)
+	pyParts := `"` + strings.Join(strings.Split(canon.HookLogDir, "/"), `", "`) + `"`
+	// The shipped templates, not the source tree: the hook tests leave a
+	// __pycache__ directory there that is never embedded.
+	files, err := fs.Glob(claudecode.ExportTemplateFS, "templates/hooks/*")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var shellLogs int
+	for _, f := range files {
+		data, err := fs.ReadFile(claudecode.ExportTemplateFS, f)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, m := range shellLogDir.FindAllStringSubmatch(string(data), -1) {
+			shellLogs++
+			if m[1] != canon.HookLogDir {
+				t.Errorf("%s logs to %s, want %s", f, m[1], canon.HookLogDir)
+			}
+		}
+	}
+	if shellLogs < 2 {
+		t.Errorf("found %d shell LOG_DIR assignments, want the audit-log and semble-analytics ones", shellLogs)
+	}
+	lib, err := fs.ReadFile(claudecode.ExportTemplateFS, "templates/hooks/_qsdev_hooklib.py")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(lib), "os.path.join(base, "+pyParts+", AUDIT_LOG_NAME)") {
+		t.Errorf("_qsdev_hooklib.py audit_log_path does not join %s", pyParts)
+	}
+}
+
+// TestLoggingHooks_RefusePlantedSymlink: any sandboxed hook with a writable
+// project can write the hook log directory, so the logging hooks must never
+// append through a symlink planted there (or in its place), which would let
+// that hook aim the next append at any file the user can write.
+func TestLoggingHooks_RefusePlantedSymlink(t *testing.T) {
+	t.Parallel()
+	semble := map[string]any{"tool_name": "mcp__semble__search", "tool_input": map[string]any{"query": "q"}}
+	audit := map[string]any{"tool_name": "Bash", "tool_input": map[string]any{"command": "ls"}}
+	now := time.Now()
+	auditNames := []string{
+		"audit-" + now.Format("2006-01-02") + ".jsonl",
+		"audit-" + now.AddDate(0, 0, 1).Format("2006-01-02") + ".jsonl",
+	}
+	tests := []struct {
+		name, interpreter, script string
+		needs                     string
+		payload                   any
+		files                     []string // log names planted as symlinks; none: the directory is
+	}{
+		{"audit-log file", "bash", "audit-log.sh", "", audit, auditNames},
+		{"audit-log directory", "bash", "audit-log.sh", "", audit, nil},
+		{"semble file", "sh", "semble-analytics.sh", "jq", semble, []string{"semble-searches.jsonl"}},
+		{"semble directory", "sh", "semble-analytics.sh", "jq", semble, nil},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			if tt.needs != "" {
+				if _, err := exec.LookPath(tt.needs); err != nil {
+					t.Skipf("%s not available", tt.needs)
+				}
+			}
+			project, elsewhere := t.TempDir(), t.TempDir()
+			logDir := filepath.Join(project, filepath.FromSlash(canon.HookLogDir))
+			if err := os.MkdirAll(filepath.Dir(logDir), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			victim := filepath.Join(elsewhere, "victim")
+			if err := os.WriteFile(victim, nil, 0o600); err != nil {
+				t.Fatal(err)
+			}
+			if tt.files == nil {
+				if err := os.Symlink(elsewhere, logDir); err != nil {
+					t.Skipf("symlinks unavailable: %v", err)
+				}
+			} else {
+				if err := os.Mkdir(logDir, 0o700); err != nil {
+					t.Fatal(err)
+				}
+				for _, f := range tt.files {
+					if err := os.Symlink(victim, filepath.Join(logDir, f)); err != nil {
+						t.Skipf("symlinks unavailable: %v", err)
+					}
+				}
+			}
+			runLoggingHook(t, tt.interpreter, tt.script, tt.payload, []string{"CLAUDE_PROJECT_DIR=" + project})
+
+			if data, err := os.ReadFile(victim); err != nil || len(data) != 0 {
+				t.Errorf("victim = %q (err %v): the hook appended through a planted symlink", data, err)
+			}
+			if entries, err := os.ReadDir(elsewhere); err != nil || len(entries) != 1 {
+				t.Errorf("the hook wrote through the symlinked log directory: %v (err %v)", entries, err)
+			}
+		})
 	}
 }

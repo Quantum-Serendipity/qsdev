@@ -11,7 +11,7 @@ import (
 
 	"aead.dev/minisign"
 
-	"github.com/Quantum-Serendipity/qsdev/pkg/branding"
+	"github.com/Quantum-Serendipity/qsdev/internal/projectctx"
 )
 
 // QsdevPublicKey is the embedded organizational Minisign public key used to
@@ -54,19 +54,21 @@ func ParsePublicKey(s string) (PublicKey, error) {
 }
 
 // DefaultTrustedKeysDir returns the user-global directory holding trusted
-// Minisign public keys (*.pub), ~/.<app>/keys/ (e.g. ~/.qsdev/keys/). It fails
-// when the home directory cannot be determined or is not absolute: a relative
-// fallback would resolve against the working directory, which a cloned
-// repository controls (its own .qsdev/keys would become trusted).
+// Minisign public keys (*.pub), ~/.<app>/keys/ (e.g. ~/.qsdev/keys/, in
+// projectctx.LegacyDir). It fails when the home directory cannot be
+// determined or is not absolute: a relative fallback would resolve against the
+// working directory, which a cloned repository controls (its own .qsdev/keys
+// would become trusted).
+//
+// The keys are security state and stay in the legacy directory, which the
+// self-protection canon guards by its .<app>/ path element, until XA-WS8
+// extends the canon to the per-user state directory.
 func DefaultTrustedKeysDir() (string, error) {
-	home, err := os.UserHomeDir()
+	legacy, err := projectctx.LegacyDir()
 	if err != nil {
 		return "", fmt.Errorf("locating trusted keys dir: %w", err)
 	}
-	if !filepath.IsAbs(home) {
-		return "", fmt.Errorf("locating trusted keys dir: home directory %q is not absolute", home)
-	}
-	return filepath.Join(home, "."+branding.Get().AppName, "keys"), nil
+	return filepath.Join(legacy, "keys"), nil
 }
 
 // LoadTrustedKeys returns the set of trusted public keys: every *.pub file in

@@ -1,3 +1,8 @@
+# The file name is part of qsdev's Sigstore identity: every shipped binary
+# verifies self-updates against
+#   <repo>/.github/workflows/release.yml@refs/tags/<tag>
+# (pkg/branding.ReleaseWorkflow). Renaming this file changes that identity and
+# breaks verification for every installed release.
 name: Release
 
 on:
@@ -8,26 +13,40 @@ on:
 permissions:
   contents: read
 
+env:
+  # The gateway image every generated docker-compose.gateway.yaml references:
+  # internal/mcpserve/container.ImageRepository, the lower-cased GHCR package
+  # of this repository (TestGatewayImagePublishedSignedAttested).
+  IMAGE: ghcr.io/quantum-serendipity/qsdev
+
 jobs:
-  release:
+  # Gate: nothing below builds, signs or publishes unless the tag's commit
+  # passed every check in .github/required-checks.txt (TestReleaseGatedOnCI).
+  verify-ci:
     runs-on: ubuntu-latest
     permissions:
-      contents: write
-      id-token: write
-      attestations: write
-    outputs:
-      artifacts: ${{ steps.artifacts.outputs.paths }}
+      contents: read
+      checks: read
     steps:
       - name: Harden Runner
         uses: step-security/harden-runner@9af89fc71515a100421586dfdb3dc9c984fbf411 # v2.19.4
         with:
-          egress-policy: audit
+          egress-policy: block
+          allowed-endpoints: >
+            github.com:443
+            api.github.com:443
 
       - name: Checkout
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
-          fetch-depth: 0
+          persist-credentials: false
 
+      - name: Require every required check to have passed on the tag commit
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: bash scripts/verify-ci.sh "$GITHUB_REPOSITORY" "$GITHUB_SHA" .github/required-checks.txt
+
+      # Every later job derives the release version from the tag.
       - name: Validate tag matches VERSION
         run: |
           file_version="$(cat VERSION)"
@@ -36,6 +55,183 @@ jobs:
             echo "::error::Tag $GITHUB_REF_NAME (${tag_version}) does not match VERSION file (${file_version})"
             exit 1
           fi
+
+  # Publishes the gateway image (build/docker/Dockerfile) for linux/amd64 and
+  # linux/arm64 as $IMAGE:<X.Y.Z> and :latest, then signs, attests and
+  # verifies the multi-arch index by digest. Plain docker CLI: the Dockerfile
+  # cross-compiles, so no QEMU, buildx or third-party docker actions run in a
+  # job holding the id-token.
+  #
+  # The release job stamps the index digest this job outputs into the
+  # binaries (internal/version.gatewayImageDigest), so their generated
+  # compose files reference $IMAGE:<X.Y.Z>@<digest>. The image's own binary
+  # is built before the digest exists and cannot contain it, so it falls
+  # back to the tag-only reference.
+  #
+  # Publish order: the image is pushed before GoReleaser runs. If the release
+  # job then fails, the image is already public under <X.Y.Z> and :latest;
+  # re-running the workflow re-pushes it, and the binaries embed the new
+  # digest (the old one is never referenced by a published binary).
+  gateway-image:
+    needs: verify-ci
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+      id-token: write
+      attestations: write
+    outputs:
+      digest: ${{ steps.manifest.outputs.digest }}
+    steps:
+      - name: Harden Runner
+        uses: step-security/harden-runner@9af89fc71515a100421586dfdb3dc9c984fbf411 # v2.19.4
+        with:
+          # GitHub (checkout, actions, attestations), GHCR, Sigstore and the
+          # OIDC issuer, plus the registries of the Dockerfile's base images
+          # (Docker Hub for golang, gcr.io for distroless, whose blobs come
+          # from storage.googleapis.com). The build itself is vendored.
+          egress-policy: block
+          allowed-endpoints: >
+            github.com:443
+            api.github.com:443
+            objects.githubusercontent.com:443
+            release-assets.githubusercontent.com:443
+            storage.googleapis.com:443
+            fulcio.sigstore.dev:443
+            rekor.sigstore.dev:443
+            timestamp.sigstore.dev:443
+            oauth2.sigstore.dev:443
+            tuf-repo-cdn.sigstore.dev:443
+            token.actions.githubusercontent.com:443
+            ghcr.io:443
+            pkg-containers.githubusercontent.com:443
+            gcr.io:443
+            registry-1.docker.io:443
+            auth.docker.io:443
+            production.cloudflare.docker.com:443
+
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+
+      - name: Install Cosign
+        uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
+
+      # The image tag carries no "v", matching ImageForVersion. verify-ci
+      # checked the tag against VERSION.
+      - name: Set image version
+        run: echo "VERSION=${GITHUB_REF_NAME#v}" >> "$GITHUB_ENV"
+
+      - name: Log in to GHCR
+        env:
+          GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GHCR_USER: ${{ github.actor }}
+        run: printf '%s' "$GHCR_TOKEN" | docker login ghcr.io --username "$GHCR_USER" --password-stdin
+
+      # One single-platform image per architecture; provenance and SBOM
+      # manifests are off so each push is a plain image the index can list.
+      - name: Build and push the per-platform images
+        run: |
+          for platform in linux/amd64 linux/arm64; do
+            ref="${IMAGE}:${VERSION}-${platform#linux/}"
+            docker build -f build/docker/Dockerfile --platform "$platform" \
+              --provenance=false --sbom=false \
+              --build-arg VERSION="$VERSION" --build-arg COMMIT="${GITHUB_SHA::12}" \
+              -t "$ref" .
+            docker push "$ref"
+          done
+
+      - name: Push the multi-arch index
+        id: manifest
+        run: |
+          digest=""
+          for tag in "${IMAGE}:${VERSION}" "${IMAGE}:latest"; do
+            docker manifest create "$tag" "${IMAGE}:${VERSION}-amd64" "${IMAGE}:${VERSION}-arm64"
+            pushed="$(docker manifest push --purge "$tag")"
+            if [ -n "$digest" ] && [ "$pushed" != "$digest" ]; then
+              echo "::error::${tag} pushed as ${pushed}, not ${digest}"
+              exit 1
+            fi
+            digest="$pushed"
+          done
+          if ! printf '%s' "$digest" | grep -Eqx 'sha256:[0-9a-f]{64}'; then
+            echo "::error::docker manifest push printed ${digest}, not an index digest"
+            exit 1
+          fi
+          echo "digest=${digest}" >> "$GITHUB_OUTPUT"
+
+      # Keyless: the certificate names this workflow at this tag, the same
+      # identity self-update verifies (branding.ReleaseWorkflowIdentity).
+      # --recursive also signs each platform image in the index.
+      - name: Sign the image
+        env:
+          DIGEST: ${{ steps.manifest.outputs.digest }}
+        run: cosign sign --yes --recursive "${IMAGE}@${DIGEST}"
+
+      - name: Attest build provenance
+        uses: actions/attest-build-provenance@a2bbfa25375fe432b6a289bc6b6cd05ecd0c4c32 # v4.1.0
+        with:
+          subject-name: ${{ env.IMAGE }}
+          subject-digest: ${{ steps.manifest.outputs.digest }}
+          push-to-registry: true
+
+      # Fails the release unless the published signature verifies against the
+      # exact release identity (TestGatewayImageIdentityMatchesReleaseWorkflow).
+      - name: Verify the signature
+        env:
+          DIGEST: ${{ steps.manifest.outputs.digest }}
+        run: |
+          cosign verify \
+            --certificate-identity "https://github.com/Quantum-Serendipity/qsdev/.github/workflows/release.yml@refs/tags/${GITHUB_REF_NAME}" \
+            --certificate-oidc-issuer "https://token.actions.githubusercontent.com" \
+            "${IMAGE}@${DIGEST}" > /dev/null
+
+      - name: Log out of GHCR
+        if: ${{ always() }}
+        run: docker logout ghcr.io
+
+  release:
+    needs: [verify-ci, gateway-image]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      id-token: write
+      attestations: write
+    steps:
+      - name: Harden Runner
+        uses: step-security/harden-runner@9af89fc71515a100421586dfdb3dc9c984fbf411 # v2.19.4
+        with:
+          # This job holds the id-token signing identity and the tap tokens:
+          # block everything but GitHub (checkout, actions, release upload,
+          # taps), the Go module proxy, Sigstore and the OIDC issuer.
+          # raw.githubusercontent.com serves the Syft installer and the Go
+          # versions manifest.
+          egress-policy: block
+          allowed-endpoints: >
+            github.com:443
+            api.github.com:443
+            uploads.github.com:443
+            objects.githubusercontent.com:443
+            release-assets.githubusercontent.com:443
+            raw.githubusercontent.com:443
+            proxy.golang.org:443
+            sum.golang.org:443
+            storage.googleapis.com:443
+            fulcio.sigstore.dev:443
+            rekor.sigstore.dev:443
+            timestamp.sigstore.dev:443
+            oauth2.sigstore.dev:443
+            tuf-repo-cdn.sigstore.dev:443
+            token.actions.githubusercontent.com:443
+            ghcr.io:443
+            pkg-containers.githubusercontent.com:443
+
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          fetch-depth: 0
+          persist-credentials: false
 
       - name: Set up Go
         uses: actions/setup-go@4a3601121dd01d1626a1e23e37211e3254c1c06c # v6.4.0
@@ -57,32 +253,36 @@ jobs:
         env:
           GPG_PRIVATE_KEY: ${{ secrets.GPG_PRIVATE_KEY }}
 
+      - name: Load tool versions
+        # Single source of the tool versions below; see the file's header.
+        shell: bash
+        run: grep -E '^[A-Z][A-Z0-9_]*=' .github/tool-versions.env >> "$GITHUB_ENV"
+
       - name: Run GoReleaser
         uses: goreleaser/goreleaser-action@1a80836c5c9d9e5755a25cb59ec6f45a3b5f41a8 # v7.2.1
         with:
           distribution: goreleaser
-          # Exact pin: this binary runs with the release signing identity
-          # and tap tokens. Keep ci.yml and release.yml on the same version;
-          # Renovate's custom manager (renovate.json) bumps both.
-          # renovate: datasource=github-releases depName=goreleaser/goreleaser
-          version: v2.18.2
+          # Exact pin from .github/tool-versions.env, bumped by
+          # .github/workflows/tool-pins.yml: this binary runs with the release
+          # signing identity and tap tokens, and CI validates the same
+          # version the release runs (TestGoreleaserVersionPinned).
+          version: ${{ env.GORELEASER_VERSION }}
           args: release --clean
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           HOMEBREW_TAP_GITHUB_TOKEN: ${{ secrets.HOMEBREW_TAP_GITHUB_TOKEN }}
           SCOOP_TAP_GITHUB_TOKEN: ${{ secrets.SCOOP_TAP_GITHUB_TOKEN }}
           GPG_FINGERPRINT: ${{ secrets.GPG_FINGERPRINT }}
-
-      - name: Collect release artifacts
-        id: artifacts
-        run: |
-          cd dist
-          echo "paths=$(ls *.tar.gz *.zip *.deb *.rpm *.apk 2>/dev/null | tr '\n' ' ')" >> "$GITHUB_OUTPUT"
+          # The gateway image's index digest, which pins generated compose
+          # files to the image this release published.
+          GATEWAY_IMAGE_DIGEST: ${{ needs.gateway-image.outputs.digest }}
 
       - name: Attest build provenance
         uses: actions/attest-build-provenance@a2bbfa25375fe432b6a289bc6b6cd05ecd0c4c32 # v4.1.0
         with:
-          subject-path: dist/*.tar.gz, dist/*.zip, dist/*.deb, dist/*.rpm, dist/*.apk
+          # Every file .goreleaser.yaml publishes: archives, nfpm packages
+          # and the checksum file (TestReleaseAttestsEveryPublishedArtifact).
+          subject-path: dist/*.tar.gz, dist/*.zip, dist/*.deb, dist/*.rpm, dist/*.apk, dist/*.pkg.tar.zst, dist/checksums.txt
 
       # SBOM attestation deferred — actions/attest sbom-path does not
       # support glob patterns, and each archive has its own SBOM file.

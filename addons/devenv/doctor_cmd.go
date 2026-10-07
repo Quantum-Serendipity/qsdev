@@ -37,6 +37,11 @@ validates the MCP servers in .mcp.json and runs the health checks of the
 configured ecosystem modules, both statically: no MCP server, cloud CLI or
 other check command is executed.
 
+Inside a project the programs its Claude Code hooks run are required too.
+They are looked up on this shell's PATH, which doctor assumes is the PATH
+Claude Code starts hooks with: run doctor from the activated devenv shell
+(in CI, inside 'devenv shell').
+
 Use --json for machine-readable output, or --check for a simple pass/fail
 exit code (suitable for CI).`,
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -58,9 +63,14 @@ func runDoctor(cmd *cobra.Command, jsonOutput, checkMode bool) error {
 
 	osInfo := sysinfo.DetectOS()
 
-	// An unknown working directory only disables the project-scoped checks
-	// (NFS, MCP servers, cloud credential isolation, ecosystem module checks).
-	projectRoot, _ := cmdutil.ProjectRoot()
+	// The project-scoped checks (NFS, MCP servers, cloud credential
+	// isolation, toolchains, ecosystem module checks) run only inside a
+	// project: a directory under a trusted marker that projectctx found.
+	// Elsewhere projectRoot stays "" and each of them is skipped.
+	var projectRoot string
+	if pc, err := cmdutil.Project(cmd); err == nil && pc.Found {
+		projectRoot = pc.Root
+	}
 
 	var containerSection *doctor.ContainerSection
 	var sandboxSection *doctor.SandboxSection
@@ -78,10 +88,15 @@ func runDoctor(cmd *cobra.Command, jsonOutput, checkMode bool) error {
 		})
 	}
 
-	checks := doctor.RunAllChecks(ctx, osInfo)
+	// On an error the host tools are still checked and the report says the
+	// hook programs were not.
+	toolList, checksErr := doctor.ProjectChecks(projectRoot)
+	checks := doctor.RunChecks(ctx, osInfo, toolList)
 	wg.Wait()
 
 	report := doctor.BuildReport(osInfo, checks, version.Info().Version)
+	report.ProjectRoot = projectRoot
+	report.SetHookProgramsError(checksErr)
 	report.SetContainerSection(containerSection)
 	report.SetSandboxSection(sandboxSection)
 	report.SetMCPSection(mcpConfigSection(projectRoot, mcpregistry.DefaultRegistry()))
@@ -112,9 +127,11 @@ func projectToolchainWarnings(ctx context.Context, reg *ecosystem.Registry, proj
 
 // renderDoctorReport writes report to w as JSON, a pass/fail check summary,
 // or the formatted human report. In check mode it returns an error when any
-// required tool is missing, including when the report is emitted as JSON.
+// required tool is missing, below its floor or of unknown version, including
+// when the report is emitted as JSON; the text summary lists each problem
+// with its fix.
 func renderDoctorReport(w io.Writer, report *doctor.Report, jsonOutput, checkMode bool) error {
-	missing := missingRequiredTools(report)
+	problems := report.RequiredProblems()
 
 	if jsonOutput {
 		enc := json.NewEncoder(w)
@@ -122,35 +139,37 @@ func renderDoctorReport(w io.Writer, report *doctor.Report, jsonOutput, checkMod
 		if err := enc.Encode(report); err != nil {
 			return fmt.Errorf("encoding doctor report: %w", err)
 		}
-		if checkMode && len(missing) > 0 {
-			return fmt.Errorf("missing %d required tool(s): %s", len(missing), strings.Join(missing, ", "))
+		if checkMode && len(problems) > 0 {
+			return fmt.Errorf("%d required tool problem(s): %s", len(problems), strings.Join(problems, "; "))
 		}
 		return nil
 	}
 
 	if checkMode {
-		if len(missing) > 0 {
-			_, _ = fmt.Fprintf(w, "Missing required tools: %s\n", strings.Join(missing, ", "))
-			return fmt.Errorf("missing %d required tool(s)", len(missing))
+		if len(problems) > 0 {
+			_, _ = fmt.Fprintln(w, "Required tools are missing or outdated:")
+			hooks := false
+			for _, p := range problems {
+				_, _ = fmt.Fprintf(w, "  - %s\n", p)
+				hooks = hooks || strings.Contains(p, doctor.HookRequiredBy)
+			}
+			if hooks {
+				_, _ = fmt.Fprintln(w, "Hook programs are looked up on this shell's PATH; run doctor from the shell Claude Code runs in (the activated devenv shell).")
+			}
+			if report.HookProgramsWarning != "" {
+				_, _ = fmt.Fprintf(w, "Warning: %s\n", report.HookProgramsWarning)
+			}
+			return fmt.Errorf("%d required tool problem(s)", len(problems))
 		}
 		_, _ = fmt.Fprintln(w, "All required tools are present.")
+		if report.HookProgramsWarning != "" {
+			_, _ = fmt.Fprintf(w, "Warning: %s\n", report.HookProgramsWarning)
+		}
 		return nil
 	}
 
 	doctor.FormatReport(w, report, writerUsesColor(w))
 	return nil
-}
-
-// missingRequiredTools returns the names of required tools that are absent
-// or below their minimum version.
-func missingRequiredTools(report *doctor.Report) []string {
-	var missing []string
-	for _, t := range report.RequiredTools {
-		if !t.Found || !t.VersionOK {
-			missing = append(missing, t.Name)
-		}
-	}
-	return missing
 }
 
 // writerUsesColor reports whether colored output suits w: only a terminal

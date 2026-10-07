@@ -69,6 +69,11 @@ func TestGeneratePostmortemSkill_HasLoadableFrontMatter(t *testing.T) {
 
 	assertSkillLoadable(t, skillFile.Content)
 
+	// Verification is read-only and must stay model-invocable.
+	if _, disabled := parseSkillFrontMatter(t, skillFile.Path, skillFile.Content); disabled {
+		t.Error("postmortem skill must not set disable-model-invocation")
+	}
+
 	// The body must survive the front-matter prepend.
 	if !strings.Contains(string(skillFile.Content), "## Step 1 - Intent Snapshot") {
 		t.Error("skill body should be preserved after front-matter synthesis")

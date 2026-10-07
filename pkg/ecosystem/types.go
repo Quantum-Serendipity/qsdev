@@ -1,6 +1,9 @@
 package ecosystem
 
-import "fmt"
+import (
+	"fmt"
+	"time"
+)
 
 // Confidence indicates how certain the detection logic is that an ecosystem
 // is present in a project directory.
@@ -65,6 +68,11 @@ type ModuleConfig struct {
 	// IsolateCLIConfig is .qsdev.yaml cloud.isolate_cli_config: a cloud CLI
 	// module points its CLI's configuration directory into the project.
 	IsolateCLIConfig bool `yaml:"isolate_cli_config,omitempty" json:"isolate_cli_config,omitempty"`
+	// MinReleaseAge is the release-age window of the project's compliance
+	// level (catalog age_gating_threshold_hours). Modules read it through
+	// ReleaseAge, which applies DefaultMinReleaseAge when it is unset and the
+	// package manager's floor.
+	MinReleaseAge time.Duration `yaml:"min_release_age,omitempty" json:"min_release_age,omitempty"`
 }
 
 // PM returns the configured PackageManager, falling back to defaultPM if empty.
@@ -91,6 +99,11 @@ func (c ModuleConfig) Extra(key, defaultVal string) string {
 type DevenvInput struct {
 	URL     string `yaml:"url"              json:"url"`
 	Follows string `yaml:"follows,omitempty" json:"follows,omitempty"`
+	// Options are the devenv options that read the input (the attribute
+	// devenv's config.lib.getInput names, e.g. "languages.go.version"). A
+	// module contributes the input only alongside a fragment that sets one of
+	// them, so devenv.yaml never declares an input devenv.nix does not use.
+	Options []string `yaml:"-" json:"-"`
 }
 
 // HookConfig represents a pre-commit hook configuration entry.
@@ -115,14 +128,20 @@ type HookConfig struct {
 	AdditionalDependencies []string `yaml:"additional_dependencies"   json:"additional_dependencies"`
 	BuiltIn                bool     `yaml:"built_in"                  json:"built_in"`
 	NixPackage             string   `yaml:"nix_package,omitempty"     json:"nix_package,omitempty"`
-	Excludes               []string `yaml:"excludes,omitempty"        json:"excludes,omitempty"` // Path regexes the hook skips (git-hooks.nix excludes); honored for built-in hooks too.
+	// LanguagePackage names the devenv language whose
+	// config.languages.<name>.package provides the hook binary, so the hook
+	// runs the shell's pinned toolchain. It is mutually exclusive with
+	// NixPackage and is never added to packages.
+	LanguagePackage string   `yaml:"language_package,omitempty" json:"language_package,omitempty"`
+	Excludes        []string `yaml:"excludes,omitempty"        json:"excludes,omitempty"` // Path regexes the hook skips (git-hooks.nix excludes); honored for built-in hooks too.
 	// Settings sets git-hooks.nix `settings.<key>` string options of a
 	// BuiltIn hook (e.g. binPath).
 	Settings map[string]string `yaml:"settings,omitempty" json:"settings,omitempty"`
 	// Script, when set, is a bash script run as the hook instead of Entry,
 	// for checks that need logic around the tool (preconditions, clear
 	// failure messages). Staged files arrive as "$@" when PassFilenames is
-	// set, and NixPackage's bin directory is first on PATH.
+	// set, and the bin directory of NixPackage or LanguagePackage is first
+	// on PATH.
 	Script string `yaml:"script,omitempty" json:"script,omitempty"`
 }
 

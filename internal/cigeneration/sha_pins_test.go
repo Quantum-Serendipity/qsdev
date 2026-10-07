@@ -1,51 +1,24 @@
 package cigeneration
 
 import (
-	"os"
 	"path/filepath"
 	"regexp"
+	"strings"
 	"testing"
 )
 
-// usesRe matches a SHA-pinned action reference in a workflow file, e.g.
-//
-//	uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
-//
-// The action path is captured whole, so subpath actions such as
-// google/osv-scanner-action/osv-scanner-action compare correctly.
-var usesRe = regexp.MustCompile(`uses:\s+(\S+)@([0-9a-f]{40})\s+#\s+(\S+)`)
+// repoWorkflowsDir is this repository's own workflow directory, relative to
+// the package directory tests run in.
+var repoWorkflowsDir = filepath.Join("..", "..", ".github", "workflows")
 
-type workflowPin struct {
-	sha  string
-	tag  string
-	file string
-}
-
-// workflowPins collects every SHA-pinned action used by this repository's own
-// workflows, keyed by action path.
-func workflowPins(t *testing.T) map[string]workflowPin {
+// repoWorkflowPins parses the repository's own workflows.
+func repoWorkflowPins(t *testing.T) map[string]WorkflowPin {
 	t.Helper()
 
-	dir := filepath.Join("..", "..", ".github", "workflows")
-	entries, err := os.ReadDir(dir)
+	pins, err := ParseWorkflowPins(repoWorkflowsDir)
 	if err != nil {
-		t.Fatalf("reading %s: %v", dir, err)
+		t.Fatal(err)
 	}
-
-	pins := make(map[string]workflowPin)
-	for _, e := range entries {
-		if e.IsDir() || filepath.Ext(e.Name()) != ".yml" {
-			continue
-		}
-		b, err := os.ReadFile(filepath.Join(dir, e.Name()))
-		if err != nil {
-			t.Fatalf("reading %s: %v", e.Name(), err)
-		}
-		for _, m := range usesRe.FindAllStringSubmatch(string(b), -1) {
-			pins[m[1]] = workflowPin{sha: m[2], tag: m[3], file: e.Name()}
-		}
-	}
-
 	if len(pins) == 0 {
 		t.Fatal("found no pinned actions in .github/workflows; the parser or the layout changed")
 	}
@@ -60,27 +33,17 @@ func workflowPins(t *testing.T) map[string]workflowPin {
 // ActionUploadArtifact sat at v4.6.2 while the workflows had moved to v7.0.1,
 // and the emitted team workflow would have paired mismatched artifact majors.
 //
-// Only actions this repository actually uses are compared. Entries emitted
-// solely into generated projects (Grype, download-artifact) have no local
-// counterpart to check against.
+// Every catalog entry the repository's workflows also use is compared; the
+// rest are emitted solely into generated projects and have no local
+// counterpart. The dependabot-fixup workflow runs go generate on actions
+// branches, which applies SyncActionPins and keeps this test green.
 func TestActionPinsMatchWorkflows(t *testing.T) {
 	t.Parallel()
 
-	pins := workflowPins(t)
-
-	catalog := map[string]ActionRef{
-		"ActionCheckout":       ActionCheckout,
-		"ActionHardenRunner":   ActionHardenRunner,
-		"ActionUploadArtifact": ActionUploadArtifact,
-		"ActionOSVScanner":     ActionOSVScanner,
-		"ActionGrype":          ActionGrype,
-		"ActionLabeler":        ActionLabeler,
-		// ActionDownloadArtifact is emitted only into generated team
-		// workflows, so it has no counterpart here.
-	}
+	pins := repoWorkflowPins(t)
 
 	compared := 0
-	for name, ref := range catalog {
+	for name, ref := range AllActionRefs() {
 		path := ref.Owner + "/" + ref.Repo
 		pin, used := pins[path]
 		if !used {
@@ -89,14 +52,14 @@ func TestActionPinsMatchWorkflows(t *testing.T) {
 		compared++
 
 		t.Run(name, func(t *testing.T) {
-			if ref.SHA != pin.sha {
+			if ref.SHA != pin.SHA {
 				t.Errorf("%s pins %s@%s but .github/workflows/%s uses @%s\n"+
-					"Dependabot updates the workflow and not this catalog; bump the catalog to match.",
-					name, path, ref.SHA, pin.file, pin.sha)
+					"Dependabot updates the workflow and not this catalog; run go generate ./internal/cigeneration/",
+					name, path, ref.SHA, pin.File, pin.SHA)
 			}
-			if ref.Tag != pin.tag {
-				t.Errorf("%s is tagged %q but .github/workflows/%s comments %q",
-					name, ref.Tag, pin.file, pin.tag)
+			if ref.Tag != pin.Tag {
+				t.Errorf("%s is tagged %q but .github/workflows/%s comments %q; run go generate ./internal/cigeneration/",
+					name, ref.Tag, pin.File, pin.Tag)
 			}
 		})
 	}
@@ -119,16 +82,7 @@ func TestActionRefsAreWellFormed(t *testing.T) {
 
 	sha40 := regexp.MustCompile(`^[0-9a-f]{40}$`)
 
-	for name, ref := range map[string]ActionRef{
-		"ActionCheckout":         ActionCheckout,
-		"ActionHardenRunner":     ActionHardenRunner,
-		"ActionUploadArtifact":   ActionUploadArtifact,
-		"ActionDownloadArtifact": ActionDownloadArtifact,
-		"ActionOSVScanner":       ActionOSVScanner,
-		"ActionGrype":            ActionGrype,
-		"ActionInstallNix":       ActionInstallNix,
-		"ActionLabeler":          ActionLabeler,
-	} {
+	for name, ref := range AllActionRefs() {
 		t.Run(name, func(t *testing.T) {
 			if ref.Owner == "" || ref.Repo == "" {
 				t.Errorf("%s has an empty Owner or Repo", name)
@@ -144,10 +98,6 @@ func TestActionRefsAreWellFormed(t *testing.T) {
 	}
 }
 
-// goreleaserVersionRe captures the `version:` input of each goreleaser-action
-// step (the input sits in the step's `with:` block a few lines below `uses:`).
-var goreleaserVersionRe = regexp.MustCompile(`(?s)uses:\s+goreleaser/goreleaser-action@\S+[^\n]*\n(?:[^\n]*\n){0,8}?\s+version:\s*"?([^"\s]+)"?`)
-
 // exactVersionRe matches an exact release tag such as v2.17.1.
 var exactVersionRe = regexp.MustCompile(`^v\d+\.\d+\.\d+$`)
 
@@ -155,37 +105,53 @@ var exactVersionRe = regexp.MustCompile(`^v\d+\.\d+\.\d+$`)
 // pinned, but its `version` input chooses the goreleaser binary it downloads,
 // and the release job runs that binary with the signing identity and tap
 // tokens. A range such as "~> v2" runs whatever was published last, and CI
-// would not even validate the version the release uses.
+// would not even validate the version the release uses. The input resolves
+// through tool-versions.env (U26-02), which must hold an exact release.
 func TestGoreleaserVersionPinned(t *testing.T) {
 	t.Parallel()
 
-	dir := filepath.Join("..", "..", ".github", "workflows")
-	entries, err := os.ReadDir(dir)
-	if err != nil {
-		t.Fatalf("reading %s: %v", dir, err)
-	}
-	versions := map[string]string{} // version -> first file using it
-	for _, e := range entries {
-		if e.IsDir() || filepath.Ext(e.Name()) != ".yml" {
-			continue
-		}
-		b, err := os.ReadFile(filepath.Join(dir, e.Name()))
-		if err != nil {
-			t.Fatalf("reading %s: %v", e.Name(), err)
-		}
-		for _, m := range goreleaserVersionRe.FindAllStringSubmatch(string(b), -1) {
-			if !exactVersionRe.MatchString(m[1]) {
-				t.Errorf("%s: goreleaser-action version %q is not an exact release (want vX.Y.Z)", e.Name(), m[1])
-			}
-			if _, ok := versions[m[1]]; !ok {
-				versions[m[1]] = e.Name()
+	toolVersions := readToolVersions(t)
+	versions := map[string]string{} // version -> first workflow using it
+	for file, wf := range readRepoWorkflows(t) {
+		for jobName, job := range wf.Jobs {
+			for _, s := range job.Steps {
+				if !strings.HasPrefix(s.Uses, "goreleaser/goreleaser-action@") {
+					continue
+				}
+				where := file + " job " + jobName
+				ref := toolEnvRefRe.FindStringSubmatch(s.With["version"])
+				if ref == nil {
+					t.Errorf("%s: goreleaser-action version %q, want ${{ env.KEY }} from %s", where, s.With["version"], toolVersionsFile)
+					continue
+				}
+				v, ok := toolVersions[ref[1]]
+				if !ok {
+					t.Errorf("%s: goreleaser-action version env.%s is not in %s", where, ref[1], toolVersionsFile)
+					continue
+				}
+				if !exactVersionRe.MatchString(v) {
+					t.Errorf("%s: goreleaser version %s=%q is not an exact release (want vX.Y.Z)", where, ref[1], v)
+				}
+				if _, seen := versions[v]; !seen {
+					versions[v] = file
+				}
 			}
 		}
 	}
 	if len(versions) == 0 {
-		t.Fatal("found no goreleaser-action version inputs; the parser or the layout changed")
+		t.Fatal("found no goreleaser-action steps; the parser or the layout changed")
 	}
 	if len(versions) > 1 {
 		t.Errorf("workflows use different goreleaser versions %v; CI must validate the version the release runs", versions)
 	}
+}
+
+// TestAllActionRefsCoversExportedVars fails when an ActionRef is declared in
+// the catalog but missing from AllActionRefs, or the reverse. Every check that
+// iterates the registry (drift, shape, upstream resolution) would otherwise
+// skip that pin silently, the state that let four unresolvable SHAs and an
+// unchecked ActionInstallNix accumulate.
+func TestAllActionRefsCoversExportedVars(t *testing.T) {
+	t.Parallel()
+	assertCoversCatalog(t, "ActionRef", AllActionRefs())
 }

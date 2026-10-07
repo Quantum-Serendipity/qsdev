@@ -9,13 +9,15 @@ import (
 
 	"gopkg.in/yaml.v3"
 
+	"github.com/Quantum-Serendipity/qsdev/pkg/branding"
 	"github.com/Quantum-Serendipity/qsdev/pkg/fileutil"
 	"github.com/Quantum-Serendipity/qsdev/pkg/types"
 )
 
 // LoadStateFromFile reads and unmarshals a GeneratedState from the YAML file
 // at path. If the file does not exist, it returns a zero-value state with an
-// initialized Files map and no error.
+// initialized Files map and no error. A legacy entry for the human-owned local
+// config is dropped.
 func LoadStateFromFile(path string) (types.GeneratedState, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
@@ -36,6 +38,12 @@ func LoadStateFromFile(path string) (types.GeneratedState, error) {
 	if state.Files == nil {
 		state.Files = make(map[string]types.FileState)
 	}
+	// Earlier joins recorded the developer's local config as a generated
+	// file, so every edit to it read as drift and teardown or autofix could
+	// treat it as qsdev's. It is human-owned and never tracked; dropping it
+	// here, the one loader every consumer uses, migrates legacy state, and
+	// the next save rewrites the file without it.
+	delete(state.Files, branding.Get().LocalConfig)
 
 	slog.Debug("state loaded", "path", path, "files", len(state.Files))
 	return state, nil

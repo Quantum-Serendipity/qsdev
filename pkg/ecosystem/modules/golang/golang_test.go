@@ -4,6 +4,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strings"
 	"testing"
 
@@ -525,5 +526,16 @@ func TestPreCommitHooks_GovetExcludesGoIgnoredDirs(t *testing.T) {
 				t.Errorf("excluded(%q) = %v, want %v", tt.path, got, tt.excluded)
 			}
 		})
+	}
+}
+
+// TestDevenvPackages_ProvisionsGovulncheck verifies govulncheck, which the CI
+// scan runs, is provisioned whatever the hook tier (its hook's package is
+// added only when the hook runs).
+func TestDevenvPackages_ProvisionsGovulncheck(t *testing.T) {
+	t.Parallel()
+	pkgs := (&golang.Module{}).DevenvPackages(ecosystem.ModuleConfig{})
+	if !slices.Contains(pkgs, "govulncheck") {
+		t.Errorf("DevenvPackages() = %q, want it to contain govulncheck", pkgs)
 	}
 }

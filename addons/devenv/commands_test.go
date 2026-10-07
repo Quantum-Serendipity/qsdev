@@ -5,10 +5,13 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"strings"
 	"testing"
 
 	"github.com/Quantum-Serendipity/qsdev/addons/devenv"
+	"github.com/Quantum-Serendipity/qsdev/internal/testutil"
+	"github.com/Quantum-Serendipity/qsdev/internal/validation"
 )
 
 func TestBuildAnswersFromFlags(t *testing.T) {
@@ -90,46 +93,23 @@ func TestValidServices(t *testing.T) {
 }
 
 func TestValidLanguages(t *testing.T) {
-	expected := map[string]bool{
-		"go":         true,
-		"javascript": true,
-		"python":     true,
-		"rust":       true,
-		"java":       true,
-		"dotnet":     true,
-		"container":  true,
-		"terraform":  true,
-	}
+	t.Parallel()
 
 	languages := devenv.ExportValidLanguages
-	if len(languages) != len(expected) {
-		t.Fatalf("validLanguages has %d entries, want %d", len(languages), len(expected))
+	if want := validation.Languages(); !slices.Equal(languages, want) {
+		t.Fatalf("validLanguages = %v, want validation.Languages() = %v", languages, want)
 	}
-
-	for _, lang := range languages {
-		if !expected[lang] {
-			t.Errorf("unexpected language in validLanguages: %q", lang)
+	// aws, gcp and azure are registered modules that the core-only list
+	// used to reject (U08-02).
+	for _, lang := range []string{"aws", "gcp", "azure"} {
+		if !slices.Contains(languages, lang) {
+			t.Errorf("validLanguages is missing %q", lang)
 		}
 	}
 }
 
-// chdir changes the working directory to dir and registers a cleanup to restore
-// the original directory when the test finishes.
-func chdir(t *testing.T, dir string) {
-	t.Helper()
-	origDir, err := os.Getwd()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := os.Chdir(dir); err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { _ = os.Chdir(origDir) })
-}
-
 func TestInitCmd_DryRun(t *testing.T) {
-	tmpDir := t.TempDir()
-	chdir(t, tmpDir)
+	tmpDir := testutil.Project(t, testutil.ProjectOptions{})
 
 	cmd := devenv.ExportDevenvCmd()
 	var buf bytes.Buffer
@@ -158,8 +138,7 @@ func TestInitCmd_DryRun(t *testing.T) {
 }
 
 func TestInitCmd_WritesFiles(t *testing.T) {
-	tmpDir := t.TempDir()
-	chdir(t, tmpDir)
+	tmpDir := testutil.Project(t, testutil.ProjectOptions{})
 
 	cmd := devenv.ExportDevenvCmd()
 	var buf bytes.Buffer
@@ -193,8 +172,7 @@ func TestInitCmd_WritesFiles(t *testing.T) {
 }
 
 func TestInitCmd_ExistingDevenvNix_NoForce(t *testing.T) {
-	tmpDir := t.TempDir()
-	chdir(t, tmpDir)
+	tmpDir := testutil.Project(t, testutil.ProjectOptions{})
 
 	// Create existing devenv.nix.
 	nixPath := filepath.Join(tmpDir, "devenv.nix")
@@ -218,8 +196,7 @@ func TestInitCmd_ExistingDevenvNix_NoForce(t *testing.T) {
 }
 
 func TestInitCmd_ExistingDevenvNix_Force(t *testing.T) {
-	tmpDir := t.TempDir()
-	chdir(t, tmpDir)
+	tmpDir := testutil.Project(t, testutil.ProjectOptions{})
 
 	// Create existing devenv.nix.
 	nixPath := filepath.Join(tmpDir, "devenv.nix")
@@ -248,8 +225,7 @@ func TestInitCmd_ExistingDevenvNix_Force(t *testing.T) {
 }
 
 func TestInitCmd_SavesState(t *testing.T) {
-	tmpDir := t.TempDir()
-	chdir(t, tmpDir)
+	tmpDir := testutil.Project(t, testutil.ProjectOptions{})
 
 	cmd := devenv.ExportDevenvCmd()
 	var buf bytes.Buffer
@@ -277,8 +253,7 @@ func TestInitCmd_SavesState(t *testing.T) {
 }
 
 func TestInitCmd_SavesAnswers(t *testing.T) {
-	tmpDir := t.TempDir()
-	chdir(t, tmpDir)
+	tmpDir := testutil.Project(t, testutil.ProjectOptions{})
 
 	cmd := devenv.ExportDevenvCmd()
 	var buf bytes.Buffer
@@ -306,8 +281,7 @@ func TestInitCmd_SavesAnswers(t *testing.T) {
 }
 
 func TestUpdateCmd_NoSavedAnswers(t *testing.T) {
-	tmpDir := t.TempDir()
-	chdir(t, tmpDir)
+	testutil.Project(t, testutil.ProjectOptions{})
 
 	cmd := devenv.ExportDevenvCmd()
 	var buf bytes.Buffer
@@ -325,8 +299,7 @@ func TestUpdateCmd_NoSavedAnswers(t *testing.T) {
 }
 
 func TestUpdateCmd_AfterInit(t *testing.T) {
-	tmpDir := t.TempDir()
-	chdir(t, tmpDir)
+	tmpDir := testutil.Project(t, testutil.ProjectOptions{})
 
 	// First, init.
 	cmd := devenv.ExportDevenvCmd()
@@ -360,8 +333,7 @@ func TestUpdateCmd_AfterInit(t *testing.T) {
 }
 
 func TestAddServiceCmd_Valid(t *testing.T) {
-	tmpDir := t.TempDir()
-	chdir(t, tmpDir)
+	tmpDir := testutil.Project(t, testutil.ProjectOptions{})
 
 	// First, init.
 	cmd := devenv.ExportDevenvCmd()
@@ -409,8 +381,7 @@ func TestAddServiceCmd_Valid(t *testing.T) {
 }
 
 func TestAddServiceCmd_Invalid(t *testing.T) {
-	tmpDir := t.TempDir()
-	chdir(t, tmpDir)
+	testutil.Project(t, testutil.ProjectOptions{})
 
 	// First, init.
 	cmd := devenv.ExportDevenvCmd()
@@ -443,8 +414,7 @@ func TestAddServiceCmd_Invalid(t *testing.T) {
 }
 
 func TestAddServiceCmd_Duplicate_NoForce(t *testing.T) {
-	tmpDir := t.TempDir()
-	chdir(t, tmpDir)
+	testutil.Project(t, testutil.ProjectOptions{})
 
 	// Init with postgres already included.
 	cmd := devenv.ExportDevenvCmd()
@@ -474,8 +444,7 @@ func TestAddServiceCmd_Duplicate_NoForce(t *testing.T) {
 }
 
 func TestAddLanguageCmd_Valid(t *testing.T) {
-	tmpDir := t.TempDir()
-	chdir(t, tmpDir)
+	tmpDir := testutil.Project(t, testutil.ProjectOptions{})
 
 	// First, init with go.
 	cmd := devenv.ExportDevenvCmd()
@@ -523,8 +492,7 @@ func TestAddLanguageCmd_Valid(t *testing.T) {
 }
 
 func TestAddLanguageCmd_Invalid(t *testing.T) {
-	tmpDir := t.TempDir()
-	chdir(t, tmpDir)
+	testutil.Project(t, testutil.ProjectOptions{})
 
 	// First, init.
 	cmd := devenv.ExportDevenvCmd()
@@ -557,8 +525,7 @@ func TestAddLanguageCmd_Invalid(t *testing.T) {
 }
 
 func TestAddLanguageCmd_Duplicate_NoForce(t *testing.T) {
-	tmpDir := t.TempDir()
-	chdir(t, tmpDir)
+	testutil.Project(t, testutil.ProjectOptions{})
 
 	// Init with go.
 	cmd := devenv.ExportDevenvCmd()
@@ -588,8 +555,7 @@ func TestAddLanguageCmd_Duplicate_NoForce(t *testing.T) {
 }
 
 func TestInitCmd_MultipleLanguages(t *testing.T) {
-	tmpDir := t.TempDir()
-	chdir(t, tmpDir)
+	tmpDir := testutil.Project(t, testutil.ProjectOptions{})
 
 	cmd := devenv.ExportDevenvCmd()
 	var buf bytes.Buffer
@@ -619,8 +585,7 @@ func TestInitCmd_MultipleLanguages(t *testing.T) {
 }
 
 func TestInitCmd_WithServices(t *testing.T) {
-	tmpDir := t.TempDir()
-	chdir(t, tmpDir)
+	tmpDir := testutil.Project(t, testutil.ProjectOptions{})
 
 	cmd := devenv.ExportDevenvCmd()
 	var buf bytes.Buffer
@@ -653,8 +618,7 @@ func TestInitCmd_DirenvEnabled(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("devenv/direnv not supported on Windows")
 	}
-	tmpDir := t.TempDir()
-	chdir(t, tmpDir)
+	tmpDir := testutil.Project(t, testutil.ProjectOptions{})
 
 	cmd := devenv.ExportDevenvCmd()
 	var buf bytes.Buffer
@@ -674,8 +638,7 @@ func TestInitCmd_DirenvEnabled(t *testing.T) {
 }
 
 func TestInitCmd_NoDirenv(t *testing.T) {
-	tmpDir := t.TempDir()
-	chdir(t, tmpDir)
+	tmpDir := testutil.Project(t, testutil.ProjectOptions{})
 
 	cmd := devenv.ExportDevenvCmd()
 	var buf bytes.Buffer
@@ -698,8 +661,7 @@ func TestUpdateCmd_DryRun(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("file mode comparison differs on Windows")
 	}
-	tmpDir := t.TempDir()
-	chdir(t, tmpDir)
+	tmpDir := testutil.Project(t, testutil.ProjectOptions{})
 
 	// Init first.
 	cmd := devenv.ExportDevenvCmd()
@@ -746,8 +708,7 @@ func TestUpdateCmd_DryRun(t *testing.T) {
 }
 
 func TestAddServiceCmd_DryRun(t *testing.T) {
-	tmpDir := t.TempDir()
-	chdir(t, tmpDir)
+	tmpDir := testutil.Project(t, testutil.ProjectOptions{})
 
 	// Init first.
 	cmd := devenv.ExportDevenvCmd()
@@ -784,8 +745,7 @@ func TestAddServiceCmd_DryRun(t *testing.T) {
 }
 
 func TestAddLanguageCmd_DryRun(t *testing.T) {
-	tmpDir := t.TempDir()
-	chdir(t, tmpDir)
+	tmpDir := testutil.Project(t, testutil.ProjectOptions{})
 
 	// Init first.
 	cmd := devenv.ExportDevenvCmd()

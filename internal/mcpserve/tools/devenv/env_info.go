@@ -15,6 +15,7 @@ import (
 	"github.com/Quantum-Serendipity/qsdev/internal/logging"
 	"github.com/Quantum-Serendipity/qsdev/internal/mcpserve/spi"
 	"github.com/Quantum-Serendipity/qsdev/internal/mcpserve/tools/toolutil"
+	"github.com/Quantum-Serendipity/qsdev/internal/projectctx"
 	"github.com/Quantum-Serendipity/qsdev/internal/secrets"
 	"github.com/Quantum-Serendipity/qsdev/internal/toolreg"
 )
@@ -93,7 +94,7 @@ type pathEntry struct {
 
 // probePath splits PATH and categorizes each entry.
 func (e *envInfo) probePath() map[string]any {
-	home, _ := os.UserHomeDir()
+	home, _ := projectctx.HomeDir()
 	raw := os.Getenv("PATH")
 	parts := strings.Split(raw, string(os.PathListSeparator))
 

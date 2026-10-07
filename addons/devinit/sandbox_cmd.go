@@ -1,12 +1,14 @@
 package devinit
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
 	"io"
 	"log/slog"
 	"os"
+	"path"
 	"path/filepath"
 	"strings"
 
@@ -14,6 +16,7 @@ import (
 
 	"github.com/Quantum-Serendipity/qsdev/internal/cmdutil"
 	"github.com/Quantum-Serendipity/qsdev/internal/exitcode"
+	"github.com/Quantum-Serendipity/qsdev/internal/projectctx"
 	"github.com/Quantum-Serendipity/qsdev/internal/sandbox"
 	"github.com/Quantum-Serendipity/qsdev/internal/sandbox/backendselect"
 	"github.com/Quantum-Serendipity/qsdev/internal/sandbox/bwrap"
@@ -64,11 +67,33 @@ automatically selected based on available kernel capabilities.
 Standard input is forwarded to COMMAND, and the project directory
 ($CLAUDE_PROJECT_DIR, or the current directory) is mounted inside the
 sandbox. A failure to set up the sandbox exits with status 2 so that a
-wrapped Claude Code hook fails closed.`,
+wrapped Claude Code hook fails closed.
+
+Categories with a writable project (formatter, generator, test-runner)
+still cannot change its control plane: git's hooks, config, info and
+modules, .claude (except the hook log directory .claude/logs), the
+project data and state directories, .envrc, the devenv configuration,
+lock and caches (.devenv, except devenv's state directory .devenv/state,
+which holds GOPATH and the language environments, and .direnv), .mcp.json, the project config and
+local overrides, and the package-manager and pre-commit configuration.
+Those that exist as files or directories in the project are read-only
+inside the sandbox. Staging and committing with git still work.
+
+A missing one, or one that is a symlink (such as a pre-commit
+configuration linked into the Nix store), cannot be made read-only.
+If a hook creates or replaces one, the command exits with status 2,
+naming it: whatever the hook left there is moved aside to
+<name>.<app>-quarantined-<time> (nothing is deleted) and a replaced symlink is
+put back, so the next shell entry or commit does not run it.`,
 		SilenceUsage: true,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if len(args) == 0 {
 				return fmt.Errorf("no command specified; use -- COMMAND [ARGS...]")
+			}
+
+			cat, err := sandbox.ParseHookCategoryStrict(category)
+			if err != nil {
+				return sandboxSetupFailure(err)
 			}
 
 			ctx := cmd.Context()
@@ -76,7 +101,7 @@ wrapped Claude Code hook fails closed.`,
 				ctx = context.Background()
 			}
 
-			projectDir, err := sandboxProjectDir()
+			projectDir, err := sandboxProjectDir(cmd)
 			if err != nil {
 				return sandboxSetupFailure(err)
 			}
@@ -96,11 +121,16 @@ wrapped Claude Code hook fails closed.`,
 				hookName = defaultHookName(args[0])
 			}
 
-			cfg := policy.ToSandboxConfig(spec, sandbox.ParseHookCategory(category), hookName, projectDir)
+			cfg := policy.ToSandboxConfig(spec, cat, hookName, projectDir)
 			cfg.HookCommand = args
 			cfg.ExecOpts = hookStdio(cmd)
 
-			result, err := runSandboxed(ctx, cfg, probe(ctx), cmd.ErrOrStderr())
+			// Notices are held back until the hook's outcome is known: a
+			// blocking hook's stderr is the reason Claude Code shows, and must
+			// carry only what the hook wrote. A failing run (or a setup
+			// failure) drops them; runSandboxed has logged them already.
+			var notices bytes.Buffer
+			result, err := runSandboxed(ctx, cfg, probe(ctx), &notices)
 			if err != nil {
 				return sandboxSetupFailure(err)
 			}
@@ -115,28 +145,35 @@ wrapped Claude Code hook fails closed.`,
 			}
 
 			if result.ExitCode != 0 {
-				return exitcode.New(result.ExitCode, "sandboxed command exited with code %d", result.ExitCode)
+				// The hook's own stderr explains the failure; an empty message
+				// keeps anything from being appended to it.
+				slog.Debug("sandboxed command failed", "exit_code", result.ExitCode)
+				return &exitcode.Error{Code: result.ExitCode}
 			}
 
+			_, _ = notices.WriteTo(cmd.ErrOrStderr())
 			return nil
 		},
 	}
 
-	cmd.Flags().StringVar(&category, "category", "linter",
-		"Hook category (linter, formatter, network-linter, generator, test-runner)")
+	cmd.Flags().StringVar(&category, "category", sandbox.CategoryLinter.String(),
+		"Hook category ("+strings.Join(sandbox.HookCategoryNames(), ", ")+")")
 	addPolicyFlag(cmd, &policyPath)
 	cmd.Flags().StringVar(&hookName, "hook-name", "",
 		"Name used to look up the policy's hookOverrides (default: the command's base name without extension)")
 
-	return cmd
+	return cmdutil.MarkProfile(cmd, cmdutil.ProfileAutomatedHook)
 }
 
-// defaultPolicyPath is the project-relative location of the sandbox policy.
-const defaultPolicyPath = ".qsdev/policy.nix"
+// defaultPolicyPath returns the project-relative location of the sandbox
+// policy, policy.nix in the project data directory.
+func defaultPolicyPath() string {
+	return path.Join(projectctx.DataDirName(), "policy.nix")
+}
 
 // addPolicyFlag registers the --policy flag shared by exec and approve.
 func addPolicyFlag(cmd *cobra.Command, policyPath *string) {
-	cmd.Flags().StringVar(policyPath, "policy", defaultPolicyPath,
+	cmd.Flags().StringVar(policyPath, "policy", defaultPolicyPath(),
 		"Path to sandbox policy file (the default is relative to the project directory)")
 }
 
@@ -159,10 +196,14 @@ func sandboxSetupFailure(err error) error {
 // sandboxProjectDir returns the project directory to expose inside the
 // sandbox. Claude Code exports CLAUDE_PROJECT_DIR to every hook; outside a hook
 // the current directory is used.
-func sandboxProjectDir() (string, error) {
+func sandboxProjectDir(cmd *cobra.Command) (string, error) {
 	dir := os.Getenv("CLAUDE_PROJECT_DIR")
 	if dir == "" {
-		return cmdutil.ProjectRoot()
+		pc, err := cmdutil.Project(cmd)
+		if err != nil {
+			return "", err
+		}
+		return pc.Root, nil
 	}
 	if !filepath.IsAbs(dir) {
 		return "", fmt.Errorf("CLAUDE_PROJECT_DIR must be an absolute path, got %q", dir)
@@ -267,11 +308,18 @@ func printSandboxStatusText(cmd *cobra.Command, caps *sandbox.SystemCapabilities
 // status command stay honest even when kernel-capability probing reports a tier
 // stronger than the tool set can deliver.
 func unenforceableLayers(tier sandbox.DegradationTier) []string {
+	return layersWithoutTools(tier, sandbox.LLRestrictBin(), sandbox.SeccompFilterFile())
+}
+
+// layersWithoutTools is unenforceableLayers with the enforcement tool paths
+// given: llBin is the ll-restrict helper and seccompFile the compiled BPF
+// filter, each "" when this build does not carry it.
+func layersWithoutTools(tier sandbox.DegradationTier, llBin, seccompFile string) []string {
 	var layers []string
-	if sandbox.TierClaimsLandlock(tier) && sandbox.LLRestrictBin() == "" {
+	if sandbox.TierClaimsLandlock(tier) && llBin == "" {
 		layers = append(layers, "Landlock")
 	}
-	if sandbox.TierClaimsSeccomp(tier) && sandbox.SeccompFilterFile() == "" {
+	if sandbox.TierClaimsSeccomp(tier) && seccompFile == "" {
 		layers = append(layers, "seccomp")
 	}
 	return layers
@@ -356,8 +404,11 @@ func hookStdio(cmd *cobra.Command) sandbox.ExecOpts {
 // inside it. A backend the policy names that is unknown or unavailable is a
 // setup failure (sandbox.ErrSetupFailed), never silently replaced. Any
 // weaker-than-full isolation, and any layer the tier advertises but cannot
-// enforce, is reported on warn as well as the log: the log file is not visible
-// by default, and an unsandboxed run must never look like a sandboxed one.
+// enforce, is always logged (slog.Warn) and also written to warn. The caller
+// decides whether warn reaches the user: sandbox exec shows it only after a
+// successful run, since a blocking hook's stderr must carry only the hook's
+// reason, so a failing or blocked run records the degradation in the log
+// alone.
 func runSandboxed(ctx context.Context, cfg *sandbox.SandboxConfig, caps *sandbox.SystemCapabilities, warn io.Writer) (*sandbox.SandboxResult, error) {
 	backend, tier, err := backendselect.ResolvePreferredBackend(*caps, cfg.Backend)
 	if err != nil {

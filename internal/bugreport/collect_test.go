@@ -2,9 +2,12 @@ package bugreport
 
 import (
 	"os"
+	"path/filepath"
 	"runtime"
 	"strings"
 	"testing"
+
+	"github.com/Quantum-Serendipity/qsdev/pkg/branding"
 )
 
 func TestEnvironmentFormatTable(t *testing.T) {
@@ -249,11 +252,18 @@ func TestBrowserURLShortBodyNotTruncated(t *testing.T) {
 func TestSaveToFile(t *testing.T) {
 	// Not parallel: t.Setenv is incompatible with t.Parallel.
 	dir := t.TempDir()
+	state := filepath.Join(dir, "xdg-state")
 	t.Setenv("HOME", dir)
+	t.Setenv("USERPROFILE", dir)
+	t.Setenv("XDG_STATE_HOME", state)
 
 	path, err := SaveToFile("Test Bug", "Body of bug report")
 	if err != nil {
 		t.Fatalf("SaveToFile error: %v", err)
+	}
+	// Drafts are state, not legacy ~/.<app> data.
+	if got, want := filepath.Dir(path), filepath.Join(state, branding.Get().AppName); got != want {
+		t.Errorf("report dir = %q, want %q", got, want)
 	}
 
 	if path == "" {

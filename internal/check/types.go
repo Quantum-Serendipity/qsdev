@@ -172,6 +172,7 @@ type CheckContext struct {
 	RequiredDenyRules    []string
 	StateFile            string
 	DenyRules            []string
+	AskRules             []string // every catalog ask rule, which no skill may pre-approve
 	SkillOps             []SkillOps
 	ExpectedConflictKeys map[string]string
 	// ExpectedClaudeSettings is the .claude/settings.json the generator
@@ -184,6 +185,11 @@ type CheckContext struct {
 	// the recorded or committed hash, which a change to the guard can
 	// re-hash along with it.
 	GeneratedContent map[string][]byte
+	// GuardSupportFiles are the project-relative paths of files every Python
+	// guard loads at run time (the shared hook library). Whenever a guard is
+	// a .py script they are judged exactly like a guard: a tampered one runs
+	// inside every guard.
+	GuardSupportFiles []string
 	// ExpectedGenerationErr is why the generator's output for the project
 	// (ExpectedClaudeSettings, and the generated files beyond the embedded
 	// hook scripts) is unknown: the answers could not be derived from the
@@ -206,12 +212,38 @@ type CheckContext struct {
 	// why: pinned, or the account's home overlay when none is pinned (see
 	// catalog.ProjectOrgConfigSource).
 	OrgConfigSource string
+	// OrgOverlayErr is why the catalog this run loaded skipped the org
+	// overlay (see catalog.OrgOverlayError), or nil when it applied or there
+	// is none.
+	OrgOverlayErr error
 	// DeclaredEnv holds the environment variables the project's devenv
 	// modules (devenv.nix, devenv.local.nix) declare, read by the command
 	// layer; the cloud isolation check judges environment separation from
 	// it. DeclaredEnvErr records a module that could not be read or parsed.
 	DeclaredEnv    map[string]string
 	DeclaredEnvErr error
+	// ExpectedDevenvHooks are the security git hooks (see
+	// catalog.SecurityHookIDs) the devenv.nix generated for the project
+	// enables, and ExpectedUnsetVars the variables its unsetEnvVars strips.
+	// Both are nil when the generator writes no devenv.nix (or its output is
+	// unknown, see ExpectedGenerationErr). The project's devenv modules
+	// must still enable and strip every one of them.
+	ExpectedDevenvHooks []string
+	ExpectedUnsetVars   []string
+	// ExpectedDevenvHookSettings are the generated devenv.nix's other
+	// git-hooks definitions that shape those hooks (a hook's entry, files or
+	// excludes, a setting for every hook), by attribute path, and
+	// DevenvHookSettings the project's modules' (see
+	// devenv.DevenvSecurity.SecuritySettings). They must match.
+	ExpectedDevenvHookSettings map[string]string
+	DevenvHookSettings         map[string]string
+	// DevenvHooks and DevenvUnsetVars are the git hooks the project's devenv
+	// modules (devenv.nix, devenv.local.nix) enable and the variables they
+	// strip, read by the command layer. DevenvSecurityErr records a module
+	// that could not be read or parsed.
+	DevenvHooks       []string
+	DevenvUnsetVars   []string
+	DevenvSecurityErr error
 	// ProbeTool runs a tool's version probe for the toolchain requirement
 	// checks; nil skips them.
 	ProbeTool ToolProber

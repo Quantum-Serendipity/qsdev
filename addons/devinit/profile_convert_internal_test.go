@@ -177,7 +177,11 @@ func TestMergeProfileWithFlags_HooksAdditive(t *testing.T) {
 // the named preset.
 func TestBuildAnswers_ClaudeHooksAddToProfileHooks(t *testing.T) {
 	t.Parallel()
-	p, ok := ensureProfileRegistry().Get("go-web")
+	profiles, err := projectProfiles()
+	if err != nil {
+		t.Fatal(err)
+	}
+	p, ok := profiles.Get("go-web")
 	if !ok {
 		t.Fatal("go-web profile not found")
 	}

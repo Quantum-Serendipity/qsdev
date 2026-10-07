@@ -14,20 +14,11 @@ func TestDenyRules_CommandForms(t *testing.T) {
 	t.Parallel()
 
 	rules := (&zig.Module{}).DenyRules(ecosystem.ModuleConfig{})
-	denied := func(cmd string) bool {
-		for _, r := range rules {
-			if denyutil.MatchesDenyRule(r, "Bash("+cmd+")") {
-				return true
-			}
-		}
-		return false
-	}
-
 	for _, cmd := range []string{
 		"zig fetch --save https://example.com/dep.tar.gz",
 		"zig fetch https://example.com/dep.tar.gz",
 	} {
-		if !denied(cmd) {
+		if _, ok := denyutil.FirstMatch(rules, "Bash("+cmd+")"); !ok {
 			t.Errorf("%q is not denied by %v", cmd, rules)
 		}
 	}
@@ -36,8 +27,8 @@ func TestDenyRules_CommandForms(t *testing.T) {
 		"zig fmt --check .",
 		"zig test src/main.zig",
 	} {
-		if denied(cmd) {
-			t.Errorf("%q is unexpectedly denied by %v", cmd, rules)
+		if rule, ok := denyutil.FirstMatch(rules, "Bash("+cmd+")"); ok {
+			t.Errorf("%q is unexpectedly denied by %q", cmd, rule)
 		}
 	}
 }

@@ -78,6 +78,17 @@ type DevenvYamlInputProvider interface {
 	DevenvYamlInputs(config ModuleConfig) []DevenvInput
 }
 
+// EnvKeeper is an optional interface for modules whose tools read
+// non-secret selector variables from the user's shell, such as a cloud
+// profile, region or project ID. The names are appended to devenv.yaml
+// clean.keep for every selected module, so a value the user exports reaches
+// the devenv shell. The list is static per module and must never name a
+// credential: pkg/ecosystem/modules TestEnvKeepers_NeverKeepCredentials checks
+// every registered keeper against the credential canon.
+type EnvKeeper interface {
+	KeepEnvVars() []string
+}
+
 // WizardFieldProvider is an optional interface that ecosystem modules can
 // implement to contribute additional wizard form fields. Modules that require
 // no extra user input simply omit this interface.
@@ -136,6 +147,18 @@ type DoctorCheckProvider interface {
 // than assumed to be enforced.
 type ToolchainRequirementProvider interface {
 	ToolchainRequirements(config ModuleConfig) []ToolchainRequirement
+}
+
+// ProxyKeyProvider is an optional interface for modules whose package
+// managers resolve through infrastructure.registry_proxy. ProxyKey returns the
+// DefaultProxyPaths key the module's generated configuration routes through
+// for config (for example "maven" or "gradle" for Java, by build tool), or ""
+// when this configuration is not routed. Generation resolves the proxy URL
+// for that key into ModuleConfig.RegistryProxy, and the security overview
+// reports the ecosystem as routed. A module that installs packages without
+// implementing it gets a "no proxy support" setup warning when a proxy is set.
+type ProxyKeyProvider interface {
+	ProxyKey(config ModuleConfig) string
 }
 
 // SetupWarner is an optional interface for modules that can tell when a

@@ -338,3 +338,27 @@ func findViolation(vs []FloorViolation, field string) (FloorViolation, bool) {
 	}
 	return vs[i], true
 }
+
+// TestLocalLayer_RejectsClaudePermissions checks claude_code.permissions in
+// .qsdev.local.yaml is dropped as a FloorViolation: the permission rules are
+// team policy, so only the committed file sets them.
+func TestLocalLayer_RejectsClaudePermissions(t *testing.T) {
+	t.Parallel()
+	project := &types.QsdevConfig{ClaudeCode: types.ClaudeCodeConfig{
+		Permissions: types.ClaudePermissionsConfig{Deny: []string{"Bash(terraform apply *)"}},
+	}}
+	local := &LocalConfig{ClaudeCode: types.ClaudeCodeConfig{
+		Permissions: types.ClaudePermissionsConfig{Allow: []string{"Bash(*)"}, Deny: []string{"Bash(x *)"}},
+	}}
+	result, err := ResolveConfig(nil, project, local)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := result.Config.ClaudeCode.Permissions
+	if len(got.Allow) != 0 || !slices.Equal(got.Deny, []string{"Bash(terraform apply *)"}) {
+		t.Errorf("permissions = %+v, want only the committed deny", got)
+	}
+	if _, ok := findViolation(result.Violations, "claude_code.permissions"); !ok {
+		t.Errorf("no claude_code.permissions violation in %+v", result.Violations)
+	}
+}

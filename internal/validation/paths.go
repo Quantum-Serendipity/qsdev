@@ -3,12 +3,14 @@ package validation
 import (
 	"errors"
 	"fmt"
-	"os"
 	"path"
 	"regexp"
 	"strings"
 
+	"github.com/Quantum-Serendipity/qsdev/internal/pathmatch"
+	"github.com/Quantum-Serendipity/qsdev/internal/projectctx"
 	"github.com/Quantum-Serendipity/qsdev/internal/sandbox/denylist"
+	"github.com/Quantum-Serendipity/qsdev/internal/secrets"
 )
 
 // windowsAbsRe matches a drive-absolute Windows path such as C:\Users or C:/x.
@@ -26,18 +28,20 @@ const maxReadPathLen = 1024
 // lift the read boundary altogether, nor contain a ".." segment, a comma (the
 // separator of the list handed to the hook) or a control character. It must
 // not be, contain or lie inside a credential store (~/.ssh, ~/.aws,
-// /etc/shadow and the rest of the sandbox deny list).
+// /etc/shadow, the sandbox system deny list and secrets.CredentialPaths).
 func CheckBoundaryReadPath(p string) error {
-	home, err := os.UserHomeDir()
+	home, err := projectctx.HomeDir()
 	if err != nil {
 		home = ""
 	}
-	return checkBoundaryReadPath(p, home)
+	return checkBoundaryReadPath(p, home, pathmatch.Platform)
 }
 
-// checkBoundaryReadPath is CheckBoundaryReadPath for the given home directory;
-// an empty home skips the checks of absolute paths against it.
-func checkBoundaryReadPath(p, home string) error {
+// checkBoundaryReadPath is CheckBoundaryReadPath for the given home directory,
+// comparing paths as a filesystem with opts does (so on macOS and Windows
+// "~/.SSH" is the credential store "~/.ssh"); an empty home skips the checks
+// of absolute paths against it.
+func checkBoundaryReadPath(p, home string, opts pathmatch.Options) error {
 	switch {
 	case p == "":
 		return errors.New("path is empty")
@@ -74,44 +78,38 @@ func checkBoundaryReadPath(p, home string) error {
 		return errors.New("path is the filesystem root or the home directory, which would lift the read boundary")
 	}
 	if homeRelative {
-		return checkCredentialOverlap(path.Clean("/"+rest), "/", denylist.HomeDenyRelPaths())
+		return checkCredentialOverlap(path.Clean("/"+rest), "/", secrets.CredentialPaths(), opts)
 	}
-	return checkAbsoluteReadPath(slashed[:len(slashed)-len(rest)]+path.Clean("/"+rest), home)
+	return checkAbsoluteReadPath(slashed[:len(slashed)-len(rest)]+path.Clean("/"+rest), home, opts)
 }
 
 // checkAbsoluteReadPath rejects an absolute read path that contains the home
 // directory or overlaps a system or per-user credential store.
-func checkAbsoluteReadPath(abs, home string) error {
-	if err := checkCredentialOverlap(abs, "", denylist.SystemDenyPaths()); err != nil {
+func checkAbsoluteReadPath(abs, home string, opts pathmatch.Options) error {
+	if err := checkCredentialOverlap(abs, "", denylist.SystemDenyPaths(), opts); err != nil {
 		return err
 	}
 	if home == "" {
 		return nil
 	}
 	home = path.Clean(toSlash(home))
-	if abs == home || isAncestor(abs, home) {
+	if opts.Within(home, abs) {
 		return errors.New("path is or contains the home directory, which would lift the read boundary")
 	}
-	return checkCredentialOverlap(abs, home+"/", denylist.HomeDenyRelPaths())
+	return checkCredentialOverlap(abs, home+"/", secrets.CredentialPaths(), opts)
 }
 
 // checkCredentialOverlap rejects p when it equals, contains or lies inside
 // any deny entry (each prefixed with prefix), since reading it would expose
 // the credential store.
-func checkCredentialOverlap(p, prefix string, deny []string) error {
+func checkCredentialOverlap(p, prefix string, deny []string, opts pathmatch.Options) error {
 	for _, d := range deny {
 		d = path.Clean(prefix + toSlash(d))
-		if p == d || isAncestor(p, d) || isAncestor(d, p) {
+		if opts.Within(p, d) || opts.Within(d, p) {
 			return fmt.Errorf("path overlaps the credential store %s", d)
 		}
 	}
 	return nil
-}
-
-// isAncestor reports whether ancestor is a proper parent directory of
-// descendant; both are cleaned, slash-separated paths.
-func isAncestor(ancestor, descendant string) bool {
-	return strings.HasPrefix(descendant, strings.TrimSuffix(ancestor, "/")+"/")
 }
 
 // toSlash converts Windows separators to slashes on every platform, since the

@@ -10,12 +10,15 @@ import (
 	"maps"
 	"os"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strings"
 	"time"
 
 	"github.com/spf13/cobra"
 
+	"github.com/Quantum-Serendipity/qsdev/addons/claudecode"
+	"github.com/Quantum-Serendipity/qsdev/addons/devenv"
 	"github.com/Quantum-Serendipity/qsdev/internal/claudesettings"
 	"github.com/Quantum-Serendipity/qsdev/internal/cmdutil"
 	qsdevconfig "github.com/Quantum-Serendipity/qsdev/internal/config"
@@ -24,6 +27,7 @@ import (
 	"github.com/Quantum-Serendipity/qsdev/internal/tier"
 	"github.com/Quantum-Serendipity/qsdev/internal/toolreg"
 	"github.com/Quantum-Serendipity/qsdev/internal/update"
+	"github.com/Quantum-Serendipity/qsdev/internal/validation"
 	"github.com/Quantum-Serendipity/qsdev/pkg/branding"
 	"github.com/Quantum-Serendipity/qsdev/pkg/fileutil"
 	"github.com/Quantum-Serendipity/qsdev/pkg/generate"
@@ -50,6 +54,7 @@ type toolChange struct {
 // toolChangeResult reports what applying a toolChange did.
 type toolChangeResult struct {
 	written   []types.GeneratedFile
+	removed   []string // no-longer-generated files deleted
 	notices   []string
 	nixResult *update.NixUpdateResult
 }
@@ -57,16 +62,22 @@ type toolChangeResult struct {
 // runEnable enables a tool: validates prerequisites, generates files, and
 // updates persisted answers and state.
 func runEnable(cmd *cobra.Command, toolName string, opts enableOptions) error {
-	projectRoot, err := cmdutil.ProjectRoot()
+	pc, err := cmdutil.Project(cmd)
 	if err != nil {
 		return err
 	}
+	projectRoot := pc.Root
 	if err := requireJoined(projectRoot); err != nil {
 		return err
 	}
+	devenv.PrintProjectDefaults(cmd.OutOrStdout())
 
 	registry := toolreg.DefaultRegistry()
-	answers, tool, err := loadToolForEnable(cmdContext(cmd), cmd.ErrOrStderr(), registry, projectRoot, toolName)
+	tool, isTool := registry.ByName(toolName)
+	if !isTool {
+		return runLanguageChange(cmd, toolName, true, opts.DryRun, opts.Force)
+	}
+	answers, err := loadLifecycleAnswers(cmdContext(cmd), cmd.ErrOrStderr(), projectRoot)
 	if err != nil {
 		return err
 	}
@@ -130,20 +141,56 @@ func runEnable(cmd *cobra.Command, toolName string, opts enableOptions) error {
 	return nil
 }
 
-// loadToolForEnable loads saved answers, infers enabled tools, and looks up
-// the named tool in registry.
-func loadToolForEnable(ctx context.Context, w io.Writer, registry *toolreg.Registry, projectRoot, toolName string) (types.WizardAnswers, *toolreg.Tool, error) {
-	answers, err := loadLifecycleAnswers(ctx, w, projectRoot)
-	if err != nil {
-		return types.WizardAnswers{}, nil, err
-	}
+// unknownNameError reports a name that is neither a tool nor a language.
+func unknownNameError(name string) error {
+	return fmt.Errorf("unknown tool or language %q; use '%s list' to see available tools, or name a supported language: %s",
+		name, branding.Get().AppName, strings.Join(validation.Languages(), ", "))
+}
 
-	tool, ok := registry.ByName(toolName)
-	if !ok {
-		return types.WizardAnswers{}, nil, fmt.Errorf("unknown tool %q; use '%s list' to see available tools", toolName, branding.Get().AppName)
-	}
+// languageForceError rejects --force on a language name: the flag's narrow
+// tool-file meaning has no language counterpart, and mapping it to update's
+// overwrite mode would discard the user's edits to every managed file.
+func languageForceError() error {
+	return fmt.Errorf("--force does not apply to language modules: edits to managed files are merged or kept as sidecars; run '%s update %s' to replace them with freshly generated versions",
+		branding.Get().AppName, overwriteModifiedFlag)
+}
 
-	return answers, tool, nil
+// runLanguageChange adds (add) or removes the language module name through
+// the update pipeline, so one step regenerates the devenv files, the Claude
+// Code settings with the module's deny rules, the answers and .qsdev.yaml.
+// Tools are resolved before languages (the catalog keeps the two name spaces
+// disjoint); a name that is neither is an error. Modified managed files are
+// always merged or kept, never overwritten, so force is refused.
+func runLanguageChange(cmd *cobra.Command, name string, add, dryRun, force bool) error {
+	if !validation.IsValidLanguage(name) {
+		return unknownNameError(name)
+	}
+	if force {
+		return languageForceError()
+	}
+	changed := false
+	opts := UpdateOptions{DryRun: dryRun, OverwriteFlag: "'" + branding.Get().AppName + " update " + overwriteModifiedFlag + "'"}
+	err := runUpdateWith(cmd, opts, func(a *types.WizardAnswers) (bool, error) {
+		if add {
+			changed = a.AddLanguage(name)
+		} else {
+			changed = a.RemoveLanguage(name)
+		}
+		return changed, nil
+	})
+	verb := "disabled"
+	if add {
+		verb = "enabled"
+	}
+	switch {
+	case err != nil:
+		return err
+	case !changed:
+		fmt.Fprintf(cmd.OutOrStdout(), "Language %q is already %s.\n", name, verb)
+	case !dryRun:
+		fmt.Fprintf(cmd.OutOrStdout(), "Language %q %s.\n", name, verb)
+	}
+	return nil
 }
 
 // loadLifecycleAnswers loads saved answers (empty if no prior init) and
@@ -173,13 +220,14 @@ func lifecycleAccumulatorMode(answers types.WizardAnswers) generationScope {
 
 // generateToolFiles renders the tool's exclusive files (its GenerateFunc plus
 // any file the generators emit under its exclusive paths) and the current
-// content of every shared file it contributes to, from the given answers.
-func generateToolFiles(tool *toolreg.Tool, toolName string, answers types.WizardAnswers) (exclusive, shared []types.GeneratedFile, err error) {
+// content of every shared file it contributes to, from the given answers, and
+// returns every file the generators emit for them (all).
+func generateToolFiles(tool *toolreg.Tool, toolName string, answers types.WizardAnswers) (exclusive, shared, all []types.GeneratedFile, err error) {
 	have := make(map[string]bool)
 	if tool.GenerateFunc != nil {
 		generated, err := tool.GenerateFunc(answers)
 		if err != nil {
-			return nil, nil, fmt.Errorf("generating files for %q: %w", toolName, err)
+			return nil, nil, nil, fmt.Errorf("generating files for %q: %w", toolName, err)
 		}
 		for _, f := range generated {
 			f.Owner = toolName
@@ -190,7 +238,7 @@ func generateToolFiles(tool *toolreg.Tool, toolName string, answers types.Wizard
 
 	acc, err := runAccumulator(answers, lifecycleAccumulatorMode(answers))
 	if err != nil {
-		return nil, nil, fmt.Errorf("generating files: %w", err)
+		return nil, nil, nil, fmt.Errorf("generating files: %w", err)
 	}
 	sharedPaths := make(map[string]bool)
 	for _, sf := range tool.SharedFiles() {
@@ -206,7 +254,7 @@ func generateToolFiles(tool *toolreg.Tool, toolName string, answers types.Wizard
 			have[f.Path] = true
 		}
 	}
-	return exclusive, shared, nil
+	return exclusive, shared, acc.allFiles, nil
 }
 
 // planToolEnable computes every file an enable writes and refuses — before
@@ -217,7 +265,7 @@ func planToolEnable(
 	tool *toolreg.Tool, toolName, projectRoot string,
 	answers types.WizardAnswers, existingState types.GeneratedState, force bool,
 ) (toolChange, error) {
-	exclusive, shared, err := generateToolFiles(tool, toolName, answers)
+	exclusive, shared, all, err := generateToolFiles(tool, toolName, answers)
 	if err != nil {
 		return toolChange{}, err
 	}
@@ -243,6 +291,7 @@ func planToolEnable(
 	if err != nil {
 		return toolChange{}, err
 	}
+	exclusive = append(exclusive, hookSupportFiles(projectRoot, exclusive, all, existingState)...)
 	if err := checkExclusiveWrites(projectRoot, exclusive, modStatus, force); err != nil {
 		return toolChange{}, err
 	}
@@ -254,6 +303,40 @@ func planToolEnable(
 	}
 	change.notices = append(kept, change.notices...)
 	return change, nil
+}
+
+// hookSupportFiles returns, from the generators' output (all), the support
+// files the hooks among exclusive load at run time (claudecode.HookSupportPaths:
+// the shared Python hook library) that are missing, differ on disk or are not
+// tracked, so an enable writes and records them with the hook. Without its
+// library a hook blocks every call, and the library may be absent: a disable
+// that stopped its last user removed it, or an older qsdev never wrote it.
+// The files keep their generator owner, so the tool's own disable leaves them
+// to the support-file cleanup (supportOrphans).
+func hookSupportFiles(projectRoot string, exclusive, all []types.GeneratedFile, st types.GeneratedState) []types.GeneratedFile {
+	need := make(map[string]bool)
+	for _, f := range exclusive {
+		for _, p := range claudecode.HookSupportPaths(f.Path) {
+			need[p] = true
+		}
+	}
+	for _, f := range exclusive {
+		delete(need, f.Path)
+	}
+	var support []types.GeneratedFile
+	for _, f := range all {
+		if !need[f.Path] {
+			continue
+		}
+		delete(need, f.Path)
+		_, tracked := st.Files[f.Path]
+		onDisk, err := os.ReadFile(filepath.Join(projectRoot, filepath.FromSlash(f.Path)))
+		if tracked && err == nil && bytes.Equal(onDisk, f.Content) {
+			continue
+		}
+		support = append(support, f)
+	}
+	return support
 }
 
 // keepUserOwnedFiles honours the Skip (skip-if-exists) strategy for a tool's
@@ -454,6 +537,7 @@ func applyToolChange(projectRoot string, change toolChange, st types.GeneratedSt
 	sharedWritten := outcome.written
 	result.nixResult = outcome.nixResult
 	result.notices = append(result.notices, change.notices...)
+	result.notices = append(result.notices, outcome.held...)
 
 	writtenPaths := make(map[string]bool, len(sharedWritten))
 	for _, f := range sharedWritten {
@@ -470,6 +554,15 @@ func applyToolChange(projectRoot string, change toolChange, st types.GeneratedSt
 		}
 	}
 	result.written = append(result.written, sharedWritten...)
+	for _, fp := range change.shared.Files {
+		if !outcome.dropped[fp.Path] {
+			continue
+		}
+		delete(st.Files, fp.Path)
+		if fp.Action == UpdateActionRemove {
+			result.removed = append(result.removed, fp.Path)
+		}
+	}
 
 	recorded := state.RecordFiles(result.written)
 	for _, fp := range change.shared.Files {
@@ -523,24 +616,25 @@ func saveToolState(projectRoot string, st types.GeneratedState, toolName string,
 // runDisable disables a tool: validates dependents, removes files, and
 // updates persisted answers and state.
 func runDisable(cmd *cobra.Command, toolName string, opts disableOptions) error {
-	projectRoot, err := cmdutil.ProjectRoot()
+	pc, err := cmdutil.Project(cmd)
 	if err != nil {
 		return err
 	}
+	projectRoot := pc.Root
 	if err := requireJoined(projectRoot); err != nil {
 		return err
 	}
+	devenv.PrintProjectDefaults(cmd.OutOrStdout())
 
 	registry := toolreg.DefaultRegistry()
+	tool, ok := registry.ByName(toolName)
+	if !ok {
+		return runLanguageChange(cmd, toolName, false, false, opts.Force)
+	}
 
 	answers, err := loadLifecycleAnswers(cmdContext(cmd), cmd.ErrOrStderr(), projectRoot)
 	if err != nil {
 		return err
-	}
-
-	tool, ok := registry.ByName(toolName)
-	if !ok {
-		return fmt.Errorf("unknown tool %q; use '%s list' to see available tools", toolName, branding.Get().AppName)
 	}
 
 	// Already disabled — no-op.
@@ -579,7 +673,7 @@ func runDisable(cmd *cobra.Command, toolName string, opts disableOptions) error 
 	}
 	answers.EnabledTools[toolName] = false
 
-	change, err := planToolDisable(tool, toolName, projectRoot, answers, existingState)
+	change, err := planToolDisable(registry, tool, toolName, projectRoot, answers, existingState)
 	if err != nil {
 		return err
 	}
@@ -592,6 +686,7 @@ func runDisable(cmd *cobra.Command, toolName string, opts disableOptions) error 
 	if err != nil {
 		return err
 	}
+	removed = append(removed, result.removed...)
 	result.notices = append(removal.notices, result.notices...)
 	result.notices = append(result.notices, removeStaleSections(tool, projectRoot, change, existingState)...)
 
@@ -638,12 +733,14 @@ func requireCommittedConfig(projectRoot, toolName string) error {
 		toolName, errOptOutNeedsCommittedConfig, b.ConfigFile, b.AppName)
 }
 
-// planToolDisable regenerates the tool's shared files with the tool disabled.
+// planToolDisable regenerates the tool's shared files with the tool disabled,
+// and cleans up the generator support files no longer generated without it
+// (see supportOrphans).
 func planToolDisable(
-	tool *toolreg.Tool, toolName, projectRoot string,
+	registry *toolreg.Registry, tool *toolreg.Tool, toolName, projectRoot string,
 	answers types.WizardAnswers, existingState types.GeneratedState,
 ) (toolChange, error) {
-	_, shared, err := generateToolFiles(tool, toolName, answers)
+	_, shared, all, err := generateToolFiles(tool, toolName, answers)
 	if err != nil {
 		return toolChange{}, err
 	}
@@ -652,7 +749,23 @@ func planToolDisable(
 	if err != nil {
 		return toolChange{}, err
 	}
+	plan.Files = append(plan.Files, supportOrphans(registry, planOrphans(existingState, all, modStatus, answers), existingState)...)
 	return toolChange{shared: plan, notices: notices}, nil
+}
+
+// supportOrphans keeps, of the orphan cleanup plans, those for generator
+// support files: tracked files whose owner is set but is not a registry tool,
+// such as the shared Python hook library, which is generated only while some
+// Python hook is. A disable that stops the last user of one cleans it up as
+// update would (unmodified: removed; otherwise left and untracked), instead
+// of leaving it inert until the next update. Files a tool owns are left to
+// that tool's own disable.
+func supportOrphans(registry *toolreg.Registry, plans []FileUpdatePlan, st types.GeneratedState) []FileUpdatePlan {
+	return slices.DeleteFunc(plans, func(fp FileUpdatePlan) bool {
+		owner := st.Files[fp.Path].Owner
+		_, isTool := registry.ByName(owner)
+		return owner == "" || isTool
+	})
 }
 
 // exclusiveRemoval is the validated set of tool files a disable deletes.
@@ -891,7 +1004,10 @@ func runList(cmd *cobra.Command, opts listOptions) error {
 	registry := toolreg.DefaultRegistry()
 
 	// Load project state for enabled/disabled display.
-	projectRoot, _ := cmdutil.ProjectRoot()
+	var projectRoot string
+	if pc, err := cmdutil.Project(cmd); err == nil {
+		projectRoot = pc.Root
+	}
 	var enabledTools map[string]bool
 	if projectRoot != "" {
 		if ans, err := loadAnswersOrEmpty(projectRoot); err == nil {

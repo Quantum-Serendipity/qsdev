@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/Quantum-Serendipity/qsdev/addons/claudecode"
+	"github.com/Quantum-Serendipity/qsdev/internal/testutil"
 )
 
 // listHookStatuses runs `claude hooks list --json` and indexes the first
@@ -61,8 +62,8 @@ func TestHooksList_ReportsDeployedState(t *testing.T) {
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			dir := t.TempDir()
-			chdir(t, dir)
+			dir := testutil.IsolatedDir(t)
+			t.Chdir(dir)
 			mustRunClaude(t, "init", "--yes", "--permission-preset", "standard")
 			tc.mutate(t, dir)
 
@@ -80,8 +81,8 @@ func TestHooksList_ReportsDeployedState(t *testing.T) {
 // TestHooksList_CorruptAnswersFails guards F100: a corrupt answers file is an
 // error, not a silent "nothing configured" listing.
 func TestHooksList_CorruptAnswersFails(t *testing.T) {
-	dir := t.TempDir()
-	chdir(t, dir)
+	dir := testutil.IsolatedDir(t)
+	t.Chdir(dir)
 	writeFile(t, claudecode.ExportAnswersPath(dir), "hooks: [not: valid\n")
 
 	if out, err := runClaudeCmd(t, "hooks", "list"); err == nil {
@@ -91,8 +92,8 @@ func TestHooksList_CorruptAnswersFails(t *testing.T) {
 
 // TestHooksList_NoAnswersIsNotAnError keeps the listing usable before init.
 func TestHooksList_NoAnswersIsNotAnError(t *testing.T) {
-	dir := t.TempDir()
-	chdir(t, dir)
+	dir := testutil.IsolatedDir(t)
+	t.Chdir(dir)
 	for name, s := range listHookStatuses(t) {
 		if s.Deployment != "not deployed" {
 			t.Errorf("%s: deployment = %q before init, want not deployed", name, s.Deployment)
@@ -104,8 +105,8 @@ func TestHooksList_NoAnswersIsNotAnError(t *testing.T) {
 // no .qsdev.yaml hooks.tool_gates lists allows every tool, so the listing
 // marks it "no policy" rather than as a plain configured control.
 func TestHooksList_ToolGatesWithoutPolicy(t *testing.T) {
-	dir := t.TempDir()
-	chdir(t, dir)
+	dir := testutil.IsolatedDir(t)
+	t.Chdir(dir)
 	mustRunClaude(t, "init", "--yes", "--permission-preset", "standard")
 	mustRunClaude(t, "add-hook", "tool-gates")
 
@@ -125,8 +126,8 @@ func TestHooksList_ToolGatesWithoutPolicy(t *testing.T) {
 // project's .claude/settings.json, so the listing must not claim a deployment
 // tier (team/org managed settings are not generated).
 func TestHooksList_NoDeploymentTier(t *testing.T) {
-	dir := t.TempDir()
-	chdir(t, dir)
+	dir := testutil.IsolatedDir(t)
+	t.Chdir(dir)
 	tests := []struct {
 		name string
 		args []string

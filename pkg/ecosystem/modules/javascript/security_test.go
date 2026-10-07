@@ -1,10 +1,12 @@
 package javascript_test
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/BurntSushi/toml"
 
@@ -157,5 +159,50 @@ func writeTestFile(t *testing.T, dir, name, content string) {
 	t.Helper()
 	if err := os.WriteFile(filepath.Join(dir, name), []byte(content), 0o644); err != nil {
 		t.Fatal(err)
+	}
+}
+
+// TestSecurityConfigs_MinReleaseAgeByComplianceLevel checks every JS package
+// manager's age gate follows the compliance window (ModuleConfig.MinReleaseAge)
+// in its own unit, never below its historical floor (D18: npm and pnpm 3
+// days, yarn and bun 7 days). The zero ModuleConfig is baseline, and a
+// catalog overlay's shorter window (24h) never loosens any manager.
+func TestSecurityConfigs_MinReleaseAgeByComplianceLevel(t *testing.T) {
+	t.Parallel()
+	levels := []struct {
+		name string
+		age  time.Duration
+	}{
+		{"unset", 0},
+		{"overlay-24h", 24 * time.Hour},
+		{"baseline", 72 * time.Hour},
+		{"enhanced", 168 * time.Hour},
+		{"strict", 336 * time.Hour},
+	}
+	wants := []struct {
+		pm     string
+		path   string
+		format string
+		values []string // per level: unset, overlay-24h, baseline, enhanced, strict
+	}{
+		{"npm", ".npmrc", "\nmin-release-age=%s\n", []string{"3", "3", "3", "7", "14"}},
+		{"pnpm", "pnpm-workspace.yaml", "\nminimumReleaseAge: %s ", []string{"4320", "4320", "4320", "10080", "20160"}},
+		{"yarn", ".yarnrc.yml", "\nnpmMinimalAgeGate: %s ", []string{"7d", "7d", "7d", "7d", "14d"}},
+		{"bun", "bunfig.toml", "\nminimumReleaseAge = %s\n", []string{"604800", "604800", "604800", "604800", "1209600"}},
+	}
+	for _, w := range wants {
+		for i, lvl := range levels {
+			t.Run(w.pm+"/"+lvl.name, func(t *testing.T) {
+				t.Parallel()
+				configs := (&javascript.Module{}).SecurityConfigs(ecosystem.ModuleConfig{PackageManager: w.pm, MinReleaseAge: lvl.age})
+				if len(configs) != 1 || configs[0].Path != w.path {
+					t.Fatalf("SecurityConfigs(%s) = %v, want one %s", w.pm, configs, w.path)
+				}
+				want := fmt.Sprintf(w.format, w.values[i])
+				if got := string(configs[0].Content); !strings.Contains(got, want) {
+					t.Errorf("%s lacks %q:\n%s", w.path, want, got)
+				}
+			})
+		}
 	}
 }

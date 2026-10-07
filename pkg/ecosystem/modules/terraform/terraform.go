@@ -23,6 +23,7 @@ import (
 
 // Compile-time interface compliance checks.
 var _ ecosystem.EcosystemModule = (*Module)(nil)
+var _ ecosystem.PackageProvider = (*Module)(nil)
 var _ ecosystem.SecretDeclarer = (*Module)(nil)
 var _ ecosystem.DenyRuleProvider = (*Module)(nil)
 var _ ecosystem.ReadDenyRuleProvider = (*Module)(nil)
@@ -196,6 +197,13 @@ func (m *Module) DevenvNixFragment(config ecosystem.ModuleConfig) (string, error
 	return b.String(), nil
 }
 
+// DevenvPackages provisions tflint and tfsec, which the CI scan runs for
+// both variants: the matching pre-commit hooks add them only at the tiers
+// those hooks run at.
+func (m *Module) DevenvPackages(_ ecosystem.ModuleConfig) []string {
+	return []string{"tflint", "tfsec"}
+}
+
 // DevenvYamlInputs contributes the nixpkgs-terraform flake input when the
 // fragment pins languages.terraform.version; devenv refuses to evaluate the
 // version option without it. The input and the version line are an
@@ -204,7 +212,7 @@ func (m *Module) DevenvYamlInputs(config ecosystem.ModuleConfig) []ecosystem.Dev
 	if version, err := pinnedVersion(config); err != nil || version == "" {
 		return nil
 	}
-	return []ecosystem.DevenvInput{{URL: nixpkgsTerraformInput, Follows: "nixpkgs"}}
+	return []ecosystem.DevenvInput{{URL: nixpkgsTerraformInput, Follows: "nixpkgs", Options: []string{"languages.terraform.version"}}}
 }
 
 // pinnedVersion returns the version the fragment pins: "" for OpenTofu (no
@@ -264,7 +272,6 @@ func (m *Module) SecurityConfigs(config ecosystem.ModuleConfig) []types.Generate
 func (m *Module) PreCommitHooks(config ecosystem.ModuleConfig) []ecosystem.HookConfig {
 	variant := config.Extra("variant", "terraform")
 	binary := binaryName(variant)
-	nixPkg := nixPackageName(variant)
 	dirs := configDirs(config)
 	tflintEntry := "tflint"
 	if len(dirs) > 0 {
@@ -276,8 +283,10 @@ func (m *Module) PreCommitHooks(config ecosystem.ModuleConfig) []ecosystem.HookC
 	// These are custom hooks (BuiltIn:false), not git-hooks.nix built-ins: the
 	// built-in `terraform-format` runs plain `terraform fmt`, which would discard
 	// this module's binary selection (tofu for OpenTofu) and the `-check`/
-	// `-recursive` flags. NixPackage puts the right binary on PATH so the custom
-	// Entry resolves.
+	// `-recursive` flags. terraform-format runs the variant's devenv language
+	// package (LanguagePackage), the same terraform/tofu build that
+	// languages.<variant>.version pins and that devenv's language module binds
+	// to the hook; the linters bring their own NixPackage.
 	return []ecosystem.HookConfig{
 		{
 			ID:            "terraform-format",
@@ -289,7 +298,8 @@ func (m *Module) PreCommitHooks(config ecosystem.ModuleConfig) []ecosystem.HookC
 			Stages:        []string{"pre-commit"},
 			PassFilenames: false,
 			BuiltIn:       false,
-			NixPackage:    nixPkg,
+			// DevenvNixFragment always enables languages.<variant>.
+			LanguagePackage: variant,
 		},
 		validateHook(variant, dirs),
 		{
@@ -334,8 +344,7 @@ const configFilesPattern = `\.(tf|tofu|tfvars)(\.json)?$`
 // configured). The two steps need a shell, so the entry runs through `sh -c`
 // with NixPackage "bash" (entry rewriting turns `sh` into
 // ${pkgs.bash}/bin/sh); the Terraform binary itself resolves from the devenv
-// environment, where languages.<variant>.enable and the sibling hooks'
-// NixPackage install it.
+// environment, where languages.<variant>.enable installs it.
 //
 // When the configuration lives below the root (dirs, see ExtraConfigDirs)
 // each directory is initialized and validated through -chdir; validating the
@@ -364,20 +373,15 @@ func validateHook(variant string, dirs []string) ecosystem.HookConfig {
 	}
 }
 
-// nixPackageName returns the nixpkgs package providing the CLI binary for the
-// given Terraform variant: opentofu (tofu) or terraform.
-func nixPackageName(variant string) string {
-	if variant == "opentofu" {
-		return "opentofu"
-	}
-	return "terraform"
-}
-
 // deniedSubcommands are the Terraform/OpenTofu subcommands the agent must not
 // run: ones that change real infrastructure or state (apply, destroy, import,
-// state push/rm/mv, force-unlock), fetch providers or modules past the lock
-// file (init, get, providers), and ones that print state secrets in plain
-// text (state pull, output, show -json).
+// refresh, taint, untaint, state push/rm/mv/replace-provider, workspace
+// delete, force-unlock), ones that run against real providers (test creates
+// and destroys real resources), fetch providers or modules past the lock file
+// (init, get, providers), handle registry credentials (login, logout), and
+// ones that print state secrets in plain text (state pull, output, show -json,
+// console, which evaluates any expression against state). workspace new and
+// select stay allowed: they only switch the local working state.
 var deniedSubcommands = []string{
 	"init",
 	"apply",
@@ -386,10 +390,19 @@ var deniedSubcommands = []string{
 	"import",
 	"force-unlock",
 	"providers",
+	"refresh",
+	"taint",
+	"untaint",
+	"test",
+	"console",
+	"login",
+	"logout",
 	"state pull",
 	"state push",
 	"state rm",
 	"state mv",
+	"state replace-provider",
+	"workspace delete",
 	"output",
 	"show *-json*",
 }
@@ -400,8 +413,13 @@ var deniedSubcommands = []string{
 var iacBinaries = []string{"terraform", "tofu"}
 
 // DenyRules returns Claude Code deny-rule patterns for Terraform/OpenTofu.
-// Each subcommand in deniedSubcommands is denied for both binaries, plain and
-// after global options such as -chdir=DIR (denyutil.SubcommandRules).
+// Each subcommand in deniedSubcommands is denied for both binaries, plain,
+// after global options such as -chdir=DIR and behind an env prefix
+// (denyutil.SubcommandRules). Because a global option is matched as any text
+// before the subcommand word, a later argument spelled like a denied
+// subcommand is over-blocked too (`terraform fmt test` for a directory named
+// test); that is an accepted residual, and such a command can be run by hand
+// in a terminal.
 func (m *Module) DenyRules(_ ecosystem.ModuleConfig) []string {
 	var rules []string
 	for _, bin := range iacBinaries {

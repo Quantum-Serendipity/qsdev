@@ -5,9 +5,8 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/Quantum-Serendipity/qsdev/internal/logging"
 	"github.com/Quantum-Serendipity/qsdev/internal/mcpserve/container"
-	"github.com/Quantum-Serendipity/qsdev/pkg/branding"
+	"github.com/Quantum-Serendipity/qsdev/internal/projectctx"
 )
 
 // Project-root resolution environment variables, consulted in this order.
@@ -15,11 +14,6 @@ const (
 	envProjectRoot     = container.EnvProjectRoot
 	envGdevProjectRoot = "GDEV_PROJECT_ROOT"
 )
-
-// fallbackMarkers are weaker project-root markers used only when no .qsdev.yaml
-// is found while walking up the tree. Order is irrelevant: any one of them
-// present in a directory makes that directory a candidate root.
-var fallbackMarkers = []string{".git", "go.mod", "package.json"}
 
 // ResolveOptions carries every input the project-root resolver may consult. The
 // function-valued fields are injectable so the resolver is fully unit-testable
@@ -29,7 +23,8 @@ type ResolveOptions struct {
 	FlagRoot string
 	// Getenv reads environment variables; defaults to os.Getenv when nil.
 	Getenv func(string) string
-	// Getwd reports the current working directory; defaults to os.Getwd when nil.
+	// Getwd reports the current working directory; defaults to
+	// projectctx.WorkingDir when nil.
 	Getwd func() (string, error)
 }
 
@@ -47,11 +42,12 @@ type ResolveOptions struct {
 //  2. The QSDEV_PROJECT_ROOT environment variable, then GDEV_PROJECT_ROOT.
 //  3. The current working directory (os.Getwd).
 //
-// From the chosen start directory the resolver walks UP the tree to the nearest
-// directory containing .qsdev.yaml (the definitive qsdev project marker). If no
-// .qsdev.yaml is found, it walks up again looking for a weaker marker (.git,
-// go.mod, package.json). If nothing matches, the absolute start directory is
-// returned so callers always receive a usable root.
+// From the chosen start directory the project is resolved by
+// projectctx.Resolve, the resolver every qsdev command shares: the nearest
+// trusted project marker, bounded by the git toplevel and the device. Without
+// a trusted marker the root is the absolute start directory, exactly as for
+// the CLI, so callers always receive a usable root. The start directory must
+// exist.
 //
 // NOTE on precedence vs. the spec's numbered list: the spec lists the flag last
 // but explicitly labels it "an explicit override". Treating an explicit flag as
@@ -64,7 +60,7 @@ func ResolveProjectRoot(o ResolveOptions) (string, error) {
 	}
 	getwd := o.Getwd
 	if getwd == nil {
-		getwd = os.Getwd
+		getwd = projectctx.WorkingDir
 	}
 
 	start, err := pickStartDir(o.FlagRoot, getenv, getwd)
@@ -77,13 +73,16 @@ func ResolveProjectRoot(o ResolveOptions) (string, error) {
 		return "", fmt.Errorf("resolving absolute path for %q: %w", start, err)
 	}
 
-	if root, ok := walkUpForFile(abs, configFileName()); ok {
-		return root, nil
+	pc, err := projectctx.Resolve(abs, projectctx.Enclosing)
+	if err != nil {
+		return "", err
 	}
-	if root, ok := walkUpForAny(abs, fallbackMarkers); ok {
-		return root, nil
-	}
-	return abs, nil
+	// Root is the trusted marker's directory, or the start directory when no
+	// trusted marker exists. The git toplevel is deliberately not a fallback:
+	// nothing vouches for who created that .git, so another local user could
+	// plant one (and a .qsdev.yaml policy) in a shared ancestor. The CLI
+	// resolves the same Root, so both agree on every start directory.
+	return pc.Root, nil
 }
 
 // pickStartDir applies the start-directory precedence chain.
@@ -102,48 +101,4 @@ func pickStartDir(flagRoot string, getenv func(string) string, getwd func() (str
 		return "", fmt.Errorf("determining working directory: %w", err)
 	}
 	return wd, nil
-}
-
-// configFileName returns the qsdev project marker filename (.qsdev.yaml),
-// sourced from branding so it tracks any rebrand rather than being hardcoded.
-func configFileName() string {
-	if cf := branding.Get().ConfigFile; cf != "" {
-		return cf
-	}
-	return ".qsdev.yaml"
-}
-
-// walkUpForFile walks from dir toward the filesystem root, returning the first
-// directory that directly contains a regular file named name. It shares the
-// traversal logic with the rest of qsdev via logging.WalkUp, supplying its own
-// "regular file named name" marker predicate.
-func walkUpForFile(dir, name string) (string, bool) {
-	return logging.WalkUp(dir, func(d string) bool {
-		return regularFileExists(filepath.Join(d, name))
-	})
-}
-
-// walkUpForAny walks from dir toward the filesystem root, returning the first
-// directory that contains any of the given markers (file or directory). Like
-// walkUpForFile it delegates traversal to logging.WalkUp and keeps its own
-// "any marker present" predicate.
-func walkUpForAny(dir string, markers []string) (string, bool) {
-	return logging.WalkUp(dir, func(d string) bool {
-		for _, m := range markers {
-			if pathExists(filepath.Join(d, m)) {
-				return true
-			}
-		}
-		return false
-	})
-}
-
-func regularFileExists(path string) bool {
-	info, err := os.Stat(path)
-	return err == nil && !info.IsDir()
-}
-
-func pathExists(path string) bool {
-	_, err := os.Stat(path)
-	return err == nil
 }

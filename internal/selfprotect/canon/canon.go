@@ -12,9 +12,9 @@ import (
 	"strings"
 	"sync"
 	"syscall"
-	"unicode"
-	"unicode/utf8"
 
+	"github.com/Quantum-Serendipity/qsdev/internal/pathmatch"
+	"github.com/Quantum-Serendipity/qsdev/internal/projectctx"
 	"github.com/Quantum-Serendipity/qsdev/internal/userhome"
 	"github.com/Quantum-Serendipity/qsdev/pkg/branding"
 )
@@ -24,7 +24,7 @@ var (
 	protectedSuffixes []protectedEntry
 	protectedHomes    []string
 	// prefixKeys and suffixKeys are the path keys of protectedPrefixes and
-	// protectedSuffixes under every matchOptions, computed once by
+	// protectedSuffixes under every pathmatch.Options, computed once by
 	// ensureInit: every path a rule checks is compared against every entry,
 	// and on Windows computing a key copies the path several times.
 	prefixKeys entryKeys
@@ -33,9 +33,9 @@ var (
 	initErr    error
 
 	// userHomeDir resolves the current user's home directory. It is a package
-	// variable (defaulting to os.UserHomeDir) so tests can simulate a
+	// variable (defaulting to projectctx.HomeDir) so tests can simulate a
 	// home-resolution failure and verify the fail-closed behavior of IsProtected.
-	userHomeDir = os.UserHomeDir
+	userHomeDir = projectctx.HomeDir
 
 	// accountHomeDir resolves the home directory the user database records
 	// for the account, where the CLI reads the org overlay from (a variable
@@ -45,6 +45,10 @@ var (
 	// namedHomeDir resolves the home directory of a named account, which
 	// `~name` expands to (a variable for tests).
 	namedHomeDir = userhome.Named
+
+	// userDirs resolves the per-user state and cache directories (a variable
+	// for tests).
+	userDirs = projectctx.UserDirs
 
 	// executablePath resolves the running qsdev binary (a variable for tests).
 	executablePath = os.Executable
@@ -79,6 +83,9 @@ func ensureInit() error {
 			protectedPrefixes = append(protectedPrefixes, protectedEntry{dir + string(filepath.Separator), "system-config"})
 		}
 		protectedPrefixes = append(protectedPrefixes, claudeConfigDirEntries(os.Getenv(ClaudeConfigDirEnv))...)
+		if dirs, err := userDirs(); err == nil {
+			protectedPrefixes = append(protectedPrefixes, userDirEntries(dirs)...)
+		}
 		// The CLI reads the overlay below the account's home directory
 		// (catalog.OrgConfigPath); the one below HOME is protected too.
 		protectedHomes = []string{home}
@@ -101,6 +108,12 @@ func ensureInit() error {
 // its environment to every hook, so the value a hook sees is the directory the
 // running session loads its user settings from.
 const ClaudeConfigDirEnv = "CLAUDE_CONFIG_DIR"
+
+// AgentEnvMarkers are the environment variables AI coding agents export to the
+// shells they run commands in (Claude Code sets CLAUDECODE=1). The CLI's human
+// gate refuses a sensitive command while one is set, so a shell session that
+// clears one must not run the CLI.
+var AgentEnvMarkers = []string{"CLAUDECODE"}
 
 // claudeConfigFiles are the entries of a Claude Code configuration directory
 // that register or steer enforcement, mirroring the .claude entries of
@@ -133,6 +146,31 @@ func claudeConfigDirEntries(dir string) []protectedEntry {
 			entries = append(entries, protectedEntry{p, "claude-settings"})
 		}
 	}
+	return entries
+}
+
+// userDirEntries returns the protected entries for the per-user state and
+// cache directories (projectctx.UserDirs), which live outside the legacy
+// ~/.<app> the segment tables guard: the global session logs (State/logs,
+// including the automated sub-tier that records hook invocations) as audit,
+// and the rest of both directories (bug-report drafts, the update-check
+// cache) as config. Each is protected under its written and symlink-resolved
+// spellings, since rules compare canonical paths. When the directories cannot
+// be resolved the caller adds nothing: no qsdev process can then write there
+// either.
+func userDirEntries(d projectctx.Dirs) []protectedEntry {
+	sep := string(filepath.Separator)
+	var entries []protectedEntry
+	add := func(dir, category string) {
+		for _, p := range spellings(dir) {
+			entries = append(entries, protectedEntry{p + sep, category})
+		}
+	}
+	// The logs entry precedes the State entry it lies below: the first
+	// matching prefix decides the category.
+	add(d.Logs(), "audit")
+	add(d.State, "config")
+	add(d.Cache, "config")
 	return entries
 }
 
@@ -259,13 +297,6 @@ func expandTildeOrSelf(path string) string {
 		return expanded
 	}
 	return path
-}
-
-// PathKey returns p in the form protected-path comparisons use on this
-// platform: slash-separated, case-folded on case-insensitive filesystems, and
-// with Windows name aliases removed. Two spellings of one file have equal keys.
-func PathKey(p string) string {
-	return platformMatch.key(p)
 }
 
 // installedBinaryEntries returns the protected entries for the qsdev binary,
@@ -510,7 +541,7 @@ func (r *Resolver) walk(p string) (canonical string, missing bool, err error) {
 		if err != nil {
 			return "", false, fmt.Errorf("canonicalizing path %q: %w", p, err)
 		}
-		if isRooted(target) {
+		if IsRooted(target) {
 			// An absolute target restarts resolution at its root (the current
 			// volume when a Windows target is rooted without a drive).
 			targetVol := filepath.VolumeName(target)
@@ -550,18 +581,18 @@ func absWithoutClean(p string) (string, error) {
 		// working directory.
 		return filepath.Abs(p)
 	}
-	cwd, err := os.Getwd()
+	cwd, err := projectctx.WorkingDir()
 	if err != nil {
-		return "", fmt.Errorf("getting working directory: %w", err)
+		return "", err
 	}
-	if isRooted(p) {
+	if IsRooted(p) {
 		return filepath.VolumeName(cwd) + p, nil
 	}
 	return cwd + string(filepath.Separator) + p, nil
 }
 
-// isRooted reports whether p is absolute or starts at a root separator.
-func isRooted(p string) bool {
+// IsRooted reports whether p is absolute or starts at a root separator.
+func IsRooted(p string) bool {
 	return filepath.IsAbs(p) || (p != "" && os.IsPathSeparator(p[0]))
 }
 
@@ -613,10 +644,10 @@ func isSymlinkLoop(err error) bool {
 // ignores the name aliases the filesystem strips (trailing dots and spaces, and
 // an alternate-data-stream suffix such as "::$DATA").
 func IsProtected(canonicalPath string) (bool, string) {
-	return isProtected(canonicalPath, platformMatch)
+	return isProtected(canonicalPath, pathmatch.Platform)
 }
 
-func isProtected(canonicalPath string, opts matchOptions) (bool, string) {
+func isProtected(canonicalPath string, opts pathmatch.Options) (bool, string) {
 	if err := ensureInit(); err != nil {
 		// Fail closed. If the home directory cannot be resolved we cannot build
 		// the home-anchored protected-prefix table, so we cannot prove that a
@@ -624,13 +655,13 @@ func isProtected(canonicalPath string, opts matchOptions) (bool, string) {
 		// protection because of an environment error (the phase-28 fail-closed
 		// mandate), so treat every path as protected and let the rules deny the
 		// operation. This is deliberately conservative and only triggers when
-		// os.UserHomeDir fails (e.g. HOME/USERPROFILE unset), which is rare. The
+		// projectctx.HomeDir fails (e.g. HOME/USERPROFILE unset), which is rare. The
 		// "config" category makes SP-001 — and, via deny-overrides, the whole
 		// Tier-1 rule set — block the operation.
 		return true, "config"
 	}
 
-	key := opts.key(canonicalPath)
+	key := opts.Key(canonicalPath)
 
 	// Check home- and system-anchored paths.
 	for i, entryKey := range prefixKeys.under(opts) {
@@ -648,7 +679,7 @@ func isProtected(canonicalPath string, opts matchOptions) (bool, string) {
 	// or .qsdev/ canonicalizes OUTSIDE $HOME, so an anchored prefix cannot catch
 	// it; the segment match does, so SP-001/SP-013 guard Write/Edit to them in
 	// both the home config and a project checkout.
-	if category := brandedTables().segmentCategory(key, opts.foldCase); category != "" {
+	if category := brandedTables().segmentCategory(key, opts.FoldCase); category != "" {
 		return true, category
 	}
 
@@ -669,25 +700,25 @@ func isProtected(canonicalPath string, opts matchOptions) (bool, string) {
 }
 
 // entryKeys holds the path keys of a list of protected entries, in the same
-// order, under each matchOptions (indexed by matchOptions.index).
+// order, under each pathmatch.Options (indexed by optionsIndex).
 type entryKeys [4][]string
 
-// newEntryKeys computes the keys of entries under every matchOptions.
+// newEntryKeys computes the keys of entries under every pathmatch.Options.
 func newEntryKeys(entries []protectedEntry) entryKeys {
 	var keys entryKeys
 	for i := range keys {
-		opts := matchOptions{foldCase: i&1 != 0, windowsAliases: i&2 != 0}
+		opts := pathmatch.Options{FoldCase: i&1 != 0, WindowsAliases: i&2 != 0}
 		keys[i] = make([]string, len(entries))
 		for j, e := range entries {
-			keys[i][j] = opts.key(e.path)
+			keys[i][j] = opts.Key(e.path)
 		}
 	}
 	return keys
 }
 
 // under returns the keys under opts.
-func (k *entryKeys) under(opts matchOptions) []string {
-	return k[opts.index()]
+func (k *entryKeys) under(opts pathmatch.Options) []string {
+	return k[optionsIndex(opts)]
 }
 
 // segmentEntry is a protected location matched wherever it appears in a path.
@@ -717,7 +748,7 @@ type segmentEntry struct {
 var staticSegments = []segmentEntry{
 	{".qsdev/audit/", "audit"},
 	// Hook audit logs and the SOC 2 session trail (~/.claude/audit).
-	{".claude/logs/", "audit"},
+	{HookLogDir + "/", "audit"},
 	{".claude/audit/", "audit"},
 	{".claude/hook-audit.log", "audit"},
 	{".claude/hook-audit.log.1", "audit"},
@@ -730,6 +761,12 @@ var staticSegments = []segmentEntry{
 	{".claude/commands/", "claude-settings"},
 	{".claude/skills/", "claude-settings"},
 }
+
+// HookLogDir is the project-relative, slash-separated directory the generated
+// Claude Code hooks append their logs to (git-ignored by init). It is an
+// "audit" location: the agent may not write it, only the hooks may, so the
+// hook sandbox keeps it writable inside the otherwise read-only .claude.
+const HookLogDir = ".claude/logs"
 
 // hasPathSegment reports whether the slash-separated path key contains seg as
 // whole path components: a directory segment ("x/y/") matches the directory
@@ -753,157 +790,16 @@ func hasPathSegment(key, seg string) bool {
 	return false
 }
 
-// matchOptions describe how the host filesystem compares names.
-type matchOptions struct {
-	// foldCase compares names case-insensitively (macOS and Windows defaults).
-	foldCase bool
-	// windowsAliases strips the name aliases Windows ignores when it opens a
-	// file: trailing dots and spaces, and an alternate-data-stream suffix.
-	windowsAliases bool
-}
-
-var platformMatch = matchOptions{
-	foldCase:       runtime.GOOS == "darwin" || runtime.GOOS == "windows",
-	windowsAliases: runtime.GOOS == "windows",
-}
-
-// index numbers the four matchOptions 0 to 3.
-func (o matchOptions) index() int {
+// optionsIndex numbers the four pathmatch.Options 0 to 3, indexing entryKeys.
+func optionsIndex(o pathmatch.Options) int {
 	i := 0
-	if o.foldCase {
+	if o.FoldCase {
 		i |= 1
 	}
-	if o.windowsAliases {
+	if o.WindowsAliases {
 		i |= 2
 	}
 	return i
-}
-
-// key returns p in the form protected-path comparisons use: slash-separated,
-// with the platform's filesystem name aliases normalized away. Folding case
-// before stripping aliases gives the same key, since folding never adds or
-// removes the ':', '.' and ' ' that stripping looks at; it lets the separator
-// conversion and the fold share one copy of p.
-func (o matchOptions) key(p string) string {
-	var s string
-	if o.foldCase {
-		s = toSlashLower(p)
-	} else {
-		s = filepath.ToSlash(p)
-	}
-	if o.windowsAliases {
-		s = stripWindowsAliases(s)
-	}
-	return s
-}
-
-// toSlashLower is strings.ToLower(filepath.ToSlash(p)) in a single copy, and
-// none when p is already slash-separated lower case.
-func toSlashLower(p string) string {
-	return sepToSlashLower(p, filepath.Separator)
-}
-
-// sepToSlashLower is toSlashLower for an explicit separator, so the Windows
-// form can be tested on any platform.
-func sepToSlashLower(p string, sep rune) string {
-	if sep == '/' {
-		return strings.ToLower(p)
-	}
-	// Paths are almost always ASCII: convert them byte by byte, as
-	// strings.ToLower's own fast path does, instead of decoding runes.
-	if sep < utf8.RuneSelf {
-		if s, ok := asciiSepToSlashLower(p, byte(sep)); ok {
-			return s
-		}
-	}
-	return strings.Map(func(r rune) rune {
-		if r == sep {
-			return '/'
-		}
-		return unicode.ToLower(r)
-	}, p)
-}
-
-// asciiSepToSlashLower is sepToSlashLower for an all-ASCII p; ok is false when
-// p holds a non-ASCII byte. It copies p only when a byte changes.
-func asciiSepToSlashLower(p string, sep byte) (string, bool) {
-	changed := false
-	for i := 0; i < len(p); i++ {
-		c := p[i]
-		if c >= utf8.RuneSelf {
-			return "", false
-		}
-		changed = changed || c == sep || ('A' <= c && c <= 'Z')
-	}
-	if !changed {
-		return p, true
-	}
-	var b strings.Builder
-	b.Grow(len(p))
-	for i := 0; i < len(p); i++ {
-		c := p[i]
-		switch {
-		case c == sep:
-			c = '/'
-		case 'A' <= c && c <= 'Z':
-			c += 'a' - 'A'
-		}
-		b.WriteByte(c)
-	}
-	return b.String(), true
-}
-
-// stripWindowsAliases removes, from each component of a slash-separated path,
-// an alternate-data-stream suffix ("settings.json::$DATA" -> "settings.json")
-// and trailing dots and spaces (".claude." -> ".claude"), which Windows
-// discards when it opens the file. A drive component ("C:") and "."/".." are
-// left alone. Every path a rule checks on Windows goes through it, so it
-// copies s only from the first component it changes, and not at all when
-// there is none (the usual case).
-func stripWindowsAliases(s string) string {
-	var b strings.Builder
-	copying := false
-	for start := 0; start <= len(s); {
-		end := strings.IndexByte(s[start:], '/')
-		if end < 0 {
-			end = len(s)
-		} else {
-			end += start
-		}
-		part := stripComponentAliases(s[start:end])
-		if !copying && len(part) != end-start {
-			copying = true
-			b.Grow(len(s))
-			b.WriteString(s[:start])
-		}
-		if copying {
-			b.WriteString(part)
-			if end < len(s) {
-				b.WriteByte('/')
-			}
-		}
-		start = end + 1
-	}
-	if !copying {
-		return s
-	}
-	return b.String()
-}
-
-// stripComponentAliases is stripWindowsAliases for one path component. The
-// result is always a prefix of part.
-func stripComponentAliases(part string) string {
-	if part == "." || part == ".." || (len(part) == 2 && part[1] == ':') {
-		return part
-	}
-	if j := strings.IndexByte(part, ':'); j >= 0 {
-		part = part[:j]
-	}
-	end := len(part)
-	for end > 0 && (part[end-1] == '.' || part[end-1] == ' ') {
-		end--
-	}
-	return part[:end]
 }
 
 // staticSubstringPatterns are path fragments used by ContainsProtectedPath
@@ -1027,11 +923,11 @@ var brandedTables = sync.OnceValue(func() *pathTables {
 // name, and the file getenv says that variable names.
 func newPathTables(cfg branding.Config, getenv func(string) string) *pathTables {
 	stateDir := strings.Trim(filepath.ToSlash(cfg.StateDir), "/")
-	devenvCopy := "." + cfg.AppName + "-answers.yaml"
+	devenvCopy := path.Base(cfg.DevenvAnswersCopy())
 	t := &pathTables{
 		segments: append(slices.Clone(staticSegments),
 			segmentEntry{stateDir + "/", "answers"},
-			segmentEntry{".devenv/" + devenvCopy, "answers"},
+			segmentEntry{cfg.DevenvAnswersCopy(), "answers"},
 			segmentEntry{".envrc", "config"},
 		),
 		substrings: append(slices.Clone(staticSubstringPatterns), stateDir+"/", ".config/"+cfg.AppName+"/"),
@@ -1059,10 +955,22 @@ func commandSpellings(p string) []string {
 	for _, s := range spellings(p) {
 		out = append(out, filepath.ToSlash(s))
 	}
-	if isRooted(p) || strings.HasPrefix(p, "~") {
+	if IsRooted(p) || strings.HasPrefix(p, "~") {
 		if raw := filepath.ToSlash(p); !slices.Contains(out, raw) {
 			out = append(out, raw)
 		}
+	}
+	return out
+}
+
+// Segments returns the slash-separated relative locations canon protects
+// wherever they appear, a project checkout included (a directory ends in
+// "/"). The hook sandbox keeps them read-only inside the project.
+func Segments() []string {
+	t := brandedTables()
+	out := make([]string, len(t.segments))
+	for i, seg := range t.segments {
+		out[i] = seg.segment
 	}
 	return out
 }
@@ -1086,12 +994,40 @@ func ProtectedEnvVars() []string {
 // devenv addon pins that. What these files import or source (another .nix
 // file, a ~/.bashrc.d fragment) is not listed: see catalog.OrgConfigPin for
 // the control that does not depend on it.
-var envSourceFiles = []string{
-	"devenv.yaml", "devenv.local.yaml", "devenv.nix", "devenv.local.nix",
+var envSourceFiles = append(slices.Clone(devenvSourceFiles),
 	".profile", ".bashrc", ".bash_profile", ".bash_login",
 	".zshenv", ".zprofile", ".zshrc", ".zlogin",
 	".kshrc", ".mkshrc", "config.fish", ".pam_environment",
 	"profile.ps1", "microsoft.powershell_profile.ps1",
+)
+
+// devenvSourceFiles are the members of envSourceFiles that live in a project
+// checkout: devenv's configuration files, which devenv evaluates (running
+// their code) on every shell entry.
+var devenvSourceFiles = []string{"devenv.yaml", "devenv.local.yaml", "devenv.nix", "devenv.local.nix"}
+
+// DevenvSourceFiles returns the base names of the project files devenv loads
+// its configuration from (see devenvSourceFiles).
+func DevenvSourceFiles() []string {
+	return slices.Clone(devenvSourceFiles)
+}
+
+// guardedConfigFiles are the lower-cased base names of the project files
+// whose protective settings gate-dodge result rules compare before and after
+// a change: the npm, pnpm, Yarn and Bun install-script, release-age and
+// registry settings, and the pre-commit configuration. gatedodge holds one
+// rule per name.
+var guardedConfigFiles = []string{
+	".npmrc", ".pre-commit-config.yaml", "pnpm-workspace.yaml",
+	".yarnrc.yml", ".yarnrc", "bunfig.toml",
+}
+
+// GuardedConfigFiles returns the base names in guardedConfigFiles, sorted. A
+// shell command that rewrites one of them bypasses the before/after
+// comparison, so selfprotect denies those, and the hook sandbox keeps them
+// read-only.
+func GuardedConfigFiles() []string {
+	return slices.Sorted(slices.Values(guardedConfigFiles))
 }
 
 // EnvSourceFiles returns the lower-cased base names of the files that set the
@@ -1147,14 +1083,14 @@ func ProtectedLocations() []string {
 	return locs
 }
 
-// ProtectedLocationKeys returns the path keys (PathKey) of
+// ProtectedLocationKeys returns the path keys (pathmatch.Key) of
 // ProtectedLocations, in the same order, computed once per process. It
 // returns nil when the table cannot be built; IsProtected then fails closed.
 func ProtectedLocationKeys() []string {
 	if ensureInit() != nil {
 		return nil
 	}
-	return slices.Clone(prefixKeys.under(platformMatch))
+	return slices.Clone(prefixKeys.under(pathmatch.Platform))
 }
 
 // FindProbes returns representative protected paths, slash-separated, for a
@@ -1216,7 +1152,14 @@ func (t *pathTables) segmentCategory(key string, foldCase bool) string {
 // protected directory name at a path-token boundary (`rm -rf .claude`). Like
 // IsProtected, it ignores case on case-insensitive filesystems.
 func ContainsProtectedPath(s string) bool {
-	return containsProtectedPath(s, platformMatch.foldCase)
+	return containsProtectedPath(s, pathmatch.Platform.FoldCase)
+}
+
+// ContainsProtectedPathFold is ContainsProtectedPath ignoring case on every
+// platform, for text whose paths are case-insensitive wherever it runs
+// (PowerShell), so its verdict does not depend on the host OS.
+func ContainsProtectedPathFold(s string) bool {
+	return containsProtectedPath(s, true)
 }
 
 func containsProtectedPath(s string, foldCase bool) bool {

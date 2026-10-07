@@ -115,10 +115,11 @@ func Assess(projectPath string, opts AssessOptions) (*PostureReport, error) {
 		Ecosystems: []EcosystemStatus{},
 	}
 
-	// Determine progressive tier from config. A config that exists but cannot
-	// be parsed must not silently grade the project against the default tier.
+	// Determine progressive tier and compliance level from config. A config
+	// that exists but cannot be parsed must not silently grade the project
+	// against the default tier.
 	configFile := branding.Get().ConfigFile
-	currentTierName, cfgErr := resolveTierName(filepath.Join(projectPath, configFile))
+	currentTierName, complianceLevel, cfgErr := resolveTierAndLevel(filepath.Join(projectPath, configFile))
 	if cfgErr != nil {
 		slog.Warn("posture: config unreadable; assessing against the default tier",
 			"config", configFile, "tier", currentTierName, "error", cfgErr)
@@ -199,7 +200,7 @@ func Assess(projectPath string, opts AssessOptions) (*PostureReport, error) {
 	}
 
 	// Assess defense layers.
-	report.Defense = AssessDefenseLayers(projectPath, opts, activeTools, detected, presentState, report.Tier.Position)
+	report.Defense = AssessDefenseLayers(projectPath, opts, activeTools, detected, presentState, report.Tier.Position, complianceLevel)
 
 	configScore := ComputeConfigScore(configFiles)
 	report.Config = ConfigHealth{
@@ -265,23 +266,26 @@ func Assess(projectPath string, opts AssessOptions) (*PostureReport, error) {
 	return report, nil
 }
 
-// resolveTierName returns the project's progressive tier from its config file:
-// the explicit tier, else one inferred from the Claude Code settings. An absent
-// config yields the default tier. A config that exists but cannot be read or
-// parsed yields the default together with the error, so the caller can report
+// resolveTierAndLevel returns the project's progressive tier and compliance
+// level from its config file. The tier is the explicit one, else one inferred
+// from the Claude Code settings; the level is config.EffectiveSecurityLevel.
+// An absent config yields the default tier and an empty level (which the
+// catalog judges as baseline). A config that exists but cannot be read or
+// parsed yields the same together with the error, so the caller can report
 // that the tier is a guess.
-func resolveTierName(configPath string) (string, error) {
+func resolveTierAndLevel(configPath string) (tierName, level string, err error) {
 	cfg, err := config.ParseQsdevConfig(configPath)
 	if err != nil {
 		if errors.Is(err, fs.ErrNotExist) {
-			return tier.Default().String(), nil
+			return tier.Default().String(), "", nil
 		}
-		return tier.Default().String(), err
+		return tier.Default().String(), "", err
 	}
+	level = config.EffectiveSecurityLevel(cfg)
 	if cfg.Tier != "" {
-		return cfg.Tier, nil
+		return cfg.Tier, level, nil
 	}
-	return tier.Infer(cfg.ClaudeCode.PermissionLevel, cfg.ClaudeCode.MCPServers).String(), nil
+	return tier.Infer(cfg.ClaudeCode.PermissionLevel, cfg.ClaudeCode.MCPServers).String(), level, nil
 }
 
 // addDriftFinding records a finding under the named category and updates the

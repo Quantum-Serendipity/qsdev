@@ -18,6 +18,10 @@ import (
 // symbolic link redirects the write into a .git metadata directory.
 var ErrOutsideRoot = errors.New("path resolves outside root")
 
+// ErrSymlink is returned by WriteNewFileInRoot when a symbolic link, dangling
+// or not, already occupies the path it was asked to create.
+var ErrSymlink = errors.New("refusing to write through a symlink")
+
 // gitDirName is the repository metadata directory. A committed symbolic link
 // must never redirect a write into it (for example CLAUDE.md -> .git/config).
 const gitDirName = ".git"
@@ -98,6 +102,49 @@ func WriteFileAtomicInRoot(root, rel string, content []byte, mode os.FileMode) e
 		return fmt.Errorf("writing %q under %s (resolves to %s): %w", rel, root, resolvedDir, ErrOutsideRoot)
 	}
 	return writeAtomic(filepath.Join(resolvedDir, filepath.Base(target)), content, mode)
+}
+
+// WriteNewFileInRoot creates rel, a path relative to root, with content and
+// mode (filtered by the process umask), only if nothing exists there yet. The
+// existence check and the create are one O_CREATE|O_EXCL open through
+// os.Root, so there is no window between them. If a file already exists, it
+// is left untouched and the error wraps fs.ErrExist; a symlink at rel, even a
+// dangling one, is refused with an error that wraps ErrSymlink (not
+// fs.ErrExist), so the caller decides what an existing link means; and
+// a path that leaves root, lexically or through a symlinked parent, is
+// refused by os.Root. Use it for files the developer owns once created, such
+// as a template written on first run.
+func WriteNewFileInRoot(root, rel string, content []byte, mode os.FileMode) error {
+	r, err := os.OpenRoot(root)
+	if err != nil {
+		return fmt.Errorf("opening root %s: %w", root, err)
+	}
+	defer func() { _ = r.Close() }()
+
+	f, err := r.OpenFile(rel, os.O_CREATE|os.O_EXCL|os.O_WRONLY, mode.Perm())
+	if err != nil {
+		if info, lerr := r.Lstat(rel); errors.Is(err, fs.ErrExist) && lerr == nil && info.Mode()&fs.ModeSymlink != 0 {
+			return fmt.Errorf("creating %q under %s: %w", rel, root, ErrSymlink)
+		}
+		return fmt.Errorf("creating %q under %s: %w", rel, root, err)
+	}
+	if err := writeAndClose(f, content); err != nil {
+		// Remove the partial file so the next run creates it afresh instead
+		// of treating it as the developer's.
+		_ = r.Remove(rel)
+		return fmt.Errorf("writing %q under %s: %w", rel, root, err)
+	}
+	return nil
+}
+
+// writeAndClose writes content to f, syncs it, and closes it. f is closed
+// even when the write or sync fails.
+func writeAndClose(f *os.File, content []byte) error {
+	_, err := f.Write(content)
+	if err == nil {
+		err = f.Sync()
+	}
+	return errors.Join(err, f.Close())
 }
 
 // writeAtomic performs the temp-file-and-rename write of an already-resolved

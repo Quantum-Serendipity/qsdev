@@ -1,6 +1,8 @@
 package fileutil_test
 
 import (
+	"errors"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -215,4 +217,188 @@ type partialContentError struct {
 
 func (e *partialContentError) Error() string {
 	return "partial content: " + e.got
+}
+
+// TestWriteNewFileInRoot pins the create-if-absent write: a new file is
+// created with the requested mode, an existing file is left byte-identical
+// and reported as fs.ErrExist, and a symlink at the target or one that leads
+// out of the root is refused without writing anything.
+func TestWriteNewFileInRoot(t *testing.T) {
+	t.Parallel()
+	const rel = "local.yaml"
+	data := []byte("# new\n")
+	tests := []struct {
+		name string
+		rel  string
+		// setup prepares root (and outside, a directory beside it).
+		setup func(t *testing.T, root, outside string)
+		// symlink marks a case that creates a symlink, which needs a
+		// privilege Windows does not grant by default.
+		symlink   bool
+		wantErr   bool
+		wantExist bool // the error wraps fs.ErrExist
+		wantLink  bool // the error wraps fileutil.ErrSymlink
+		// check verifies the files on disk after the call.
+		check func(t *testing.T, root, outside string)
+	}{
+		{
+			name: "creates new file",
+			rel:  rel,
+			check: func(t *testing.T, root, _ string) {
+				t.Helper()
+				assertFile(t, filepath.Join(root, rel), data)
+				if runtime.GOOS == "windows" {
+					return
+				}
+				info, err := os.Stat(filepath.Join(root, rel))
+				if err != nil {
+					t.Fatal(err)
+				}
+				if got := info.Mode().Perm(); got != fileutil.ModeReadWrite {
+					t.Errorf("mode = %v, want %v", got, fileutil.ModeReadWrite)
+				}
+			},
+		},
+		{
+			name: "existing file left unchanged",
+			rel:  rel,
+			setup: func(t *testing.T, root, _ string) {
+				t.Helper()
+				if err := os.WriteFile(filepath.Join(root, rel), []byte("# mine\n"), fileutil.ModeReadWrite); err != nil {
+					t.Fatal(err)
+				}
+			},
+			wantErr:   true,
+			wantExist: true,
+			check: func(t *testing.T, root, _ string) {
+				t.Helper()
+				assertFile(t, filepath.Join(root, rel), []byte("# mine\n"))
+			},
+		},
+		{
+			name:    "dangling symlink refused",
+			symlink: true,
+			rel:     rel,
+			setup: func(t *testing.T, root, _ string) {
+				t.Helper()
+				symlinkOrFatal(t, "missing.yaml", filepath.Join(root, rel))
+			},
+			wantErr:  true,
+			wantLink: true,
+			check: func(t *testing.T, root, _ string) {
+				t.Helper()
+				assertAbsent(t, filepath.Join(root, "missing.yaml"))
+			},
+		},
+		{
+			name:    "symlink to existing file refused, target unchanged",
+			symlink: true,
+			rel:     rel,
+			setup: func(t *testing.T, root, _ string) {
+				t.Helper()
+				if err := os.WriteFile(filepath.Join(root, "mine.yaml"), []byte("# mine\n"), fileutil.ModeReadWrite); err != nil {
+					t.Fatal(err)
+				}
+				symlinkOrFatal(t, "mine.yaml", filepath.Join(root, rel))
+			},
+			wantErr:  true,
+			wantLink: true,
+			check: func(t *testing.T, root, _ string) {
+				t.Helper()
+				assertFile(t, filepath.Join(root, "mine.yaml"), []byte("# mine\n"))
+			},
+		},
+		{
+			name:    "symlink escaping root refused",
+			symlink: true,
+			rel:     rel,
+			setup: func(t *testing.T, root, outside string) {
+				t.Helper()
+				symlinkOrFatal(t, filepath.Join(outside, "victim.yaml"), filepath.Join(root, rel))
+			},
+			wantErr:  true,
+			wantLink: true,
+			check: func(t *testing.T, _, outside string) {
+				t.Helper()
+				assertAbsent(t, filepath.Join(outside, "victim.yaml"))
+			},
+		},
+		{
+			name:    "symlinked parent escaping root refused",
+			symlink: true,
+			rel:     filepath.Join("sub", rel),
+			setup: func(t *testing.T, root, outside string) {
+				t.Helper()
+				symlinkOrFatal(t, outside, filepath.Join(root, "sub"))
+			},
+			wantErr: true,
+			check: func(t *testing.T, _, outside string) {
+				t.Helper()
+				assertAbsent(t, filepath.Join(outside, rel))
+			},
+		},
+		{
+			name:    "non-local path refused",
+			rel:     filepath.Join("..", rel),
+			wantErr: true,
+			check: func(t *testing.T, root, _ string) {
+				t.Helper()
+				assertAbsent(t, filepath.Join(filepath.Dir(root), rel))
+			},
+		},
+	}
+	for _, tt := range tests {
+		if tt.symlink && runtime.GOOS == "windows" {
+			continue
+		}
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			base := t.TempDir()
+			root, outside := filepath.Join(base, "root"), filepath.Join(base, "outside")
+			for _, d := range []string{root, outside} {
+				if err := os.Mkdir(d, 0o755); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if tt.setup != nil {
+				tt.setup(t, root, outside)
+			}
+			err := fileutil.WriteNewFileInRoot(root, tt.rel, data, fileutil.ModeReadWrite)
+			if (err != nil) != tt.wantErr {
+				t.Fatalf("WriteNewFileInRoot() error = %v, wantErr %v", err, tt.wantErr)
+			}
+			if got := errors.Is(err, fs.ErrExist); got != tt.wantExist {
+				t.Errorf("errors.Is(%v, fs.ErrExist) = %v, want %v", err, got, tt.wantExist)
+			}
+			if got := errors.Is(err, fileutil.ErrSymlink); got != tt.wantLink {
+				t.Errorf("errors.Is(%v, fileutil.ErrSymlink) = %v, want %v", err, got, tt.wantLink)
+			}
+			tt.check(t, root, outside)
+		})
+	}
+}
+
+func symlinkOrFatal(t *testing.T, target, link string) {
+	t.Helper()
+	if err := os.Symlink(target, link); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func assertFile(t *testing.T, path string, want []byte) {
+	t.Helper()
+	got, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(got) != string(want) {
+		t.Errorf("%s = %q, want %q", path, got, want)
+	}
+}
+
+func assertAbsent(t *testing.T, path string) {
+	t.Helper()
+	if _, err := os.Lstat(path); !errors.Is(err, fs.ErrNotExist) {
+		t.Errorf("%s exists (Lstat error %v), want absent", path, err)
+	}
 }

@@ -6,23 +6,21 @@ import (
 	"context"
 	"sync"
 
+	"github.com/Quantum-Serendipity/qsdev/internal/config"
 	"github.com/Quantum-Serendipity/qsdev/internal/sysinfo"
 	"github.com/Quantum-Serendipity/qsdev/internal/toolcheck"
 )
 
-// RunAllChecks runs every tool check returned by DefaultChecks in parallel and
-// returns the results (one ToolStatus per check).
-func RunAllChecks(ctx context.Context, osInfo *sysinfo.OSInfo) []ToolStatus {
-	checks := DefaultChecks()
+// RunChecks runs checks in parallel and returns one ToolStatus per check, in
+// order.
+func RunChecks(ctx context.Context, osInfo *sysinfo.OSInfo, checks []ToolCheck) []ToolStatus {
 	results := make([]ToolStatus, len(checks))
 
 	var wg sync.WaitGroup
-	wg.Add(len(checks))
 	for i, tc := range checks {
-		go func(idx int, check ToolCheck) {
-			defer wg.Done()
-			results[idx] = runSingleCheck(ctx, check, osInfo)
-		}(i, tc)
+		wg.Go(func() {
+			results[i] = runSingleCheck(ctx, tc, osInfo)
+		})
 	}
 	wg.Wait()
 
@@ -31,12 +29,12 @@ func RunAllChecks(ctx context.Context, osInfo *sysinfo.OSInfo) []ToolStatus {
 
 // runSingleCheck detects one tool and builds a ToolStatus from the result.
 func runSingleCheck(ctx context.Context, tc ToolCheck, osInfo *sysinfo.OSInfo) ToolStatus {
-	info := toolcheck.Detect(ctx, tc.Binary, tc.VersionFlag)
+	info := detect(ctx, tc.Binary, tc.VersionFlag)
 
 	// Try alternative binaries if the primary was not found
 	if !info.Found && len(tc.AltBinaries) > 0 {
 		for _, alt := range tc.AltBinaries {
-			info = toolcheck.Detect(ctx, alt, tc.VersionFlag)
+			info = detect(ctx, alt, tc.VersionFlag)
 			if info.Found {
 				break
 			}
@@ -44,8 +42,10 @@ func runSingleCheck(ctx context.Context, tc ToolCheck, osInfo *sysinfo.OSInfo) T
 	}
 
 	status := ToolStatus{
-		Name:     tc.Name,
-		Required: tc.Required,
+		Name:       tc.Name,
+		Required:   tc.Required,
+		RequiredBy: tc.RequiredBy,
+		PathHint:   tc.PathHint,
 	}
 
 	if !info.Found {
@@ -66,24 +66,53 @@ func runSingleCheck(ctx context.Context, tc ToolCheck, osInfo *sysinfo.OSInfo) T
 	if tc.ParseVersion != nil && info.Output != "" {
 		status.Version = tc.ParseVersion(info.Output)
 	}
-
-	// Check minimum version
-	if tc.MinVersion != "" {
-		status.MinVersion = tc.MinVersion
-		if status.Version != "" {
-			status.VersionOK = MeetsMinimum(status.Version, tc.MinVersion)
-		}
-	} else {
-		// No minimum version requirement — if installed, version is OK
-		status.VersionOK = true
+	// A binary inside the project was not run; metadata beside it may still
+	// say its version.
+	status.InProject = info.InProject
+	if info.InProject && tc.ProjectVersion != nil {
+		status.Version = tc.ProjectVersion(info.Path)
 	}
+
+	// With no floor any installed version is OK; with one, a version that
+	// could not be determined is not.
+	status.MinVersion = tc.MinVersion
+	status.Constraint = tc.Constraint
+	status.VersionOK = versionOK(status.Version, tc)
 
 	if tc.AutoInstall != nil {
 		status.AutoInstallable = tc.AutoInstall(osInfo)
+	}
+	if !status.VersionOK && tc.UpgradeHint != "" {
+		// Setup would reinstall, not upgrade.
+		status.AutoInstallable = false
+		status.UpgradeHint = tc.UpgradeHint
 	}
 	if tc.Notes != nil {
 		status.Notes = tc.Notes(osInfo)
 	}
 
 	return status
+}
+
+// versionOK reports whether version meets tc's floor: its Constraint when
+// set, else its MinVersion. A version that could not be determined meets no
+// constraint.
+func versionOK(version string, tc ToolCheck) bool {
+	if tc.Constraint != "" {
+		return version != "" && config.CheckBinaryVersion(tc.Constraint, version) == nil
+	}
+	return toolcheck.MeetsMinimum(version, tc.MinVersion)
+}
+
+// detect finds binary on PATH and, unless versionFlag is empty (a
+// lookup-only check), runs it with versionFlag for its version output.
+func detect(ctx context.Context, binary, versionFlag string) toolcheck.Info {
+	if versionFlag == "" {
+		path, err := toolcheck.LookPath(binary)
+		if err != nil {
+			return toolcheck.Info{}
+		}
+		return toolcheck.Info{Found: true, Path: path}
+	}
+	return toolcheck.Detect(ctx, binary, versionFlag)
 }

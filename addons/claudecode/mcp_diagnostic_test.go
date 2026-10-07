@@ -26,6 +26,7 @@ import (
 	"github.com/Quantum-Serendipity/qsdev/internal/mcphealth"
 	"github.com/Quantum-Serendipity/qsdev/internal/mcpregistry"
 	"github.com/Quantum-Serendipity/qsdev/internal/procexec"
+	"github.com/Quantum-Serendipity/qsdev/internal/testutil"
 	"github.com/Quantum-Serendipity/qsdev/pkg/branding"
 	"github.com/Quantum-Serendipity/qsdev/pkg/types"
 )
@@ -174,7 +175,7 @@ func (r *requestRecorder) snapshot() (auth, queries []string) {
 // writeMCPJSON writes content as the .mcp.json of a new project directory.
 func writeMCPJSON(t *testing.T, content string) string {
 	t.Helper()
-	dir := t.TempDir()
+	dir := testutil.IsolatedDir(t)
 	if err := os.WriteFile(filepath.Join(dir, ".mcp.json"), []byte(content), 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -663,7 +664,7 @@ func TestMCPStatus_ProbeJSONMarksProbed(t *testing.T) {
 // TestMCPProbe_ExitCodeAndJSON guards F107: JSON modes emit JSON even with no
 // servers, and `mcp health` fails when a server is not healthy.
 func TestMCPProbe_ExitCodeAndJSON(t *testing.T) {
-	empty := t.TempDir()
+	empty := testutil.IsolatedDir(t)
 	for name, newCmd := range map[string]func() *cobra.Command{"status": mcpStatusCmd, "health": mcpHealthCmd, "list": mcpListCmd} {
 		t.Run(name+" --json without .mcp.json", func(t *testing.T) {
 			out, err := runMCPSubcommand(t, empty, newCmd(), "--json")
@@ -676,7 +677,7 @@ func TestMCPProbe_ExitCodeAndJSON(t *testing.T) {
 		})
 	}
 
-	unhealthy := t.TempDir()
+	unhealthy := testutil.IsolatedDir(t)
 	mcp := `{"mcpServers":{"x":{"command":"definitely-not-a-trusted-cmd"}}}`
 	if err := os.WriteFile(filepath.Join(unhealthy, ".mcp.json"), []byte(mcp), 0o644); err != nil {
 		t.Fatal(err)
@@ -699,7 +700,7 @@ func TestMCPProbe_ExitCodeAndJSON(t *testing.T) {
 
 // TestMCPList_SortedRows guards F107: list rows are in a stable, sorted order.
 func TestMCPList_SortedRows(t *testing.T) {
-	dir := t.TempDir()
+	dir := testutil.IsolatedDir(t)
 	mcp := `{"mcpServers":{"zeta":{"command":"z"},"alpha":{"command":"a"},"mid":{"command":"m"}}}`
 	if err := os.WriteFile(filepath.Join(dir, ".mcp.json"), []byte(mcp), 0o644); err != nil {
 		t.Fatal(err)

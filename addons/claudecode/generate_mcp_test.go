@@ -2,10 +2,14 @@ package claudecode_test
 
 import (
 	"encoding/json"
+	"os"
+	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 
 	"github.com/Quantum-Serendipity/qsdev/addons/claudecode"
+	"github.com/Quantum-Serendipity/qsdev/internal/mcpconfig"
 	"github.com/Quantum-Serendipity/qsdev/pkg/types"
 )
 
@@ -489,4 +493,49 @@ func mcpKeys(m map[string]claudecode.MCPServerEntry) []string {
 		result = append(result, k)
 	}
 	return result
+}
+
+// TestMcpJSON_RoundTripsThroughMcpconfig pins that the generator writes the
+// shared mcpconfig schema: what GenerateMcpJson emits, and an entry using
+// every field, re-read with mcpconfig.Read and re-marshaled, loses nothing.
+func TestMcpJSON_RoundTripsThroughMcpconfig(t *testing.T) {
+	t.Parallel()
+	gf, err := claudecode.GenerateMcpJson(types.WizardAnswers{MCPServers: []string{"github", "context7"}}, claudecode.NewConfig())
+	if err != nil || gf == nil {
+		t.Fatalf("GenerateMcpJson = %v, %v", gf, err)
+	}
+	full, err := json.Marshal(claudecode.McpJSON{MCPServers: map[string]claudecode.MCPServerEntry{
+		"remote": {Type: "http", URL: "https://mcp.example/x", Headers: map[string]string{"Authorization": "Bearer ${TOKEN}"}},
+		"local":  {Command: "srv", Args: []string{"--stdio"}, Env: map[string]string{"K": "v"}},
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for name, content := range map[string][]byte{"generated": gf.Content, "all-fields": full} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			dir := t.TempDir()
+			if err := os.WriteFile(filepath.Join(dir, mcpconfig.FileName), content, 0o600); err != nil {
+				t.Fatal(err)
+			}
+			f, err := mcpconfig.Read(dir)
+			if err != nil {
+				t.Fatalf("mcpconfig.Read: %v", err)
+			}
+			again, err := json.Marshal(f)
+			if err != nil {
+				t.Fatal(err)
+			}
+			var want, got any
+			if err := json.Unmarshal(content, &want); err != nil {
+				t.Fatal(err)
+			}
+			if err := json.Unmarshal(again, &got); err != nil {
+				t.Fatal(err)
+			}
+			if !reflect.DeepEqual(want, got) {
+				t.Errorf("round trip lost fields:\nwant %s\ngot  %s", content, again)
+			}
+		})
+	}
 }

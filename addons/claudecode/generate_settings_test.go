@@ -4,8 +4,10 @@ import (
 	"encoding/json"
 	"reflect"
 	"slices"
+	"strconv"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/Quantum-Serendipity/qsdev/addons/claudecode"
 	"github.com/Quantum-Serendipity/qsdev/internal/catalog"
@@ -132,8 +134,13 @@ func TestGenerateSettings_StandardPreset(t *testing.T) {
 	if containsRule(s.Permissions.Allow, "Bash(nix develop *)") {
 		t.Error("standard allow must not contain Bash(nix develop *)")
 	}
-	if !containsRule(s.Permissions.Allow, "Bash(cargo audit *)") {
-		t.Error("standard allow should contain Bash(cargo audit *)")
+	// Audit is allowed only in read-only shapes: `cargo audit *` would
+	// auto-approve `cargo audit fix` (U15-01).
+	if !containsRule(s.Permissions.Allow, "Bash(cargo audit)") {
+		t.Error("standard allow should contain Bash(cargo audit)")
+	}
+	if containsRule(s.Permissions.Allow, "Bash(cargo audit *)") {
+		t.Error("standard allow must not contain Bash(cargo audit *)")
 	}
 
 	// Code-execution commands should be in ask, not allow.
@@ -297,9 +304,9 @@ func TestGenerateSettings_CustomPreset(t *testing.T) {
 		t.Error("custom ask should contain Bash(npm install *)")
 	}
 
-	// DefaultMode should NOT be set for custom.
-	if s.Permissions.DefaultMode != "" {
-		t.Errorf("custom should not set defaultMode, got %q", s.Permissions.DefaultMode)
+	// Custom applies its catalog modes like every other preset.
+	if s.Permissions.DefaultMode != "default" {
+		t.Errorf("custom defaultMode = %q, want default", s.Permissions.DefaultMode)
 	}
 }
 
@@ -356,7 +363,7 @@ func TestGenerateSettings_DotnetPackageAddsAreAskGated(t *testing.T) {
 	}
 	denied := []string{"dnx evil-tool", "dotnet tool exec evil-tool", "dotnet new install Evil.Templates"}
 	matches := func(rules []string, cmd string) bool {
-		return slices.ContainsFunc(rules, func(r string) bool { return denyutil.MatchesDenyRule(r, "Bash("+cmd+")") })
+		return slices.ContainsFunc(rules, func(r string) bool { return denyutil.MatchesBashRule(r, cmd) })
 	}
 	for _, preset := range []string{"minimal", "standard", "permissive", "supply-chain-only"} {
 		t.Run(preset, func(t *testing.T) {
@@ -397,10 +404,12 @@ func TestGenerateSettings_DenoPackageCommands(t *testing.T) {
 	denied := []string{
 		"deno x evil-cli", "deno run -A npm:evil-cli", "deno -A npm:evil-cli", "deno npm:evil-cli",
 		"deno -q run npm:evil-cli", "deno serve jsr:@evil/server", "deno watch npm:evil-cli",
-		"deno -q x evil-cli",
+		"deno -q x evil-cli", "deno run --allow-net jsr:@evil/server",
 	}
+	// Running local code stays open: only the npm:/jsr: specifiers are denied.
+	notDenied := []string{"deno run main.ts", "deno run -A scripts/npm.ts", "deno test", "deno serve server.ts"}
 	matches := func(rules []string, cmd string) bool {
-		return slices.ContainsFunc(rules, func(r string) bool { return denyutil.MatchesDenyRule(r, "Bash("+cmd+")") })
+		return slices.ContainsFunc(rules, func(r string) bool { return denyutil.MatchesBashRule(r, cmd) })
 	}
 	for _, preset := range []string{"minimal", "standard", "permissive", "supply-chain-only"} {
 		t.Run(preset, func(t *testing.T) {
@@ -421,6 +430,11 @@ func TestGenerateSettings_DenoPackageCommands(t *testing.T) {
 			for _, cmd := range denied {
 				if !matches(s.Permissions.Deny, cmd) {
 					t.Errorf("%q is not denied", cmd)
+				}
+			}
+			for _, cmd := range notDenied {
+				if matches(s.Permissions.Deny, cmd) {
+					t.Errorf("%q is unexpectedly denied", cmd)
 				}
 			}
 		})
@@ -776,7 +790,7 @@ func TestGenerateSettings_CriticalDenyRulesPresent(t *testing.T) {
 		`Bash(rm -rf *)`,
 		`Read(./.env)`,
 		`Read(./.env.*)`,
-		`Read(./secrets/**)`,
+		`Read(/secrets/**)`,
 	}
 
 	for _, rule := range criticalDenyRules {
@@ -966,8 +980,9 @@ func TestGenerateSettings_SupplyChainOnlyPreset(t *testing.T) {
 	if s.Permissions.DefaultMode != "" {
 		t.Errorf("supply-chain-only should have no defaultMode, got %q", s.Permissions.DefaultMode)
 	}
-	if s.Permissions.DisableBypassPermissionsMode != "" {
-		t.Errorf("supply-chain-only should have no disableBypass, got %q", s.Permissions.DisableBypassPermissionsMode)
+	// Bypass mode would auto-run the package-install ask rules.
+	if s.Permissions.DisableBypassPermissionsMode != "disable" {
+		t.Errorf("supply-chain-only disableBypassPermissionsMode = %q, want disable", s.Permissions.DisableBypassPermissionsMode)
 	}
 }
 
@@ -1150,13 +1165,12 @@ func TestCatalogCompliancePermissionLevelsAreDefinedPresets(t *testing.T) {
 // matching deny, then ask, then allow rule decides; otherwise the user is
 // prompted ("default").
 func permissionDecision(p claudecode.Permissions, command string) string {
-	op := "Bash(" + command + ")"
 	for _, set := range []struct {
 		name  string
 		rules []string
 	}{{"deny", p.Deny}, {"ask", p.Ask}, {"allow", p.Allow}} {
 		for _, r := range set.rules {
-			if denyutil.MatchesDenyRule(r, op) {
+			if denyutil.MatchesBashRule(r, command) {
 				return set.name
 			}
 		}
@@ -1399,5 +1413,192 @@ func TestGenerateSettings_ToolGatesPolicy(t *testing.T) {
 				t.Errorf("env = %#v, want %#v", settings.Env, tt.wantEnv)
 			}
 		})
+	}
+}
+
+// TestBuildHookEnv_PackageGuardMinAgeDays covers handing the compliance
+// level's release-age window to the package-guard hook through settings.json
+// "env": at least the catalog baseline (3 days), raised by the level.
+func TestBuildHookEnv_PackageGuardMinAgeDays(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name        string
+		level       string
+		safetyBlock bool
+		want        string // "" means the variable is absent
+	}{
+		{name: "baseline", level: "baseline", safetyBlock: true, want: "3"},
+		{name: "enhanced", level: "enhanced", safetyBlock: true, want: "7"},
+		{name: "strict", level: "strict", safetyBlock: true, want: "14"},
+		{name: "unset level gets baseline", level: "", safetyBlock: true, want: "3"},
+		{name: "unknown level gets baseline", level: "bogus", safetyBlock: true, want: "3"},
+		{name: "safety block off", level: "strict", safetyBlock: false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			answers := types.WizardAnswers{
+				ComplianceLevel: tt.level,
+				Hooks:           types.HookChoices{SafetyBlock: tt.safetyBlock},
+			}
+			settings := mustUnmarshalSettings(t, mustGenerateSettings(t, answers, nil))
+			got, ok := settings.Env[claudecode.PackageGuardMinAgeDaysEnv]
+			if tt.want == "" {
+				if ok {
+					t.Errorf("%s = %q, want it absent", claudecode.PackageGuardMinAgeDaysEnv, got)
+				}
+				return
+			}
+			if got != tt.want {
+				t.Errorf("%s = %q, want %q", claudecode.PackageGuardMinAgeDaysEnv, got, tt.want)
+			}
+		})
+	}
+}
+
+// TestPackageGuardMinAgeDays_NeverBelowFloor checks the package guard keeps
+// its 3-day floor (D18) when a catalog overlay defines a shorter compliance
+// window, and follows longer windows rounded up to whole days.
+func TestPackageGuardMinAgeDays_NeverBelowFloor(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		window time.Duration
+		want   int
+	}{
+		{0, 3},
+		{time.Hour, 3},
+		{24 * time.Hour, 3},
+		{72 * time.Hour, 3},
+		{100 * time.Hour, 5},
+		{336 * time.Hour, 14},
+	}
+	for _, tt := range tests {
+		t.Run(tt.window.String(), func(t *testing.T) {
+			t.Parallel()
+			if got := claudecode.ExportPackageGuardMinAgeDays(tt.window); got != tt.want {
+				t.Errorf("packageGuardMinAgeDays(%v) = %d, want %d", tt.window, got, tt.want)
+			}
+		})
+	}
+}
+
+// TestPackageGuardMinAgeEnvNameInTemplate verifies that package-guard.py reads
+// the variable the generator sets, so the two cannot drift apart.
+func TestPackageGuardMinAgeEnvNameInTemplate(t *testing.T) {
+	t.Parallel()
+	want := `_int_env("` + claudecode.PackageGuardMinAgeDaysEnv + `"`
+	if !strings.Contains(string(claudecode.PackageGuardContent()), want) {
+		t.Errorf("package-guard.py does not read %s (looked for %s)", claudecode.PackageGuardMinAgeDaysEnv, want)
+	}
+}
+
+// TestPackageGuardDefaultMinAgeMatchesBaseline pins that package-guard.py,
+// with PACKAGE_GUARD_MIN_AGE_DAYS unset, enforces DefaultMinReleaseAge with a
+// 1-day minimum: posture judges an unset window as exactly that.
+func TestPackageGuardDefaultMinAgeMatchesBaseline(t *testing.T) {
+	t.Parallel()
+	want := `_int_env("` + claudecode.PackageGuardMinAgeDaysEnv + `", ` +
+		strconv.Itoa(ecosystem.ReleaseAgeDays(ecosystem.DefaultMinReleaseAge)) + `, 1)`
+	if !strings.Contains(string(claudecode.PackageGuardContent()), want) {
+		t.Errorf("package-guard.py does not default its release-age window to DefaultMinReleaseAge (looked for %s)", want)
+	}
+}
+
+// TestCustomPresetDisablesBypass pins U15-V03: custom applies its catalog
+// modes, so bypass mode cannot auto-run its ask rules, and its allow list is
+// exactly the configured extras (addon config and the committed
+// claude_code.permissions block).
+func TestCustomPresetDisablesBypass(t *testing.T) {
+	t.Parallel()
+	answers := types.WizardAnswers{
+		PermissionLevel: "custom",
+		ClaudePermissions: types.ClaudePermissionsConfig{
+			Allow: []string{"Bash(make *)"},
+			Deny:  []string{"Bash(terraform apply *)"},
+		},
+	}
+	gf := mustGenerateSettings(t, answers, ecosystem.NewRegistry(),
+		claudecode.WithExtraAllowPatterns("Bash(my-tool *)"),
+		claudecode.WithExtraDenyPatterns("Bash(forbidden *)"),
+	)
+	s := mustUnmarshalSettings(t, gf)
+
+	if s.Permissions.DefaultMode != "default" {
+		t.Errorf("custom defaultMode = %q, want default", s.Permissions.DefaultMode)
+	}
+	if s.Permissions.DisableBypassPermissionsMode != "disable" {
+		t.Errorf("custom disableBypassPermissionsMode = %q, want disable", s.Permissions.DisableBypassPermissionsMode)
+	}
+	wantAllow := []string{"Bash(my-tool *)", "Bash(make *)"}
+	if !slices.Equal(s.Permissions.Allow, wantAllow) {
+		t.Errorf("custom allow = %v, want exactly %v", s.Permissions.Allow, wantAllow)
+	}
+	for _, rule := range []string{"Bash(forbidden *)", "Bash(terraform apply *)"} {
+		if !containsRule(s.Permissions.Deny, rule) {
+			t.Errorf("custom deny missing extra %s", rule)
+		}
+	}
+}
+
+// TestSupplyChainOnlyKeepsExtrasAndDisablesBypass pins U15-V03 for
+// supply-chain-only: its configured deny extras are no longer dropped, bypass
+// mode is disabled, defaultMode stays unset and the preset allows nothing of
+// its own.
+func TestSupplyChainOnlyKeepsExtrasAndDisablesBypass(t *testing.T) {
+	t.Parallel()
+	answers := types.WizardAnswers{
+		PermissionLevel: "supply-chain-only",
+		ClaudePermissions: types.ClaudePermissionsConfig{
+			Deny: []string{"Bash(terraform apply *)"},
+		},
+	}
+	gf := mustGenerateSettings(t, answers, ecosystem.NewRegistry(),
+		claudecode.WithExtraDenyPatterns("Bash(forbidden *)"),
+	)
+	s := mustUnmarshalSettings(t, gf)
+
+	if s.Permissions.DisableBypassPermissionsMode != "disable" {
+		t.Errorf("supply-chain-only disableBypassPermissionsMode = %q, want disable", s.Permissions.DisableBypassPermissionsMode)
+	}
+	if s.Permissions.DefaultMode != "" {
+		t.Errorf("supply-chain-only defaultMode = %q, want unset", s.Permissions.DefaultMode)
+	}
+	if len(s.Permissions.Allow) != 0 {
+		t.Errorf("supply-chain-only allow = %v, want empty", s.Permissions.Allow)
+	}
+	for _, rule := range []string{"Bash(forbidden *)", "Bash(terraform apply *)"} {
+		if !containsRule(s.Permissions.Deny, rule) {
+			t.Errorf("supply-chain-only deny dropped extra %s", rule)
+		}
+	}
+}
+
+// TestGenerateSettings_CommittedClaudePermissions checks that the committed
+// claude_code.permissions block reaches settings.json under a catalog preset,
+// without displacing the preset's ask rules, and that a malformed entry fails
+// generation instead of being written.
+func TestGenerateSettings_CommittedClaudePermissions(t *testing.T) {
+	t.Parallel()
+	answers := types.WizardAnswers{
+		PermissionLevel: "standard",
+		ClaudePermissions: types.ClaudePermissionsConfig{
+			Allow: []string{"Bash(make *)"},
+			Deny:  []string{"Bash(terraform apply *)"},
+		},
+	}
+	s := mustUnmarshalSettings(t, mustGenerateSettings(t, answers, ecosystem.NewRegistry()))
+	if !containsRule(s.Permissions.Allow, "Bash(make *)") {
+		t.Error("standard allow missing committed Bash(make *)")
+	}
+	if !containsRule(s.Permissions.Deny, "Bash(terraform apply *)") {
+		t.Error("standard deny missing committed Bash(terraform apply *)")
+	}
+	if !containsRule(s.Permissions.Ask, "Bash(npm install *)") {
+		t.Error("committed extras must not displace the preset ask rules")
+	}
+
+	answers.ClaudePermissions.Allow = []string{"Bash(make *"}
+	if _, err := claudecode.GenerateSettings(answers, ecosystem.NewRegistry(), claudecode.NewConfig()); err == nil {
+		t.Error("GenerateSettings accepted a malformed claude_code.permissions entry")
 	}
 }

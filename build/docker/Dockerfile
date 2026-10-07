@@ -13,6 +13,12 @@
 # and pinned via a replace directive, so the build IGNORES the workspace and uses
 # the vendor tree: GOWORK=off + -mod=vendor. The .dockerignore deliberately
 # excludes go.work/go.work.sum from the context for the same reason.
+#
+# Multi-arch: the release (release.yml's gateway-image job) builds linux/amd64
+# and linux/arm64 with `docker build --platform`. The builder stage always runs
+# on the build machine's platform and cross-compiles for the target, and the
+# runtime stage runs nothing, so no emulation (QEMU) is needed
+# (TestDockerfileCrossCompiles).
 
 # ---- builder stage --------------------------------------------------------
 # The image sets GOTOOLCHAIN=local, so its Go must be at least go.mod's `go`
@@ -20,7 +26,7 @@
 # stale pin fails there. Pinned by digest for reproducible, supply-chain-
 # resistant builds (the tag is kept for readability; dependabot bumps both).
 # Re-resolve with: docker buildx imagetools inspect golang:<version>-alpine
-FROM golang:1.26.8-alpine@sha256:8ac98ca534ac3f51e1f420a1dd2c15e74c75cfa0f23f3ad27eb5d7236c349a0c AS builder
+FROM --platform=$BUILDPLATFORM golang:1.26.8-alpine@sha256:8ac98ca534ac3f51e1f420a1dd2c15e74c75cfa0f23f3ad27eb5d7236c349a0c AS builder
 
 WORKDIR /src
 
@@ -28,7 +34,13 @@ WORKDIR /src
 ENV GOWORK=off
 ENV GOFLAGS=-mod=vendor
 ENV CGO_ENABLED=0
-ENV GOOS=linux
+
+# The target platform, set by docker build --platform (default: the build
+# machine's): the Go toolchain cross-compiles for it.
+ARG TARGETOS
+ARG TARGETARCH
+ENV GOOS=${TARGETOS}
+ENV GOARCH=${TARGETARCH}
 
 # Version stamping, matching .goreleaser.yaml's ldflags.
 ARG VERSION=dev
@@ -50,9 +62,14 @@ RUN go build -trimpath -o /qsdev \
 # ---- runtime stage --------------------------------------------------------
 # distroless/static is the minimal base for a CGO-free static Go binary; the
 # :nonroot variant runs as an unprivileged user (uid 65532) by default. Pinned by
-# digest (tag kept for readability); re-resolve with:
+# digest (tag kept for readability). The digest must be the multi-arch index
+# digest, not one platform's manifest, so it resolves for amd64 and arm64;
+# re-resolve with (the top-level "Digest:" line):
 #   docker buildx imagetools inspect gcr.io/distroless/static-debian12:nonroot
 FROM gcr.io/distroless/static-debian12:nonroot@sha256:d093aa3e30dbadd3efe1310db061a14da60299baff8450a17fe0ccc514a16639
+
+# Links the GHCR package to the repository that publishes it.
+LABEL org.opencontainers.image.source="https://github.com/Quantum-Serendipity/qsdev"
 
 COPY --from=builder /qsdev /qsdev
 

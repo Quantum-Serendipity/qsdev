@@ -309,6 +309,11 @@ type AssessOptions struct {
 	// a change to the guard can re-hash along with it; nil leaves the guard
 	// unverified, so it is not credited.
 	PackageGuard []byte
+	// GuardSupport maps the project-relative path of each file
+	// package-guard.py loads at run time (claudecode.PackageGuardSupportContents:
+	// the shared hook library) to the content the generator writes there.
+	// The guard is credited only when each is that content too.
+	GuardSupport map[string][]byte
 	// DetectOptions replace the host probes project detection runs (the
 	// container runtime and OS); none probes the real host.
 	DetectOptions []detect.Option

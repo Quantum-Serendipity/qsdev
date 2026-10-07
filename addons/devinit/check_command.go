@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 
 	"github.com/mattn/go-isatty"
 	"github.com/spf13/cobra"
@@ -65,35 +66,31 @@ dependencies.totals can pass (without one they fail as inconclusive).`,
 	cmd.Flags().BoolVar(&scan, "scan", false,
 		"Run a fresh dependency vulnerability scan for custom conformance requirements")
 
-	return cmdutil.MarkReadOnly(cmd, "", "auto-fix", "scan")
+	// check reports a catalog that does not load as a config_catalog result
+	// (so --format json still writes a report), alongside the checks that
+	// need no catalog, instead of the root gate's bare error.
+	return cmdutil.MarkCatalogOptional(cmdutil.MarkReadOnly(cmd, "", "auto-fix", "scan"))
 }
 
 func runCheck(cmd *cobra.Command, format check.OutputFormat, auditLevel check.AuditLevel, autoFix, scan bool) error {
-	projectRoot, err := cmdutil.ProjectRoot()
+	pc, err := cmdutil.Project(cmd)
 	if err != nil {
 		return err
 	}
+	projectRoot := pc.Root
+	ctx := catalogFreeCheckContext(cmd, projectRoot)
 
-	// Build CheckContext.
-	ctx := check.CheckContext{
-		ProjectRoot:   projectRoot,
-		BinaryVersion: version.Info().Version,
-		StateFile:     filepath.Join(projectRoot, stateFilePath()),
-		ManifestFile:  filepath.Join(projectRoot, state.ManifestFile()),
-		ProbeTool: func(binary, versionArg string) toolcheck.Info {
-			return toolcheck.Detect(cmd.Context(), binary, versionArg)
-		},
-		ClaudeUserDir: claudeUserDir(),
+	// A catalog that does not load (a project defaults file it rejects), or
+	// a registry that cannot be built from it, is reported as a failing
+	// check alongside the checks that need no catalog. No auto-fix runs: the
+	// fixes regenerate from the catalog.
+	toolRegistry, failure := loadCheckRegistry()
+	ctx.OrgOverlayErr = catalog.OrgOverlayError()
+	if failure != nil {
+		return emitCheckReport(cmd, check.RunCatalogUnavailable(ctx, *failure), format, auditLevel)
 	}
 
-	// Parse config if present. The error travels in the context so the report
-	// (including machine-readable formats) distinguishes "not found" from a
-	// parse failure.
-	cfgFile := branding.Get().ConfigFile
-	ctx.QsdevConfig, ctx.ConfigErr = qsdevconfig.ParseQsdevConfig(filepath.Join(projectRoot, cfgFile))
-
 	// Tool names from registry for config validation.
-	toolRegistry := toolreg.DefaultRegistry()
 	ctx.ToolNames = toolRegistry.Names()
 
 	// mcp.disabled_tools names MCP tools, a namespace separate from the
@@ -101,7 +98,11 @@ func runCheck(cmd *cobra.Command, format check.OutputFormat, auditLevel check.Au
 	ctx.MCPToolNames = mcpserve.MountableToolNames(mcpadapters.All())
 
 	// Profile names from registry.
-	ctx.ProfileNames = ensureProfileRegistry().Names()
+	profiles, err := projectProfiles()
+	if err != nil {
+		return err
+	}
+	ctx.ProfileNames = profiles.Names()
 
 	// Saved answers are the generator's input; they decide which deny rules
 	// .claude/settings.json must contain.
@@ -113,17 +114,20 @@ func runCheck(cmd *cobra.Command, format check.OutputFormat, auditLevel check.Au
 	// rebuild them from the committed config the way join does, so CI still
 	// knows what the project must enforce.
 	var answersErr error
+	cfgFile := branding.Get().ConfigFile
 	if answers.ProjectName == "" && ctx.QsdevConfig != nil {
 		if answers, answersErr = buildJoinAnswers(cmd, InitOptions{}, projectRoot); answersErr != nil {
 			answersErr = fmt.Errorf("deriving answers from %s: %w", cfgFile, answersErr)
 		}
 	}
-	// The committed hooks block is authoritative for the hook policy (init,
-	// join and update refresh it from .qsdev.yaml), so a policy committed
+	// The committed hooks block and claude_code.permissions are
+	// authoritative for the hook policy and the extra permission rules (init,
+	// join and update refresh them from .qsdev.yaml), so a policy committed
 	// after the answers were saved is what settings.json must enforce, and
 	// a checkout that has not run 'qsdev init --update' since fails.
 	if ctx.QsdevConfig != nil {
 		answers.HookPolicy = ctx.QsdevConfig.Hooks.Clone()
+		answers.ClaudePermissions = ctx.QsdevConfig.ClaudeCode.Permissions.Clone()
 	}
 
 	// Settle the answers against the committed config, as every generation
@@ -150,12 +154,14 @@ func runCheck(cmd *cobra.Command, format check.OutputFormat, auditLevel check.Au
 
 	// Deny rule conflict validation.
 	ctx.DenyRules = claudecode.AllBaseDenyRules()
+	ctx.AskRules = claudecode.AllBaseAskRules()
 	builtinSkills := claudecode.BuiltinSkillDefinitions()
 	ctx.SkillOps = make([]check.SkillOps, len(builtinSkills))
 	for i, s := range builtinSkills {
 		ctx.SkillOps[i] = check.SkillOps{
 			Name:         s.Name,
 			AllowedTools: s.AllowedTools,
+			PreApproved:  s.PreApproved,
 		}
 	}
 	ctx.ExpectedConflictKeys = claudecode.ExpectedConflicts()
@@ -176,10 +182,16 @@ func runCheck(cmd *cobra.Command, format check.OutputFormat, auditLevel check.Au
 	// seeded from the embedded templates so the judgement holds when the
 	// generator cannot run or the config turns Claude Code off.
 	ctx.GeneratedContent = claudecode.HookScriptContents()
+	ctx.GuardSupportFiles = []string{claudecode.HookLibPath}
 	for rel, f := range freshFiles {
 		ctx.GeneratedContent[rel] = f.Content
 	}
 	ctx.ExpectedGenerationErr = expectedGenerationErr(answersErr, genErr)
+	// The hand-edited devenv.nix (and devenv.local.nix) must still enable the
+	// security hooks and strip the variables the generated one does.
+	if ctx.ExpectedGenerationErr == nil {
+		ctx.ExpectedGenerationErr = fillDevenvSecurity(&ctx, answers, freshFiles, projectRoot)
+	}
 	ctx.RequiredMCPServers = requiredMCPServers(answers, toolRegistry, freshFiles)
 	if answers.ClaudeCode {
 		for _, h := range claudecode.HooksWithoutPolicy(answers) {
@@ -188,8 +200,6 @@ func runCheck(cmd *cobra.Command, format check.OutputFormat, auditLevel check.Au
 	}
 
 	ctx.CustomConformance = evaluateCustomConformance(projectRoot, scan)
-	ctx.OrgConfigDrift = catalog.ProjectOrgConfigDrift(projectRoot)
-	ctx.OrgConfigSource = catalog.ProjectOrgConfigSource(projectRoot)
 
 	// Environment separation for cloud providers is judged from what the
 	// devenv modules declare; no cloud CLI runs.
@@ -211,6 +221,55 @@ func runCheck(cmd *cobra.Command, format check.OutputFormat, auditLevel check.Au
 		report = check.BuildReport(report.Checks, report.Version, report.Project)
 	}
 
+	return emitCheckReport(cmd, report, format, auditLevel)
+}
+
+// loadCheckRegistry returns the tool registry check validates against, or the
+// result that reports why it is unavailable. A catalog that does not load is
+// reported with the catalog's own error, worded as the root catalog gate
+// words it (not toolreg's re-wrap); a registry that cannot be built from a
+// catalog that loaded is reported separately, so its cause is not blamed on
+// the defaults file.
+func loadCheckRegistry() (*toolreg.Registry, *check.CheckResult) {
+	if _, err := catalog.Default(); err != nil {
+		r := check.CatalogLoadFailure(err)
+		return nil, &r
+	}
+	reg, err := toolreg.Default()
+	if err != nil {
+		r := check.ToolRegistryFailure(err)
+		return nil, &r
+	}
+	return reg, nil
+}
+
+// catalogFreeCheckContext returns the check context for the project at
+// projectRoot with every field that needs no catalog filled in: what
+// check.RunCatalogUnavailable judges when the catalog does not load.
+func catalogFreeCheckContext(cmd *cobra.Command, projectRoot string) check.CheckContext {
+	ctx := check.CheckContext{
+		ProjectRoot:   projectRoot,
+		BinaryVersion: version.Info().Version,
+		StateFile:     filepath.Join(projectRoot, stateFilePath()),
+		ManifestFile:  filepath.Join(projectRoot, state.ManifestFile()),
+		ProbeTool: func(binary, versionArg string) toolcheck.Info {
+			return toolcheck.Detect(cmd.Context(), binary, versionArg)
+		},
+		ClaudeUserDir:   claudeUserDir(),
+		OrgConfigDrift:  catalog.ProjectOrgConfigDrift(projectRoot),
+		OrgConfigSource: catalog.ProjectOrgConfigSource(projectRoot),
+	}
+	// Parse config if present. The error travels in the context so the report
+	// (including machine-readable formats) distinguishes "not found" from a
+	// parse failure.
+	ctx.QsdevConfig, ctx.ConfigErr = qsdevconfig.ParseQsdevConfig(filepath.Join(projectRoot, branding.Get().ConfigFile))
+	return ctx
+}
+
+// emitCheckReport writes report to cmd's output in format, emits GitHub
+// Actions annotations when running there, and returns the error that makes
+// check exit 1 when a result fails at or above auditLevel.
+func emitCheckReport(cmd *cobra.Command, report *check.CheckReport, format check.OutputFormat, auditLevel check.AuditLevel) error {
 	// Detect color support.
 	useColor := false
 	if f, ok := cmd.OutOrStdout().(*os.File); ok {
@@ -369,6 +428,40 @@ func requiredMCPServers(answers types.WizardAnswers, reg *toolreg.Registry, fres
 		}
 	}
 	return required
+}
+
+// fillDevenvSecurity records in ctx the security git hooks (see
+// catalog.SecurityHookIDs for the answers' compliance level) the devenv.nix in
+// freshFiles enables, the variables it strips and the git-hooks settings that
+// shape those hooks, next to what the project's devenv modules declare. It
+// records nothing when the generator writes no devenv.nix, and returns an
+// error when the generated file cannot be read.
+func fillDevenvSecurity(ctx *check.CheckContext, answers types.WizardAnswers, freshFiles map[string]types.GeneratedFile, projectRoot string) error {
+	f, ok := freshFiles[toolreg.DevenvNixFile]
+	if !ok {
+		return nil
+	}
+	cat, err := catalog.Default()
+	if err != nil {
+		return fmt.Errorf("loading catalog for the devenv security floor: %w", err)
+	}
+	expected, err := devenv.DeclaredSecurity(string(f.Content))
+	if err != nil {
+		return fmt.Errorf("reading the generated %s: %w", toolreg.DevenvNixFile, err)
+	}
+	level := answers.ComplianceLevel
+	if level == "" {
+		level = cat.TierCompliance(answers.Tier)
+	}
+	security := cat.SecurityHookIDs(level)
+	ctx.ExpectedDevenvHooks = slices.DeleteFunc(expected.Hooks, func(id string) bool { return !slices.Contains(security, id) })
+	ctx.ExpectedUnsetVars = expected.UnsetVars
+	ctx.ExpectedDevenvHookSettings = expected.SecuritySettings(ctx.ExpectedDevenvHooks)
+
+	declared, err := devenv.ProjectDeclaredSecurity(projectRoot)
+	ctx.DevenvHooks, ctx.DevenvUnsetVars, ctx.DevenvSecurityErr = declared.Hooks, declared.UnsetVars, err
+	ctx.DevenvHookSettings = declared.SecuritySettings(ctx.ExpectedDevenvHooks)
+	return nil
 }
 
 // expectedGenerationErr reports why the generator's output for the project

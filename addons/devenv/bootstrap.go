@@ -7,6 +7,7 @@ import (
 	"fastcat.org/go/gdev/addons/bootstrap"
 
 	"github.com/Quantum-Serendipity/qsdev/internal/catalog"
+	"github.com/Quantum-Serendipity/qsdev/internal/doctor"
 	"github.com/Quantum-Serendipity/qsdev/internal/installer"
 )
 
@@ -18,7 +19,9 @@ const (
 )
 
 // nixToolSpec describes a tool the bootstrap installs with Nix. Its install
-// command comes from the catalog's bootstrap_tools pin, not from here.
+// command comes from the catalog's bootstrap_tools pin, and its version
+// probe, parser and floor from the doctor check of the same name, not from
+// here.
 type nixToolSpec struct {
 	catalogName string // bootstrap_tools entry, e.g. catalog.BootstrapToolDevenv
 	displayName string
@@ -43,8 +46,13 @@ var (
 
 // toolSpec returns the install spec for t: `nix profile install` of the
 // attribute the catalog pins (bootstrap_tools.<name>) from a flake pinned to
-// a commit, with the flake's nixConfig ignored.
+// a commit, with the flake's nixConfig ignored. A found binary below the
+// doctor check's floor is upgraded.
 func (t nixToolSpec) toolSpec(cat *catalog.Catalog) (installer.ToolSpec, error) {
+	check, ok := doctor.CheckNamed(t.binary)
+	if !ok {
+		return installer.ToolSpec{}, fmt.Errorf("no doctor check for %s", t.binary)
+	}
 	cmd, err := installer.BootstrapToolInstallCmd(cat, t.catalogName, time.Now())
 	if err != nil {
 		return installer.ToolSpec{}, err
@@ -52,7 +60,9 @@ func (t nixToolSpec) toolSpec(cat *catalog.Catalog) (installer.ToolSpec, error) 
 	return installer.ToolSpec{
 		DisplayName:   t.displayName,
 		Binary:        t.binary,
-		VersionFlag:   "--version",
+		VersionFlag:   check.VersionFlag,
+		MinVersion:    check.MinVersion,
+		ParseVersion:  check.ParseVersion,
 		InstallCmd:    cmd,
 		ManagerBinary: "nix",
 		ManagerName:   "Nix",
@@ -72,7 +82,8 @@ func (t nixToolSpec) defaultToolSpec() (installer.ToolSpec, error) {
 }
 
 // installStep returns a bootstrap step that ensures t is installed,
-// installing the catalog's pinned package when it is missing.
+// installing the catalog's pinned package when it is missing or below the
+// floor.
 func (t nixToolSpec) installStep(name string) *bootstrap.Step {
 	return bootstrap.NewStep(
 		name,

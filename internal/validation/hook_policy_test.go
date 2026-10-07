@@ -45,7 +45,7 @@ func TestCheckHookPolicy(t *testing.T) {
 	}
 }
 
-func TestHookPolicyError_UnwrapsToolNamePattern(t *testing.T) {
+func TestPolicyEntryError_UnwrapsToolNamePattern(t *testing.T) {
 	t.Parallel()
 	errs := CheckHookPolicy(types.HooksConfig{ToolGates: types.ToolGatesConfig{Denied: []string{"a b"}}})
 	if len(errs) != 1 || !errors.Is(errs[0], ErrToolNamePattern) {

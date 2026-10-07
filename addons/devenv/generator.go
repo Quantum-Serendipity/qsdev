@@ -59,9 +59,13 @@ func (g *DevenvGenerator) Generate(answers types.WizardAnswers) ([]types.Generat
 	if err != nil {
 		return nil, err
 	}
+	ctx, err := newGenContext(answers, g.registry)
+	if err != nil {
+		return nil, err
+	}
 
 	// 1. devenv.yaml
-	yamlFile, err := GenerateDevenvYaml(answers, g.registry)
+	yamlFile, err := generateDevenvYaml(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("generating devenv.yaml: %w", err)
 	}
@@ -70,7 +74,7 @@ func (g *DevenvGenerator) Generate(answers types.WizardAnswers) ([]types.Generat
 	}
 
 	// 2. devenv.nix
-	nixFile, err := GenerateDevenvNix(answers, g.registry)
+	nixFile, err := generateDevenvNix(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("generating devenv.nix: %w", err)
 	}
@@ -91,9 +95,7 @@ func (g *DevenvGenerator) Generate(answers types.WizardAnswers) ([]types.Generat
 			if !ok {
 				return nil, fmt.Errorf("unknown language module: %q", lang.Name)
 			}
-			cfg := ecosystem.ToGenerationConfig(lang, answers)
-			secFiles := mod.SecurityConfigs(cfg)
-			files = append(files, secFiles...)
+			files = append(files, mod.SecurityConfigs(ctx.moduleConfig(mod))...)
 		}
 	}
 
@@ -124,7 +126,7 @@ func (g *DevenvGenerator) Generate(answers types.WizardAnswers) ([]types.Generat
 	t := tier.Resolve(answers.Tier, answers.PermissionLevel, answers.MCPServers)
 	if t >= tier.Standard && infraProfile != nil {
 		in := profile.ProjectInputsFromAnswers(answers)
-		if in.CI, err = g.ciCommands(answers); err != nil {
+		if in.CI, err = ctx.ciCommands(); err != nil {
 			return nil, err
 		}
 		profileFiles, err := infraProfile.ConfigFiles(in)
@@ -138,32 +140,27 @@ func (g *DevenvGenerator) Generate(answers types.WizardAnswers) ([]types.Generat
 }
 
 // ciCommands groups the CI commands of every selected language's module by
-// phase, each module configured as for its security configs (package
-// manager, extras and the effective infrastructure). Settings the language
-// entry leaves unset are completed from detection (WithSuggested), as a
-// create does: answers saved by an older qsdev lack settings some commands
-// are gated on (the renv or luarocks package manager, the Nix flake extra),
-// and update refreshes detection but not the saved entries, so without this
-// those projects would silently lose the lock-enforcing steps.
-func (g *DevenvGenerator) ciCommands(answers types.WizardAnswers) ([]ecosystem.CIPhaseGroup, error) {
-	if g.registry == nil {
+// phase, each module configured with the context's ModuleConfig, the same one
+// devenv.nix, devenv.yaml, the security configs and secretspec are generated
+// from, so the workflow's commands (and the uv cooldown, which must match the
+// shell's) run against the environment the project actually gets.
+func (c *genContext) ciCommands() ([]ecosystem.CIPhaseGroup, error) {
+	if c.modules == nil {
 		return nil, nil
 	}
-	modules := make([]ecosystem.EcosystemModule, 0, len(answers.Languages))
-	configs := make(map[string]ecosystem.ModuleConfig, len(answers.Languages))
-	for _, lang := range answers.Languages {
-		mod, ok := g.registry.ByName(lang.Name)
+	modules := make([]ecosystem.EcosystemModule, 0, len(c.answers.Languages))
+	seen := make(map[string]bool, len(c.answers.Languages))
+	for _, lang := range c.answers.Languages {
+		mod, ok := c.modules.ByName(lang.Name)
 		if !ok {
 			return nil, fmt.Errorf("unknown language module: %q", lang.Name)
 		}
-		if _, dup := configs[mod.Name()]; !dup {
+		if !seen[mod.Name()] {
+			seen[mod.Name()] = true
 			modules = append(modules, mod)
 		}
-		configs[mod.Name()] = ecosystem.ToModuleConfigWithInfra(answers.Detected.WithSuggested(lang), answers.Infrastructure)
 	}
-	groups, err := ecosystem.AggregateCICommands(modules, func(mod ecosystem.EcosystemModule) ecosystem.ModuleConfig {
-		return configs[mod.Name()]
-	})
+	groups, err := ecosystem.AggregateCICommands(modules, c.moduleConfig)
 	if err != nil {
 		return nil, fmt.Errorf("collecting ecosystem CI commands: %w", err)
 	}
@@ -181,20 +178,21 @@ const defaultInfraProfile = "consulting-default"
 // environment is added under the user's own env vars; a missing or
 // placeholder endpoint is an error. The implicit default only contributes
 // its config files (ConfigOnly), so projects that never chose an
-// infrastructure keep exactly the endpoints they configured; a Nix cache they
-// configured is still checked (profile.ResolveProjectInfrastructure). The returned profile is nil when
-// the generator has no profile registry.
+// infrastructure keep exactly the endpoints they configured, after the same
+// endpoint checks (profile.ResolveProjectInfrastructure). Those checks run
+// for every generator, so no configuration writes an unvalidated endpoint.
+// The returned profile is nil when the generator has no profile registry.
 func (g *DevenvGenerator) applyInfraProfile(answers types.WizardAnswers) (types.WizardAnswers, *profile.InfraProfile, error) {
-	if g.profileRegistry == nil {
-		return answers, nil, nil
-	}
 	name := answers.ProfileName
-	if name == "" {
+	if name == "" || g.profileRegistry == nil {
 		infra, err := profile.ResolveProjectInfrastructure(answers.Infrastructure)
 		if err != nil {
 			return answers, nil, err
 		}
 		answers.Infrastructure = infra
+		if g.profileRegistry == nil {
+			return answers, nil, nil
+		}
 		p, ok := g.profileRegistry.Get(defaultInfraProfile)
 		if !ok {
 			return answers, nil, nil

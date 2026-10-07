@@ -8,7 +8,9 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
+	"github.com/Quantum-Serendipity/qsdev/internal/testutil"
 	"github.com/Quantum-Serendipity/qsdev/pkg/branding"
 	"github.com/Quantum-Serendipity/qsdev/pkg/ecosystem"
 	"github.com/Quantum-Serendipity/qsdev/pkg/ecosystem/modules/python"
@@ -683,10 +685,7 @@ func TestDevenvNixFragment_SupplyChainEnv(t *testing.T) {
 // nix-instantiate (when available) inside a devenv-style module.
 func TestDevenvNixFragment_NixParses(t *testing.T) {
 	t.Parallel()
-	nixInstantiate, err := exec.LookPath("nix-instantiate")
-	if err != nil {
-		t.Skip("nix-instantiate not available")
-	}
+	nixInstantiate := testutil.RequireTool(t, "nix-instantiate", testutil.RequireNix)
 	for _, pm := range []string{"pip", "uv", "poetry"} {
 		t.Run(pm, func(t *testing.T) {
 			t.Parallel()
@@ -1284,4 +1283,61 @@ func assertEvidenceContains(t *testing.T, evidence []string, substr string) {
 		}
 	}
 	t.Errorf("evidence %v should contain an entry mentioning %q", evidence, substr)
+}
+
+// TestUVExcludeNewerByComplianceLevel checks uv's cooldown follows the
+// compliance window, never below uv's 7-day floor (D18), and that the devenv
+// shell and CI use the same value (uv treats a different exclude-newer as a
+// stale lockfile). A project-owned exclude-newer suppresses both.
+func TestUVExcludeNewerByComplianceLevel(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name string
+		age  time.Duration
+		want string
+	}{
+		{"unset", 0, "P7D"},
+		{"baseline", 72 * time.Hour, "P7D"},
+		{"enhanced", 168 * time.Hour, "P7D"},
+		{"strict", 336 * time.Hour, "P14D"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			cfg := ecosystem.ModuleConfig{PackageManager: "uv", MinReleaseAge: tt.age}
+			frag, err := (&python.Module{}).DevenvNixFragment(cfg)
+			if err != nil {
+				t.Fatalf("DevenvNixFragment: %v", err)
+			}
+			if want := `UV_EXCLUDE_NEWER = "` + tt.want + `"`; !strings.Contains(frag, want) {
+				t.Errorf("fragment lacks %q:\n%s", want, frag)
+			}
+			if got, want := uvSyncCommand(t, cfg), "uv sync --locked --exclude-newer "+tt.want; got != want {
+				t.Errorf("CI uv sync = %q, want %q", got, want)
+			}
+
+			cfg.Extras = map[string]string{"uv_exclude_newer": "project"}
+			frag, err = (&python.Module{}).DevenvNixFragment(cfg)
+			if err != nil {
+				t.Fatalf("DevenvNixFragment (project-owned): %v", err)
+			}
+			if strings.Contains(frag, "UV_EXCLUDE_NEWER") {
+				t.Errorf("project-owned exclude-newer still sets UV_EXCLUDE_NEWER:\n%s", frag)
+			}
+			if got := uvSyncCommand(t, cfg); got != "uv sync --locked" {
+				t.Errorf("project-owned CI uv sync = %q, want %q", got, "uv sync --locked")
+			}
+		})
+	}
+}
+
+func uvSyncCommand(t *testing.T, cfg ecosystem.ModuleConfig) string {
+	t.Helper()
+	for _, c := range (&python.Module{}).CICommands(cfg) {
+		if c.Name == "uv-sync" {
+			return c.Command
+		}
+	}
+	t.Fatalf("no uv-sync CI command for %+v", cfg)
+	return ""
 }

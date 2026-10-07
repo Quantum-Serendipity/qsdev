@@ -12,6 +12,7 @@ import (
 	"github.com/BurntSushi/toml"
 
 	"github.com/Quantum-Serendipity/qsdev/internal/sectools"
+	"github.com/Quantum-Serendipity/qsdev/internal/testutil"
 	"github.com/Quantum-Serendipity/qsdev/pkg/types"
 )
 
@@ -126,10 +127,7 @@ func fakeGitHubPAT() string {
 // under an allowlisted directory is not.
 func TestGenerateGitleaksToml_DetectsWithBinary(t *testing.T) {
 	t.Parallel()
-	bin, err := exec.LookPath("gitleaks")
-	if err != nil {
-		t.Skip("gitleaks not installed")
-	}
+	bin := testutil.RequireTool(t, "gitleaks", testutil.RequireSecTools)
 	f, err := sectools.GenerateGitleaksToml(types.WizardAnswers{})
 	if err != nil {
 		t.Fatalf("GenerateGitleaksToml() error: %v", err)

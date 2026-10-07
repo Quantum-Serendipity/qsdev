@@ -37,9 +37,9 @@ Flags explicitly set on the command line always take precedence over profile def
 
 | Profile | When to Use |
 |---------|-------------|
-| `consulting-default` | Multi-client consulting shops; Nexus proxy, OSV + Socket scanning, Renovate with 3-day age gate |
+| `consulting-default` | Multi-client consulting shops; Nexus proxy, OSV + Socket scanning, Renovate with at least a 3-day age gate (raised to the compliance window) |
 | `startup-github` | GitHub-native; GitHub Packages, OSV + Socket scanning, Dependabot |
-| `enterprise` | Regulated environments; Artifactory, Snyk + Socket scanning, Renovate with 7-day age gate, Cosign signing |
+| `enterprise` | Regulated environments; Artifactory, Snyk + Socket scanning, Renovate with at least a 7-day age gate (raised to the compliance window), Cosign signing |
 
 An infrastructure profile needs your organization's real endpoints; qsdev
 refuses to apply one without them (see
@@ -53,13 +53,15 @@ qsdev init --profile go-web --infra-profile enterprise \
 
 ### Compliance Levels
 
-Each security tier maps to a compliance level that selects the generated pre-commit hooks. The compliance level does not select the age gate yet: at every level, the generated package-manager settings gate installs for at least 72 hours (3 days) where the package manager supports an age gate (npm and pnpm use 3 days; yarn, bun and uv use 7 days). The Renovate or Dependabot window comes from the infrastructure profile instead: 3 days for `consulting-default`, 7 days for `enterprise`, none for `startup-github`. Per-level windows are planned. Per-level SBOM policies and the strict-level license-compliance hook are planned and not generated yet.
+Each security tier maps to a compliance level, which selects the generated pre-commit hooks and the release-age window: how long a package version must have been published before it can be installed. The generated package-manager settings gate installs for at least the level's window where the package manager supports an age gate. Each package manager keeps its historical minimum, so neither a level nor an organization catalog overlay ever loosens it: npm and pnpm (and the Claude Code package guard, through `PACKAGE_GUARD_MIN_AGE_DAYS` in `.claude/settings.json`) never go below 3 days, and yarn, bun and uv never below 7 days. Renovate's `minimumReleaseAge` and Dependabot's `cooldown` use the larger of the infrastructure profile's delay (3 days for `consulting-default`, 7 days for `enterprise`, none for `startup-github`, or an ecosystem override) and the level's window. Per-level SBOM policies and the strict-level license-compliance hook are planned and not generated yet.
 
-| Level | Age Gate | Generated Hooks | Planned |
-|-------|---------|-----------------|---------|
-| `baseline` | at least 72 hours (3 days) | ripsecrets, gitleaks | none |
-| `enhanced` | at least 72 hours (3 days) | ripsecrets, gitleaks, semgrep | SBOM policy: on release |
-| `strict` | at least 72 hours (3 days) | ripsecrets, gitleaks, semgrep | license-compliance hook; SBOM policy: every build |
+| Level | Age Gate (npm, pnpm, package guard) | Age Gate (yarn, bun, uv) | Renovate / Dependabot delay | Generated Hooks | Planned |
+|-------|---------|---------|---------|-----------------|---------|
+| `baseline` | at least 3 days | at least 7 days | at least 3 days | ripsecrets, gitleaks | none |
+| `enhanced` | at least 7 days | at least 7 days | at least 7 days | ripsecrets, gitleaks, semgrep | SBOM policy: on release |
+| `strict` | at least 14 days | at least 14 days | at least 14 days | ripsecrets, gitleaks, semgrep | license-compliance hook; SBOM policy: every build |
+
+The JavaScript configs (`.npmrc`, `pnpm-workspace.yaml`, `.yarnrc.yml`, `bunfig.toml`) are created only if absent. `qsdev init --update` rewrites one only while it still holds what qsdev generated, so an edited file keeps its value; `qsdev check` fails `security_config_javascript` until its age gate meets the level's window.
 
 ### Container Runtime
 
@@ -80,13 +82,23 @@ Package installs are hook-gated (the user is asked for confirmation), not blocke
 
 | Preset | Allow | Deny | Ask | Notes |
 |--------|-------|------|-----|-------|
-| `minimal` | `Read(*)`, basic build/test commands | All base deny rules + ecosystem-specific | `nix flake update` | Read-only by default; every write requires approval |
-| `standard` | `Read(*)`, `Edit(*)`, `Write(*)`, read-only and commit `git` subcommands (never `git *`), build/test/lint, Nix dev shells | All base deny rules + ecosystem-specific | `nix flake update`, `pip install -r`, `pip install -e .` | Recommended for most teams |
+| `minimal` | `Read(*)`, basic build/test commands, frozen-lockfile `npm ci` | All base deny rules + ecosystem-specific | Package installs, code execution, supply-chain mutation, publish/credentials, work-discarding git, `nix flake update` | Read-only by default; every write requires approval |
+| `standard` | `Read(*)`, `Edit(*)`, `Write(*)`, read-only and commit `git` subcommands and `git branch` listing forms (never `git *`, `git checkout *`, `git switch *` or `git branch *`), build/test/lint, read-only audit forms (`npm audit`, `npm audit --json`, `pip-audit`, `cargo audit`; never `audit *`), Nix dev shells | All base deny rules + ecosystem-specific | Package installs, code execution, supply-chain mutation, publish/credentials, work-discarding git, `nix flake update` | Recommended for most teams |
 | `permissive` | Everything in standard + `Bash(make *)` and docker/podman build, ps and images (never `docker *`: daemon access is root-equivalent) | All base deny rules + ecosystem-specific | Same as standard | For teams with Docker/Make workflows |
-| `supply-chain-only` | Minimal | All base + ecosystem deny rules | (none) | Supply chain defense only; no dev tooling permissions |
-| `custom` | Only `ExtraAllowPatterns` from config | All base + ecosystem + `ExtraDenyPatterns` | (none) | Full manual control |
+| `supply-chain-only` | (none) | Supply-chain base deny rules + ecosystem-specific | Package installs, supply-chain mutation, publish/credentials | Supply chain defense only; no dev tooling permissions |
+| `custom` | Only `claude_code.permissions.allow` from `.qsdev.yaml` | All base + ecosystem + `claude_code.permissions.deny` | Package installs, supply-chain mutation, publish/credentials, work-discarding git | Full manual control |
 
-The `standard` and `permissive` presets also set `defaultMode: "default"` and `disableBypassPermissionsMode: "disable"` to prevent developers from bypassing the permission model.
+The ask sets are evaluated before allow rules, so they also cover allows that you or a skill's `allowed-tools` add:
+
+- **Package installs** -- `npm install`, `pip install`, `cargo add`, `go get`, `gem install`, `composer require`, `dotnet add package` and their variants.
+- **Code execution** -- `npm run`, `go run`, `cargo run`, `nix run`, `nix build`, and build-tool flags that run a separate program: `go generate`, `go ... -exec`/`-toolexec` (single- or double-dash), `go ... -ldflags` naming an external linker (`-extld`, `-extldflags`) and `cargo ... --config`.
+- **Supply-chain mutation** -- `npm audit fix` (also with flags before `fix`, or `audit` abbreviated as npm allows, such as `npm aud fix`), `pnpm audit --fix`, `pip-audit --fix`, `cargo audit fix`, and any command with `--ignore-scripts=false`, `--ignore-scripts false` or `--no-ignore-scripts`.
+- **Publish/credentials** -- `npm`/`pnpm`/`yarn npm publish`, `cargo publish`, `twine upload`, `gem push`, `npm token`, `npm login`, `npm adduser`, `npm config set` and `pip config`.
+- **Work-discarding git** -- `git checkout -- <path>`, `git checkout .`, `git checkout -f`/`--force`, `git switch --discard-changes`/`-f`/`--force`/`-C`, `git branch -D`/`-f`/`--force`/`-M`/`-C`/`-df`, and `git clean`. Because git also accepts abbreviated long options (`git switch --disc`) and clustered short flags (`git switch -qf`, `git branch -qD`), which no ask rule can enumerate, no preset allows `git checkout`, `git switch` or branch-changing `git branch` forms at all: they prompt.
+
+`pip-audit -r <file>` and `pip-audit <project-dir>` are not auto-approved: they pip-install the requirements into a temporary virtual environment, which builds source distributions. Build/test allows still execute code the agent can write (test files); that is an accepted risk of the `standard` preset.
+
+Every preset sets `disableBypassPermissionsMode: "disable"`, because bypass mode would auto-run the ask rules. `standard`, `permissive` and `custom` also set `defaultMode: "default"` and `minimal` sets `defaultMode: "plan"`; `supply-chain-only` leaves `defaultMode` unset.
 
 ### Deny Rule Categories
 
@@ -112,17 +124,20 @@ Each ecosystem module also contributes its own deny rules (e.g., JavaScript modu
 
 ### Customizing Deny Rules
 
-Add extra deny or allow patterns in `.qsdev.yaml`:
+Add extra deny or allow rules in the committed `.qsdev.yaml`:
 
 ```yaml
-claude:
-  permissions: standard
-  extra_deny:
-    - "Bash(terraform apply *)"
-    - "Bash(kubectl delete *)"
-  extra_allow:
-    - "Bash(terraform plan *)"
+claude_code:
+  permission_level: standard
+  permissions:
+    deny:
+      - "Bash(terraform apply *)"
+      - "Bash(kubectl delete *)"
+    allow:
+      - "Bash(terraform plan *)"
 ```
+
+The rules are appended to the preset's own, under every preset; with `custom` the `allow` list is the whole allow list. Each entry must be a Claude Code permission rule, either a tool name (`Read`) or a tool with a specifier (`Bash(make *)`); a malformed entry fails validation. The preset's ask and deny rules still take precedence over an added allow. Run `qsdev init --update` to regenerate `.claude/settings.json`; the block is kept as committed. `claude_code.permissions` is team policy, so `.qsdev.local.yaml` cannot set it: a local value is ignored with a warning.
 
 ## Configuring Skills
 
@@ -419,8 +434,8 @@ This ensures consistent security policies, tooling versions, and Claude Code per
 | `qsdev status` | Security posture assessment (score + grade) |
 | `qsdev check` | CI enforcement (config integrity, hardening) |
 | `qsdev update` | Update binary + configs + devenv inputs (3-stage coordinated update) |
-| `qsdev enable <tool>` | Enable a security/AI tool |
-| `qsdev disable <tool>` | Disable a tool |
+| `qsdev enable <tool\|language>` | Enable a security/AI tool, or add a language module such as `gcp` |
+| `qsdev disable <tool\|language>` | Disable a tool, or remove a language module |
 | `qsdev list` | Show all available tools |
 | `qsdev devenv doctor` | Diagnose environment issues |
 | `qsdev devenv setup` | Install prerequisites (Nix, devenv, direnv) |

@@ -25,6 +25,7 @@ We will acknowledge receipt within 48 hours and provide a resolution timeline wi
 
 - Releases carry [SLSA](https://slsa.dev/) Build L2 provenance (GitHub artifact attestations)
 - All release artifacts are signed with Cosign (Sigstore)
+- The gateway container image (`ghcr.io/quantum-serendipity/qsdev`) is published for linux/amd64 and linux/arm64, cosign keyless-signed by the `release.yml` workflow and carries build provenance; the release verifies the signature against that workflow's exact identity before publishing binaries
 - Dependencies are monitored with Dependabot and govulncheck
 - Code is scanned with CodeQL on every PR
 - Branch protection enforces peer review on `main`

@@ -12,6 +12,7 @@ import (
 
 	"gopkg.in/yaml.v3"
 
+	"github.com/Quantum-Serendipity/qsdev/pkg/denyutil"
 	"github.com/Quantum-Serendipity/qsdev/pkg/ecosystem"
 	"github.com/Quantum-Serendipity/qsdev/pkg/fileutil"
 	"github.com/Quantum-Serendipity/qsdev/pkg/types"
@@ -252,29 +253,94 @@ func (m *Module) PreCommitHooks(_ ecosystem.ModuleConfig) []ecosystem.HookConfig
 // other CLI open.
 var containerCLIs = []string{"docker", "podman"}
 
-// containerEscapeArgs are argument fragments that break container isolation:
-// privileged mode, host PID/network namespaces, container-engine socket
-// mounts, and mounting the host root filesystem (via -v/--volume or a
-// --mount bind whose source is /). They are matched anywhere in the command
-// so run, create, exec and `container run` are all covered.
-var containerEscapeArgs = []string{
+// containerEscapeArgs are argument fragments that break container
+// isolation: privileged mode, added capabilities, disabled seccomp/AppArmor/
+// SELinux confinement or unmasked /proc and /sys paths (in the `=` and the
+// legacy `:` spelling of --security-opt), host PID/network/user namespaces,
+// container-engine socket mounts, and mounting the host root filesystem (via
+// -v/--volume, quoted or not, or a --mount bind whose source is /, wherever
+// the source key sits in the mount spec). They are matched anywhere in the
+// command so run, create, exec and `container run` are all covered. A
+// host-root bind is matched as "/:/" followed by the absolute container path,
+// or as "source=/" followed by ",", " " (the image name always follows the
+// mount spec) or a closing quote; a trailing ":*" would be Claude Code's
+// legacy spelling of " *" and match nothing here.
+//
+// These globs are a best-effort first layer: they match the common spellings
+// only (see hostRootVolumeArgs), and a path spelling of the host root they do
+// not list ("-v ///:/host", "-v /../:/host") gets past them. No hook parses
+// container mounts today; only the sandbox, when enabled, backs these rules
+// up. An argv check is a planned block-destructive.py item of the U11
+// remediation design.
+var containerEscapeArgs = slices.Concat(isolationEscapeArgs, hostRootVolumeArgs(), hostRootMountArgs)
+
+// isolationEscapeArgs are the escape arguments other than host-root mounts.
+var isolationEscapeArgs = []string{
 	"*--privileged*",
+	"*--cap-add*",
+	"*seccomp=unconfined*",
+	"*seccomp:unconfined*",
+	"*apparmor=unconfined*",
+	"*apparmor:unconfined*",
+	"*systempaths=unconfined*",
+	"*label=disable*",
+	"*label:disable*",
 	"*--pid=host*",
 	"*--pid host*",
 	"*--network=host*",
 	"*--network host*",
 	"*--net=host*",
 	"*--net host*",
+	"*--userns=host*",
+	"*--userns host*",
 	"*docker.sock*",
 	"*podman.sock*",
-	"* -v /:*",
-	"* -v=/:*",
-	"* -v/:*",
-	"*--volume /:*",
-	"*--volume=/:*",
+}
+
+// volumeFlagSpellings are the ways -v/--volume is given its value: as the
+// next word, after "=", or glued to -v.
+var volumeFlagSpellings = []string{" -v ", " -v=", " -v", "--volume ", "--volume="}
+
+// hostRootSpellings are the spellings of the host root a mount source can
+// take: / itself (quoted or not) and its path-normalized forms, each of
+// which names exactly / and so matches no other mount.
+var hostRootSpellings = []struct{ path, quote string }{
+	{"/", ""}, {"/", `"`}, {"/", "'"},
+	{"//", ""}, {"/.", ""}, {"/./", ""},
+}
+
+// hostRootVolumeArgs returns the -v/--volume escape globs: for every flag
+// spelling and host-root spelling, the bind form (source then ":/" and the
+// absolute container path) and the single-path form (the host root alone,
+// followed by the image).
+func hostRootVolumeArgs() []string {
+	var args []string
+	for _, flag := range volumeFlagSpellings {
+		for _, root := range hostRootSpellings {
+			args = append(args,
+				"*"+flag+root.quote+root.path+":/*",
+				"*"+flag+root.quote+root.path+root.quote+" *")
+		}
+	}
+	return args
+}
+
+// hostRootMountArgs are the --mount escape globs: a bind whose source is /,
+// wherever the source key sits in the mount spec.
+var hostRootMountArgs = []string{
 	"*source=/,*",
 	"*src=/,*",
+	"*,source=/ *",
+	"*,src=/ *",
+	"*,source=/\"*",
+	"*,src=/\"*",
+	"*,source=/'*",
+	"*,src=/'*",
 }
+
+// containerPullSubcommands are the explicit image-pull spellings: the
+// classic `pull`, the management-command `image pull` and `compose pull`.
+var containerPullSubcommands = []string{"pull", "image pull", "compose pull"}
 
 // registryAuthFiles are where the Docker and Podman CLIs store registry
 // credentials (base64-encoded passwords or tokens) after `login`.
@@ -283,17 +349,34 @@ var registryAuthFiles = []string{
 	"~/.config/containers/auth.json",
 }
 
-// DenyRules returns Claude Code deny-rule patterns for the container ecosystem.
-// For both Docker-compatible CLIs it prevents uncontrolled image pulls and
-// blocks the container-escape arguments listed in containerEscapeArgs. It
-// also blocks printing the registry credential files with cat.
+// DenyRules returns Claude Code deny-rule patterns for the container
+// ecosystem. For both Docker-compatible CLIs it denies explicit image pulls
+// (with global options such as --context or -H, and behind an env prefix,
+// which Claude Code does not strip before matching) and the
+// container-escape arguments listed in containerEscapeArgs. It also blocks
+// printing the registry credential files with cat.
+//
+// The pull rules anchor the global-option form on a dash
+// (denyutil.DashedOptionSubcommandRules), since Docker and Podman global
+// options always start with one, so `docker exec web git pull` stays
+// allowed. A global option followed by another subcommand that runs a pull
+// (`docker --context prod exec web git pull`) is over-blocked; run it
+// yourself in a terminal.
+//
+// Residual risks these rules cannot close:
+//   - Implicit pulls: `run`, `create`, `build` and `compose up` pull missing
+//     images themselves, and denying those would deny the ecosystem
+//     outright.
+//   - Membership in the docker group (or access to a rootful socket) is
+//     root-equivalent on the host whatever the rules say.
+//   - Credential-directory mounts (-v ~/.aws:..., ~/.ssh) and --device need
+//     argv parsing. No hook checks them yet: the block-destructive.py check
+//     is a planned cross-domain item of the U11 remediation design.
 func (m *Module) DenyRules(_ ecosystem.ModuleConfig) []string {
-	rules := make([]string, 0, len(containerCLIs)*(1+len(containerEscapeArgs))+len(registryAuthFiles))
+	var rules []string
 	for _, cli := range containerCLIs {
-		rules = append(rules, "Bash("+cli+" pull *)")
-		for _, arg := range containerEscapeArgs {
-			rules = append(rules, "Bash("+cli+" "+arg+")")
-		}
+		rules = append(rules, denyutil.DashedOptionSubcommandRules(cli, containerPullSubcommands...)...)
+		rules = append(rules, denyutil.SubcommandRules(cli, containerEscapeArgs...)...)
 	}
 	for _, f := range registryAuthFiles {
 		rules = append(rules, "Bash(cat "+f+"*)")

@@ -69,12 +69,92 @@ func TestSecurityConfigs_RepositoryAllowlistMirrorOf(t *testing.T) {
 				RegistryProxy:       tt.proxy,
 				RepositoryAllowlist: tt.allowlist,
 			})
-			if len(mirrors) != 1 {
-				t.Fatalf("mirrors = %+v, want exactly one", mirrors)
+			if len(mirrors) != 2 {
+				t.Fatalf("mirrors = %+v, want the qsdev mirror and the HTTP blocker", mirrors)
 			}
 			m := mirrors[0]
 			if m.ID != tt.wantID || m.URL != tt.wantURL || m.MirrorOf != tt.wantOf {
 				t.Errorf("mirror = %+v, want id %q url %q mirrorOf %q", m, tt.wantID, tt.wantURL, tt.wantOf)
+			}
+		})
+	}
+}
+
+// TestSecurityConfigs_HTTPBlockerMirror checks that settings.xml carries
+// Maven's own HTTP-blocking mirror. -gs replaces Maven's conf/settings.xml,
+// which is where Maven >= 3.8.1 defines it, so without this copy an
+// allowlisted plain-http repository would be contacted. It must follow the
+// qsdev mirror: Maven picks the first matching mirror, and a non-allowlisted
+// http repository is to be redirected, not blocked.
+func TestSecurityConfigs_HTTPBlockerMirror(t *testing.T) {
+	t.Parallel()
+	for _, proxy := range []string{"", "https://maven.corp.example/all/"} {
+		mirrors := generatedMirrors(t, ecosystem.ModuleConfig{
+			Extras:              map[string]string{"build_tool": "maven"},
+			RegistryProxy:       proxy,
+			RepositoryAllowlist: []string{"confluent"},
+		})
+		if len(mirrors) != 2 {
+			t.Fatalf("proxy %q: mirrors = %+v, want two", proxy, mirrors)
+		}
+		b := mirrors[1]
+		if b.ID != "maven-default-http-blocker" || b.MirrorOf != "external:http:*" || !b.Blocked {
+			t.Errorf("proxy %q: second mirror = %+v, want the blocked maven-default-http-blocker for external:http:*", proxy, b)
+		}
+	}
+}
+
+// TestMavenWrapperVersionWarning checks that a Maven wrapper pinning a Maven
+// older than 3.9, which ignores MAVEN_ARGS, is reported: ./mvnw would then
+// run without .mvn/settings.xml.
+func TestMavenWrapperVersionWarning(t *testing.T) {
+	t.Parallel()
+	const url = "https://repo.maven.apache.org/maven2/org/apache/maven/apache-maven/%s/apache-maven-%s-bin.zip"
+	wrapper := func(v string) string {
+		return "wrapperVersion=3.3.2\ndistributionUrl=" + strings.ReplaceAll(url, "%s", v) + "\n"
+	}
+	tests := []struct {
+		name       string
+		properties string
+		buildTool  string
+		wantWarn   bool
+	}{
+		{name: "3.8.8 warns", properties: wrapper("3.8.8"), wantWarn: true},
+		{name: "escaped colon 3.6.3 warns", properties: "distributionUrl=https\\://repo.maven.apache.org/maven2/org/apache/maven/apache-maven/3.6.3/apache-maven-3.6.3-bin.zip\n", wantWarn: true},
+		{name: "3.9.6 silent", properties: wrapper("3.9.6")},
+		{name: "4.0.0 silent", properties: wrapper("4.0.0")},
+		{name: "no wrapper silent"},
+		{name: "malformed silent", properties: "distributionUrl=https://example.invalid/maven.zip\nnot a property line\n"},
+		{name: "gradle project not checked", properties: wrapper("3.8.8"), buildTool: "gradle"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			dir := t.TempDir()
+			if tt.properties != "" {
+				writeProjectFile(t, dir, ".mvn/wrapper/maven-wrapper.properties", tt.properties)
+			}
+			bt := tt.buildTool
+			if bt == "" {
+				bt = "maven"
+			}
+			// Bootstrapped Gradle verification metadata, so only the POM
+			// repository warnings under test can appear.
+			writeProjectFile(t, dir, "gradle/verification-metadata.xml", "<verification-metadata/>")
+			got := (&java.Module{}).SetupWarnings(dir, ecosystem.ModuleConfig{PackageManager: bt})
+			if !tt.wantWarn {
+				if len(got) != 0 {
+					t.Fatalf("SetupWarnings() = %q, want none", got)
+				}
+				return
+			}
+			if len(got) != 1 {
+				t.Fatalf("SetupWarnings() = %q, want one warning", got)
+			}
+			for _, s := range []string{"MAVEN_ARGS", "3.9", ".mvn/wrapper/maven-wrapper.properties"} {
+				if !strings.Contains(got[0], s) {
+					t.Errorf("warning %q lacks %q", got[0], s)
+				}
 			}
 		})
 	}
@@ -205,6 +285,9 @@ func TestSetupWarnings_RedirectedRepositories(t *testing.T) {
 			if bt == "" {
 				bt = "maven"
 			}
+			// Bootstrapped Gradle verification metadata, so only the POM
+			// repository warnings under test can appear.
+			writeProjectFile(t, dir, "gradle/verification-metadata.xml", "<verification-metadata/>")
 			got := (&java.Module{}).SetupWarnings(dir, ecosystem.ModuleConfig{
 				Extras:              map[string]string{"build_tool": bt},
 				RegistryProxy:       tt.proxy,
@@ -228,6 +311,14 @@ func TestSetupWarnings_RedirectedRepositories(t *testing.T) {
 				if strings.Contains(got[0], s) {
 					t.Errorf("warning %q should not mention %q", got[0], s)
 				}
+			}
+			// The file is loaded through MAVEN_ARGS in the devenv shell, not
+			// by passing -s by hand.
+			if strings.Contains(got[0], "mvn -s") {
+				t.Errorf("warning %q still says Maven needs -s to use settings.xml", got[0])
+			}
+			if len(tt.wantIDs) > 0 && !strings.Contains(got[0], "MAVEN_ARGS") {
+				t.Errorf("warning %q does not say how Maven loads settings.xml", got[0])
 			}
 			if len(tt.wantIDs) > 0 && !strings.Contains(got[0], "java.repository_allowlist") {
 				t.Errorf("warning %q does not say how to allow the repositories", got[0])
@@ -259,6 +350,11 @@ func TestSetupWarnings_StaleSettingsXML(t *testing.T) {
 	}{
 		{name: "matching mirror", existing: generated([]string{"confluent"})},
 		{name: "mirror from before the allowlist", existing: generated(nil), want: `mirrorOf "*" but java.repository_allowlist needs "*,!confluent"`},
+		{
+			name:     "qsdev file from before the HTTP blocker",
+			existing: `<settings><mirrors><mirror><id>central-only</id><url>https://repo.maven.apache.org/maven2</url><mirrorOf>*,!confluent</mirrorOf></mirror></mirrors></settings>`,
+			want:     "maven-default-http-blocker",
+		},
 		{name: "user mirror ids are not qsdev's", existing: `<settings><mirrors><mirror><id>mine</id><mirrorOf>*</mirrorOf></mirror></mirrors></settings>`},
 		{name: "unparseable file is left to the settings check", existing: "<settings>"},
 	}

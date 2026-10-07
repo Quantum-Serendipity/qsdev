@@ -69,7 +69,16 @@ A tracked file that the generators no longer produce is cleaned up by `qsdev upd
 
 This is the source-of-truth file that teammates use to reproduce the same environment. When committed to version control, running `qsdev init --mode join` reads this file to produce an identical setup without re-running the wizard.
 
-**Project root.** qsdev commands (`check`, `status`, `enable`, `update`, the `devenv` and `claudecode` commands, logs and bug reports) can be run from any subdirectory: they walk up from the working directory to the nearest directory holding `.qsdev.yaml` (a regular file), the `.devinit/` state directory, or a `.qsdev/` project data directory — except in your home directory, where `~/.qsdev/` is the per-user data directory (logs, cache, docs), not a project. Outside any project the working directory is used. `qsdev init` is the exception: it always initializes the directory it is run in.
+**Project root.** qsdev commands (`check`, `status`, `enable`, `update`, the `devenv` and `claudecode` commands, logs and bug reports) can be run from any subdirectory: they walk up from the working directory to the nearest directory holding `.qsdev.yaml` (a regular file) or the `.devinit/` state directory. A `.qsdev/` data directory alone does not mark a project. The walk never leaves the enclosing git repository (it stops at the first directory with a `.git` entry) or the filesystem it started on. A marker owned by another user (other than root) or writable by everyone, or one in a directory writable by everyone such as `/tmp`, is ignored, and an interactive command run outside any project says so on stderr. Outside any project the working directory is used. `qsdev init` and `qsdev devenv init` are the exception: they always act on the directory they are run in.
+
+**Per-user directories.** qsdev keeps the files it writes routinely in the XDG base directories:
+
+| Contents | Location |
+|---|---|
+| Global session logs in `logs/` (commands run outside a project, and `version`, `self-update` and `report`), external-tool captures in `logs/capture/`, bug-report drafts | `$XDG_STATE_HOME/qsdev/`, else `~/.local/state/qsdev/` on Linux and the BSDs, `~/Library/Application Support/qsdev/` on macOS, `%LocalAppData%\qsdev\` on Windows |
+| Self-update check cache (`update-check.json`) | `$XDG_CACHE_HOME/qsdev/`, else `~/.cache/qsdev/` on Linux and the BSDs, `~/Library/Caches/qsdev/` on macOS, `%LocalAppData%\qsdev\` on Windows |
+
+`QSDEV_LOG_DIR` overrides the global log directory. A relative `XDG_STATE_HOME` or `XDG_CACHE_HOME` is ignored. Logs from a release that wrote them to `~/.qsdev/logs/` are moved into the state directory the first time you run a command yourself (hooks and MCP servers never move them). If that directory already exists they are merged into it entry by entry, and `~/.qsdev/logs/` is removed once it is empty; nothing is copied or overwritten. Security state (`policy.yaml`, `trust.yaml`, `session-state.json`, `sandbox-policy-approvals.json`, `keys/`), the installed binaries and the documentation corpus (`docs/`) stay in `~/.qsdev/`, where qsdev's self-protection guards them. Project session logs stay in the project's `.qsdev/logs/`.
 
 Structure:
 
@@ -97,6 +106,9 @@ claude_code:
   permission_level: standard
   skills: [deploy, review-pr, security-review-owasp]
   mcp_servers: [context7, github, socket, semble]
+  permissions:                 # extra rules added to the preset's; see Permission Presets
+    allow: ["Bash(terraform plan *)"]
+    deny: ["Bash(terraform apply *)"]
 hooks:
   file_boundary:
     extra_read_paths: [/opt/android-sdk]   # read-only; see Hook settings
@@ -134,7 +146,9 @@ validated against its own registry by `qsdev check`:
   `consulting-default`'s CI, Renovate and security-documentation files are
   generated and none of its components is applied: only the
   `infrastructure:` settings you set yourself are (`registry_proxy`, and
-  `nix_cache` with `nix_cache_public_key`, checked like a profile's).
+  `nix_cache` with `nix_cache_public_key`). Every `infrastructure:` endpoint
+  is validated the same way with or without an `infra_profile` (see
+  [Infrastructure settings](#infrastructure-settings)).
 
 `qsdev init` records both keys, and `qsdev init --mode join` restores both
 from the committed file, so a joining teammate generates the same CI,
@@ -238,13 +252,111 @@ mcp:
 - The key is set only in `.qsdev.yaml`: `.qsdev.local.yaml` cannot add to
   or remove from it. Re-creating a project (`qsdev init --force`) keeps it.
 
+### MCP server opt-ins
+
+Two tools of the qsdev MCP server (`qsdev mcp serve`) are off by default:
+`qsdev_nix_run` starts processes on the host, and `qsdev_credential_vend`
+hands out cloud credentials. The server does not mount `qsdev_nix_run` or
+`qsdev_credential_vend` without an operator opt-in that the project's qsdev
+configuration cannot set. The opt-ins come from the person or deployment
+running the server:
+
+| Tool | Opt-in (any one) | Also needed |
+|------|------------------|-------------|
+| `qsdev_nix_run` | `--allow-nix-run`, `QSDEV_MCP_ALLOW_NIX_RUN=1`, or `mcp_serve.allow_nix_run: true` in the user defaults file | gateway and standalone modes: `--gateway-allow-nix-run` or `QSDEV_GATEWAY_ALLOW_NIX_RUN=1` |
+| `qsdev_credential_vend` | `--allow-credential-vend`, `QSDEV_MCP_ALLOW_CREDENTIAL_VEND=1`, or `mcp_serve.allow_credential_vend: true` in the user defaults file | an enabled `security.credential_vend` in `.qsdev.yaml` (below); gateway and standalone modes: `--gateway-allow-credential-vend` or `QSDEV_GATEWAY_ALLOW_CREDENTIAL_VEND=1` |
+
+The user defaults file is `~/.config/qsdev/defaults.yaml` below the home
+directory your account's user database entry records, or an overlay a human
+approved with `qsdev defaults pin` (a `$QSDEV_ORG_CONFIG` that names an
+unpinned file is ignored with a warning; see
+[Org overlay pin](security-architecture.md)):
+
+```yaml
+# ~/.config/qsdev/defaults.yaml
+mcp_serve:
+  allow_nix_run: true
+  allow_credential_vend: true
+```
+
+- A project defaults file (`.qsdev/defaults.yaml`) that sets `mcp_serve` is
+  rejected, and `.qsdev.yaml` has no key for either opt-in: a committed
+  `mcp.credential_vend` or `mcp.nix_run` key fails the strict config parser,
+  so the server refuses to start rather than serving.
+- A user defaults file that fails to load is skipped with a warning, and both
+  opt-ins it would have set stay off.
+- Gateway credential vending without an agent allow-list
+  (`QSDEV_GATEWAY_AGENTS`) is refused at startup.
+- The server logs one line per tool at startup saying whether it is mounted
+  and which opt-in mounted it. When `.qsdev.yaml` enables
+  `security.credential_vend` but nobody has confirmed it, the line is a
+  warning naming the three ways to confirm.
+- The generated `.mcp.json` passes neither opt-in, so a default install
+  serves neither tool.
+- The flags and environment variables belong to whoever launches the
+  server, and are trusted only as far as the environment it is launched
+  from. `.qsdev.yaml`, `.qsdev.local.yaml` and `.qsdev/defaults.yaml` cannot
+  set them, but a committed `devenv.nix` (`env.QSDEV_MCP_ALLOW_NIX_RUN = "1";`)
+  or `.envrc` can export an environment variable into the shell a server is
+  started from, as it can run any other code there; review those files as
+  code. An agent that can run shell commands can also launch its own
+  `qsdev mcp serve` with the flags, so they keep the tools out of the
+  default install rather than out of an agent's reach.
+- A server on plain HTTP started with `--http-no-auth` mounts neither tool,
+  whatever the opt-ins say (see [MCP server over HTTP](#mcp-server-over-http)).
+
+### MCP server over HTTP
+
+`qsdev mcp serve --transport http` (and every standalone server) listens on
+HTTP. Without mTLS material it binds only a loopback address, and it
+requires a bearer token on every request:
+
+- At startup the server generates a random 32-byte token and, once the
+  port is bound, writes it (hex, mode `0600`) to
+  `<user state dir>/qsdev/mcp/<port>.token`: `$XDG_STATE_HOME/qsdev/mcp/`
+  when `XDG_STATE_HOME` is set, otherwise `~/.local/state/qsdev/mcp/` on
+  Linux, `~/Library/Application Support/qsdev/mcp/` on macOS and
+  `%LocalAppData%\qsdev\mcp\` on Windows. A directory it creates is mode
+  `0700`, and so is that `mcp` directory if it already existed. `<port>` is
+  the port actually bound, so `--port 0` names the port the system chose.
+  `--http-token-file <path>` chooses another file; its directory is left as
+  it is, with a warning when other users can write to it. The log names the
+  file, never the token, and the file is removed when the server stops.
+- A client sends `Authorization: Bearer <token>`. A request without it, or
+  with another token, gets `401` before any tool runs.
+- A standalone server's `GET /health` needs no token, so an orchestrator's
+  plain probe keeps working.
+- Under mTLS (`--tls-cert`, `--tls-key`, `--tls-client-ca`) the client
+  certificate is the authentication and no token is used.
+- `--http-no-auth` serves plain HTTP without the token. Any local process can
+  then call the server, so it logs a warning and mounts neither
+  `qsdev_nix_run` nor `qsdev_credential_vend`.
+
+| Flag | Default | Meaning |
+|------|---------|---------|
+| `--http-token-file <path>` | `<user state dir>/qsdev/mcp/<port>.token` | where plain HTTP writes its bearer token |
+| `--http-no-auth` | off | serve plain HTTP without the token; the gated tools are not mounted |
+
+The token keeps other local accounts and web pages out. A process running as
+your user, an agent included, can read the token file, so the server still
+holds each `qsdev_nix_run` call to what a Bash call may do. It judges the
+Bash command lines the call is equivalent to (the `nix run` line, the program
+the installable names with its arguments, a `-c` script and stdin) and
+refuses the call when a Bash deny rule matches one, when a Bash ask rule
+(package installs among them) would ask about one other than the `nix run`
+line, or when self-protection refuses one (a write to a protected file, a
+human-only `qsdev` command, an evasion pattern). The selfprotect hook judges
+`mcp__<server>__qsdev_nix_run` calls the same way.
+
 ### MCP credential vending
 
 `qsdev_credential_vend` exchanges the host's ambient cloud identity for
 short-lived credentials (AWS STS, GCP IAM Credentials, Azure Managed
 Identity). Its output is exempt from the MCP server's secret redaction, so
-it is opt-in. The server does not mount it unless `security.credential_vend`
-is enabled, and it vends only the identities the allow-lists name:
+it is opt-in twice: the committed `security.credential_vend` must enable it,
+and the operator must confirm it (see
+[MCP server opt-ins](#mcp-server-opt-ins)). It vends only the identities the
+allow-lists name:
 
 ```yaml
 security:
@@ -265,7 +377,8 @@ security:
 ```
 
 - Without the block, or with `enabled: false`, the tool is not offered to
-  any client. A call to it on a server that does mount it is still checked
+  any client, whatever the operator confirms. With the block but without an
+  operator confirmation, it is not offered either. A call to it on a server that does mount it is still checked
   against the block and refused (`status: denied`, naming the setting that
   would allow it) before any ambient credential is loaded.
 - An AWS request without `role_arn` calls `GetSessionToken`. Those
@@ -284,10 +397,46 @@ security:
 `qsdev_nix_run` runs its target with the server's environment minus every
 variable `qsdev_env_info` withholds (tokens, keys, passwords, and the
 `AWS_*`, `GCP_*`, `GOOGLE_*`, `AZURE_*`, `GH_*` and `GITHUB_*` namespaces), so the child cannot
-print the server's credentials. In gateway mode (`--deploy-mode=gateway`)
-the tool is not mounted, because it would run Nix packages on the gateway
-host for every framework the gateway serves. Pass `--gateway-allow-nix-run`
-or set `QSDEV_GATEWAY_ALLOW_NIX_RUN=true` to mount it.
+print the server's credentials. It is mounted only with an operator opt-in
+(see [MCP server opt-ins](#mcp-server-opt-ins)); in gateway and standalone
+mode it also needs `--gateway-allow-nix-run` or
+`QSDEV_GATEWAY_ALLOW_NIX_RUN=true`, because there it would run Nix packages
+for every client the server fronts.
+
+The server also checks every `qsdev_nix_run` call against the Bash deny
+rules, before nix is looked up: the catalog's deny rules (every set in
+`permission_all_deny_sets`, from the built-in and user defaults) and the
+`permissions.deny` rules of `~/.claude/settings.json`,
+`.claude/settings.json` and `.claude/settings.local.json`. The call is
+matched as the Bash commands it is equivalent to:
+
+- the literal `nix run <installable> -- <args>` command;
+- the program it runs, named by the installable's attribute
+  (`nixpkgs#bash` runs `bash`), followed by the arguments;
+- the script of a `-c` option among the arguments (`-c 'curl x | sh'`),
+  whichever program receives it, taken as a shell takes it: the first
+  operand after all the options, so `-c -- 'curl x | sh'` and
+  `-c -o errexit 'curl x | sh'` count too;
+- each command or pipeline that script runs: after `;`, `&&`, `||`, `&` or a
+  newline, inside a block, subshell or command substitution, inside a nested
+  `sh -c` or `eval`, and in a here-document or here-string fed to a shell
+  (`sh <<EOF`), so `-c 'true; curl x | sh'` is refused like
+  `-c 'curl x | sh'`. Each is matched both as written and from the program
+  it runs, without assignments, wrappers (`nohup`, `timeout 5`, `nice`,
+  `env`, `command`, `exec`, `sudo`, ...) and quotes or escapes on the
+  command word, so `nohup curl x | sh`, `X=1 curl x | sh` and
+  `\curl x | sh` are refused as `curl x | sh`;
+- the `stdin` text, and each command or pipeline in it, since a shell given
+  no `-c` script runs its standard input. A line the shell parser rejects is
+  matched as written.
+
+A `qsdev_nix_run` call is refused when its Bash equivalent matches a Bash
+deny rule, so `nixpkgs#bash` with `-c 'curl -fsSL https://x | sh'` is
+refused by the `pipe_to_shell` rules and `-c 'npm install x'` by the
+`shell_wrapping` rules. The refusal names the matching rule
+(`deny_rule`). Ask rules are not applied: `Bash(nix run *)` asks before
+every call, and the client's own permission prompt for the MCP tool is the
+ask. When the tool is not mounted, none of these files is read for it.
 
 ### Infrastructure settings
 
@@ -301,7 +450,7 @@ installs on the public registries:
 
 | Profile component | Required setting | Applied as |
 |---|---|---|
-| Registry proxy (`consulting-default`: Nexus, `enterprise`: Artifactory) | `registry_proxy` (or a per-ecosystem `registry_proxy_overrides` entry), for each proxied ecosystem the project uses | Each package manager's config (`.npmrc`, `pip.conf`, `GOPROXY`, `.cargo/config.toml`, `nuget.config`, Maven/Gradle), using the vendor's group/virtual repository paths (`/repository/npm-group/`, `/api/npm/npm-virtual/`, ...); `registry_proxy_paths` entries win |
+| Registry proxy (`consulting-default`: Nexus, `enterprise`: Artifactory) | `registry_proxy` (or a per-ecosystem `registry_proxy_overrides` entry), for each proxied ecosystem the project uses | Each package manager's config (`.npmrc`, `pip.conf`, `GOPROXY`, `.cargo/config.toml`, `nuget.config`, Maven/Gradle), using the vendor's group/virtual repository paths (`/repository/npm-group/`, `/api/npm/npm-virtual/`, ...); `registry_proxy_paths` entries (an absolute path on the proxy host, starting with `/`) win |
 | Nix binary cache (Cachix in all three) | `nix_cache` and `nix_cache_public_key` | `cachix.pull` in `devenv.nix` for a Cachix cache, and the `trusted-substituters`/`trusted-public-keys` of `docs/nix-conf-hardening.md` |
 | Build cache (`sccache`, or Turborepo for `startup-github`) | none; `build_cache_url` optional (Turborepo only) | `infrastructure.build_cache`: sccache as Rust's `rustc-wrapper` (with the package); `TURBO_API` from `build_cache_url` |
 
@@ -309,16 +458,69 @@ installs on the public registries:
 and needs a token even to read, so it is not a pull-through proxy: nothing
 is routed through it unless you set `registry_proxy_overrides`.
 
-Endpoints must be `https` URLs (plain `http` only to `localhost`) without
-embedded credentials, and documentation placeholders are rejected: hosts
-under `example.com`/`.net`/`.org` or the `.example`, `.invalid` and `.test`
-domains, the `myorg` Cachix cache, and an all-zero public key. Set
+Every endpoint (`registry_proxy`, each `registry_proxy_overrides` entry,
+`build_cache_url` and `nix_cache`) is validated whether or not an
+`infra_profile` is selected, by `qsdev init` (including `--mode join` and
+`--update`) and by `qsdev check` (as a `config_validation` failure). Endpoints
+must be `https` URLs (plain `http` only to `localhost` or a loopback address)
+without embedded credentials (supply them through the environment, the
+profile's `AuthEnvVar` token variable such as `NEXUS_TOKEN`), and
+documentation placeholders are rejected: hosts under
+`example.com`/`.net`/`.org` or the `.example`, `.invalid` and `.test`
+domains, the `myorg` Cachix cache, and an all-zero public key. Each
+`registry_proxy_paths` entry must be an absolute path on the proxy host
+(starting with a single `/`, for example `/repository/npm/`); it is joined
+onto `registry_proxy` as a URL path, so it can never change the host (a base
+with a path, `https://a.io/art` plus `/api/npm/`, gives
+`https://a.io/art/api/npm/`). Errors name the exact key, for example
+`infrastructure.registry_proxy_paths.npm`. Set
 `registry_proxy: none` or `nix_cache: none` to keep a profile's CI and
 update tooling without that component. Credentials (`NEXUS_TOKEN`,
 `ARTIFACTORY_TOKEN`, `CACHIX_AUTH_TOKEN`, the sccache S3 credentials,
 `SNYK_TOKEN`) are read from the environment and never written by qsdev;
 `docs/security-overview.md` lists the ones the profile expects and describes
 the proxy and caches actually applied.
+
+#### Registry proxy coverage
+
+`registry_proxy` only reaches the package managers whose generated
+configuration routes them through it. For every other module that installs
+packages, `qsdev init` (including `--update` and `--mode join`) warns
+`registry_proxy is set but <module> has no proxy support; <package managers>
+will fetch directly from the public registries`, and the security overview
+does not list that ecosystem as routed. The matrix below has one row per
+module with package managers; a test keeps it in step with the module
+catalog.
+
+<!-- registry-proxy-coverage:start -->
+| Module | Package managers | Proxy support | How it is routed |
+|---|---|---|---|
+| Ansible | ansible-galaxy | No | |
+| Bazel | bzlmod | No | |
+| C#/.NET | nuget | Yes | `nuget.config` pins the package source to the proxy (key `nuget`) |
+| C/C++ | conan, vcpkg | No | |
+| Clojure | tools-deps, leiningen | No | Not wired. To route by hand, override the default repositories in `deps.edn` with `:mvn/repos {"central" {:url "<maven proxy URL>"} "clojars" {:url "<clojars proxy URL>"}}` (or a Leiningen `:mirrors` entry) |
+| Dart/Flutter | pub | No | |
+| Elixir | mix | No | |
+| Go | go modules | Yes | `GOPROXY` in `devenv.nix`, with no direct fallback (key `go`) |
+| Haskell | cabal, stack | No | |
+| Helm | helm | No | |
+| Java/Kotlin (JVM) | maven, gradle | Yes | Maven: the `.mvn/settings.xml` mirror (key `maven`). Gradle: `gradle/qsdev-proxy.init.gradle` (key `gradle`) |
+| JavaScript/TypeScript | npm, pnpm, yarn, bun | Yes | The registry in `.npmrc`, `.yarnrc.yml`, `.yarnrc` or `bunfig.toml` (key `npm`) |
+| Lua | luarocks, lux | No | |
+| Nix | nix-flake | No | Use `nix_cache` for Nix substitutes |
+| PHP | composer | Yes | The Composer config adds the proxy and disables `packagist.org` (key `composer`) |
+| Perl | carton | No | |
+| PowerShell | psgallery | No | |
+| Python | pip, uv, poetry | Yes | pip only: `index-url` in the generated `pip.conf` (key `pypi`). uv and Poetry projects are not routed and get the warning |
+| R | renv | No | |
+| Ruby | bundler | No | |
+| Rust | cargo | Yes | `.cargo/config.toml` replaces crates.io with the proxy (key `cargo`) |
+| Scala | sbt | Yes | sbt only: `project/qsdev.repositories`, loaded through `SBT_OPTS` (key `maven`; see [Scala](#scala)). Mill projects are not routed and get the warning |
+| Swift | spm | No | |
+| Terraform/OpenTofu | terraform-registry | No | |
+| Zig | zig-build | No | |
+<!-- registry-proxy-coverage:end -->
 
 Schema version 1 used a single `profile` key, which `qsdev init` filled with
 the infrastructure profile. Version 1 files still load: an infrastructure
@@ -466,7 +668,7 @@ client:
   | `claude_code.skills`, `claude_code.mcp_servers` | Added (servers still subject to the client MCP policy) |
   | `claude_code.permission_level` | Applied only when stricter than the committed level (or, when none is committed, the tier's preset): `minimal` is stricter than `standard`, which is stricter than `permissive`. `custom` and `supply-chain-only` are not comparable, so a local override can neither switch to them nor away from them |
   | `security.level`, `security.*` | Can raise the floor, never lower it |
-  | `tools.disabled`, `tools.config`, `claude_code.enabled` | Ignored: only `.qsdev.yaml` sets them |
+  | `tools.disabled`, `tools.config`, `claude_code.enabled`, `claude_code.permissions` | Ignored: only `.qsdev.yaml` sets them |
   | `hooks` | Not accepted: the local file fails to parse, since only `.qsdev.yaml` sets hook policy |
 
   Every ignored or raised setting is reported as a warning (for example
@@ -495,14 +697,29 @@ one.
 
 ### Java repository allowlist
 
-For Maven projects qsdev generates `.mvn/settings.xml` with a single mirror
-that sends every repository to Maven Central (mirror id `central-only`), or
-to the registry proxy when `infrastructure.registry_proxy` is set (mirror id
-`corporate-proxy`). Maven uses the file when run with
-`mvn -s .mvn/settings.xml`. A repository a `pom.xml` declares, such as a
-company Nexus, Spring milestones, JitPack or Confluent, is then never
-contacted: artifacts only it hosts fail to resolve with an error that names
-the mirror, not the repository.
+For Maven projects qsdev generates `.mvn/settings.xml` with a mirror that
+sends every repository to Maven Central (mirror id `central-only`), or to the
+registry proxy when `infrastructure.registry_proxy` is set (mirror id
+`corporate-proxy`). A repository a `pom.xml` declares, such as a company
+Nexus, Spring milestones, JitPack or Confluent, is then never contacted:
+artifacts only it hosts fail to resolve with an error that names the mirror,
+not the repository.
+
+Maven reads no settings file from the project, so the devenv shell sets
+`MAVEN_ARGS="-gs $DEVENV_ROOT/.mvn/settings.xml"` and every `mvn` run in it,
+including the generated CI steps, loads the file as Maven's global settings.
+Your `~/.m2/settings.xml` still applies on top of it, so private-repository
+credentials keep working. This needs Maven 3.9.0 or later, the first release
+that reads `MAVEN_ARGS`: `qsdev check` fails when the `mvn` on `PATH` is older,
+and init and update warn when `.mvn/wrapper/maven-wrapper.properties` pins an
+older Maven, since `./mvnw` would then run without the file. Maven's `bin/mvn`
+splits `MAVEN_ARGS` on spaces, so the project path must not contain a space.
+
+Because `-gs` replaces Maven's own `conf/settings.xml`, the generated file also
+carries the HTTP-blocking mirror Maven 3.8.1 and later define there
+(`maven-default-http-blocker`, `mirrorOf` `external:http:*`). It comes after
+the qsdev mirror, so a plain-`http://` repository that is not allowlisted is
+still redirected and an allowlisted one is refused.
 
 List the ids of the repositories Maven should resolve from their own URL
 under `java.repository_allowlist`:
@@ -519,9 +736,8 @@ through the mirror. Ids are the `<id>` of a `<repository>` or
 or `-` (`qsdev check` reports anything else, since `,`, `!` and `*` are
 `mirrorOf` syntax; init, join and update stop on an invalid id). Checksums of
 artifacts from an allowlisted repository are still verified strictly by the
-`--strict-checksums` in `.mvn/maven.config`, and Maven 3.8.1 and later still
-refuse a plain-`http://` repository through the HTTP-blocking mirror in their
-global settings. A POM that redeclares the `central` id with another URL (a
+`--strict-checksums` in `.mvn/maven.config`, and a plain-`http://` one is
+refused by the HTTP-blocking mirror. A POM that redeclares the `central` id with another URL (a
 company Nexus, say) overrides Central, so it is reported like any other
 repository and needs `central` in the allowlist to keep its own URL.
 
@@ -530,13 +746,15 @@ project's POMs declare (the root `pom.xml`, its profiles and the module POMs
 it aggregates) that is neither Maven Central nor allowlisted, for example:
 
 ```text
-Warning: Java/Kotlin (JVM): the project's POMs declare repositories that the .mvn/settings.xml mirror redirects to Maven Central whenever Maven uses that file (mvn -s .mvn/settings.xml): jitpack (https://jitpack.io). Artifacts only they host will fail to resolve; to resolve them from their own URL, add their ids to java.repository_allowlist in .qsdev.yaml
+Warning: Java/Kotlin (JVM): the project's POMs declare repositories that the .mvn/settings.xml mirror redirects to Maven Central (the devenv shell loads that file for every mvn run through MAVEN_ARGS): jitpack (https://jitpack.io). Artifacts only they host will fail to resolve; to resolve them from their own URL, add their ids to java.repository_allowlist in .qsdev.yaml
 ```
 
 `.mvn/settings.xml` is only created when absent (strategy `skip`), so a
 change to the allowlist does not rewrite an existing file. Init and update
 then warn that the file's `central-only` or `corporate-proxy` mirror has a
-stale `mirrorOf` and print the value to set by hand. The allowlist is
+stale `mirrorOf` and print the value to set by hand. They likewise warn when a
+file qsdev generated earlier lacks the HTTP-blocking mirror, and print the
+mirror to add. The allowlist is
 team-wide policy: only `.qsdev.yaml` sets it (a `java` key in
 `.qsdev.local.yaml` is an error).
 
@@ -613,7 +831,7 @@ push to the repository controls it, it may only **add or tighten**:
 | `hook_tiers` | Hooks are added to an existing hook tier |
 | `tier_to_compliance` | A tier may move to a compliance level of equal or higher `order`, never a lower one |
 
-Every other section (for example `mcp_servers`, `tools`, `tiers`,
+Every other section (for example `mcp_servers`, `mcp_serve`, `tools`, `tiers`,
 `compliance`, `permission_allow_rules`, `permission_ask_rules`, `keep_vars`,
 `unset_vars`, `default_mcp_servers`) is rejected. A file that sets a
 rejected section or tries a weakening above stops every command with an
@@ -633,11 +851,71 @@ tier_to_compliance:
   standard: strict
 ```
 
-Layers apply in the order built-in, project, user: the user defaults file
-has the last word, so a developer's own file overrides the project's
-additions where both set the same entry. The file is found in the project
-enclosing the working directory (the directory holding `.qsdev.yaml` or the
-state directory), or in the working directory outside a project.
+The file is found in the project enclosing the working directory (the
+directory holding `.qsdev.yaml` or the state directory), or in the working
+directory outside a project.
+
+Every command that generates `devenv.nix` from the catalog names the file in
+its plan: `qsdev init` (every mode, `--dry-run` included), `qsdev init
+--update`, `qsdev update`, `qsdev devenv init`, `qsdev devenv update`, the
+`qsdev devenv add-*` and `remove-*` commands, and `qsdev enable` and
+`qsdev disable`. The name is followed by each pre-commit hook the file
+adds: a new custom hook with the command it runs, a hook added to the
+always-on `security_hooks` list, and a hook added to a hook tier. Hooks the
+built-in catalog or your user defaults file already define are not listed.
+A value holding a control character (a carriage return, an ANSI escape) is
+shown quoted with it escaped, so the file cannot rewrite its own line.
+
+```text
+Project defaults: /path/to/project/.qsdev/defaults.yaml
+  adds pre-commit hook foo-hook (security_hooks)
+  adds pre-commit hook okhook (custom_hooks): ./check.sh
+  adds pre-commit hook okhook (hook_tiers.baseline): ./check.sh
+```
+
+#### Layer order and the security floor
+
+Catalog layers apply in the order **built-in, user, project**:
+
+1. The built-in catalog sets the security floor.
+2. The user defaults file (`~/.config/qsdev/defaults.yaml` or the pinned
+   `$QSDEV_ORG_CONFIG` overlay) may change most of the catalog, but never
+   below that floor.
+3. The committed project policy applies last. It may only add or tighten
+   (table above), so a developer's own file cannot erase a deny rule, hook
+   or compliance raise the repository committed: where both set the same
+   deny set, the result is the user file's list plus the project's
+   additions, and where both raise a tier's compliance level the higher
+   one applies. The project file is judged against the built-in catalog
+   alone, so a user file never makes it fail to load.
+
+In the user defaults file, map sections (`tiers`, `tools`, `compliance`,
+...) merge per entry, and list sections replace the built-in list, except:
+
+| Section | User-file effect |
+|---------|------------------|
+| `security_hooks` | Hooks are added to the built-in always-on hooks; none can be removed |
+| `unset_vars` | Variables are added to the built-in credentials the shell strips; none can be removed |
+| `keep_vars` | Replaces the built-in list, but may not name a variable `unset_vars` strips |
+| `compliance.<level>.required_pre_commit_hooks` | May only grow for a built-in level |
+| `compliance.<level>.order` | Cannot change for a built-in level |
+| `compliance.<level>.age_gating_threshold_hours` | May not shrink for a built-in level |
+| `compliance.<level>.script_blocking`, `claude_audit_log`, `license_scanning` | May not be turned off for a built-in level |
+| `compliance.<level>.claude_permission_level` | May not name a less strict preset (by `strictness`) for a built-in level |
+| `tier_to_compliance` | A built-in tier may move only to a level of equal or higher `order` that is not weaker, in any of the ways above, than its built-in level |
+| `hook_tier_order`, `hook_tiers` | The built-in hook tiers stay first, in order; a `security_hooks` or `custom_hooks` entry may not move to a higher hook tier |
+
+`mcp_server_policy` and `sbom_policy` have no strictness order and are not
+part of the floor.
+
+A user defaults file that breaks one of these rules fails to load with
+an error that names the file and each offending field (for example
+`keep_vars: cannot keep "GITHUB_TOKEN"`); `qsdev defaults validate`
+reports the same error. A compliance level's required hook must also be
+a tool or an always-on hook (`security_hooks` or `custom_hooks`):
+`hook_tiers` only filters hooks by security level and never enables one,
+so a required hook listed only there is rejected. Use hook tiers to place
+non-security hooks such as formatters.
 
 ---
 
@@ -662,7 +940,7 @@ Key contents:
 - `permitted_unfree_packages: []` -- Empty allowlist
 - `permitted_insecure_packages: []` -- Empty allowlist
 - `clean.enabled: true` -- Strips environment on shell entry
-- `clean.keep: [TERM, HOME, USER, ...]` -- Minimal variable allowlist
+- `clean.keep: [PATH, TERM, HOME, USER, ...]` -- Minimal variable allowlist: the catalog `keep_vars` (`PATH` is required: devenv's shell rcfile runs `mktemp` under a Nix bash whose default `PATH` is `/no-such-path` before it sets its own `PATH`; the devenv profile still comes first), then the non-secret selector variables of each selected cloud module (AWS: `AWS_PROFILE`, `AWS_REGION`, `AWS_DEFAULT_REGION`; GCP: `CLOUDSDK_ACTIVE_CONFIG_NAME`, `CLOUDSDK_CORE_PROJECT`, `GOOGLE_CLOUD_PROJECT`; Azure: `ARM_SUBSCRIPTION_ID`, `ARM_TENANT_ID`), sorted. A module can never keep a credential variable.
 
 ### `devenv.nix`
 
@@ -795,7 +1073,9 @@ The three-way merge during updates preserves any custom allow/deny rules you hav
 
 `env` holds variables qsdev generates to configure its hooks
 (`FILE_BOUNDARY_EXTRA_READ_PATHS`, from `hooks.file_boundary.extra_read_paths`;
-`TOOL_GATES_ALLOWED` and `TOOL_GATES_DENIED`, from `hooks.tool_gates`)
+`TOOL_GATES_ALLOWED` and `TOOL_GATES_DENIED`, from `hooks.tool_gates`;
+`PACKAGE_GUARD_MIN_AGE_DAYS`, the package guard's release-age gate in days
+from the compliance level, when the safety-block hook is on)
 alongside any you add. A regeneration sets the generated variables to the
 committed policy's values, removes one the policy no longer produces unless
 you changed it, and keeps your own variables.
@@ -807,8 +1087,13 @@ you changed it, and keeps your own variables.
 | **minimal** | Read-only by default. Only `Read(*)` and basic build/test commands are allowed. Every write or edit requires approval. |
 | **standard** | Productive development. `Read`, `Edit`, `Write`, `git`, build/test/lint, and Nix dev commands are allowed. Package installs are ask-gated. Bypass mode is disabled. |
 | **permissive** | Standard plus `make` and `docker` commands. For teams that use Makefiles or Docker-based workflows. |
-| **supply-chain-only** | Minimal permissions focused on supply chain defense. Deny rules and package-guard hook without broader development tooling permissions. |
-| **custom** | Only explicitly configured allow/deny patterns. Full manual control for advanced use cases. |
+| **supply-chain-only** | Minimal permissions focused on supply chain defense. Deny rules and package-guard hook without broader development tooling permissions. Bypass mode is disabled; `defaultMode` is left unset. |
+| **custom** | Allows only the `claude_code.permissions.allow` rules; denies the base rules plus `claude_code.permissions.deny`. Bypass mode is disabled and `defaultMode` is `default`. Full manual control for advanced use cases. |
+
+`claude_code.permissions.allow` and `claude_code.permissions.deny` in the
+committed `.qsdev.yaml` add Claude Code permission rules (`Read`,
+`Bash(make *)`) to every preset's allow and deny lists. The preset's ask and
+deny rules still take precedence over an added allow.
 
 ### `.claude/hooks/package-guard.py`
 
@@ -1371,6 +1656,47 @@ Created once with an empty `exceptions:` list and an example entry (package, lic
 ## Per-Ecosystem Security Configs
 
 These files are generated by ecosystem modules based on the selected languages.
+`qsdev enable <language>` adds a language module the detector did not select
+(for example `qsdev enable gcp` for an application that only uses the Google
+Cloud SDK), and `qsdev disable <language>` removes one. Either command
+regenerates every file as `qsdev update` does, so the module's devenv
+configuration, its Claude Code deny and Read-deny rules and the `languages`
+list in `.qsdev.yaml` change in one step. `--dry-run` previews the plan
+without writing. Your edits to managed files are merged or kept as sidecars
+exactly as `qsdev update` keeps them; `--force` is refused for a language
+(run `qsdev update --overwrite-modified` to replace modified files). Tool names and language names never overlap; `qsdev list`
+shows the tools.
+
+### Release-age window
+
+The effective compliance level (the stricter of `security.level` and
+`client.security_level`) sets the release-age window from the catalog's
+`age_gating_threshold_hours`: 3 days for `baseline`, 7 for `enhanced` and
+14 for `strict`. Each package manager enforces the larger of that window
+and its own historical minimum (3 days for npm, pnpm and the package guard;
+7 days for yarn, bun and uv), so neither a level nor an organization catalog
+overlay with a shorter window ever loosens a gate:
+
+| Gate | `baseline` | `enhanced` | `strict` |
+|------|-----------|-----------|----------|
+| npm `.npmrc` `min-release-age` (days) | 3 | 7 | 14 |
+| pnpm `minimumReleaseAge` (minutes) | 4320 | 10080 | 20160 |
+| Yarn Berry `npmMinimalAgeGate` | `7d` | `7d` | `14d` |
+| bun `install.minimumReleaseAge` (seconds) | 604800 | 604800 | 1209600 |
+| uv `UV_EXCLUDE_NEWER` and CI `--exclude-newer` | `P7D` | `P7D` | `P14D` |
+| Package guard `PACKAGE_GUARD_MIN_AGE_DAYS` | 3 | 7 | 14 |
+| Renovate / Dependabot delay (days, at least) | 3 | 7 | 14 |
+
+`qsdev check` fails `security_config_javascript` when a JavaScript config's gate is below
+the window. The `skip`-strategy files are rewritten by `qsdev init --update`
+only while they still hold what qsdev generated; raise an edited file's value
+yourself.
+
+uv records its `exclude-newer` setting in `uv.lock` and treats a different
+setting as a stale lockfile. A `strict` project using uv must therefore run
+`uv lock` inside the devenv shell after `qsdev init --update` changes the
+window to `P14D`, and commit `uv.lock`; until then the CI
+`uv sync --locked` fails.
 
 Files with the `skip` strategy are conventional package-manager or tool configs that projects usually maintain themselves. qsdev creates them only when they are absent. If one already exists, qsdev leaves it untouched and does **not** apply its hardening settings to it. Copy the settings listed below into your existing file yourself.
 
@@ -1378,11 +1704,11 @@ Files with the `skip` strategy are conventional package-manager or tool configs 
 
 | File | Merge Strategy | Purpose |
 |------|---------------|---------|
-| `.npmrc` | `skip` | `ignore-scripts=true`, `min-release-age=3` (needs npm >= 11.10.0, which the generated `devenv.nix` provides as `languages.javascript.npm.package` for every Node.js major; `qsdev check` fails when the `npm` on `PATH` is older), registry configuration, audit settings (only created if absent). `audit-level=moderate` sets only `npm audit`'s exit code; installs never fail on audit results, so the `ecosystem-ci` job runs `npm audit` to enforce it |
-| `.yarnrc.yml` | `skip` | `enableScripts: false`, registry configuration (Yarn Berry; only created if absent) |
+| `.npmrc` | `skip` | `ignore-scripts=true`, `min-release-age` set to the compliance level's release-age window in days (3/7/14 for `baseline`/`enhanced`/`strict`; see [Release-age window](#release-age-window)) (needs npm >= 11.10.0, which the generated `devenv.nix` provides as `languages.javascript.npm.package` for every Node.js major; `qsdev check` fails when the `npm` on `PATH` is older), registry configuration, audit settings (only created if absent). `audit-level=moderate` sets only `npm audit`'s exit code; installs never fail on audit results, so the `ecosystem-ci` job runs `npm audit` to enforce it |
+| `.yarnrc.yml` | `skip` | `enableScripts: false`, `npmMinimalAgeGate` (`7d`/`7d`/`14d` for `baseline`/`enhanced`/`strict`), registry configuration (Yarn Berry; only created if absent) |
 | `.yarnrc` | `skip` | `ignore-scripts true`, registry configuration (Yarn Classic v1; only created if absent) |
-| `pnpm-workspace.yaml` | `skip` | pnpm security config with age-gating (when pnpm is detected; only created if absent) |
-| `bunfig.toml` | `skip` | `install.minimumReleaseAge` in seconds (when bun is detected; only created if absent) |
+| `pnpm-workspace.yaml` | `skip` | pnpm security config with `minimumReleaseAge` in minutes (4320/10080/20160 for `baseline`/`enhanced`/`strict`) (when pnpm is detected; only created if absent) |
+| `bunfig.toml` | `skip` | `install.minimumReleaseAge` in seconds (604800/604800/1209600 for `baseline`/`enhanced`/`strict`) (when bun is detected; only created if absent) |
 | `.nvmrc` | `overwrite` | Pinned Node.js version |
 
 **Package manager.** A pin in `package.json` decides the package manager: the Corepack `packageManager` field (`"pnpm@10.17.0"`), then `devEngines.packageManager`. The pin applies even before the project has a lockfile. Without a pin, the lockfile decides, in this order: `pnpm-lock.yaml`, `yarn.lock`, `bun.lock`/`bun.lockb`, `package-lock.json`/`npm-shrinkwrap.json`. If none of these exist, qsdev uses npm. A Yarn pin also tells Yarn Classic (`yarn@1.x`, hardened through `.yarnrc`) apart from Yarn Berry (`yarn@2+`, hardened through `.yarnrc.yml`).
@@ -1435,9 +1761,45 @@ The `qsdev:python:poetry-check-lock` task checks both conditions each time the s
 
 | File | Merge Strategy | Purpose |
 |------|---------------|---------|
-| Maven `.mvn/settings.xml` | `skip` | Checksum enforcement and a mirror sending every repository not in `java.repository_allowlist` to Maven Central or the registry proxy (see [Java repository allowlist](#java-repository-allowlist)) |
+| Maven `.mvn/settings.xml` | `skip` | Checksum enforcement, a mirror sending every repository not in `java.repository_allowlist` to Maven Central or the registry proxy, and the HTTP blocker; loaded by every `mvn` in the devenv shell through `MAVEN_ARGS` (Maven >= 3.9.0; see [Java repository allowlist](#java-repository-allowlist)) |
 | Maven `.mvn/maven.config` | `skip` | `--strict-checksums` for every repository |
-| Gradle `gradle.properties` (and `init.gradle` with a registry proxy) | `skip` | Dependency verification; proxy routing (only created if absent) |
+| Gradle `gradle.properties` | `skip` | Strict dependency verification against the committed `gradle/verification-metadata.xml` (only created if absent; see [Gradle verification and registry proxy](#gradle-verification-and-registry-proxy)) |
+| Gradle `gradle/qsdev-proxy.init.gradle` (with a registry proxy) | `overwrite` | Routes every Maven repository, settings-level ones included, through the registry proxy; loaded with `-I` by the qsdev tasks and CI |
+
+#### Gradle verification and registry proxy
+
+`gradle.properties` turns on strict dependency verification, but Gradle
+checks only what `gradle/verification-metadata.xml` lists, and without that
+file it verifies nothing. Bootstrap it once with
+`gradle --write-verification-metadata sha256,pgp help`, review it and commit
+it. The generated `gradle-build` CI step fails with that command in its
+message when the file is missing (`test -f gradle/verification-metadata.xml ||
+...`), and init and update warn about it. CI never writes the file itself,
+since that would trust whatever the network served on that run.
+
+With a registry proxy, qsdev writes `gradle/qsdev-proxy.init.gradle` and
+rewrites it on every update, so a changed proxy URL takes effect. Commit it:
+it sits next to `gradle/wrapper/`, not under the gitignored `.qsdev/`, so CI
+checkouts have it. Gradle has no environment variable that adds an init
+script, so the qsdev tasks (`qsdev-build`, `qsdev-test`) and the generated CI
+steps run `gradle -I "$DEVENV_ROOT/gradle/qsdev-proxy.init.gradle" ...`. A
+`gradle` you run by hand in the shell does not load it; pass the same `-I`
+to resolve through the proxy. The script:
+
+- removes every Maven repository whose URL is not the proxy (Maven Central,
+  JitPack, the Gradle Plugin Portal, company repositories) from each project
+  and from the settings' `pluginManagement` and `dependencyResolutionManagement`
+  repositories, including those declared after it runs, and adds the proxy;
+- leaves project repositories alone when the settings set `repositoriesMode`
+  to `FAIL_ON_PROJECT_REPOS` (adding one would fail the build) or
+  `PREFER_SETTINGS` (Gradle ignores them);
+- needs Gradle 6.8 or later.
+
+Because the Gradle Plugin Portal is removed too, the proxy must also serve
+Gradle plugin markers (proxy `https://plugins.gradle.org/m2/`); init and update
+warn about this when a proxy is set. A root `init.gradle` generated by an older
+qsdev is no longer loaded or generated: `qsdev init --update` deletes it when
+it is unchanged, and stops tracking it when you edited it.
 
 ### C#/.NET
 
@@ -1503,7 +1865,31 @@ The generated config cannot block install scripts. Composer has no setting for t
 
 | File | Merge Strategy | Purpose |
 |------|---------------|---------|
-| sbt or Mill config | `overwrite` | Repository pinning |
+| `.qsdev/sbt-security-plugins.sbt` (sbt) | `overwrite` | The sbt-dependency-lock plugin the `build.sbt.lock` CI check loads with `--addPluginSbtFile` |
+| `project/qsdev.repositories` (sbt, with a registry proxy) | `overwrite` | sbt repositories file: `local` plus the registry proxy's Maven repository |
+
+With a registry proxy, the devenv shell (and so CI) sets
+`SBT_OPTS="-Dsbt.repository.config=$DEVENV_ROOT/project/qsdev.repositories -Dsbt.override.build.repos=true"`,
+so every sbt run resolves dependencies and plugins only through `local` and
+the proxy, ignoring the resolvers the build declares. Commit the file: it sits
+under `project/`, not the gitignored `.qsdev/`, so CI checkouts have it, and
+sbt compiles only `*.sbt` and `*.scala` files there. qsdev rewrites it on
+every update, so a changed proxy URL takes effect. The proxy must also serve
+the sbt plugins the build uses; plugins published only to the Ivy-style
+`repo.scala-sbt.org` need a proxy of that repository. `SBT_OPTS` is
+word-split, so a project root containing a space is not supported. Mill
+projects are not routed through the proxy.
+
+sbt projects get two CI steps. The install phase runs `sbt dependencyLockCheck`
+with sbt-dependency-lock loaded, failing when a `build.sbt.lock` is missing or
+stale. The scan phase converts every `build.sbt.lock` in the project
+(sbt-dependency-lock writes one per sbt project) with `jq` into
+osv-scanner's custom lockfile format, naming each locked dependency as the
+Maven package `org:name`, and runs
+`osv-scanner scan source -L osv-scanner:<file>`. It fails on any known
+vulnerability, and also when no `build.sbt.lock` lists a dependency. It
+needs no sbt plugin and no credentials: only osv.dev is queried. qsdev adds
+`osv-scanner` to the devenv shell of sbt projects.
 
 ### Haskell
 
@@ -1524,35 +1910,35 @@ When the version is known, devenv.nix sets `languages.haskell.package` to nixpkg
 
 ### AWS
 
-When AWS project files are detected (CDK, SAM, Terraform `aws` provider):
+When AWS project files are detected (CDK, SAM, Terraform `aws` provider), or after `qsdev enable aws`:
 
 | Control | Mechanism |
 |---------|-----------|
 | Deny rules | Blocks `aws configure`, `aws sts assume-role`, credential cat commands |
 | Read-deny rules | Blocks Read access to `~/.aws/credentials`, `~/.aws/config`, `~/.aws/sso/cache/` |
-| Environment | Sets `AWS_PROFILE` / `AWS_DEFAULT_REGION` in devenv.nix only when the `aws_profile` / `aws_default_region` extras are configured; otherwise they are inherited from your shell |
+| Environment | `AWS_PROFILE`, `AWS_REGION` and `AWS_DEFAULT_REGION` are inherited from your shell: the module adds them to devenv.yaml `clean.keep`, and none of them is in `unsetEnvVars`. The `aws_profile` extra sets `AWS_PROFILE` in the committed devenv.nix for the whole team (leave it empty for per-developer profiles), and the `aws_default_region` extra sets both `AWS_REGION` (read by the JS v3 and Go v2 SDKs) and `AWS_DEFAULT_REGION` (read by the CLI); a value set there overrides your shell. To pin a value without an extra, set it in `devenv.local.nix` |
 
 ### GCP
 
-When GCP project files are detected (Cloud Build, Firebase, Terraform `google` provider):
+When GCP project files are detected (Cloud Build, Firebase, Terraform `google` provider), or after `qsdev enable gcp`:
 
 | Control | Mechanism |
 |---------|-----------|
 | Deny rules | Blocks `gcloud auth print-access-token`, `gcloud config set`, credential cat commands |
 | Read-deny rules | Blocks Read access to `~/.config/gcloud/application_default_credentials.json`, `~/.config/gcloud/credentials.db` and the per-project `.qsdev/cloud/gcp/` |
-| Environment | Documents `CLOUDSDK_ACTIVE_CONFIG_NAME`, `CLOUDSDK_CORE_PROJECT` and `GOOGLE_CLOUD_PROJECT` as comments in devenv.nix; set real values in `devenv.local.nix` or with `qsdev init --env`. These select a default configuration and project; credentials stay shared in `~/.config/gcloud` |
+| Environment | `CLOUDSDK_ACTIVE_CONFIG_NAME`, `CLOUDSDK_CORE_PROJECT` and `GOOGLE_CLOUD_PROJECT` are inherited from your shell: the module adds them to devenv.yaml `clean.keep`, and devenv.nix documents them as comments. To pin a value for the project, set it in `devenv.local.nix` or with `qsdev init --env`. These select a default configuration and project; credentials stay shared in `~/.config/gcloud` |
 | CLI isolation | With `cloud.isolate_cli_config`, sets `CLOUDSDK_CONFIG` to `.qsdev/cloud/gcp` (see [Cloud CLI configuration isolation](#cloud-cli-configuration-isolation)) |
-| GKE auth | When Helm or container files are also detected, installs `google-cloud-sdk` with the `gke-gcloud-auth-plugin` component |
+| GKE auth | When Helm charts are also detected, installs `google-cloud-sdk` with the `gke-gcloud-auth-plugin` component |
 
 ### Azure
 
-When Azure project files are detected (Pipelines, Bicep, Terraform `azurerm` provider):
+When Azure project files are detected (Pipelines, Bicep, Terraform `azurerm` provider), or after `qsdev enable azure`:
 
 | Control | Mechanism |
 |---------|-----------|
 | Deny rules | Blocks `az account get-access-token`, `az login --service-principal`, credential cat commands |
 | Read-deny rules | Blocks Read access to `~/.azure/accessTokens.json`, `~/.azure/msal_token_cache.json` and the per-project `.qsdev/cloud/azure/` |
-| Environment | Documents `ARM_SUBSCRIPTION_ID` and `ARM_TENANT_ID` as comments in devenv.nix; set real values in `devenv.local.nix` or with `qsdev init --env`. Only Terraform's azurerm provider reads them: `az` ignores them and uses the subscription last selected with `az account set` |
+| Environment | `ARM_SUBSCRIPTION_ID` and `ARM_TENANT_ID` are inherited from your shell: the module adds them to devenv.yaml `clean.keep`, and devenv.nix documents them as comments. To pin a value for the project, set it in `devenv.local.nix` or with `qsdev init --env`. Only Terraform's azurerm provider reads them: `az` ignores them and uses the subscription last selected with `az account set` |
 | CLI isolation | With `cloud.isolate_cli_config`, sets `AZURE_CONFIG_DIR` to `.qsdev/cloud/azure` (see [Cloud CLI configuration isolation](#cloud-cli-configuration-isolation)) |
 
 ---
@@ -1635,7 +2021,7 @@ Generated when an infrastructure profile is active.
 | **Merge strategy** | `overwrite` |
 | **Purpose** | Renovate bot configuration with age-gating |
 
-Key settings include `minimumReleaseAge` (3 or 7 days), `automergeType` for patch updates, and lockfile maintenance schedules.
+Key settings include `minimumReleaseAge` and `automergeType` for patch updates. Each `minimumReleaseAge` (the default rule and every ecosystem override) is the larger of the profile's delay (3 days for `consulting-default`, 7 for `enterprise`) and the compliance level's window (3/7/14 days for `baseline`/`enhanced`/`strict`; see [Release-age window](#release-age-window)).
 
 ### `.github/dependabot.yml`
 
@@ -1644,6 +2030,8 @@ Key settings include `minimumReleaseAge` (3 or 7 days), `automergeType` for patc
 | **Generated by** | Profiles using Dependabot (`startup-github`) |
 | **Merge strategy** | `overwrite` |
 | **Purpose** | Dependabot update configuration |
+
+Each update entry's `cooldown.default-days` is the larger of the profile's delay (none for `startup-github`) and the compliance level's window (3/7/14 days for `baseline`/`enhanced`/`strict`).
 
 ### `docs/security-overview.md`
 

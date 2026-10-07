@@ -1,7 +1,9 @@
 package devinit
 
 import (
+	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -10,11 +12,12 @@ import (
 
 	"github.com/Quantum-Serendipity/qsdev/internal/sandbox"
 	"github.com/Quantum-Serendipity/qsdev/internal/sandbox/bwrap"
+	"github.com/Quantum-Serendipity/qsdev/internal/sandbox/shim"
 	"github.com/Quantum-Serendipity/qsdev/internal/shebang"
 )
 
 // sandboxStoreDir is mounted read-only into every bubblewrap sandbox.
-const sandboxStoreDir = "/nix/store"
+const sandboxStoreDir = sandbox.NixStoreDir
 
 // maxSymlinkHops bounds symlink-chain resolution, matching the kernel's limit.
 const maxSymlinkHops = 40
@@ -29,6 +32,10 @@ const maxSymlinkHops = 40
 //     component is kept, so multi-call binaries still see their own name.
 //   - A script whose interpreter is not visible (typically
 //     `#!/usr/bin/env python3`) is started through its interpreter explicitly.
+//   - qsdev itself (the same file as the running binary, however the hook
+//     names it) is replaced by shim.SandboxPath(), where the backend mounts
+//     the running binary, so a self-invoked guard runs wherever qsdev is
+//     installed.
 //
 // A command that cannot be made reachable is an error: bwrap would otherwise
 // fail with a non-blocking exit status and the wrapped guard would fail open.
@@ -38,6 +45,9 @@ func namespaceHookCommand(cfg *sandbox.SandboxConfig) ([]string, error) {
 	exe, err := hostExecutable(cfg.HookCommand[0])
 	if err != nil {
 		return nil, err
+	}
+	if isSelf(exe) {
+		return append([]string{shim.SandboxPath()}, cfg.HookCommand[1:]...), nil
 	}
 	exe, err = visiblePath(exe, visible)
 	if err != nil {
@@ -54,6 +64,22 @@ func namespaceHookCommand(cfg *sandbox.SandboxConfig) ([]string, error) {
 	argv = append(argv, exe)
 	argv = append(argv, cfg.HookCommand[1:]...)
 	return argv, nil
+}
+
+// isSelf reports whether exe is the running qsdev binary, the file the
+// bubblewrap backend mounts at shim.SandboxPath(). Comparing files rather
+// than paths covers PATH names, symlinks and hard links alike.
+func isSelf(exe string) bool {
+	self, err := shim.HostExecutable()
+	if err != nil {
+		return false
+	}
+	selfInfo, err := os.Stat(self)
+	if err != nil {
+		return false
+	}
+	exeInfo, err := os.Stat(exe)
+	return err == nil && os.SameFile(selfInfo, exeInfo)
 }
 
 // sandboxVisibility reports whether a host path is visible at the same path
@@ -126,6 +152,9 @@ func hostExecutable(name string) (string, error) {
 // .../coreutils).
 func visiblePath(p string, visible func(string) bool) (string, error) {
 	for range maxSymlinkHops {
+		if _, err := os.Lstat(p); errors.Is(err, fs.ErrNotExist) {
+			return "", fmt.Errorf("%s does not exist (interpreter garbage-collected?)", p)
+		}
 		if resolvesInside(p, visible) {
 			return p, nil
 		}
@@ -161,6 +190,9 @@ func resolvesInside(p string, visible func(string) bool) bool {
 		}
 		target, err := os.Readlink(p)
 		if err != nil {
+			if _, statErr := os.Lstat(p); errors.Is(statErr, fs.ErrNotExist) {
+				return false // a dangling chain resolves nowhere
+			}
 			return true // not a symlink: the chain ends inside the sandbox
 		}
 		if !filepath.IsAbs(target) {

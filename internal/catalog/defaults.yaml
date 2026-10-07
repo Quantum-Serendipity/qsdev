@@ -963,19 +963,14 @@ unset_vars:
     - AWS_SECRET_ACCESS_KEY
     - AWS_SESSION_TOKEN
     - AWS_SECURITY_TOKEN
-    - AWS_DEFAULT_REGION
     - GITHUB_TOKEN
     - GH_TOKEN
     - GITHUB_PAT
     - GITLAB_TOKEN
     - GL_TOKEN
     - GOOGLE_APPLICATION_CREDENTIALS
-    - GCLOUD_PROJECT
-    - CLOUDSDK_CORE_PROJECT
     - AZURE_CLIENT_ID
     - AZURE_CLIENT_SECRET
-    - AZURE_TENANT_ID
-    - AZURE_SUBSCRIPTION_ID
     - NPM_TOKEN
     - PYPI_TOKEN
     - DOCKER_PASSWORD
@@ -998,6 +993,10 @@ unset_vars:
     - PRIVATE_KEY
     - ENCRYPTION_KEY
 keep_vars:
+    # PATH is required, not a convenience: `devenv shell` runs a Nix-built bash
+    # (default PATH /no-such-path) whose devenv rcfile calls mktemp before it
+    # sources the environment that sets PATH. The devenv profile is still
+    # prepended, so its tools shadow host ones.
     - PATH
     - TERM
     - COLORTERM
@@ -1184,6 +1183,9 @@ languages:
         - lua
         - zig
         - powershell
+        - aws
+        - gcp
+        - azure
     core:
         - go
         - javascript
@@ -1267,18 +1269,23 @@ permission_deny_rules:
         - "Bash(npm exec *)"
         - "Bash(npm x *)"
         - "Bash(deno x *)"
-        - "Bash(deno run *npm:*)"
-        - "Bash(deno run *jsr:*)"
-        - "Bash(deno serve *npm:*)"
-        - "Bash(deno serve *jsr:*)"
-        - "Bash(deno npm:*)"
-        - "Bash(deno jsr:*)"
-        - "Bash(deno watch *npm:*)"
-        - "Bash(deno watch *jsr:*)"
+        # The npm:/jsr: specifier runs straight into the package name, so the
+        # rules end in "**" ("*" matches any text). A rule ending in ":*" is
+        # the legacy spelling of a trailing " *" ("The legacy :* suffix ... is
+        # only recognized at the end of a pattern", code.claude.com/docs/en/
+        # permissions) and would only match "npm <args>", never "npm:pkg".
+        - "Bash(deno run *npm:**)"
+        - "Bash(deno run *jsr:**)"
+        - "Bash(deno serve *npm:**)"
+        - "Bash(deno serve *jsr:**)"
+        - "Bash(deno npm:**)"
+        - "Bash(deno jsr:**)"
+        - "Bash(deno watch *npm:**)"
+        - "Bash(deno watch *jsr:**)"
         # Flags before the module (`deno -A npm:x`, an implicit `deno run`) or
         # deno global flags before the subcommand (`deno -q run npm:x`).
-        - "Bash(deno -* npm:*)"
-        - "Bash(deno -* jsr:*)"
+        - "Bash(deno -* npm:**)"
+        - "Bash(deno -* jsr:**)"
         - "Bash(deno -* x *)"
     nix:
         - "Bash(nix-env -i *)"
@@ -1441,9 +1448,54 @@ permission_deny_rules:
         - "Bash(docker * --cap-add*)"
         - "Bash(docker * --security-opt*)"
         - "Bash(docker *docker.sock*)"
-        - "Bash(docker * -v /:*)"
-        - "Bash(docker * --volume /:*)"
-        - "Bash(docker * --volume=/:*)"
+        # Host-root mounts: the bind target follows "/:" and is an absolute
+        # container path, hence "/:/*" (a trailing ":*" is the legacy " *"
+        # suffix and would match nothing here); "-v / " mounts / with no
+        # explicit target. Every -v/--volume spelling (next word, "=",
+        # glued -v) is listed for / and its path-normalized forms //, /.
+        # and /./, each of which names only the host root. Best effort:
+        # spellings not listed ("-v ///:/host") get past these globs; the
+        # sandbox is the backstop.
+        - "Bash(docker * -v /:/*)"
+        - "Bash(docker * -v=/:/*)"
+        - "Bash(docker * -v/:/*)"
+        - "Bash(docker * --volume /:/*)"
+        - "Bash(docker * --volume=/:/*)"
+        - "Bash(docker * -v / *)"
+        - "Bash(docker * -v=/ *)"
+        - "Bash(docker * -v/ *)"
+        - "Bash(docker * --volume / *)"
+        - "Bash(docker * --volume=/ *)"
+        - "Bash(docker * -v //:/*)"
+        - "Bash(docker * -v=//:/*)"
+        - "Bash(docker * -v//:/*)"
+        - "Bash(docker * --volume //:/*)"
+        - "Bash(docker * --volume=//:/*)"
+        - "Bash(docker * -v // *)"
+        - "Bash(docker * -v=// *)"
+        - "Bash(docker * -v// *)"
+        - "Bash(docker * --volume // *)"
+        - "Bash(docker * --volume=// *)"
+        - "Bash(docker * -v /.:/*)"
+        - "Bash(docker * -v=/.:/*)"
+        - "Bash(docker * -v/.:/*)"
+        - "Bash(docker * --volume /.:/*)"
+        - "Bash(docker * --volume=/.:/*)"
+        - "Bash(docker * -v /. *)"
+        - "Bash(docker * -v=/. *)"
+        - "Bash(docker * -v/. *)"
+        - "Bash(docker * --volume /. *)"
+        - "Bash(docker * --volume=/. *)"
+        - "Bash(docker * -v /./:/*)"
+        - "Bash(docker * -v=/./:/*)"
+        - "Bash(docker * -v/./:/*)"
+        - "Bash(docker * --volume /./:/*)"
+        - "Bash(docker * --volume=/./:/*)"
+        - "Bash(docker * -v /./ *)"
+        - "Bash(docker * -v=/./ *)"
+        - "Bash(docker * -v/./ *)"
+        - "Bash(docker * --volume /./ *)"
+        - "Bash(docker * --volume=/./ *)"
         - "Bash(docker * --mount *source=/,*)"
         - "Bash(podman * --privileged*)"
         - "Bash(podman * --pid=host*)"
@@ -1455,9 +1507,46 @@ permission_deny_rules:
         - "Bash(podman * --security-opt*)"
         - "Bash(podman *podman.sock*)"
         - "Bash(podman *docker.sock*)"
-        - "Bash(podman * -v /:*)"
-        - "Bash(podman * --volume /:*)"
-        - "Bash(podman * --volume=/:*)"
+        - "Bash(podman * -v /:/*)"
+        - "Bash(podman * -v=/:/*)"
+        - "Bash(podman * -v/:/*)"
+        - "Bash(podman * --volume /:/*)"
+        - "Bash(podman * --volume=/:/*)"
+        - "Bash(podman * -v / *)"
+        - "Bash(podman * -v=/ *)"
+        - "Bash(podman * -v/ *)"
+        - "Bash(podman * --volume / *)"
+        - "Bash(podman * --volume=/ *)"
+        - "Bash(podman * -v //:/*)"
+        - "Bash(podman * -v=//:/*)"
+        - "Bash(podman * -v//:/*)"
+        - "Bash(podman * --volume //:/*)"
+        - "Bash(podman * --volume=//:/*)"
+        - "Bash(podman * -v // *)"
+        - "Bash(podman * -v=// *)"
+        - "Bash(podman * -v// *)"
+        - "Bash(podman * --volume // *)"
+        - "Bash(podman * --volume=// *)"
+        - "Bash(podman * -v /.:/*)"
+        - "Bash(podman * -v=/.:/*)"
+        - "Bash(podman * -v/.:/*)"
+        - "Bash(podman * --volume /.:/*)"
+        - "Bash(podman * --volume=/.:/*)"
+        - "Bash(podman * -v /. *)"
+        - "Bash(podman * -v=/. *)"
+        - "Bash(podman * -v/. *)"
+        - "Bash(podman * --volume /. *)"
+        - "Bash(podman * --volume=/. *)"
+        - "Bash(podman * -v /./:/*)"
+        - "Bash(podman * -v=/./:/*)"
+        - "Bash(podman * -v/./:/*)"
+        - "Bash(podman * --volume /./:/*)"
+        - "Bash(podman * --volume=/./:/*)"
+        - "Bash(podman * -v /./ *)"
+        - "Bash(podman * -v=/./ *)"
+        - "Bash(podman * -v/./ *)"
+        - "Bash(podman * --volume /./ *)"
+        - "Bash(podman * --volume=/./ *)"
         - "Bash(podman * --mount *source=/,*)"
     # Prefix globs cannot enumerate every spelling of a destructive command,
     # so this set lists the common flag orders and short/long forms, plus the
@@ -1488,9 +1577,15 @@ permission_deny_rules:
         - "Bash(rm -f -R *)"
         - "Bash(rm --recursive --force *)"
         - "Bash(rm --force --recursive *)"
+        # The .env rules stay unanchored (`./` is a gitignore-style pattern
+        # matching at any depth): nested .env files such as pkg/.env or
+        # apps/web/.env.local are real secret stores.
         - "Read(./.env)"
         - "Read(./.env.*)"
-        - "Read(./secrets/**)"
+        # Anchored with a leading `/`. Claude Code collapses `./secrets/**` to
+        # the bare name `secrets`, which matches at any depth and would also
+        # deny source directories such as internal/secrets/ (U15-14).
+        - "Read(/secrets/**)"
     sandbox_config_edits:
         - "Edit(devenv.nix)"
         - "Write(devenv.nix)"
@@ -1567,12 +1662,27 @@ permission_allow_rules:
         - "Bash(git log *)"
         - "Bash(git show)"
         - "Bash(git show *)"
+        # Only exact listing forms of `git branch`, and no `git switch *`
+        # or `git checkout *`: git expands unambiguous long-option prefixes
+        # (`git switch --disc` is --discard-changes, `git branch --delete
+        # --forc` is --force) and clusters short flags (`git switch -qf`,
+        # `git branch -qD`), so no finite ask list under a wildcard allow can
+        # catch every work-discarding spelling. `git checkout .` and `git
+        # checkout <path>` also discard work, and no glob can tell a path from
+        # a branch. Branch changes and creation therefore prompt.
         - "Bash(git branch)"
-        - "Bash(git branch *)"
+        - "Bash(git branch --show-current)"
+        - "Bash(git branch --list)"
+        - "Bash(git branch -a)"
+        - "Bash(git branch -r)"
+        - "Bash(git branch -v)"
+        - "Bash(git branch -vv)"
         - "Bash(git add *)"
         - "Bash(git commit -m *)"
-        - "Bash(git switch *)"
-        - "Bash(git checkout *)"
+    # Build/test allows imply execution of agent-controlled code (Write(*) +
+    # test files); accepted (U15-08). Flags that hand the build tool a
+    # separate program to run (-exec, -toolexec, --config, go generate) are
+    # asked through the code_execution set instead.
     standard_build_test_lint:
         - "Bash(npm test *)"
         - "Bash(npm test)"
@@ -1594,14 +1704,28 @@ permission_allow_rules:
         - "Bash(npm list *)"
         - "Bash(npm ls *)"
         - "Bash(npm outdated *)"
-        - "Bash(npm audit *)"
+        # Audit commands are allowed only in read-only shapes: a trailing
+        # wildcard would auto-approve `npm audit fix --force`, `pip-audit
+        # --fix` and `cargo audit fix`, which rewrite manifests and lockfiles.
+        # Fix forms that ride a remaining wildcard are asked through the
+        # dependency_mutation_indirect set.
+        - "Bash(npm audit)"
+        - "Bash(npm audit --json*)"
+        - "Bash(npm audit --audit-level*)"
+        - "Bash(npm audit signatures*)"
         - "Bash(npm view *)"
         - "Bash(npm info *)"
         - "Bash(pip list *)"
         - "Bash(pip show *)"
         - "Bash(pip freeze *)"
-        - "Bash(pip-audit *)"
-        - "Bash(cargo audit *)"
+        # Exact forms only: `pip-audit -r <file>` and `pip-audit <project>`
+        # pip-install the requirements into a temporary venv, building sdists
+        # (arbitrary registry code) with no package-guard check.
+        - "Bash(pip-audit)"
+        - "Bash(pip-audit --format json)"
+        - "Bash(pip-audit --format=json)"
+        - "Bash(cargo audit)"
+        - "Bash(cargo audit --json*)"
         - "Bash(vulnix *)"
         - "Bash(nix flake info *)"
         - "Bash(nix flake metadata *)"
@@ -1756,6 +1880,83 @@ permission_ask_rules:
         - "Bash(nix-shell --packages *)"
         - "Bash(nix build *)"
         - "Bash(nix build)"
+        # The build/test allows would otherwise pass flags that run a
+        # separate, agent-chosen program. Go accepts both -flag and --flag.
+        - "Bash(go generate*)"
+        - "Bash(go * -toolexec*)"
+        - "Bash(go * --toolexec*)"
+        - "Bash(go * -exec*)"
+        - "Bash(go * --exec*)"
+        - "Bash(cargo * --config*)"
+        # -ldflags=-extld=<prog> (or -extldflags=-wrapper,<prog>) makes the
+        # go linker exec an agent-chosen program, with no file write needed.
+        - "Bash(go * -ldflags*extld*)"
+        - "Bash(go * --ldflags*extld*)"
+    # Commands that mutate dependencies or re-enable install scripts without
+    # an install verb, so they ride read-only allows such as `npm audit
+    # --json*` or `npm test *`, or a user's or skill's broader allow. npm's
+    # `fix` is a positional that may follow flags; nopt also accepts
+    # `--ignore-scripts false` and `--no-ignore-scripts`.
+    dependency_mutation_indirect:
+        - "Bash(npm audit fix*)"
+        - "Bash(npm audit * fix*)"
+        # npm runs an unambiguous command prefix (`npm aud fix`).
+        - "Bash(npm aud* fix*)"
+        - "Bash(pnpm audit *--fix*)"
+        - "Bash(pip-audit *--fix*)"
+        - "Bash(cargo audit fix*)"
+        - "Bash(cargo audit * fix*)"
+        - "Bash(* --ignore-scripts=false*)"
+        - "Bash(* --ignore-scripts false*)"
+        - "Bash(* --no-ignore-scripts*)"
+    # Publishing and registry credential changes. The catalog never allows
+    # them, but a user's allow or a skill's allowed-tools (e.g. Bash(npm *))
+    # could, and ask is evaluated before allow.
+    publish_and_credentials:
+        - "Bash(npm publish*)"
+        - "Bash(pnpm publish*)"
+        - "Bash(yarn npm publish*)"
+        - "Bash(cargo publish*)"
+        - "Bash(npm token *)"
+        - "Bash(npm login*)"
+        - "Bash(npm adduser*)"
+        - "Bash(npm config set *)"
+        - "Bash(pip config *)"
+        - "Bash(twine upload*)"
+        - "Bash(gem push*)"
+    # git forms that silently discard uncommitted work or move/delete branch
+    # refs. The catalog allows no `git checkout`, `git switch` or `git branch`
+    # form these could ride (see standard_base); this set is defence in depth
+    # for a user's or skill's broader allow. It lists the canonical spellings
+    # at token boundaries only: abbreviated long options (`--disc`) and
+    # clustered short flags (`-qf`) are not glob-enumerable, which is why no
+    # wildcard allow for these subcommands is safe.
+    work_discarding:
+        - "Bash(git checkout -- *)"
+        - "Bash(git checkout * -- *)"
+        - "Bash(git checkout .)"
+        - "Bash(git checkout -f*)"
+        - "Bash(git checkout * -f*)"
+        - "Bash(git checkout --force*)"
+        - "Bash(git checkout * --force*)"
+        - "Bash(git switch *--discard-changes*)"
+        - "Bash(git switch -f*)"
+        - "Bash(git switch * -f*)"
+        - "Bash(git switch *--force*)"
+        - "Bash(git switch -C*)"
+        - "Bash(git switch * -C*)"
+        - "Bash(git branch -D*)"
+        - "Bash(git branch * -D*)"
+        - "Bash(git branch -f*)"
+        - "Bash(git branch * -f*)"
+        - "Bash(git branch *--force*)"
+        - "Bash(git branch -M*)"
+        - "Bash(git branch * -M*)"
+        - "Bash(git branch -C*)"
+        - "Bash(git branch * -C*)"
+        - "Bash(git branch -df*)"
+        - "Bash(git branch * -df*)"
+        - "Bash(git clean*)"
     standard_base:
         - "Bash(nix flake update *)"
         - "Bash(nix flake update)"
@@ -1811,6 +2012,9 @@ permission_preset_defs:
             - ruby
             - php
             - dotnet
+            - dependency_mutation_indirect
+            - publish_and_credentials
+            - work_discarding
     standard:
         strictness: 2
         default_mode: default
@@ -1844,6 +2048,9 @@ permission_preset_defs:
             - ruby
             - php
             - dotnet
+            - dependency_mutation_indirect
+            - publish_and_credentials
+            - work_discarding
     permissive:
         strictness: 1
         default_mode: default
@@ -1878,7 +2085,14 @@ permission_preset_defs:
             - ruby
             - php
             - dotnet
+            - dependency_mutation_indirect
+            - publish_and_credentials
+            - work_discarding
+    # supply-chain-only leaves defaultMode unset (Claude Code's own default)
+    # but disables bypass mode, which would auto-run its package-install ask
+    # rules.
     supply-chain-only:
+        disable_bypass_mode: disable
         allow_sets: []
         deny_sets:
             - npx
@@ -1900,7 +2114,13 @@ permission_preset_defs:
             - ruby
             - php
             - dotnet
+            - dependency_mutation_indirect
+            - publish_and_credentials
+    # custom allows only the configured extras; like every preset with ask
+    # rules it disables bypass mode, which would auto-run them.
     custom:
+        default_mode: default
+        disable_bypass_mode: disable
         deny_sets:
             - npx
             - remote_package_exec
@@ -1924,3 +2144,6 @@ permission_preset_defs:
             - ruby
             - php
             - dotnet
+            - dependency_mutation_indirect
+            - publish_and_credentials
+            - work_discarding

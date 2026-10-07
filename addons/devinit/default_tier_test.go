@@ -1,6 +1,7 @@
 package devinit
 
 import (
+	"bytes"
 	"maps"
 	"reflect"
 	"slices"
@@ -96,5 +97,30 @@ func TestTierFlagUsage(t *testing.T) {
 	}
 	if want := "(default: " + cat.DefaultTier() + ")"; !strings.Contains(usage, want) {
 		t.Errorf("--tier usage %q omits %q", usage, want)
+	}
+}
+
+// TestInitHelpListsTiers verifies `init --help` describes --tier from the
+// catalog. The usage is filled in when help renders, not when the command is
+// built, so building the command tree does not load the catalog.
+func TestInitHelpListsTiers(t *testing.T) {
+	t.Parallel()
+	cat := catalog.MustDefault()
+	cmd := initCmd()
+	var out bytes.Buffer
+	cmd.SetOut(&out)
+	cmd.SetErr(&out)
+	cmd.SetArgs([]string{"--help"})
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("init --help: %v", err)
+	}
+	help := out.String()
+	for _, name := range cat.TierOrder() {
+		if !strings.Contains(help, name) {
+			t.Errorf("init --help omits tier %q:\n%s", name, help)
+		}
+	}
+	if want := "(default: " + cat.DefaultTier() + ")"; !strings.Contains(help, want) {
+		t.Errorf("init --help omits %q:\n%s", want, help)
 	}
 }

@@ -11,6 +11,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/Quantum-Serendipity/qsdev/internal/cmdutil"
+	"github.com/Quantum-Serendipity/qsdev/internal/projectctx"
 	"github.com/Quantum-Serendipity/qsdev/internal/sandbox/policy"
 )
 
@@ -25,7 +26,7 @@ func newSandboxApproveCmd(openStore approvalStoreFunc) *cobra.Command {
 		Use:   "approve",
 		Short: "Approve the project's sandbox policy for use by sandbox exec",
 		Long: `Records the current content of the sandbox policy (the policy file and
-the *.nix files beside it) as approved in ~/.qsdev/. The policy comes from
+the *.nix files beside it) as approved in ~/` + projectctx.DataDirName() + `/. The policy comes from
 the repository whose hooks the sandbox contains, so "sandbox exec" refuses
 to evaluate it, and blocks the hook, until this exact content is approved.
 Any later change to those files needs a new approval.
@@ -53,7 +54,7 @@ confirms the prompt.`,
 }
 
 func runSandboxApprove(ctx context.Context, cmd *cobra.Command, policyPath string, openStore approvalStoreFunc) error {
-	projectDir, err := sandboxProjectDir()
+	projectDir, err := sandboxProjectDir(cmd)
 	if err != nil {
 		return err
 	}

@@ -4,13 +4,17 @@ import (
 	"fmt"
 	"maps"
 	"os"
+	"path"
 	"path/filepath"
 	"regexp"
 	"runtime"
 	"slices"
+	"strconv"
 	"strings"
 	"sync"
+	"time"
 
+	"github.com/Quantum-Serendipity/qsdev/internal/catalog"
 	"github.com/Quantum-Serendipity/qsdev/internal/claudesettings"
 	"github.com/Quantum-Serendipity/qsdev/internal/selfprotect/cmdscan"
 	"github.com/Quantum-Serendipity/qsdev/internal/shebang"
@@ -104,6 +108,13 @@ type assessmentInput struct {
 	// packageGuard is the generator's package-guard.py (see
 	// AssessOptions.PackageGuard).
 	packageGuard []byte
+	// guardSupport is what the files package-guard.py loads must hold (see
+	// AssessOptions.GuardSupport).
+	guardSupport map[string][]byte
+	// complianceLevel is the project's security level, whose release-age
+	// window the package guard must enforce; empty or unknown is judged as
+	// the catalog's lowest level.
+	complianceLevel string
 }
 
 // guardState is whether the package guard is in force, and why.
@@ -212,10 +223,11 @@ func (in assessmentInput) guardUnrunnable() string {
 }
 
 // guardModified returns why package-guard.py on disk cannot be credited as the
-// generated version, or "" when it is the content the generator writes (see
-// AssessOptions.PackageGuard), line endings aside, with its recorded mode.
-// The local state and the committed manifest are not consulted for the
-// content: either can be re-hashed along with an edited guard.
+// generated version, or "" when it and every support file it loads are the
+// content the generator writes (see AssessOptions.PackageGuard and
+// GuardSupport), line endings aside, with their recorded modes. The local
+// state and the committed manifest are not consulted for the content: either
+// can be re-hashed along with an edited guard.
 func (in assessmentInput) guardModified() string {
 	switch {
 	case in.ProjectPath == "":
@@ -223,17 +235,33 @@ func (in assessmentInput) guardModified() string {
 	case in.packageGuard == nil:
 		return "package-guard.py content not verified: no generated version to compare it with"
 	}
-	fs := state.CheckContent(in.ProjectPath, packageGuardPath, in.packageGuard, in.GenState.Files[packageGuardPath].Mode)
+	if reason := in.generatedContentDiffers(packageGuardPath, in.packageGuard); reason != "" {
+		return reason
+	}
+	for _, rel := range slices.Sorted(maps.Keys(in.guardSupport)) {
+		if reason := in.generatedContentDiffers(rel, in.guardSupport[rel]); reason != "" {
+			return reason + " (package-guard.py loads it)"
+		}
+	}
+	return ""
+}
+
+// generatedContentDiffers returns why the file at rel is not want, the content
+// the generator writes there, or "" when it is (line endings aside, with its
+// recorded mode).
+func (in assessmentInput) generatedContentDiffers(rel string, want []byte) string {
+	name := path.Base(rel)
+	fs := state.CheckContent(in.ProjectPath, rel, want, in.GenState.Files[rel].Mode)
 	switch fs.Status {
 	case types.Unmodified:
 		return ""
 	case types.Deleted:
-		return "package-guard.py not present"
+		return name + " not present"
 	case types.Modified:
-		return "package-guard.py modified from the generated version this qsdev writes; run " +
-			"'qsdev update --configs-only --overwrite-modified' to restore " + packageGuardPath
+		return name + " modified from the generated version this qsdev writes; run " +
+			"'qsdev update --configs-only --overwrite-modified' to restore " + rel
 	default:
-		return fmt.Sprintf("package-guard.py unreadable: %v", fs.Error)
+		return fmt.Sprintf("%s unreadable: %v", name, fs.Error)
 	}
 }
 
@@ -318,6 +346,89 @@ func (in assessmentInput) ageUngatedLanguages() []string {
 	return out
 }
 
+// guardMinAge returns the release-age window package-guard.py enforces with
+// env as its environment, read as its _int_env(PACKAGE_GUARD_MIN_AGE_DAYS,
+// 3, 1) reads it: unset or blank is the template default
+// (ecosystem.DefaultMinReleaseAge), a whole number n is max(n, 1) days. Any
+// other value returns a non-empty problem: the guard records it as a
+// configuration error and blocks every install, so it gates nothing by age.
+// Values Python's int() accepts but strconv.Atoi does not (digit separators,
+// non-ASCII digits, numbers beyond int) are reported as problems, which
+// under-credits and so fails safe.
+//
+// Environment names are case-insensitive on Windows, where any spelling of
+// the name (package_guard_min_age_days, ...) can be the one the guard sees,
+// so every spelling is judged on every OS and the weakest wins: a problem,
+// else the shortest window, counting the default when the exact name is
+// unset. That only under-credits elsewhere. key is the spelling judged, or ""
+// for the default.
+func guardMinAge(env map[string]string) (window time.Duration, key, problem string) {
+	const day = 24 * time.Hour
+	name := claudesettings.EnvPackageGuardMinAgeDays
+	if _, ok := env[name]; !ok {
+		window = ecosystem.DefaultMinReleaseAge
+	}
+	for _, k := range slices.Sorted(maps.Keys(env)) {
+		if !strings.EqualFold(k, name) {
+			continue
+		}
+		w := ecosystem.DefaultMinReleaseAge
+		if raw := strings.TrimSpace(env[k]); raw != "" {
+			n, err := strconv.Atoi(raw)
+			if err != nil {
+				return 0, k, fmt.Sprintf("%s=%q is not a whole number of days", k, raw)
+			}
+			w = time.Duration(max(n, 1)) * day
+		}
+		if window == 0 || w < window {
+			window, key = w, k
+		}
+	}
+	return window, key, ""
+}
+
+// ageGatingLayer judges the age-gating built into package-guard.py: in force
+// only while the guard is, and only as strong as the window it enforces
+// against the compliance level's (the window the generator writes, see
+// catalog.EffectiveAgeGate) and the registries it checks.
+func ageGatingLayer(input assessmentInput) (LayerStatus, int, string) {
+	if g := input.guard(); g.Status != LayerEnabled {
+		return g.Status, 0, g.Reason
+	}
+	settings, err := input.settings()
+	if err != nil {
+		return LayerDisabled, 0, fmt.Sprintf("Claude settings unreadable: %v", err)
+	}
+	enforced, key, problem := guardMinAge(settings.Env)
+	sources := strings.Join(settings.Sources[claudesettings.EnvSourceKey(key)], ", ")
+	if problem != "" {
+		return LayerPartial, 5, fmt.Sprintf("%s (set in %s); package-guard.py rejects its configuration and blocks every install",
+			problem, sources)
+	}
+	required := ecosystem.EffectiveReleaseAge(catalog.EffectiveAgeGate(input.complianceLevel), ecosystem.DefaultMinReleaseAge)
+	enforcedDays, requiredDays := ecosystem.ReleaseAgeDays(enforced), ecosystem.ReleaseAgeDays(required)
+	if enforced < required {
+		origin := claudesettings.EnvPackageGuardMinAgeDays + " unset"
+		if key != "" {
+			origin = key + " in " + sources
+		}
+		level := input.complianceLevel
+		if level == "" {
+			level = "(unset)"
+		}
+		return LayerPartial, 5, fmt.Sprintf("package-guard.py enforces %d days (%s); compliance level %s requires %d days",
+			enforcedDays, origin, level, requiredDays)
+	}
+	// The guard checks publication age only for some registries: a project
+	// using another package ecosystem is only partly gated.
+	if uncovered := input.ageUngatedLanguages(); len(uncovered) > 0 {
+		return LayerPartial, 5, fmt.Sprintf("package-guard.py checks publication age only for %s packages; not for: %s",
+			strings.Join(GuardAgeCheckedLanguages, ", "), strings.Join(uncovered, ", "))
+	}
+	return LayerEnabled, 0, fmt.Sprintf("package-guard.py enforces publication age checks of %d days (at least the %d its compliance level requires)",
+		enforcedDays, requiredDays)
+}
+
 // layerSpec defines one defense layer's metadata and assessment logic.
 type layerSpec struct {
 	Name    string
@@ -339,19 +450,7 @@ var layerTable = []layerSpec{
 		Name:    "age-gating",
 		Weight:  WeightHigh,
 		MinTier: 2,
-		Assess: func(input assessmentInput) (LayerStatus, int, string) {
-			// Age-gating is built into package-guard.py (MIN_AGE_DAYS), which
-			// checks publication age only for some registries: a project using
-			// another package ecosystem is only partly gated.
-			if g := input.guard(); g.Status != LayerEnabled {
-				return g.Status, 0, g.Reason
-			}
-			if uncovered := input.ageUngatedLanguages(); len(uncovered) > 0 {
-				return LayerPartial, 5, fmt.Sprintf("package-guard.py checks publication age only for %s packages; not for: %s",
-					strings.Join(GuardAgeCheckedLanguages, ", "), strings.Join(uncovered, ", "))
-			}
-			return LayerEnabled, 0, "package-guard.py enforces publication age checks"
-		},
+		Assess:  ageGatingLayer,
 	},
 	{
 		Name:    "install-script-blocking",
@@ -542,8 +641,10 @@ func assessLayer(spec layerSpec, input assessmentInput) DefenseLayer {
 // opts.ClaudeUserDir also reads the user Claude settings, so a user-level
 // disableAllHooks disables the guard layers; opts.PackageGuard is what the
 // guard on disk is judged against. opts.FreshScan is not used here.
+// complianceLevel is the project's security level (config.EffectiveSecurityLevel),
+// whose release-age window the age-gating layer requires of the guard.
 func AssessDefenseLayers(projectPath string, opts AssessOptions, enabledTools map[string]bool,
-	detected types.DetectedProject, genState types.GeneratedState, currentTier int) DefenseCoverage {
+	detected types.DetectedProject, genState types.GeneratedState, currentTier int, complianceLevel string) DefenseCoverage {
 	settingsOpts := claudesettings.ReadOptions{UserDir: opts.ClaudeUserDir}
 	input := assessmentInput{
 		ProjectPath:  projectPath,
@@ -555,6 +656,8 @@ func AssessDefenseLayers(projectPath string, opts AssessOptions, enabledTools ma
 		}),
 		userSettingsRead: settingsOpts.UserDir != "",
 		packageGuard:     opts.PackageGuard,
+		guardSupport:     opts.GuardSupport,
+		complianceLevel:  complianceLevel,
 	}
 	input.guardOnce = sync.OnceValue(input.judgeGuard)
 

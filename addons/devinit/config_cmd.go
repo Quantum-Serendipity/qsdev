@@ -15,22 +15,25 @@ import (
 	"github.com/Quantum-Serendipity/qsdev/pkg/types"
 )
 
+// configShowCmd prints .qsdev.yaml as written. It reads no defaults catalog,
+// so it runs when the catalog fails to load.
 func configShowCmd() *cobra.Command {
-	return cmdutil.MarkReadOnly(&cobra.Command{
+	return cmdutil.MarkCatalogOptional(cmdutil.MarkReadOnly(&cobra.Command{
 		Use:   "show",
 		Short: "Display current project configuration",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			return runConfigShow(cmd)
 		},
-	}, "")
+	}, ""))
 }
 
 func runConfigShow(cmd *cobra.Command) error {
-	projectRoot, err := cmdutil.ProjectRoot()
+	pc, err := cmdutil.Project(cmd)
 	if err != nil {
 		return err
 	}
+	projectRoot := pc.Root
 	b := branding.Get()
 	configPath := filepath.Join(projectRoot, b.ConfigFile)
 	data, err := os.ReadFile(configPath)
@@ -66,10 +69,11 @@ Use --write to apply the migration in place.`,
 }
 
 func runMigrate(cmd *cobra.Command, write bool) error {
-	projectRoot, err := cmdutil.ProjectRoot()
+	pc, err := cmdutil.Project(cmd)
 	if err != nil {
 		return err
 	}
+	projectRoot := pc.Root
 
 	cfgFile := branding.Get().ConfigFile
 	configPath := filepath.Join(projectRoot, cfgFile)

@@ -224,22 +224,32 @@ func TestResolveProjectInfrastructure(t *testing.T) {
 		infra     types.InfraConfig
 		wantCache string
 		wantErr   error
+		wantField string
 	}{
-		{"nothing configured", types.InfraConfig{RegistryProxy: "https://repo.corp.internal"}, "", nil},
-		{"opted out", types.InfraConfig{NixCache: types.InfraDisabled}, types.InfraDisabled, nil},
-		{"cachix name", types.InfraConfig{NixCache: "corp", NixCachePublicKey: testCacheKey}, "https://corp.cachix.org", nil},
-		{"cache URL", types.InfraConfig{NixCache: "https://cache.corp.internal", NixCachePublicKey: testCacheKey}, "https://cache.corp.internal", nil},
-		{"key missing", types.InfraConfig{NixCache: "corp"}, "", ErrEndpointNotConfigured},
-		{"placeholder cache", types.InfraConfig{NixCache: "https://myorg.cachix.org", NixCachePublicKey: testCacheKey}, "", ErrPlaceholderEndpoint},
-		{"all-zero key", types.InfraConfig{NixCache: "corp", NixCachePublicKey: placeholderZeroKey}, "", ErrPlaceholderEndpoint},
-		{"plain http", types.InfraConfig{NixCache: "http://cache.corp.internal", NixCachePublicKey: testCacheKey}, "", ErrInvalidEndpoint},
+		{"nothing configured", types.InfraConfig{RegistryProxy: "https://repo.corp.internal"}, "", nil, ""},
+		{"opted out", types.InfraConfig{NixCache: types.InfraDisabled}, types.InfraDisabled, nil, ""},
+		{"cachix name", types.InfraConfig{NixCache: "corp", NixCachePublicKey: testCacheKey}, "https://corp.cachix.org", nil, ""},
+		{"cache URL", types.InfraConfig{NixCache: "https://cache.corp.internal", NixCachePublicKey: testCacheKey}, "https://cache.corp.internal", nil, ""},
+		{"key missing", types.InfraConfig{NixCache: "corp"}, "", ErrEndpointNotConfigured, "infrastructure.nix_cache"},
+		{"placeholder cache", types.InfraConfig{NixCache: "https://myorg.cachix.org", NixCachePublicKey: testCacheKey}, "", ErrPlaceholderEndpoint, "infrastructure.nix_cache"},
+		{"placeholder cache trailing dot", types.InfraConfig{NixCache: "https://myorg.cachix.org.", NixCachePublicKey: testCacheKey}, "", ErrPlaceholderEndpoint, "infrastructure.nix_cache"},
+		{"cache port out of range", types.InfraConfig{NixCache: "https://cache.corp.internal:70000", NixCachePublicKey: testCacheKey}, "", ErrInvalidEndpoint, "infrastructure.nix_cache"},
+		{"all-zero key", types.InfraConfig{NixCache: "corp", NixCachePublicKey: placeholderZeroKey}, "", ErrPlaceholderEndpoint, "infrastructure.nix_cache"},
+		{"plain http", types.InfraConfig{NixCache: "http://cache.corp.internal", NixCachePublicKey: testCacheKey}, "", ErrInvalidEndpoint, "infrastructure.nix_cache"},
+		{"registry proxy plain http", types.InfraConfig{RegistryProxy: "http://alice:s3cret@proxy.corp.lan:8081"}, "", ErrInvalidEndpoint, "infrastructure.registry_proxy"},
+		{"registry proxy credentials", types.InfraConfig{RegistryProxy: "https://alice:s3cret@proxy.corp.lan"}, "", ErrInvalidEndpoint, "infrastructure.registry_proxy"},
+		{"registry proxy newline", types.InfraConfig{RegistryProxy: "https://proxy.corp.lan\nregistry=https://evil.io"}, "", ErrInvalidEndpoint, "infrastructure.registry_proxy"},
+		{"registry path rewrites host", types.InfraConfig{
+			RegistryProxy: "https://artifactory.corp.io", RegistryProxyPaths: map[string]string{"npm": "@attacker.io/npm/"},
+		}, "", ErrInvalidEndpoint, "infrastructure.registry_proxy_paths.npm"},
+		{"loopback http registry proxy", types.InfraConfig{RegistryProxy: "http://127.0.0.1:8081"}, "", nil, ""},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 			got, err := ResolveProjectInfrastructure(tt.infra)
 			if tt.wantErr != nil {
-				if !errors.Is(err, tt.wantErr) || !strings.Contains(err.Error(), "infrastructure.nix_cache") {
+				if !errors.Is(err, tt.wantErr) || !strings.Contains(err.Error(), tt.wantField) {
 					t.Fatalf("ResolveProjectInfrastructure() error = %v, want %v naming the setting", err, tt.wantErr)
 				}
 				return
@@ -270,5 +280,137 @@ func TestConfigOnly_DescribesNoComponents(t *testing.T) {
 		if strings.Contains(doc, unwanted) {
 			t.Errorf("implicit default security overview lists %s", unwanted)
 		}
+	}
+}
+
+// TestValidateInfra_NoProfile checks every endpoint of a project's
+// infrastructure is validated without an infra profile selected.
+func TestValidateInfra_NoProfile(t *testing.T) {
+	t.Parallel()
+	fields := []struct {
+		name string
+		set  func(*types.InfraConfig, string)
+	}{
+		{"infrastructure.registry_proxy", func(c *types.InfraConfig, v string) { c.RegistryProxy = v }},
+		{"infrastructure.registry_proxy_overrides.npm", func(c *types.InfraConfig, v string) {
+			c.RegistryProxyOverrides = map[string]string{"npm": v}
+		}},
+		{"infrastructure.build_cache_url", func(c *types.InfraConfig, v string) { c.BuildCacheURL = v }},
+	}
+	values := []struct {
+		name    string
+		value   string
+		wantErr error
+		wantMsg string
+	}{
+		{"plain http to a remote host", "http://proxy.corp.lan:8081", ErrInvalidEndpoint, "uses plain http"},
+		{"plain http with credentials", "http://alice:s3cret@proxy.corp.lan:8081", ErrInvalidEndpoint, "uses plain http"},
+		{"embedded credentials", "https://alice:s3cret@proxy.corp.lan", ErrInvalidEndpoint, "environment"},
+		{"placeholder host", "https://proxy.example.com", ErrPlaceholderEndpoint, "example host"},
+		{"embedded newline", "https://proxy.corp.lan\nregistry=https://evil.io", ErrInvalidEndpoint, "not an absolute http(s) URL"},
+		{"port above 65535", "https://proxy.corp.lan:65536", ErrInvalidEndpoint, "port"},
+		{"port far out of range", "https://proxy.corp.lan:99999999999", ErrInvalidEndpoint, "port"},
+		{"port zero", "https://proxy.corp.lan:0", ErrInvalidEndpoint, "port"},
+		{"example cachix cache with trailing dot", "https://myorg.cachix.org.", ErrPlaceholderEndpoint, "example Cachix cache"},
+		{"https", "https://proxy.corp.lan/artifactory", nil, ""},
+		{"highest port", "https://proxy.corp.lan:65535", nil, ""},
+		{"loopback http", "http://localhost:8081", nil, ""},
+	}
+	for _, f := range fields {
+		for _, v := range values {
+			t.Run(f.name+"/"+v.name, func(t *testing.T) {
+				t.Parallel()
+				var infra types.InfraConfig
+				f.set(&infra, v.value)
+				err := errors.Join(ValidateInfra(infra)...)
+				if v.wantErr == nil {
+					if err != nil {
+						t.Fatalf("ValidateInfra() error = %v", err)
+					}
+					return
+				}
+				if !errors.Is(err, v.wantErr) {
+					t.Fatalf("ValidateInfra() error = %v, want %v", err, v.wantErr)
+				}
+				for _, want := range []string{f.name, v.wantMsg} {
+					if !strings.Contains(err.Error(), want) {
+						t.Errorf("error %q lacks %q", err, want)
+					}
+				}
+				if strings.Contains(err.Error(), "s3cret") {
+					t.Errorf("error %q echoes the embedded password", err)
+				}
+			})
+		}
+	}
+
+	t.Run("registry_proxy none", func(t *testing.T) {
+		t.Parallel()
+		if errs := ValidateInfra(types.InfraConfig{RegistryProxy: types.InfraDisabled, NixCache: types.InfraDisabled}); len(errs) != 0 {
+			t.Errorf("ValidateInfra() = %v, want none", errs)
+		}
+	})
+	t.Run("nix cache without key", func(t *testing.T) {
+		t.Parallel()
+		err := errors.Join(ValidateInfra(types.InfraConfig{NixCache: "corp"})...)
+		if !errors.Is(err, ErrEndpointNotConfigured) || !strings.Contains(err.Error(), "nix_cache_public_key") {
+			t.Errorf("ValidateInfra() error = %v, want %v naming nix_cache_public_key", err, ErrEndpointNotConfigured)
+		}
+	})
+}
+
+// TestValidateInfra_PathRewritesHost is the regression test for a
+// registry_proxy_paths value that moved the computed proxy URL to another
+// host (https://artifactory.corp.io + "@attacker.io/npm/").
+func TestValidateInfra_PathRewritesHost(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		path string
+		ok   bool
+	}{
+		{"@evil/", false},
+		{"@attacker.io/npm/", false},
+		{"evil.com/x", false},
+		{"//evil.com/x", false},
+		{"npm/", false},
+		{"/repository/npm/", true},
+		{"/api/npm/npm-virtual/", true},
+	}
+	for _, base := range []string{"https://artifactory.corp.io", ""} {
+		for _, tt := range tests {
+			t.Run(base+" "+tt.path, func(t *testing.T) {
+				t.Parallel()
+				err := errors.Join(ValidateInfra(types.InfraConfig{
+					RegistryProxy:      base,
+					RegistryProxyPaths: map[string]string{"npm": tt.path},
+				})...)
+				if tt.ok {
+					if err != nil {
+						t.Fatalf("ValidateInfra() error = %v", err)
+					}
+					return
+				}
+				if !errors.Is(err, ErrInvalidEndpoint) || !strings.Contains(err.Error(), "infrastructure.registry_proxy_paths.npm") {
+					t.Fatalf("ValidateInfra() error = %v, want %v naming infrastructure.registry_proxy_paths.npm", err, ErrInvalidEndpoint)
+				}
+			})
+		}
+	}
+}
+
+// TestResolve_RejectsBadRegistryPath checks an explicitly selected profile
+// validates registry_proxy_paths through the same shared checks.
+func TestResolve_RejectsBadRegistryPath(t *testing.T) {
+	t.Parallel()
+	infra := validInfra()
+	infra.RegistryProxyPaths = map[string]string{"npm": "@attacker.io/npm/"}
+	_, err := Enterprise.Resolve(infra, ProjectInputs{Ecosystems: []string{"npm"}})
+	if !errors.Is(err, ErrInvalidEndpoint) || !strings.Contains(err.Error(), "infrastructure.registry_proxy_paths.npm") {
+		t.Fatalf("Resolve() error = %v, want %v naming infrastructure.registry_proxy_paths.npm", err, ErrInvalidEndpoint)
+	}
+
+	infra.RegistryProxyPaths = map[string]string{"npm": "/custom/npm/"}
+	if _, err := Enterprise.Resolve(infra, ProjectInputs{Ecosystems: []string{"npm"}}); err != nil {
+		t.Fatalf("Resolve() with a valid path error = %v", err)
 	}
 }

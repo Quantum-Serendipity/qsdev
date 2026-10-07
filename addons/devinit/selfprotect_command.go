@@ -3,7 +3,6 @@ package devinit
 import (
 	"context"
 	"errors"
-	"fmt"
 	"io"
 	"os"
 	"path/filepath"
@@ -12,11 +11,12 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/Quantum-Serendipity/qsdev/internal/cmdutil"
+	"github.com/Quantum-Serendipity/qsdev/internal/projectctx"
 	"github.com/Quantum-Serendipity/qsdev/internal/selfprotect/canon"
 	"github.com/Quantum-Serendipity/qsdev/internal/selfprotect/cmdscan"
-	"github.com/Quantum-Serendipity/qsdev/internal/selfprotect/evasion"
 	"github.com/Quantum-Serendipity/qsdev/internal/selfprotect/gatedodge"
 	"github.com/Quantum-Serendipity/qsdev/internal/selfprotect/hookio"
+	"github.com/Quantum-Serendipity/qsdev/internal/selfprotect/judge"
 	"github.com/Quantum-Serendipity/qsdev/internal/selfprotect/rules"
 )
 
@@ -31,7 +31,7 @@ func selfprotectCmd() *cobra.Command {
 	}
 	cmd.SilenceErrors = true
 	cmd.SilenceUsage = true
-	return cmd
+	return cmdutil.MarkProfile(cmd, cmdutil.ProfileAutomatedHook)
 }
 
 // errSelfprotectDeny is returned after the deny reason has been written to
@@ -99,35 +99,17 @@ func evaluateSelfprotect(ctx context.Context, stdin io.Reader, stderr io.Writer,
 		hookio.WriteError(stderr, err.Error())
 		return errSelfprotectDeny
 	}
-	evalCtx := buildSelfprotectContext(call.ToolName, &input)
-	// The envelope's cwd is the session directory, which the Bash tool keeps
-	// across calls (a `cd` in one call moves the next); relative paths must be
-	// resolved against it, not against the hook process's own directory.
-	if call.CWD != "" {
-		evalCtx.CWD = call.CWD
-	}
+	evalCtx := buildSelfprotectContext(call, &input)
 	evalCtx.ToolInput = call.ToolInput
 	evalCtx.SensitiveCommands = sensitive
 
-	// Parse the Bash command once here (memoized on evalCtx); the rules below
-	// reuse the same parse via ctx.ParsedCommands().
-	cmds, parseErr := evalCtx.ParsedCommands()
-	// Over the cap the rules below could outlast the deadline. This must be a
-	// deny, not a parse error: a parse error makes rules fall back to
-	// substring tests rather than deny.
-	if len(cmds) > hookio.MaxSimpleCommands {
-		hookio.WriteDeny(stderr, "SP-LIMIT", fmt.Sprintf("command has %d simple commands, more than the %d evaluated; split it up or write it to a script with the Write tool", len(cmds), hookio.MaxSimpleCommands))
-		return errSelfprotectDeny
+	if d, denied := judge.Evaluate(evalCtx); denied {
+		return writeDenial(stderr, d)
 	}
-	if blocked, category, reason := evasion.CheckParsed(call.ToolName, input.Command, input.FilePath, cmds, parseErr); blocked {
-		hookio.WriteEvasionDeny(stderr, category, reason)
-		return errSelfprotectDeny
-	}
-
-	verdict, matches := rules.Tier1Rules.EvaluateAll(evalCtx)
-	if verdict == rules.Deny {
-		hookio.WriteDeny(stderr, matches[0].Rule.ID, matches[0].Reason)
-		return errSelfprotectDeny
+	if cmdscan.IsNixRunTool(call.ToolName) {
+		if err := judgeNixRun(call, evalCtx.CWD, sensitive, stderr); err != nil {
+			return err
+		}
 	}
 
 	if edited := input.EditedContent(); isWriteOrEditTool(call.ToolName) && edited != "" {
@@ -147,56 +129,102 @@ func evaluateSelfprotect(ctx context.Context, stdin io.Reader, stderr io.Writer,
 		hookio.WriteDeny(stderr, ruleID, reason)
 		return errSelfprotectDeny
 	}
-	if blocked, ruleID, reason := detectBashGateDodge(evalCtx); blocked {
-		hookio.WriteDeny(stderr, ruleID, reason)
+	return nil
+}
+
+// writeDenial writes d to stderr in the hook's deny format and returns
+// errSelfprotectDeny.
+func writeDenial(stderr io.Writer, d judge.Denial) error {
+	if d.Evasion {
+		hookio.WriteEvasionDeny(stderr, d.RuleID, d.Reason)
+	} else {
+		hookio.WriteDeny(stderr, d.RuleID, d.Reason)
+	}
+	return errSelfprotectDeny
+}
+
+// judgeNixRun judges a call of the MCP server's nix_run tool as the Bash
+// command lines it is equivalent to (cmdscan.NixRunCommandLines), each run in
+// cwd, so the tool cannot do what a Bash call may not. The server holds each
+// call to the same checks before running it; judging it here as well keeps
+// the decision in the hook Claude Code consults for every tool. A tool_input
+// that cannot be read is denied.
+func judgeNixRun(call *hookio.ToolCall, cwd string, sensitive []cmdscan.CommandSpec, stderr io.Writer) error {
+	in, err := hookio.ParseNixRunInput(call.ToolInput)
+	if err != nil {
+		hookio.WriteError(stderr, err.Error())
 		return errSelfprotectDeny
 	}
-	if reason, blocked := rules.GitCodeExecution(evalCtx); blocked {
-		hookio.WriteDeny(stderr, rules.GitCodeExecutionRuleID, reason)
-		return errSelfprotectDeny
+	for _, line := range cmdscan.NixRunCommandLines(in.Installable, in.Args, in.Stdin) {
+		ctx := &rules.EvalContext{ToolName: "Bash", Command: line, CWD: cwd, SensitiveCommands: sensitive}
+		if d, denied := judge.Evaluate(ctx); denied {
+			return writeDenial(stderr, d)
+		}
 	}
 	return nil
 }
 
-func buildSelfprotectContext(toolName string, input *hookio.ToolInput) *rules.EvalContext {
+// buildSelfprotectContext builds the rule context for call. CWD is the
+// envelope's cwd: the session directory, which the Bash tool keeps across
+// calls (a `cd` in one call moves the next), so relative paths are resolved
+// against it, not against the hook process's own directory. Only when the
+// envelope has none does it fall back to the process working directory.
+// FilePath keeps the spelling the tool used, which rules match on;
+// CanonicalPath is the resolved target.
+func buildSelfprotectContext(call *hookio.ToolCall, input *hookio.ToolInput) *rules.EvalContext {
 	ctx := &rules.EvalContext{
-		ToolName: toolName,
+		ToolName: call.ToolName,
 		FilePath: input.FilePath,
 		Command:  input.Command,
 		Content:  input.EditedContent(),
-		Edits:    textEdits(toolName, input),
+		Edits:    textEdits(call.ToolName, input),
+		CWD:      call.CWD,
 	}
 
-	if cwd, err := os.Getwd(); err == nil {
-		ctx.CWD = cwd
+	if ctx.CWD == "" {
+		if cwd, err := projectctx.WorkingDir(); err == nil {
+			ctx.CWD = cwd
+		}
 	}
 
 	if input.FilePath != "" {
-		ctx.CanonicalPath = targetPath(input.FilePath)
+		ctx.CanonicalPath = targetPath(input.FilePath, ctx.CWD)
 	}
 
 	return ctx
 }
 
-// targetPath returns the canonical form of filePath for the path-based rules.
+// targetPath returns the canonical form of filePath for the path-based rules,
+// resolving a relative path against cwd (or the process working directory
+// when cwd is empty). A Windows drive-relative (C:x) or rooted (\x) path is
+// not joined to cwd: it is left to canonicalization, as before.
+//
 // When canonicalization fails (a permission error on an ancestor, a symlink
 // loop, an unresolvable home directory) it falls back to the lexically
 // cleaned absolute path instead of leaving CanonicalPath empty: an empty path
 // is never protected, so dropping the error would let every path rule allow
 // the call. With the fallback a protected target is still denied, and an
 // unresolvable home makes canon.IsProtected fail closed.
-func targetPath(filePath string) string {
-	if canonical, err := canon.Canonicalize(filePath); err == nil {
+func targetPath(filePath, cwd string) string {
+	p, err := canon.ExpandTilde(filePath)
+	if err != nil {
+		p = filePath
+	}
+	if cwd != "" && !canon.IsRooted(p) && filepath.VolumeName(p) == "" {
+		// Not filepath.Join: cleaning would collapse lnk/.. before the
+		// symlink lnk is resolved, naming a different file than the tool's.
+		if !os.IsPathSeparator(cwd[len(cwd)-1]) {
+			cwd += string(filepath.Separator)
+		}
+		p = cwd + p
+	}
+	if canonical, err := canon.Canonicalize(p); err == nil {
 		return canonical
 	}
-	expanded, err := canon.ExpandTilde(filePath)
-	if err != nil {
-		expanded = filePath
-	}
-	if abs, err := filepath.Abs(expanded); err == nil {
+	if abs, err := filepath.Abs(p); err == nil {
 		return abs
 	}
-	return filepath.Clean(expanded)
+	return filepath.Clean(p)
 }
 
 // textEdits returns the replacements of an Edit/MultiEdit call, which rules

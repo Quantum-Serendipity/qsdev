@@ -393,20 +393,17 @@ func TestPreCommitHooks(t *testing.T) {
 
 	// All four are custom hooks (BuiltIn:false): the built-in terraform-format
 	// would discard the tofu/terraform binary selection and -check flags, so the
-	// hooks are rendered with a NixPackage that puts the binary on PATH.
+	// hooks are rendered with a package that provides their binary.
+	// terraform-format runs the variant's pinned language package;
 	// terraform-validate chains init and validate through `sh -c`, so its
 	// NixPackage provides `sh` rather than the Terraform binary.
 	for i, h := range hooks {
 		if h.BuiltIn {
 			t.Errorf("%s should not be BuiltIn (custom hook preserving entry)", h.ID)
 		}
-		if h.NixPackage == "" {
-			t.Errorf("%s should set a NixPackage so its binary resolves", hooks[i].ID)
+		if (h.NixPackage == "") == (h.LanguagePackage == "") {
+			t.Errorf("%s should set exactly one of NixPackage/LanguagePackage so its binary resolves", hooks[i].ID)
 		}
-	}
-	// Default variant resolves to the terraform package.
-	if hooks[0].NixPackage != "terraform" {
-		t.Errorf("terraform-format NixPackage = %q, want terraform", hooks[0].NixPackage)
 	}
 
 	// Default variant should use "terraform" in entry.
@@ -446,6 +443,8 @@ func TestPreCommitHooks_OpenTofu(t *testing.T) {
 // read-only plan/validate runs stay allowed.
 func TestDenyRules(t *testing.T) {
 	t.Parallel()
+	// Every command is written for terraform and asserted for both binaries
+	// (iacBinaries) under both variants.
 	denied := []string{
 		"terraform init",
 		"terraform init -upgrade",
@@ -466,9 +465,21 @@ func TestDenyRules(t *testing.T) {
 		"terraform -chdir=infra output -raw db_password",
 		"terraform show -json",
 		"terraform show -no-color -json plan.out",
-		"tofu apply -auto-approve",
-		"tofu -chdir=infra destroy",
-		"tofu state pull",
+		// U11-09: tests can create real resources, refresh rewrites state,
+		// taint/untaint mutate it, console evaluates against state, login
+		// and logout handle registry tokens.
+		"terraform test",
+		"terraform -chdir=infra test",
+		"terraform refresh",
+		"terraform taint aws_instance.x",
+		"terraform untaint aws_instance.x",
+		"terraform console",
+		"terraform login",
+		"terraform logout",
+		"terraform state replace-provider a b",
+		"terraform workspace delete prod",
+		"terraform -chdir=infra workspace delete prod",
+		"env TF_LOG=debug terraform test",
 	}
 	allowed := []string{
 		"terraform plan",
@@ -479,21 +490,26 @@ func TestDenyRules(t *testing.T) {
 		"terraform fmt -check -recursive",
 		"terraform state list",
 		"terraform show",
-		"tofu -chdir=infra validate",
+		"terraform -chdir=infra validate",
+		"terraform workspace select dev",
+		"terraform workspace new dev",
+		"terraform plan -refresh=false",
+		"terraform fmt",
 	}
 	for _, variant := range []string{"terraform", "opentofu"} {
 		rules := newModule().DenyRules(ecosystem.ModuleConfig{Extras: map[string]string{"variant": variant}})
-		matches := func(cmd string) bool {
-			return slices.ContainsFunc(rules, func(r string) bool { return denyutil.MatchesBashRule(r, cmd) })
-		}
-		for _, cmd := range denied {
-			if !matches(cmd) {
-				t.Errorf("variant %s: no deny rule blocks %q", variant, cmd)
+		for _, bin := range []string{"terraform", "tofu"} {
+			for _, cmd := range denied {
+				cmd = strings.Replace(cmd, "terraform", bin, 1)
+				if _, ok := denyutil.FirstMatch(rules, "Bash("+cmd+")"); !ok {
+					t.Errorf("variant %s: no deny rule blocks %q", variant, cmd)
+				}
 			}
-		}
-		for _, cmd := range allowed {
-			if matches(cmd) {
-				t.Errorf("variant %s: deny rules over-block %q", variant, cmd)
+			for _, cmd := range allowed {
+				cmd = strings.Replace(cmd, "terraform", bin, 1)
+				if rule, ok := denyutil.FirstMatch(rules, "Bash("+cmd+")"); ok {
+					t.Errorf("variant %s: deny rule %q over-blocks %q", variant, rule, cmd)
+				}
 			}
 		}
 	}
@@ -686,4 +702,48 @@ func containsEvidence(evidence []string, substr string) bool {
 		}
 	}
 	return false
+}
+
+// TestPreCommitHooks_FormatRunsLanguagePackage guards the terraform-format
+// binding: it runs the variant's devenv language package, the build that
+// languages.<variant>.version pins and devenv binds to the hook, not an
+// unpinned pkgs.terraform / pkgs.opentofu, and the fragment enables that
+// language.
+func TestPreCommitHooks_FormatRunsLanguagePackage(t *testing.T) {
+	t.Parallel()
+	m := newModule()
+	for _, variant := range []string{"terraform", "opentofu"} {
+		t.Run(variant, func(t *testing.T) {
+			t.Parallel()
+			cfg := ecosystem.ModuleConfig{Extras: map[string]string{"variant": variant}}
+			hooks := m.PreCommitHooks(cfg)
+			if len(hooks) == 0 || hooks[0].ID != "terraform-format" {
+				t.Fatalf("hooks[0] = %+v, want terraform-format", hooks)
+			}
+			if got := hooks[0]; got.LanguagePackage != variant || got.NixPackage != "" {
+				t.Errorf("terraform-format LanguagePackage = %q, NixPackage = %q; want %q and none",
+					got.LanguagePackage, got.NixPackage, variant)
+			}
+			frag, err := m.DevenvNixFragment(cfg)
+			if err != nil {
+				t.Fatalf("DevenvNixFragment: %v", err)
+			}
+			if !strings.Contains(frag, "languages."+variant) || !strings.Contains(frag, "enable = true") {
+				t.Errorf("fragment does not enable languages.%s:\n%s", variant, frag)
+			}
+		})
+	}
+}
+
+// TestDevenvPackages verifies tflint and tfsec, which the CI scan runs for
+// both variants, are provisioned whatever the hook tier.
+func TestDevenvPackages(t *testing.T) {
+	t.Parallel()
+	want := []string{"tflint", "tfsec"}
+	for _, variant := range []string{"terraform", "opentofu"} {
+		cfg := ecosystem.ModuleConfig{Extras: map[string]string{"variant": variant}}
+		if got := (&terraform.Module{}).DevenvPackages(cfg); !slices.Equal(got, want) {
+			t.Errorf("DevenvPackages(variant=%s) = %q, want %q", variant, got, want)
+		}
+	}
 }

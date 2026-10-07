@@ -16,6 +16,9 @@ umask 077
 LOG_DIR="${CLAUDE_PROJECT_DIR:-.}/.claude/logs"
 LOG_FILE="${LOG_DIR}/audit-$(date +%Y-%m-%d).jsonl"
 mkdir -p "$LOG_DIR" 2>/dev/null || exit 0
+# Never append through a symlink planted in the log directory (any sandboxed
+# hook with a writable project can write there): ">>" would follow it.
+if [ -L "$LOG_DIR" ] || [ -L "$LOG_FILE" ]; then exit 0; fi
 
 python3 -c '
 import hashlib, json, sys

@@ -12,6 +12,7 @@ import (
 
 	"github.com/Quantum-Serendipity/qsdev/internal/exitcode"
 	"github.com/Quantum-Serendipity/qsdev/internal/policyengine/policy"
+	"github.com/Quantum-Serendipity/qsdev/internal/testutil"
 )
 
 func TestPolicyBlockMessage(t *testing.T) {
@@ -179,7 +180,7 @@ func TestRunEnforce_PolicyOutcome(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			projectDir := t.TempDir()
+			projectDir := testutil.IsolatedDir(t)
 			homeDir := t.TempDir()
 			t.Chdir(projectDir)
 			if tt.noHome {

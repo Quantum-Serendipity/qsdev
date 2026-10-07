@@ -46,10 +46,11 @@ The devenv.nix file is never auto-modified regardless of flags.`,
 }
 
 func runRepairCommand(cmd *cobra.Command, opts repair.RepairOptions) error {
-	projectRoot, err := cmdutil.ProjectRoot()
+	pc, err := cmdutil.Project(cmd)
 	if err != nil {
 		return err
 	}
+	projectRoot := pc.Root
 	if err := requireJoined(projectRoot); err != nil {
 		return err
 	}

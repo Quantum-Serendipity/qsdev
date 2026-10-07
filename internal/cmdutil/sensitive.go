@@ -14,6 +14,7 @@ import (
 	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
 
+	"github.com/Quantum-Serendipity/qsdev/internal/selfprotect/canon"
 	"github.com/Quantum-Serendipity/qsdev/internal/selfprotect/cmdscan"
 	"github.com/Quantum-Serendipity/qsdev/pkg/branding"
 )
@@ -206,14 +207,10 @@ func InstallHumanGate(root *cobra.Command) {
 	}
 }
 
-// agentEnvMarkers are environment variables AI coding agents export to the
-// shells they run commands in (Claude Code sets CLAUDECODE=1).
-var agentEnvMarkers = []string{"CLAUDECODE"}
-
 // agentSessionMarker returns the first agent marker set in the environment,
 // or "" when the command is not running inside an agent session.
 func agentSessionMarker() string {
-	for _, name := range agentEnvMarkers {
+	for _, name := range canon.AgentEnvMarkers {
 		if os.Getenv(name) != "" {
 			return name
 		}

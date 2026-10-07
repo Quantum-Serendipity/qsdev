@@ -1,6 +1,7 @@
 package cmdscan
 
 import (
+	"maps"
 	"slices"
 	"strings"
 	"unicode"
@@ -14,6 +15,11 @@ var commandWrappers = map[string]bool{
 	"timeout": true, "stdbuf": true, "ionice": true, "setsid": true,
 	"chrt": true, "taskset": true, "unbuffer": true,
 }
+
+// WrapperNames returns the names of the command wrappers the scanner follows,
+// sorted. The Python hooks' wrapper table is tested against it, so the two
+// cannot drift apart unnoticed.
+func WrapperNames() []string { return slices.Sorted(maps.Keys(commandWrappers)) }
 
 // wrapperOptionArgs lists the options of a wrapper that take the next word as
 // their argument, so it is not the program (`timeout -s KILL 30 cmd`).
@@ -29,6 +35,12 @@ var wrapperOptionArgs = map[string][]string{
 	"stdbuf":  {"-i", "-o", "-e"},
 	"ionice":  {"-c", "--class", "-n", "--classdata", "-p", "--pid", "-P", "--pgid", "-u", "--uid"},
 }
+
+// wrapperPositionals are the wrappers whose first operand is not the program
+// but one word of their own (timeout's DURATION, chrt's priority, taskset's
+// mask), whatever it looks like: `timeout inf`, `timeout .5`, `taskset ff`.
+// The word after it is the program.
+var wrapperPositionals = map[string]bool{"timeout": true, "chrt": true, "taskset": true}
 
 // wrapperCommandStrings are options whose argument is itself a command line
 // (`env -S 'python3 -u'`), so the program is not a single later word.
@@ -109,8 +121,9 @@ func CommandWordIndexes(words []string) []int {
 
 // ProgramWordIndex returns the index of the word naming the program the words
 // run, following wrappers (`env A=1 timeout 30 nice -n 5 python3 x.py` runs
-// python3): a wrapper's options and their arguments, numeric operands
-// (durations, priorities, CPU masks) and VAR=value assignments are skipped up
+// python3): a wrapper's options and their arguments, its own operand
+// (wrapperPositionals: a duration, priority or CPU mask), numeric operands
+// and VAR=value assignments are skipped up
 // to the next command word. It returns -1 when no single word names the
 // program (no words, a wrapper given no command, `command -v`, which only
 // looks its operands up, or a wrapper that takes the command as one string;
@@ -195,6 +208,9 @@ func Program(words []string) ProgramRun {
 				})
 				run.DirChanged = run.DirChanged || slices.ContainsFunc(opts, func(o WrapperOption) bool { return o.Is(wrapperChdirs[name]...) })
 				i += n
+			case wrapperPositionals[name]:
+				i++ // the wrapper's own operand; the next word is the program
+				break operands
 			case w != "" && w[0] >= '0' && w[0] <= '9', isAssignment(w):
 				run.PathChanged = run.PathChanged || wrapperSetsEnv[name] && strings.HasPrefix(w, "PATH=")
 				i++
@@ -353,13 +369,59 @@ func Script(words []string) (ScriptRun, bool) {
 			continue
 		}
 		rest := words[i+1:]
-		for j, a := range rest {
-			if len(a) > 1 && a[0] == '-' && a[1] != '-' && strings.ContainsRune(a[1:], 'c') && j+1 < len(rest) {
-				return ScriptRun{Script: rest[j+1], ReadsStartup: ReadsStartupFiles(name, rest[:j+1])}, true
-			}
+		if k, ok := shellScriptIndex(rest); ok {
+			return ScriptRun{Script: rest[k], ReadsStartup: ReadsStartupFiles(name, rest[:k])}, true
 		}
 	}
 	return ScriptRun{}, false
+}
+
+// shellScriptIndex returns the index in args, the words after a script
+// shell's name, of the script it runs for its -c option: the first operand
+// after the option words, which the shell reads in full before it takes an
+// operand, so `bash -c -e 'S'`, `bash -c -o errexit 'S'` and `bash -c -- 'S'`
+// all run S. It returns false when no -c option is given or no operand
+// follows it.
+func shellScriptIndex(args []string) (int, bool) {
+	c := slices.IndexFunc(args, func(a string) bool {
+		return len(a) > 1 && a[0] == '-' && a[1] != '-' && strings.ContainsRune(a[1:], 'c')
+	})
+	if c < 0 {
+		return 0, false
+	}
+	skip := shellOptionArgs(args[c])
+	for i := c + 1; i < len(args); i++ {
+		a := args[i]
+		switch {
+		case skip > 0:
+			skip--
+		case a == "--" || a == "-":
+			return i + 1, i+1 < len(args)
+		case len(a) > 1 && (a[0] == '-' || a[0] == '+'):
+			skip = shellOptionArgs(a)
+		default:
+			return i, true
+		}
+	}
+	return 0, false
+}
+
+// shellOptionLongArgs are the long options of a script shell that take the
+// next word as their argument.
+var shellOptionLongArgs = []string{"--rcfile", "--init-file"}
+
+// shellOptionArgs returns how many of the following words the script shell
+// option word a takes as arguments: one for --rcfile and --init-file, and
+// one for each -o or -O (+o, +O) in a short-option cluster, which names a
+// shell option (`-o errexit`, `-O extglob`).
+func shellOptionArgs(a string) int {
+	if strings.HasPrefix(a, "--") {
+		if slices.Contains(shellOptionLongArgs, a) {
+			return 1
+		}
+		return 0
+	}
+	return strings.Count(a[1:], "o") + strings.Count(a[1:], "O")
 }
 
 // commandLineOption is the option with which a program runs a command line
@@ -397,10 +459,14 @@ func CommandLine(words []string) (head string, rest int, ok bool) {
 	if name == "eval" {
 		return words[1], 2, true
 	}
-	opt, known := commandLineOptions[name]
 	if scriptShells[name] {
-		opt, known = commandLineOption{letter: 'c'}, true
+		k, ok := shellScriptIndex(words[1:])
+		if !ok {
+			return "", 0, false
+		}
+		return words[k+1], k + 2, true
 	}
+	opt, known := commandLineOptions[name]
 	if !known {
 		return "", 0, false
 	}

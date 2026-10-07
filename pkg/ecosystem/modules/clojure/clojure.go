@@ -7,6 +7,8 @@
 package clojure
 
 import (
+	"path/filepath"
+	"regexp"
 	"strings"
 
 	"github.com/Quantum-Serendipity/qsdev/pkg/ecosystem"
@@ -18,12 +20,35 @@ import (
 var _ ecosystem.EcosystemModule = (*Module)(nil)
 var _ ecosystem.WizardFieldProvider = (*Module)(nil)
 var _ ecosystem.PackageExprProvider = (*Module)(nil)
+var _ ecosystem.SetupWarner = (*Module)(nil)
 
 // Clojure build tool identifiers, as stored in Extras["build_tool"].
 const (
 	buildToolDeps      = "tools-deps"
 	buildToolLeiningen = "leiningen"
 )
+
+// Extras keys Detect sets, to "true", when the project declares its build
+// tool's vulnerability scanner. They are absent otherwise, so a later
+// re-init merges them in once the project adds the scanner.
+const (
+	extraCljWatson = "clj_watson"
+	extraLeinNVD   = "lein_nvd"
+)
+
+var (
+	// cljWatsonAlias matches the :clj-watson keyword, the alias that
+	// `clojure -M:clj-watson` runs, as a whole token.
+	cljWatsonAlias = regexp.MustCompile(`(?:^|[\s,{\[(]):clj-watson(?:[\s,{}\[\]()]|$)`)
+	// leinNVDPlugin matches the lein-nvd plugin symbol as a whole token.
+	leinNVDPlugin = regexp.MustCompile(`(?:^|[\s,\[(/])lein-nvd(?:[\s,\[\]()]|$)`)
+)
+
+// declares reports whether the project's Clojure source file name declares
+// token, ignoring comments and strings.
+func declares(projectRoot, name string, token *regexp.Regexp) bool {
+	return ecosystem.FileDeclares(filepath.Join(projectRoot, name), ';', token)
+}
 
 func init() {
 	ecosystem.MustRegisterModule(&Module{})
@@ -43,7 +68,9 @@ func (m *Module) Tier() int { return 3 }
 
 // Detect scans projectRoot for deps.edn and project.clj files.
 // It determines the build tool and stores it in Extras["build_tool"].
-// tools-deps is preferred when both files are present.
+// tools-deps is preferred when both files are present. It records whether
+// deps.edn declares a :clj-watson alias (Extras clj_watson) and whether
+// project.clj uses the lein-nvd plugin (Extras lein_nvd).
 func (m *Module) Detect(projectRoot string) ecosystem.DetectionResult {
 	hasDepsEdn := fileutil.FileExists(projectRoot, "deps.edn")
 	hasProjectClj := fileutil.FileExists(projectRoot, "project.clj")
@@ -60,9 +87,15 @@ func (m *Module) Detect(projectRoot string) ecosystem.DetectionResult {
 
 	if hasDepsEdn {
 		evidence = append(evidence, "deps.edn found")
+		if declares(projectRoot, "deps.edn", cljWatsonAlias) {
+			extras[extraCljWatson] = "true"
+		}
 	}
 	if hasProjectClj {
 		evidence = append(evidence, "project.clj found")
+		if declares(projectRoot, "project.clj", leinNVDPlugin) {
+			extras[extraLeinNVD] = "true"
+		}
 	}
 
 	// Determine build tool. Prefer tools-deps if both are present.
@@ -133,10 +166,17 @@ func (m *Module) PreCommitHooks(_ ecosystem.ModuleConfig) []ecosystem.HookConfig
 	}
 }
 
-// CICommands returns CI pipeline commands for the Clojure ecosystem.
-// Commands vary based on the configured build tool.
+// CICommands returns CI pipeline commands for the Clojure ecosystem: the
+// build tool's vulnerability scan, only when the project declares the
+// scanner (see Detect). Neither scanner is in nixpkgs and both resolve
+// through the project's own configuration: the :clj-watson alias, or the
+// lein-nvd plugin. A -T tool invocation is never emitted, since it would
+// resolve a tool the project never pinned.
 func (m *Module) CICommands(config ecosystem.ModuleConfig) []ecosystem.CICommand {
 	if config.Extra("build_tool", buildToolDeps) == buildToolLeiningen {
+		if config.Extra(extraLeinNVD, "") != "true" {
+			return nil
+		}
 		return []ecosystem.CICommand{
 			{
 				Name:        "lein-nvd-check",
@@ -148,14 +188,38 @@ func (m *Module) CICommands(config ecosystem.ModuleConfig) []ecosystem.CICommand
 	}
 
 	// Default: tools-deps
+	if config.Extra(extraCljWatson, "") != "true" {
+		return nil
+	}
 	return []ecosystem.CICommand{
 		{
 			Name:        "clj-watson-scan",
-			Command:     "clojure -Tclj-watson scan",
+			Command:     "clojure -M:clj-watson scan -p deps.edn",
 			Description: "Scan tools.deps dependencies for known vulnerabilities",
 			Phase:       ecosystem.CIPhaseScan,
 		},
 	}
+}
+
+// SetupWarnings reports a project that does not declare its build tool's
+// vulnerability scanner, so CICommands emits no scan step, and names the
+// snippet to add. The project files are read as well as config, since an
+// answers file saved before the project added the scanner lacks the extra
+// that generation fills in from detection.
+func (m *Module) SetupWarnings(projectRoot string, config ecosystem.ModuleConfig) []string {
+	if config.Extra("build_tool", buildToolDeps) == buildToolLeiningen {
+		if config.Extra(extraLeinNVD, "") == "true" || declares(projectRoot, "project.clj", leinNVDPlugin) {
+			return nil
+		}
+		return []string{"Clojure dependency security scan not run: add the lein-nvd plugin to project.clj " +
+			"(:plugins [[lein-nvd \"<version>\"]]), then run `qsdev init --update`"}
+	}
+	if config.Extra(extraCljWatson, "") == "true" || declares(projectRoot, "deps.edn", cljWatsonAlias) {
+		return nil
+	}
+	return []string{"Clojure dependency security scan not run: add a :clj-watson alias to deps.edn " +
+		"(:aliases {:clj-watson {:replace-deps {io.github.clj-holmes/clj-watson {:git/tag \"<tag>\" :git/sha \"<sha>\"}} " +
+		":main-opts [\"-m\" \"clj-watson.cli\"]}}), then run `qsdev init --update`"}
 }
 
 // PackageManagers returns metadata about the Clojure package managers.

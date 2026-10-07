@@ -1,6 +1,9 @@
 package secrets
 
-import "testing"
+import (
+	"slices"
+	"testing"
+)
 
 func TestIsSensitiveName(t *testing.T) {
 	t.Parallel()
@@ -187,5 +190,80 @@ func TestSensitiveSubstringFallback(t *testing.T) {
 				t.Errorf("MatchesSensitiveKeyPattern(%q) = %v, want %v", tt.key, got, tt.want)
 			}
 		})
+	}
+}
+
+// TestIsSensitiveName_Plurals covers plural credential names (one trailing "s"
+// accepted as a token's right boundary), the connection-string / cookie /
+// passphrase tokens, and "pass" as an embedded-only token: DB_PASS is sensitive
+// but a bare "pass" (qsdev's own check/posture pass-count field) is not.
+func TestIsSensitiveName_Plurals(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		key  string
+		want bool
+	}{
+		{"credentials", true},
+		{"secrets", true},
+		{"tokens", true},
+		{"passwords", true},
+		{"api_keys", true},
+		{"keys", true},
+		{"sessions", true},
+		{"passphrase", true},
+		{"cookie", true},
+		{"set-cookie", true},
+		{"Set-Cookie", true},
+		{"dsn", true},
+		{"connection_string", true},
+		{"conn_string", true},
+		{"DB_PASS", true},
+		{"MYSQL_PASS", true},
+		{"smtp-pass", true},
+		{"pass", false},
+		{"Pass", false},
+		{"passthrough", false},
+		{"compass", false},
+		{"bypass", false},
+		{"tokenizer_version", false},
+		{"status", false},
+		{"keyboard", false},
+		{"PWD", false},
+		{"PATH", false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.key, func(t *testing.T) {
+			t.Parallel()
+			if got := IsSensitiveName(tt.key); got != tt.want {
+				t.Errorf("IsSensitiveName(%q) = %v, want %v", tt.key, got, tt.want)
+			}
+		})
+	}
+}
+
+// TestKnownCredentialVars_ExcludeSelectors guards that the credential canon
+// carries no non-secret selector variables. A region, profile name, project
+// ID, tenant ID or subscription ID picks an account context but grants no
+// access; listing one here strips it from the devenv shell (catalog
+// unset_vars must be a superset of this list), which discards the value a
+// cloud module or the user deliberately set.
+func TestKnownCredentialVars_ExcludeSelectors(t *testing.T) {
+	t.Parallel()
+
+	selectors := []string{
+		"AWS_DEFAULT_REGION",
+		"AWS_REGION",
+		"AWS_PROFILE",
+		"GCLOUD_PROJECT",
+		"CLOUDSDK_CORE_PROJECT",
+		"AZURE_TENANT_ID",
+		"AZURE_SUBSCRIPTION_ID",
+	}
+	for _, s := range selectors {
+		if slices.Contains(KnownCredentialVars, s) {
+			t.Errorf("KnownCredentialVars contains selector %q, which is not a credential", s)
+		}
 	}
 }

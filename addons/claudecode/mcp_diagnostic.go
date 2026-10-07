@@ -87,10 +87,11 @@ func withMCPProbeFlags(cmd *cobra.Command, opts *mcpProbeOptions) *cobra.Command
 // runMCPDiagnostic loads .mcp.json and reports on it: statically by default,
 // or by probing the servers PlanProbes allows under --probe.
 func runMCPDiagnostic(cmd *cobra.Command, opts mcpProbeOptions) error {
-	projectRoot, err := cmdutil.ProjectRoot()
+	pc, err := cmdutil.Project(cmd)
 	if err != nil {
 		return err
 	}
+	projectRoot := pc.Root
 
 	servers, err := mcpregistry.ConfiguredServers(projectRoot, mcpregistry.DefaultRegistry())
 	if err != nil {
@@ -292,10 +293,11 @@ func mcpListCmd() *cobra.Command {
 		Use:   "list",
 		Short: "List configured MCP servers without health-checking",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			projectRoot, err := cmdutil.ProjectRoot()
+			pc, err := cmdutil.Project(cmd)
 			if err != nil {
 				return err
 			}
+			projectRoot := pc.Root
 
 			servers, err := mcpregistry.ConfiguredServers(projectRoot, mcpregistry.DefaultRegistry())
 			if err != nil {

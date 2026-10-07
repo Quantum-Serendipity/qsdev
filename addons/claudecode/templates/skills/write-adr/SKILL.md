@@ -2,7 +2,7 @@
 name: write-adr
 description: Generate an Architecture Decision Record (ADR) in MADR format.
 disable-model-invocation: true
-allowed-tools: Read Write Edit Grep Glob Bash(ls *) Bash(find *) Bash(git log *)
+allowed-tools: Read Write Edit Grep Glob Bash(git log *)
 arguments: [decision-title]
 argument-hint: "use-postgresql-over-mongodb"
 ---

@@ -20,7 +20,7 @@ func TestPipeToShellDenyRules(t *testing.T) {
 	rules := cat.PermissionDenyRules("pipe_to_shell")
 	denied := func(cmd string) bool {
 		for _, rule := range rules {
-			if denyutil.MatchesDenyRule(rule, "Bash("+cmd+")") {
+			if denyutil.MatchesBashRule(rule, cmd) {
 				return true
 			}
 		}

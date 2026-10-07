@@ -4,7 +4,10 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/Quantum-Serendipity/qsdev/addons/devenv"
+	"github.com/Quantum-Serendipity/qsdev/internal/catalog"
 	"github.com/Quantum-Serendipity/qsdev/pkg/ecosystem"
+	"github.com/Quantum-Serendipity/qsdev/pkg/types"
 
 	// Register every ecosystem module with the DefaultRegistry via init().
 	_ "github.com/Quantum-Serendipity/qsdev/pkg/ecosystem/modules"
@@ -214,8 +217,11 @@ func TestBuiltInHookIDsAreRealGitHooksBuiltIns(t *testing.T) {
 // rendered by collectLanguageFragmentsAndHooks in devenv_nix_data.go as an
 // explicit `entry`. Unless the hook declares a NixPackage — which makes the
 // generator rewrite the entry to "${pkgs.<pkg>}/bin/<binary>" AND add <pkg> to
-// the environment — the entry is emitted as a bare binary name that nothing
-// provisions, so the hook fails with command-not-found at commit time (BL-P1-8).
+// the environment — or a LanguagePackage — which rewrites it to
+// "${config.languages.<name>.package}/bin/<binary>", the toolchain the devenv
+// language already installs — the entry is emitted as a bare binary name that
+// nothing provisions, so the hook fails with command-not-found at commit time
+// (BL-P1-8).
 //
 // The single legitimate alternative is for the owning module to ship the hook's
 // binary through DevenvPackages (e.g. container/hadolint, bazel/buildifier),
@@ -249,7 +255,7 @@ func TestCustomHooksProvisionTheirBinary(t *testing.T) {
 				if hook.BuiltIn {
 					continue
 				}
-				if hook.NixPackage != "" {
+				if hook.NixPackage != "" || hook.LanguagePackage != "" {
 					continue
 				}
 
@@ -258,10 +264,11 @@ func TestCustomHooksProvisionTheirBinary(t *testing.T) {
 					continue
 				}
 
-				t.Errorf("module %q declares custom hook %q (BuiltIn:false) with entry %q but no NixPackage, "+
+				t.Errorf("module %q declares custom hook %q (BuiltIn:false) with entry %q but no NixPackage or LanguagePackage, "+
 					"and its binary %q is not shipped via DevenvPackages; the generated hook entry would be a bare "+
 					"binary name that nothing provisions, failing with command-not-found at commit time. Set "+
-					"NixPackage to the nixpkgs attribute that provides %q (or ship it through DevenvPackages).",
+					"NixPackage to the nixpkgs attribute (or LanguagePackage to the devenv language) that provides %q, "+
+					"or ship it through DevenvPackages.",
 					mod.Name(), hook.ID, hook.Entry, binary, binary)
 			}
 		})
@@ -296,8 +303,9 @@ func packageProvidesBinary(pkgs []string, binary string) bool {
 
 // TestCustomHooksSharingBuiltInIDPinPackage guards W170: a custom hook whose
 // ID is also a git-hooks.nix built-in merges with that definition, so unless
-// it sets `package` (rendered from NixPackage) upstream's default package is
-// evaluated and installed. When that default is a removed nixpkgs attribute
+// it sets `package` (rendered from NixPackage or LanguagePackage) upstream's
+// default package is evaluated and installed even though qsdev's entry names
+// another binary. When that default is a removed nixpkgs attribute
 // (phpPackages.phpstan) the whole devenv fails to evaluate.
 func TestCustomHooksSharingBuiltInIDPinPackage(t *testing.T) {
 	t.Parallel()
@@ -307,10 +315,142 @@ func TestCustomHooksSharingBuiltInIDPinPackage(t *testing.T) {
 	}
 	for _, mod := range ecosystem.DefaultRegistry().All() {
 		for _, hook := range mod.PreCommitHooks(ecosystem.ModuleConfig{}) {
-			if !hook.BuiltIn && builtIn[hook.ID] && hook.NixPackage == "" {
-				t.Errorf("module %q custom hook %q shares a git-hooks.nix built-in ID but sets no NixPackage; "+
-					"upstream's default package would be evaluated", mod.Name(), hook.ID)
+			if !hook.BuiltIn && builtIn[hook.ID] && hook.NixPackage == "" && hook.LanguagePackage == "" {
+				t.Errorf("module %q custom hook %q shares a git-hooks.nix built-in ID but sets neither NixPackage "+
+					"nor LanguagePackage; upstream's default package would be evaluated", mod.Name(), hook.ID)
 			}
 		}
 	}
+}
+
+// hookPackageCase is one devenv.nix render of TestCustomHooksDoNotRedefineBuiltinPackage.
+type hookPackageCase struct {
+	name    string
+	answers types.WizardAnswers
+}
+
+// hookPackageCases renders every registered module alone at every hook tier
+// (and with no tier), plus version configs that change a hook's package.
+func hookPackageCases(t *testing.T) []hookPackageCase {
+	t.Helper()
+	cat, err := catalog.Default()
+	if err != nil {
+		t.Fatalf("loading catalog: %v", err)
+	}
+	tiers := append([]string{""}, cat.HookTierOrder()...)
+	var cases []hookPackageCase
+	for _, name := range ecosystem.DefaultRegistry().Names() {
+		for _, tier := range tiers {
+			cases = append(cases, hookPackageCase{
+				name:    name + "/tier=" + tier,
+				answers: types.WizardAnswers{ProjectName: "hooks", HookTier: tier, Languages: []types.LanguageChoice{{Name: name}}},
+			})
+		}
+	}
+	for _, lang := range []types.LanguageChoice{{Name: "zig", Version: "0.13.0"}, {Name: "dotnet", Version: "8"}} {
+		cases = append(cases, hookPackageCase{
+			name:    lang.Name + "/version=" + lang.Version,
+			answers: types.WizardAnswers{ProjectName: "hooks", Languages: []types.LanguageChoice{lang}},
+		})
+	}
+	return cases
+}
+
+// customHooksSection returns the rendered custom-hook definitions of
+// git-hooks.hooks: from the "Specialized hooks" marker to the attribute set's
+// closing brace.
+func customHooksSection(t *testing.T, content string) string {
+	t.Helper()
+	const marker = "    # Specialized hooks (custom definitions)\n"
+	start := strings.Index(content, marker)
+	if start < 0 {
+		t.Fatalf("no custom hooks section in:\n%s", content)
+	}
+	end := strings.Index(content[start:], "\n  };")
+	if end < 0 {
+		t.Fatalf("custom hooks section is not closed in:\n%s", content)
+	}
+	return content[start+len(marker) : start+end]
+}
+
+// customHookPackageLine is the prefix every custom hook package definition
+// must carry. A devenv language module that also sets the hook's package
+// (elixir: git-hooks.hooks.mix-format.package = cfg.package) defines it at
+// normal priority (100), or 500 via mkOverrideDefault, and git-hooks.nix
+// gives every built-in ID a mkDefault (1000) package. A second definition at
+// either priority throws "is defined multiple times"; 999 sits strictly
+// between, so the language's pin wins and upstream's default never does.
+const customHookPackageLine = "package = lib.mkOverride 999 "
+
+// TestCustomHooksDoNotRedefineBuiltinPackage guards U10-01: every custom hook
+// package line in the rendered devenv.nix carries the lib.mkOverride 999
+// priority, and every custom hook sharing a git-hooks.nix built-in ID still
+// renders one, so upstream's default package is never evaluated.
+func TestCustomHooksDoNotRedefineBuiltinPackage(t *testing.T) {
+	t.Parallel()
+	for _, tc := range hookPackageCases(t) {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			got, err := devenv.GenerateDevenvNix(tc.answers, ecosystem.DefaultRegistry())
+			if err != nil {
+				t.Fatalf("GenerateDevenvNix: %v", err)
+			}
+			section := "\n" + customHooksSection(t, string(got.Content))
+			for line := range strings.Lines(section) {
+				trimmed := strings.TrimSpace(line)
+				if strings.HasPrefix(trimmed, "package =") && !strings.HasPrefix(trimmed, customHookPackageLine) {
+					t.Errorf("custom hook package line %q lacks the %q priority", trimmed, customHookPackageLine)
+				}
+			}
+			for _, id := range gitHooksBuiltInIDs {
+				block := customHookBlock(section, id)
+				if block != "" && !strings.Contains(block, "\n      "+customHookPackageLine) {
+					t.Errorf("custom hook %q shares a git-hooks.nix built-in ID but renders no package line:\n%s", id, block)
+				}
+			}
+		})
+	}
+}
+
+// TestLanguagePackageHooksEnableTheirLanguage guards the LanguagePackage
+// binding: a hook bound to config.languages.<name>.package only evaluates when
+// its own module enables languages.<name> (otherwise the option holds devenv's
+// unpinned default, or the language does not exist), and no hook may set both
+// NixPackage and LanguagePackage, which the renderer rejects.
+func TestLanguagePackageHooksEnableTheirLanguage(t *testing.T) {
+	t.Parallel()
+	bound := 0
+	for _, mod := range ecosystem.DefaultRegistry().All() {
+		cfg := ecosystem.ModuleConfig{}
+		for _, hook := range mod.PreCommitHooks(cfg) {
+			if hook.NixPackage != "" && hook.LanguagePackage != "" {
+				t.Errorf("module %q hook %q sets both NixPackage %q and LanguagePackage %q",
+					mod.Name(), hook.ID, hook.NixPackage, hook.LanguagePackage)
+			}
+			if hook.LanguagePackage == "" {
+				continue
+			}
+			bound++
+			frag, err := mod.DevenvNixFragment(cfg)
+			if err != nil {
+				t.Fatalf("module %q DevenvNixFragment: %v", mod.Name(), err)
+			}
+			if !fragmentEnablesLanguage(frag, hook.LanguagePackage) {
+				t.Errorf("module %q hook %q binds to languages.%s.package but its fragment does not enable "+
+					"languages.%s:\n%s", mod.Name(), hook.ID, hook.LanguagePackage, hook.LanguagePackage, frag)
+			}
+		}
+	}
+	if bound == 0 {
+		t.Fatal("no registered module binds a hook to its language package; the check above ran on nothing")
+	}
+}
+
+// fragmentEnablesLanguage reports whether a module's Nix fragment enables
+// languages.<name>, in the single-line or the block form that
+// ecosystem.BuildLanguageFragment emits.
+func fragmentEnablesLanguage(frag, name string) bool {
+	path := "languages." + name
+	return strings.Contains(frag, "  "+path+".enable = true;\n") ||
+		strings.Contains(frag, "  "+path+" = {\n    enable = true;\n")
 }

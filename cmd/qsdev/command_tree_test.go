@@ -12,6 +12,7 @@ import (
 	gdevinstance "fastcat.org/go/gdev/instance"
 
 	"github.com/Quantum-Serendipity/qsdev/instance"
+	"github.com/Quantum-Serendipity/qsdev/internal/cmdutil"
 	"github.com/Quantum-Serendipity/qsdev/pkg/branding"
 )
 
@@ -20,6 +21,10 @@ import (
 // does. The startup helper process must observe package initialization alone,
 // so it skips this.
 func TestMain(m *testing.M) {
+	// The guardrail tests' PATH runs the test binary as a stubbed program.
+	if name, ok := stubbedProgram(); ok {
+		os.Exit(runStubbedProgram(name)) //nolint:forbidigo // test entrypoint
+	}
 	// The guardrail invariant tests run the test binary as qsdev itself.
 	if os.Getenv(cliHelperEnv) == "1" {
 		if os.Getenv(humanHelperEnv) == "1" {
@@ -137,4 +142,58 @@ func containsPath(cmds []*cobra.Command, path string) bool {
 		}
 	}
 	return false
+}
+
+// TestCommandTree_CatalogGateExemptions pins which commands of the real tree
+// the root catalog gate covers, derived from their runtime profiles: no
+// command a hook or the MCP server runs is gated (a gate error would make
+// Claude Code treat self-protection as a non-blocking failure and fail open),
+// and check and the whole defaults group, which report and repair a broken
+// defaults file, are catalog-optional. A command a person runs on a project
+// is gated.
+func TestCommandTree_CatalogGateExemptions(t *testing.T) {
+	root := instance.NewRootCommand()
+	var automated int
+	var walk func(c *cobra.Command)
+	walk = func(c *cobra.Command) {
+		if cmdutil.ProfileOf(c).Automated() {
+			automated++
+			if cmdutil.CatalogRequired(c) {
+				t.Errorf("%q (profile %q) requires the catalog", c.CommandPath(), cmdutil.ProfileOf(c))
+			}
+		}
+		for _, sub := range c.Commands() {
+			walk(sub)
+		}
+	}
+	walk(root)
+	if automated == 0 {
+		t.Fatal("found no automated command in the tree")
+	}
+
+	find := func(t *testing.T, args ...string) *cobra.Command {
+		t.Helper()
+		c, rest, err := root.Find(args)
+		if err != nil || len(rest) != 0 || c == root {
+			t.Fatalf("command %q not found: %v", args, err)
+		}
+		return c
+	}
+	if check := find(t, "check"); cmdutil.CatalogRequired(check) {
+		t.Errorf("%q requires the catalog; it must report the failure itself", check.CommandPath())
+	}
+	defaults := find(t, "defaults")
+	var walkDefaults func(c *cobra.Command)
+	walkDefaults = func(c *cobra.Command) {
+		if cmdutil.CatalogRequired(c) {
+			t.Errorf("%q requires the catalog it exists to repair", c.CommandPath())
+		}
+		for _, sub := range c.Commands() {
+			walkDefaults(sub)
+		}
+	}
+	walkDefaults(defaults)
+	if status := find(t, "status"); !cmdutil.CatalogRequired(status) {
+		t.Errorf("%q does not require the catalog", status.CommandPath())
+	}
 }

@@ -125,9 +125,6 @@ func TestDevenvNixFragment(t *testing.T) {
 func TestDenyRules(t *testing.T) {
 	t.Parallel()
 	rules := (&ansible.Module{}).DenyRules(ecosystem.ModuleConfig{})
-	matches := func(cmd string) bool {
-		return slices.ContainsFunc(rules, func(r string) bool { return denyutil.MatchesBashRule(r, cmd) })
-	}
 	denied := []string{
 		"ansible-galaxy install -r requirements.yml",
 		"ansible-galaxy -vvv install geerlingguy.docker",
@@ -140,22 +137,90 @@ func TestDenyRules(t *testing.T) {
 		"ansible-vault edit vault.yml",
 		"env EDITOR=cat ansible-vault edit vault.yml",
 		"env ansible-galaxy collection install community.general",
+		// U11-17: vault secrets printed through ad-hoc modules, and ad-hoc
+		// command execution on inventory hosts.
+		"ansible localhost -m debug -a var=x -e @vault.yml --vault-password-file .vp",
+		"ansible localhost -m debug -a var=x",
+		"ansible all -m shell -a id",
+		"ansible all -m ansible.builtin.shell -a id",
+		"ansible all -m command -a id",
+		"ansible all -m ansible.builtin.command -a id",
+		"ansible all -m raw -a id",
+		"ansible all -m ansible.builtin.raw -a id",
+		"ansible all --module-name shell -a id",
+		"ansible all --module-name=ansible.builtin.raw -a id",
+		"ansible all --module-name debug -a var=x",
+		"env ANSIBLE_CONFIG=x ansible all -m shell -a id",
+		"ansible-playbook site.yml --vault-id prod@prompt",
+		"ansible-playbook site.yml --vault-password-file .vp",
+		"ansible-playbook site.yml --vault-pass-file .vp",
+		"ansible-playbook --ask-vault-pass site.yml",
+		"env X=1 ansible-playbook site.yml --vault-id prod@prompt",
+		"ansible all -m ping --ask-vault-pass",
+		// Ad-hoc arguments run the default command module or feed a
+		// command-running module.
+		"ansible all -a id",
+		"ansible all -a 'rm -rf /tmp/x'",
+		"ansible all --args id",
+		"ansible all --args=id",
+		"ansible all -aid",
+		"env X=1 ansible all -a id",
+		// Module spellings without -a: no space, collection-qualified, and
+		// the other command-running modules.
+		"ansible all -mshell -o",
+		"ansible all -m ansible.legacy.shell -o",
+		"ansible localhost -m ansible.legacy.debug -e @vault.yml",
+		"ansible all -m script -o",
+		"ansible all -m ansible.builtin.script -o",
+		"ansible all -m expect -o",
+		"ansible all -m win_shell -o",
+		"ansible all -m ansible.windows.win_command -o",
+		"ansible all --module-name=raw -o",
+		"ansible all --module-name ansible.builtin.debug -o",
+		"ansible all -mansible.builtin.shell -o",
+		"ansible all -m community.windows.win_shell -o",
+		// -J is --ask-vault-pass; --ask-vault-password is its alias.
+		"ansible-playbook site.yml -J",
+		"ansible all -m ping -J",
+		"ansible-playbook site.yml --ask-vault-password",
+		// ansible-pull clones a playbook repository by URL and runs it.
+		"ansible-pull -U https://example.com/repo.git",
+		"ansible-pull",
+		"env X=1 ansible-pull -U https://example.com/repo.git",
 	}
 	allowed := []string{
+		"ansible-playbook --syntax-check site.yml",
+		"ansible-playbook -i inventories/dev site.yml --check",
+		"ansible all -m ping",
+		"ansible all -m setup",
 		"ansible-galaxy collection list",
 		"ansible-galaxy role init myrole",
 		"ansible-vault encrypt secrets.yml",
 		"ansible-vault create new.yml",
+		"ansible all -m ping -o",
+		"ansible all -m ansible.builtin.ping",
+		"ansible all -m setup --tree out",
+		"ansible-playbook -i inventories/dev site.yml --check -e app=web",
+		"ansible-playbook site.yml -e target=shell -v",
+		"ansible-inventory --list",
+		"ansible all -m ping --limit webshell -o",
+		"ansible all -m ping -e x=debug -o",
+		"ansible all -m ping --limit rawhosts -o",
 	}
 	for _, cmd := range denied {
-		if !matches(cmd) {
+		if _, ok := denyutil.FirstMatch(rules, "Bash("+cmd+")"); !ok {
 			t.Errorf("no deny rule blocks %q", cmd)
 		}
 	}
 	for _, cmd := range allowed {
-		if matches(cmd) {
-			t.Errorf("deny rules over-block %q", cmd)
+		if rule, ok := denyutil.FirstMatch(rules, "Bash("+cmd+")"); ok {
+			t.Errorf("deny rule %q over-blocks %q", rule, cmd)
 		}
+	}
+	// The generated settings carry the literal rule the U11-WS1 acceptance
+	// greps for.
+	if !slices.Contains(rules, "Bash(ansible * -m shell *)") {
+		t.Errorf("DenyRules lacks %q", "Bash(ansible * -m shell *)")
 	}
 }
 

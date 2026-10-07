@@ -2,6 +2,7 @@ package catalog
 
 import (
 	"bytes"
+	"cmp"
 	"errors"
 	"fmt"
 	"io"
@@ -108,8 +109,12 @@ func setTopLevelSections(data []byte) ([]string, error) {
 }
 
 // applyProjectOverlay returns base with the project overlay's additions
-// applied, or the reasons the overlay is rejected. A project defaults file
-// may only add or tighten:
+// applied, or the reasons the overlay is rejected. base is the catalog the
+// overlay applies to (the embedded defaults, with the developer's org file
+// when there is one), and builtin the embedded defaults alone: the committed
+// file is judged against builtin, so whether it loads never depends on the
+// developer's own org file, and where both raise a value the stricter one is
+// kept. A project defaults file may only add or tighten:
 //
 //   - permission_deny_rules: rules are added to a set (built-in rules are
 //     never removed) and new sets may be defined;
@@ -118,18 +123,20 @@ func setTopLevelSections(data []byte) ([]string, error) {
 //   - permission_preset_defs: an existing preset gains deny_sets; no other
 //     preset field may be set and no preset may be defined;
 //   - security_hooks: hooks are added to the always-on list;
-//   - custom_hooks: new hooks are added; an id that already names a hook
-//     or tool cannot be reused;
+//   - custom_hooks: new hooks are added; an id that already names a
+//     built-in hook or tool cannot be reused, and one the org file already
+//     defines keeps the org file's definition;
 //   - hook_tiers: hooks are added to an existing hook tier;
-//   - tier_to_compliance: a tier may move to a compliance level of equal or
-//     higher order, never a lower one.
+//   - tier_to_compliance: a built-in tier may move to a built-in compliance
+//     level of equal or higher order than its built-in one, never a lower
+//     one; the higher of that and the org file's level applies.
 //
 // Every hook id the overlay names must be a plain Nix identifier (see
 // Catalog.validateHookIDs), so a committed file cannot inject Nix code into
 // devenv.nix.
 //
 // base is not modified.
-func applyProjectOverlay(base *Catalog, ov *projectOverlay) (*Catalog, []CatalogError) {
+func applyProjectOverlay(base, builtin *Catalog, ov *projectOverlay) (*Catalog, []CatalogError) {
 	var errs []CatalogError
 	reject := rejectFunc(func(field, format string, args ...any) {
 		errs = append(errs, CatalogError{ov.path, field, fmt.Sprintf(format, args...)})
@@ -154,11 +161,70 @@ func applyProjectOverlay(base *Catalog, ov *projectOverlay) (*Catalog, []Catalog
 	addProjectPresetDenySets(rules, proj, reject)
 
 	out.security.Hooks.Default = unionStrings(out.security.Hooks.Default, proj.security.Hooks.Default)
-	out.security.CustomHooks = addProjectCustomHooks(base, proj.security.CustomHooks, reject)
+	out.security.CustomHooks = addProjectCustomHooks(base, builtin, proj.security.CustomHooks, reject)
 	out.hookTiers.Tiers = addProjectHookTierMembers(out.hookTiers.Tiers, proj.hookTiers.Tiers, reject)
-	out.derivations.TierToCompliance = raiseProjectTierCompliance(out, proj.derivations.TierToCompliance, reject)
+	out.derivations.TierToCompliance = raiseProjectTierCompliance(out, builtin, proj.derivations.TierToCompliance, reject)
+	out.projectHooks = addedHooks(base, out)
 
 	return out, errs
+}
+
+// ProjectHook is a pre-commit hook the project defaults file adds to the
+// generated configuration.
+type ProjectHook struct {
+	ID string
+	// Entry is the command the hook runs, when the hook is a custom hook;
+	// empty for a hook defined elsewhere (a built-in or tool hook).
+	Entry string
+	// Section is where the file adds it: custom_hooks, security_hooks or
+	// hook_tiers.<tier>.
+	Section string
+}
+
+// ProjectOverlayHooks returns the pre-commit hooks the project defaults file
+// adds, sorted by id and section, so a plan can show what repository content
+// would install. Hooks the built-in defaults or the developer's org file
+// already define are not included. It is nil when no project file applied
+// or the file adds no hook.
+func (c *Catalog) ProjectOverlayHooks() []ProjectHook {
+	return slices.Clone(c.projectHooks)
+}
+
+// addedHooks returns the hooks out has that base lacks: custom hooks,
+// always-on security hooks and hook tier members.
+func addedHooks(base, out *Catalog) []ProjectHook {
+	entries := make(map[string]string, len(out.security.CustomHooks))
+	for _, h := range out.security.CustomHooks {
+		entries[h.ID] = h.Entry
+	}
+	var added []ProjectHook
+	add := func(section string, ids []string) {
+		for _, id := range ids {
+			added = append(added, ProjectHook{ID: id, Entry: entries[id], Section: section})
+		}
+	}
+	for _, h := range out.security.CustomHooks[len(base.security.CustomHooks):] {
+		add(sectionCustomHooks, []string{h.ID})
+	}
+	add(sectionSecurityHooks, missingFrom(base.security.Hooks.Default, out.security.Hooks.Default))
+	for tier, ids := range out.hookTiers.Tiers {
+		add(sectionHookTiers+"."+tier, missingFrom(base.hookTiers.Tiers[tier], ids))
+	}
+	slices.SortFunc(added, func(a, b ProjectHook) int {
+		return cmp.Or(cmp.Compare(a.ID, b.ID), cmp.Compare(a.Section, b.Section))
+	})
+	return added
+}
+
+// missingFrom returns the entries of ids that base lacks.
+func missingFrom(base, ids []string) []string {
+	var out []string
+	for _, id := range ids {
+		if !slices.Contains(base, id) {
+			out = append(out, id)
+		}
+	}
+	return out
 }
 
 // addProjectPresetDenySets adds the overlay's deny_sets to existing
@@ -188,14 +254,17 @@ func addProjectPresetDenySets(rules *PermissionRulesFile, proj *Catalog, reject 
 	rules.PresetDefs = presets
 }
 
-// addProjectCustomHooks appends the overlay's custom hooks. A hook without
-// an id, or whose id already names a hook or tool in base, is rejected:
-// devenv.nix renders each custom hook as git-hooks.hooks.<id>, so reusing
-// an id would let the project replace a built-in check (a custom hook, an
-// always-on or tiered security hook, or a tool's hook such as
-// commit-ticket) with a no-op.
-func addProjectCustomHooks(base *Catalog, add []CustomHookDef, reject rejectFunc) []CustomHookDef {
-	taken := knownHookIDs(base)
+// addProjectCustomHooks appends the overlay's custom hooks to base's. A hook
+// without an id, or whose id already names a hook or tool in builtin, is
+// rejected: devenv.nix renders each custom hook as git-hooks.hooks.<id>, so
+// reusing an id would let the project replace a built-in check (a custom
+// hook, an always-on or tiered security hook, or a tool's hook such as
+// commit-ticket) with a no-op. A hook whose id only base defines (the
+// developer's org file added it) is skipped, keeping the org file's
+// definition.
+func addProjectCustomHooks(base, builtin *Catalog, add []CustomHookDef, reject rejectFunc) []CustomHookDef {
+	taken := knownHookIDs(builtin)
+	inBase := knownHookIDs(base)
 	out := slices.Clone(base.security.CustomHooks)
 	for i, h := range add {
 		field := fmt.Sprintf("%s[%d]", sectionCustomHooks, i)
@@ -204,6 +273,8 @@ func addProjectCustomHooks(base *Catalog, add []CustomHookDef, reject rejectFunc
 			reject(field, "custom hook has no id")
 		case taken[h.ID]:
 			reject(field, "custom hook %q is already defined as a hook or tool and cannot be redefined", h.ID)
+		case inBase[h.ID]:
+			// Defined by the org file, which the developer vouches for.
 		default:
 			taken[h.ID] = true
 			out = append(out, h)
@@ -249,27 +320,30 @@ func addProjectHookTierMembers(base, add map[string][]string, reject rejectFunc)
 }
 
 // raiseProjectTierCompliance applies tier→compliance mappings that keep or
-// raise a tier's compliance level (by the level's order). Lowering one, an
-// unmapped tier or an unknown level is rejected.
-func raiseProjectTierCompliance(base *Catalog, add map[string]string, reject rejectFunc) map[string]string {
+// raise a built-in tier's built-in compliance level (by the level's order),
+// keeping base's mapping when it is higher still. Lowering one, a tier
+// builtin does not map or a level builtin does not define is rejected.
+func raiseProjectTierCompliance(base, builtin *Catalog, add map[string]string, reject rejectFunc) map[string]string {
 	out := mergeStringMap(base.derivations.TierToCompliance, nil)
 	for _, tier := range slices.Sorted(maps.Keys(add)) {
 		field := sectionTierToCompliance + "." + tier
-		current, ok := out[tier]
+		floor, ok := builtin.derivations.TierToCompliance[tier]
 		if !ok {
 			reject(field, "tier has no compliance level to raise")
 			continue
 		}
-		want, ok := base.compliance.Levels[add[tier]]
+		want, ok := builtin.compliance.Levels[add[tier]]
 		if !ok {
 			reject(field, "unknown compliance level %q", add[tier])
 			continue
 		}
-		if have := base.compliance.Levels[current]; want.Order < have.Order {
-			reject(field, "cannot lower compliance from %q to %q", current, add[tier])
+		if want.Order < builtin.compliance.Levels[floor].Order {
+			reject(field, "cannot lower compliance from %q to %q", floor, add[tier])
 			continue
 		}
-		out[tier] = add[tier]
+		if want.Order > base.compliance.Levels[out[tier]].Order {
+			out[tier] = add[tier]
+		}
 	}
 	return out
 }

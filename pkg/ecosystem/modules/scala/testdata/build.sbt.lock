@@ -1,0 +1,61 @@
+{
+  "lockVersion" : 1,
+  "timestamp" : "2024-03-11T09:12:44.518Z",
+  "configurations" : [
+    "compile",
+    "optional",
+    "provided",
+    "runtime",
+    "test"
+  ],
+  "dependencies" : [
+    {
+      "org" : "org.apache.commons",
+      "name" : "commons-lang3",
+      "version" : "3.9",
+      "artifacts" : [
+        {
+          "name" : "commons-lang3.jar",
+          "hash" : "sha1:0122c7cee69b53ed4a7681c03d4ee4c0e2765da5"
+        }
+      ],
+      "configurations" : [
+        "test",
+        "compile",
+        "runtime"
+      ]
+    },
+    {
+      "org" : "org.scala-lang",
+      "name" : "scala-library",
+      "version" : "2.13.12",
+      "artifacts" : [
+        {
+          "name" : "scala-library.jar",
+          "hash" : "sha1:3509860bc2e5b3da001ed45aca94ffbe5694dbda"
+        }
+      ],
+      "configurations" : [
+        "test",
+        "compile",
+        "runtime"
+      ]
+    },
+    {
+      "org" : "org.typelevel",
+      "name" : "cats-core_2.13",
+      "version" : "2.10.0",
+      "artifacts" : [
+        {
+          "name" : "cats-core_2.13.jar",
+          "hash" : "sha1:7f2c1b3d9f0e4a5b6c7d8e9f0a1b2c3d4e5f6a7b"
+        }
+      ],
+      "configurations" : [
+        "compile",
+        "runtime",
+        "test"
+      ]
+    }
+  ]
+}

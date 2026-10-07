@@ -50,10 +50,13 @@ func checkRunPages(t *testing.T, pages ...[]checkRun) string {
 	return b.String()
 }
 
-// runVerifyCI runs verify-ci.sh with gh stubbed by the given stub.
-func runVerifyCI(t *testing.T, required string, gh shelltest.Stub) shelltest.Result {
+// runVerifyCI runs verify-ci.sh with gh stubbed by the given stub. With
+// crlfJQ, jq is wrapped to end every line with CRLF, as a native Windows jq
+// does, so that behaviour is exercised on every OS.
+func runVerifyCI(t *testing.T, required string, gh shelltest.Stub, crlfJQ bool) shelltest.Result {
 	t.Helper()
-	if _, err := exec.LookPath("jq"); err != nil {
+	jq, err := exec.LookPath("jq")
+	if err != nil {
 		t.Skip("jq is not installed; the CI runner provides it")
 	}
 	script, err := filepath.Abs("verify-ci.sh")
@@ -63,7 +66,12 @@ func runVerifyCI(t *testing.T, required string, gh shelltest.Stub) shelltest.Res
 	dir := shelltest.WriteTree(t, t.TempDir(), map[string]string{"required-checks.txt": required})
 	cmd := "bash " + shelltest.QuotePath(script) + " " + verifyRepo + " " + verifySHA + " " +
 		shelltest.QuotePath(filepath.Join(dir, "required-checks.txt"))
-	return shelltest.Run(t, dir, cmd, map[string]shelltest.Stub{"gh": gh})
+	stubs := map[string]shelltest.Stub{"gh": gh}
+	if crlfJQ {
+		stubs["jq"] = shelltest.Stub{Script: shelltest.QuotePath(jq) +
+			` "$@" | while IFS= read -r line; do printf '%s\r\n' "$line"; done`}
+	}
+	return shelltest.Run(t, dir, cmd, stubs)
 }
 
 // TestVerifyCI covers the U26-06 release gate: verify-ci.sh passes only when
@@ -178,34 +186,54 @@ func TestVerifyCI(t *testing.T) {
 			wantOut:  []string{"lists no checks"},
 		},
 	}
+	// Each case also runs with a jq whose output ends in CRLF.
 	for _, tc := range tests {
-		t.Run(tc.name, func(t *testing.T) {
-			t.Parallel()
-			required := tc.required
-			if required == "" {
-				required = verifyRequired
+		for _, crlfJQ := range []bool{false, true} {
+			name := tc.name
+			if crlfJQ {
+				name += "/crlfJQ"
 			}
-			res := runVerifyCI(t, required, tc.gh(t))
-			if res.Exit != tc.wantExit {
-				t.Errorf("exit code = %d, want %d\noutput:\n%s", res.Exit, tc.wantExit, res.Output)
-			}
-			for _, s := range tc.wantOut {
-				if !strings.Contains(res.Output, s) {
-					t.Errorf("output does not contain %q:\n%s", s, res.Output)
-				}
-			}
-			for _, s := range tc.notOut {
-				if strings.Contains(res.Output, s) {
-					t.Errorf("output contains %q:\n%s", s, res.Output)
-				}
-			}
-			if tc.required != "" {
-				return
-			}
-			wantCall := "gh api --paginate repos/" + verifyRepo + "/commits/" + verifySHA + "/check-runs?filter=latest&per_page=100"
-			if len(res.Calls) != 1 || res.Calls[0] != wantCall {
-				t.Errorf("gh calls = %q, want [%q]", res.Calls, wantCall)
-			}
-		})
+			t.Run(name, func(t *testing.T) {
+				t.Parallel()
+				checkVerifyCI(t, tc.required, tc.gh(t), crlfJQ, tc.wantExit, tc.wantOut, tc.notOut)
+			})
+		}
+	}
+}
+
+// checkVerifyCI runs one TestVerifyCI case and checks its exit code, output
+// and gh call.
+func checkVerifyCI(t *testing.T, required string, gh shelltest.Stub, crlfJQ bool, wantExit int, wantOut, notOut []string) {
+	t.Helper()
+	checkCall := required == ""
+	if required == "" {
+		required = verifyRequired
+	}
+	res := runVerifyCI(t, required, gh, crlfJQ)
+	if res.Exit != wantExit {
+		t.Errorf("exit code = %d, want %d\noutput:\n%s", res.Exit, wantExit, res.Output)
+	}
+	for _, s := range wantOut {
+		if !strings.Contains(res.Output, s) {
+			t.Errorf("output does not contain %q:\n%s", s, res.Output)
+		}
+	}
+	for _, s := range notOut {
+		if strings.Contains(res.Output, s) {
+			t.Errorf("output contains %q:\n%s", s, res.Output)
+		}
+	}
+	if !checkCall {
+		return
+	}
+	var ghCalls []string
+	for _, c := range res.Calls {
+		if strings.HasPrefix(c, "gh ") {
+			ghCalls = append(ghCalls, c)
+		}
+	}
+	wantCall := "gh api --paginate repos/" + verifyRepo + "/commits/" + verifySHA + "/check-runs?filter=latest&per_page=100"
+	if len(ghCalls) != 1 || ghCalls[0] != wantCall {
+		t.Errorf("gh calls = %q, want [%q]", ghCalls, wantCall)
 	}
 }

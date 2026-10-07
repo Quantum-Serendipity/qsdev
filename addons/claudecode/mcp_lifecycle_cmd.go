@@ -5,14 +5,18 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"os/exec"
 	"path/filepath"
 	"slices"
 	"strings"
+	"time"
 
 	"github.com/spf13/cobra"
 
+	"github.com/Quantum-Serendipity/qsdev/internal/catalog"
 	"github.com/Quantum-Serendipity/qsdev/internal/cmdutil"
+	"github.com/Quantum-Serendipity/qsdev/internal/config"
 	"github.com/Quantum-Serendipity/qsdev/internal/mcpregistry"
 	"github.com/Quantum-Serendipity/qsdev/internal/state"
 	"github.com/Quantum-Serendipity/qsdev/pkg/types"
@@ -33,12 +37,43 @@ func stateFilePath(projectRoot string) string {
 	return filepath.Join(projectRoot, filepath.FromSlash(statePath()))
 }
 
-// newLifecycle creates an McpLifecycle wired to the real command runner and
-// file-backed state persistence.
-func newLifecycle(projectRoot string) *mcpregistry.McpLifecycle {
+// newLifecycle creates an McpLifecycle for installs and updates: it runs
+// commands through runner, persists state to the project's state file, and
+// gates releases at the project's compliance tier (projectReleaseAge). It
+// fails before any command runs when that tier cannot be determined.
+func newLifecycle(projectRoot string, runner mcpregistry.CommandRunner) (*mcpregistry.McpLifecycle, error) {
+	minAge, err := projectReleaseAge(projectRoot)
+	if err != nil {
+		return nil, err
+	}
+	lc := stateLifecycle(projectRoot, runner)
+	lc.MinReleaseAge = minAge
+	return lc, nil
+}
+
+// projectReleaseAge returns the release-age gate of projectRoot's effective
+// security level, the same tier source generation uses. A project without a
+// committed config keeps the baseline (0: the package managers' floors); a
+// config that exists but cannot be loaded is an error, so an install fails
+// closed instead of silently falling back to the baseline.
+func projectReleaseAge(projectRoot string) (time.Duration, error) {
+	policy, err := config.LoadProjectPolicy(projectRoot)
+	if errors.Is(err, fs.ErrNotExist) {
+		return 0, nil
+	}
+	if err != nil {
+		return 0, fmt.Errorf("loading the project security level: %w", err)
+	}
+	return catalog.EffectiveAgeGate(config.EffectiveSecurityLevel(policy.Effective.Config)), nil
+}
+
+// stateLifecycle creates an McpLifecycle wired to runner and file-backed
+// state persistence, with no release-age gate of its own (removal installs
+// nothing).
+func stateLifecycle(projectRoot string, runner mcpregistry.CommandRunner) *mcpregistry.McpLifecycle {
 	stateFile := stateFilePath(projectRoot)
 	return &mcpregistry.McpLifecycle{
-		CmdRunner: &execRunner{},
+		CmdRunner: runner,
 		StateLoader: func() (*types.GeneratedState, error) {
 			s, err := state.LoadStateFromFile(stateFile)
 			if err != nil {
@@ -52,13 +87,18 @@ func newLifecycle(projectRoot string) *mcpregistry.McpLifecycle {
 	}
 }
 
-func mcpInstallCmd() *cobra.Command {
+func mcpInstallCmd() *cobra.Command { return newMCPInstallCmd(&execRunner{}) }
+
+// newMCPInstallCmd builds `mcp install`, running package-manager commands
+// through runner.
+func newMCPInstallCmd(runner mcpregistry.CommandRunner) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "install <server>",
 		Short: "Install an MCP server binary",
 		Long: `Install an MCP server using its declared install method (uv tool, npm global,
 or nix package). The server must be known to the registry, and uv tool and npm
-global installs take the exact release the catalog pins. Once installed, the
+global installs take the exact release the catalog pins, refusing releases
+younger than the project's security-level age gate. Once installed, the
 next ` + "`qsdev init --update`" + ` points .mcp.json at the installed binary instead of a
 fetch-on-run launcher.`,
 		Args: cobra.ExactArgs(1),
@@ -67,16 +107,22 @@ fetch-on-run launcher.`,
 			if err != nil {
 				return err
 			}
-			projectRoot := pc.Root
-
-			return runMCPInstall(cmd.Context(), cmd.OutOrStdout(), newLifecycle(projectRoot), args[0])
+			lc, err := newLifecycle(pc.Root, runner)
+			if err != nil {
+				return err
+			}
+			return runMCPInstall(cmd.Context(), cmd.OutOrStdout(), lc, args[0])
 		},
 	}
 
 	return cmd
 }
 
-func mcpUpdateCmd() *cobra.Command {
+func mcpUpdateCmd() *cobra.Command { return newMCPUpdateCmd(&execRunner{}) }
+
+// newMCPUpdateCmd builds `mcp update`, running package-manager commands
+// through runner.
+func newMCPUpdateCmd(runner mcpregistry.CommandRunner) *cobra.Command {
 	var all bool
 
 	cmd := &cobra.Command{
@@ -90,12 +136,13 @@ to update all MCP servers recorded in the project state.`,
 			if err != nil {
 				return err
 			}
-			projectRoot := pc.Root
-
 			if !all && len(args) == 0 {
 				return fmt.Errorf("specify a server name or use --all")
 			}
-			lc := newLifecycle(projectRoot)
+			lc, err := newLifecycle(pc.Root, runner)
+			if err != nil {
+				return err
+			}
 			if all {
 				return runMCPUpdateAll(cmd.Context(), cmd.OutOrStdout(), lc)
 			}
@@ -119,9 +166,7 @@ func mcpRemoveCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			projectRoot := pc.Root
-
-			return runMCPRemove(cmd.Context(), cmd.OutOrStdout(), newLifecycle(projectRoot), args[0])
+			return runMCPRemove(cmd.Context(), cmd.OutOrStdout(), stateLifecycle(pc.Root, &execRunner{}), args[0])
 		},
 	}
 

@@ -1284,14 +1284,33 @@ Three servers are configured by default in `.mcp.json` (context7, github, socket
 
 **Installed binaries.** Servers with an install method (context7, semble, local-docs-devdocs, local-docs-zim, mcp-nixos, postgres) can be installed with `qsdev mcp install <name>`, which installs exactly the pinned release (subject to the same release-age cutoff as project dependencies) and records it in `.claude/.qsdev-claude-state.yaml`. While that record matches the pinned release, `qsdev init --update` writes the installed executable (for example `context7-mcp`) into `.mcp.json` instead of the launcher, so no package is fetched at session start. `qsdev mcp update` moves an installed server to the release the current qsdev pins; `qsdev mcp remove` drops the record, and the next regeneration returns to the pinned launcher. The installed binary must be on the `PATH` Claude Code starts with. The install record lives in the committed project state, so the committed `.mcp.json` runs the binary for every teammate: after cloning or `qsdev init --mode join`, run `qsdev mcp update --all` to install the same pinned releases on your machine (`qsdev mcp health` reports a server whose binary is missing).
 
-Structure:
+**Hardened launchers.** A catalog server that is not installed runs its pinned launcher with the same hardening `qsdev mcp install` applies, at the project's compliance level:
+
+- An `npx` launcher gets `npm_config_ignore_scripts=true` in its `env`, so npm runs no install scripts of the server or its dependencies, and `npm_config_before=<cutoff>`, so npm resolves only releases published before the cutoff. A catalog server that sets `allow_install_scripts: true` (no shipped server does) gets only the cutoff.
+- A `uvx` launcher gets a leading `--exclude-newer=<cutoff>` argument.
+- The cutoff is the release-age gate of the project's security level (`baseline` 3 days, `enhanced` 7 days, `strict` 14 days), never less than the package manager's floor (3 days for npm, 7 days for uv), counted back from midnight UTC of the day the file is generated. It is an absolute RFC 3339 time because npm releases before 11.10 silently ignore the relative `min-release-age` setting.
+- Installed binaries, `qsdev mcp serve` entries, remote servers and servers from the claudecode addon's `mcp_servers` configuration are written as given.
+
+The trade-offs:
+
+- The cutoff stays fixed until the next `qsdev init --update`, so a launcher can keep resolving an older transitive dependency after a fix for it is published.
+- A catalog pin younger than the project's gate fails closed: the launcher cannot resolve it, so the server does not start until the pinned release is older than the gate.
+- Regenerating on a later day rewrites the cutoff, so `.mcp.json` changes by at most one line per launcher per day. Regenerating on the same day writes the same file. The three-way merge applies the new cutoff as a generator update while the entry on disk still matches what qsdev generated last time; an entry you edited keeps your version, including its cutoff.
+
+The MCP probe trust check and the `matches-registry-definition` criterion of `qsdev mcp grade` recognise these entries at any valid cutoff, as well as entries generated before hardening. A cutoff that is not an RFC 3339 time, or that is more recent than the package manager's floor allows, matches neither.
+
+Structure (generated at the `baseline` level on 2026-10-07):
 
 ```json
 {
   "mcpServers": {
     "context7": {
       "command": "npx",
-      "args": ["@upstash/context7-mcp@4.1.1"]
+      "args": ["@upstash/context7-mcp@4.1.1"],
+      "env": {
+        "npm_config_before": "2026-10-04T00:00:00Z",
+        "npm_config_ignore_scripts": "true"
+      }
     },
     "github": {
       "command": "github-mcp-server",
@@ -1304,7 +1323,7 @@ Structure:
     },
     "semble": {
       "command": "uvx",
-      "args": ["--from", "semble[mcp]==0.6.0", "semble"]
+      "args": ["--exclude-newer=2026-09-30T00:00:00Z", "--from", "semble[mcp]==0.6.0", "semble"]
     }
   }
 }

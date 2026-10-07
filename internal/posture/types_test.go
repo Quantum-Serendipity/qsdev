@@ -1,6 +1,7 @@
 package posture
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/Quantum-Serendipity/qsdev/internal/posture/drift"
@@ -200,7 +201,10 @@ func TestSchemaVersionIsSet(t *testing.T) {
 	if SchemaVersion == "" {
 		t.Error("SchemaVersion should not be empty")
 	}
-	if SchemaVersion != "1.2.0" {
-		t.Errorf("SchemaVersion = %q, want %q", SchemaVersion, "1.2.0")
+	if SchemaVersion != "1.3.0" {
+		t.Errorf("SchemaVersion = %q, want %q", SchemaVersion, "1.3.0")
+	}
+	if !strings.Contains(SchemaChangeLog, "1.3.0") || !strings.Contains(SchemaChangeLog, "mcpServers") {
+		t.Errorf("SchemaChangeLog has no 1.3.0 mcpServers entry:\n%s", SchemaChangeLog)
 	}
 }

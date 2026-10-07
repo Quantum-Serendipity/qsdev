@@ -24,6 +24,10 @@ type McpLifecycle struct {
 	// Now returns the current time, from which the release-age cutoff is
 	// computed. Nil means time.Now.
 	Now func() time.Time
+	// MinReleaseAge is the project's release-age gate (its compliance
+	// level's). Installs admit only releases at least this old, and never
+	// younger than each manager's baseline floor; zero applies the floors.
+	MinReleaseAge time.Duration
 }
 
 // pinnedSpec returns the package-manager spec for def's exact Version
@@ -56,9 +60,10 @@ func installable(def *McpServerDefinition) bool {
 // packageCommand builds the package-manager command that installs spec. The
 // same command installs and updates: spec pins an exact version, so updating
 // means installing the release the catalog now pins. Every command is
-// hardened the way project installs are: only releases older than the minimum
-// release age (installer.NpmMinReleaseAge, installer.UvMinReleaseAge) are
-// eligible, and npm lifecycle scripts never run.
+// hardened the way project installs are: only releases older than
+// lc.MinReleaseAge, raised to the manager's floor (installer.NpmMinReleaseAge,
+// installer.UvMinReleaseAge), are eligible, and npm lifecycle scripts never
+// run.
 func (lc *McpLifecycle) packageCommand(method McpInstallMethod, spec string) (string, []string) {
 	now := time.Now
 	if lc.Now != nil {
@@ -70,9 +75,9 @@ func (lc *McpLifecycle) packageCommand(method McpInstallMethod, spec string) (st
 
 	switch method {
 	case InstallUvTool:
-		return "uv", []string{"tool", "install", "--exclude-newer", cutoff(installer.UvMinReleaseAge), spec}
+		return "uv", []string{"tool", "install", "--exclude-newer", cutoff(uvReleaseAge(lc.MinReleaseAge)), spec}
 	case InstallNpmGlobal:
-		return "npm", []string{"install", "-g", "--ignore-scripts", "--before=" + cutoff(installer.NpmMinReleaseAge), spec}
+		return "npm", []string{"install", "-g", "--ignore-scripts", "--before=" + cutoff(npmReleaseAge(lc.MinReleaseAge)), spec}
 	default:
 		return "", nil
 	}

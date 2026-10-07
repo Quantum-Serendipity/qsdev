@@ -25,6 +25,40 @@ func GradeServer(def *McpServerDefinition) GradeResult {
 	return gradeServer(def, defaultProvenance)
 }
 
+// GradeConfigured grades a server as .mcp.json configures it (a definition
+// from ScanMcpJSON). It is the one grade `qsdev mcp grade` and `qsdev status`
+// report for a configured server, so the two always agree.
+func GradeConfigured(def McpServerDefinition) GradeResult {
+	graded := configuredDefinition(def)
+	return GradeServer(&graded)
+}
+
+// transportUnknown marks a configured entry whose transport could not be
+// determined, so it never passes the stdio-transport criterion.
+const transportUnknown McpTransport = "unknown"
+
+// configuredDefinition returns the .mcp.json definition to grade. An entry
+// with no command cannot be a stdio server (it is a remote "type"/"url"
+// entry), so it is not graded as a local stdio process: its transport is
+// marked unknown, which fails stdio-transport and keeps it at basic.
+func configuredDefinition(def McpServerDefinition) McpServerDefinition {
+	if def.Transport == TransportStdio && def.Command == "" {
+		def.Transport = transportUnknown
+	}
+	return def
+}
+
+// SuggestsPinnedInstall reports whether known, the registry definition of a
+// server, pins a release that `qsdev mcp install` installs as a binary
+// (Version and Bin set) while configured, the .mcp.json entry of the same
+// name, does not run that binary.
+func SuggestsPinnedInstall(known, configured *McpServerDefinition) bool {
+	if known.Bin == "" || known.Version == "" {
+		return false
+	}
+	return commandName(configured.Command) != commandName(known.Bin)
+}
+
 // gradeServer is GradeServer with the provenance lookups injected.
 func gradeServer(def *McpServerDefinition, prov provenanceResolver) GradeResult {
 	var criteria []CriterionResult

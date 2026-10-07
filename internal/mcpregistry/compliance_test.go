@@ -297,3 +297,70 @@ func TestGradeServerDeterministic(t *testing.T) {
 		}
 	}
 }
+
+// TestGradeConfigured_CommandlessEntryIsNotStdio pins that a remote
+// .mcp.json entry (no command) is not graded as a local stdio server.
+func TestGradeConfigured_CommandlessEntryIsNotStdio(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name      string
+		def       McpServerDefinition
+		wantStdio bool
+	}{
+		{name: "remote entry parsed as stdio", def: McpServerDefinition{Name: "socket", Transport: TransportStdio}},
+		{name: "http entry", def: McpServerDefinition{Name: "socket", URL: "https://mcp.example/", Transport: TransportHTTP}},
+		{name: "local stdio entry", def: McpServerDefinition{Name: "vs", Command: "qsdev", Args: []string{"mcp", "serve", "--module", "version-sentinel"}, Transport: TransportStdio}, wantStdio: true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			def := configuredDefinition(tt.def)
+			if got := def.Transport == TransportStdio; got != tt.wantStdio {
+				t.Errorf("transport = %q, want stdio=%v", def.Transport, tt.wantStdio)
+			}
+			if got := criterionPassed(t, GradeConfigured(tt.def), "stdio-transport"); got != tt.wantStdio {
+				t.Errorf("GradeConfigured stdio-transport passed = %v, want %v", got, tt.wantStdio)
+			}
+		})
+	}
+}
+
+// criterionPassed returns whether gr's criterion name passed, failing the
+// test when gr has no such criterion.
+func criterionPassed(t *testing.T, gr GradeResult, name string) bool {
+	t.Helper()
+	for _, c := range gr.Criteria {
+		if c.Name == name {
+			return c.Passed
+		}
+	}
+	t.Fatalf("grade has no %q criterion: %+v", name, gr.Criteria)
+	return false
+}
+
+func TestSuggestsPinnedInstall(t *testing.T) {
+	t.Parallel()
+
+	pinned := &McpServerDefinition{Name: "context7", Command: "npx", Bin: "context7-mcp", Version: "4.1.1"}
+	tests := []struct {
+		name       string
+		known      *McpServerDefinition
+		configured *McpServerDefinition
+		want       bool
+	}{
+		{name: "package launcher", known: pinned, configured: &McpServerDefinition{Command: "npx"}, want: true},
+		{name: "installed binary", known: pinned, configured: &McpServerDefinition{Command: "context7-mcp"}},
+		{name: "installed binary shim", known: pinned, configured: &McpServerDefinition{Command: `C:\npm\context7-mcp.cmd`}},
+		{name: "no binary", known: &McpServerDefinition{Command: "qsdev", Version: "1"}, configured: &McpServerDefinition{Command: "qsdev"}},
+		{name: "no pinned version", known: &McpServerDefinition{Command: "npx", Bin: "context7-mcp"}, configured: &McpServerDefinition{Command: "npx"}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			if got := SuggestsPinnedInstall(tt.known, tt.configured); got != tt.want {
+				t.Errorf("SuggestsPinnedInstall = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}

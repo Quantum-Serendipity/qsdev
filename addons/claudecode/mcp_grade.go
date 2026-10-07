@@ -62,7 +62,9 @@ plus its own criteria to be satisfied.
 Servers configured in .mcp.json are graded from the command, arguments and
 environment actually configured there. When a configured server shares its
 name with a built-in registry server, the extra matches-registry-definition
-criterion reports whether the configured command still matches the registry.
+criterion reports whether the configured command still matches the registry
+or an entry qsdev generates for it (the hardened launcher or the installed
+binary).
 Registry servers the project does not configure are graded only with --all or
 when named explicitly, and are marked as not configured.`,
 		Args: cobra.MaximumNArgs(1),
@@ -92,9 +94,10 @@ when named explicitly, and are marked as not configured.`,
 				return nil
 			}
 
+			trusted := mcpregistry.TrustedDefinitions(configuredServerSpecs())
 			results := make([]mcpregistry.GradeResult, len(targets))
 			for i, t := range targets {
-				results[i] = gradeTargetResult(t)
+				results[i] = gradeTargetResult(t, trusted[t.name])
 			}
 
 			if jsonOutput {
@@ -127,7 +130,7 @@ func selectGradeTargets(configured map[string]mcpregistry.McpServerDefinition, k
 		if only != "" && name != only {
 			continue
 		}
-		defCopy := configuredGradeDef(cfgDef)
+		defCopy := cfgDef
 		targets = append(targets, gradeTarget{name: name, def: &defCopy, configured: true, registry: registry[name]})
 	}
 	for name, def := range registry {
@@ -147,37 +150,31 @@ func selectGradeTargets(configured map[string]mcpregistry.McpServerDefinition, k
 	return targets, nil
 }
 
-// transportUnknown marks a configured entry whose transport could not be
-// determined, so it never passes the stdio-transport criterion.
-const transportUnknown mcpregistry.McpTransport = "unknown"
-
-// configuredGradeDef returns the .mcp.json definition to grade. An entry with
-// no command cannot be a stdio server (it is a remote "type"/"url" entry), so
-// it is not graded as a local stdio process: its transport is marked unknown,
-// which fails stdio-transport and keeps it at basic.
-func configuredGradeDef(def mcpregistry.McpServerDefinition) mcpregistry.McpServerDefinition {
-	if def.Transport == mcpregistry.TransportStdio && def.Command == "" {
-		def.Transport = transportUnknown
+// gradeTargetResult grades the target's definition (a configured one through
+// mcpregistry.GradeConfigured, the grade `qsdev status` reports too) and, for
+// a configured server that shadows a registry server, appends whether the
+// configured launch command still matches the registry definition. trusted
+// holds the launch definitions qsdev generates for the target's name
+// (TrustedDefinitions).
+func gradeTargetResult(t gradeTarget, trusted []mcpregistry.LaunchSpec) mcpregistry.GradeResult {
+	if !t.configured {
+		return mcpregistry.GradeServer(t.def)
 	}
-	return def
-}
-
-// gradeTargetResult grades the target's definition and, for a configured
-// server that shadows a registry server, appends whether the configured launch
-// command still matches the registry definition.
-func gradeTargetResult(t gradeTarget) mcpregistry.GradeResult {
-	gr := mcpregistry.GradeServer(t.def)
-	if t.configured && t.registry != nil {
-		gr.Criteria = append(gr.Criteria, registryMatchCriterion(t.def, t.registry))
+	gr := mcpregistry.GradeConfigured(*t.def)
+	if t.registry != nil {
+		gr.Criteria = append(gr.Criteria, registryMatchCriterion(t.def, t.registry, trusted))
 	}
 	return gr
 }
 
 // registryMatchCriterion reports whether a configured server launches the same
-// command, arguments and URL as the registry definition of the same name. A
-// mismatch means the name no longer identifies the reviewed registry server.
-func registryMatchCriterion(configured, registry *mcpregistry.McpServerDefinition) mcpregistry.CriterionResult {
-	if configured.Command == registry.Command && slices.Equal(configured.Args, registry.Args) && configured.URL == registry.URL {
+// command, arguments and URL as the registry definition of the same name, or
+// as one of the trusted definitions qsdev generates for that name (the
+// hardened launcher at any valid cutoff, or the installed binary). Env and
+// headers are not compared. A mismatch means the name no longer identifies
+// the reviewed registry server.
+func registryMatchCriterion(configured, registry *mcpregistry.McpServerDefinition, trusted []mcpregistry.LaunchSpec) mcpregistry.CriterionResult {
+	if sameRegistryLaunch(configured, registry) || mcpregistry.MatchesTrustedLaunch(configured.ServerConfig(), trusted) {
 		return mcpregistry.CriterionResult{
 			Name:   criterionMatchesRegistry,
 			Passed: true,
@@ -189,6 +186,12 @@ func registryMatchCriterion(configured, registry *mcpregistry.McpServerDefinitio
 		Detail: fmt.Sprintf("configured %q differs from the built-in registry definition %q",
 			launchSummary(configured), launchSummary(registry)),
 	}
+}
+
+// sameRegistryLaunch reports whether configured launches exactly the
+// registry definition's command, arguments and URL.
+func sameRegistryLaunch(configured, registry *mcpregistry.McpServerDefinition) bool {
+	return configured.Command == registry.Command && slices.Equal(configured.Args, registry.Args) && configured.URL == registry.URL
 }
 
 // launchSummary renders what a server definition launches: its URL for a

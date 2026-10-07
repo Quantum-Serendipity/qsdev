@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/Quantum-Serendipity/qsdev/internal/catalog"
 	"github.com/Quantum-Serendipity/qsdev/internal/mcpregistry"
@@ -55,10 +56,20 @@ func pinnedReleaseInstalled(name string, def catalog.MCPServerDef, installed map
 
 // catalogServerEntry returns the .mcp.json entry for a catalog server: the
 // binary `qsdev mcp install` installed when the project records it, otherwise
-// the catalog's pinned launcher.
-func catalogServerEntry(name string, def catalog.MCPServerDef, installed map[string]types.McpServerState) MCPServerEntry {
+// the catalog's pinned launcher hardened for the project's release-age gate
+// minAge (mcpregistry.HardenedLauncherSpec): an npx launcher skips install
+// scripts and an npx or uvx launcher only resolves releases older than the
+// gate, counted back from today's UTC midnight.
+func catalogServerEntry(name string, def catalog.MCPServerDef, installed map[string]types.McpServerState, minAge time.Duration) MCPServerEntry {
 	if spec, ok := mcpregistry.InstalledSpec(def); ok && pinnedReleaseInstalled(name, def, installed) {
 		return launchSpecEntry(spec)
 	}
-	return catalogDefToEntry(def)
+	return launchSpecEntry(mcpregistry.HardenedLauncherSpec(def, minAge, time.Now()))
+}
+
+// mcpReleaseAge returns the release-age gate generated MCP launchers honour:
+// the gate of the project's compliance level, the same source the package
+// guard's minimum age comes from.
+func mcpReleaseAge(answers types.WizardAnswers) time.Duration {
+	return catalog.EffectiveAgeGate(answers.ComplianceLevel)
 }

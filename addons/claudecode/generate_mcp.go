@@ -77,7 +77,8 @@ func GenerateMcpJson(answers types.WizardAnswers, cfg Config) (*types.GeneratedF
 // wizard-selected catalog servers and the config-provided servers (which win on
 // a name collision), less those the client MCP policy (answers.MCPPolicy) does
 // not permit. A catalog server `qsdev mcp install` installed runs its installed
-// binary (catalogServerEntry).
+// binary; any other runs its launcher hardened for the project's compliance
+// level (catalogServerEntry). Config-provided servers are written as given.
 func buildMcpServers(answers types.WizardAnswers, cfg Config) (map[string]MCPServerEntry, error) {
 	policy := answers.MCPPolicy
 	servers := make(map[string]MCPServerEntry)
@@ -88,12 +89,13 @@ func buildMcpServers(answers types.WizardAnswers, cfg Config) (map[string]MCPSer
 			return nil, fmt.Errorf("loading catalog for MCP server definitions: %w", err)
 		}
 		installed := installedMCPServers(answers.ProjectRoot)
+		minAge := mcpReleaseAge(answers)
 		for _, name := range names {
 			def, ok := cat.MCPServer(name)
 			if !ok {
 				return nil, fmt.Errorf("unknown MCP server %q: must be one of %s", name, mcpServerNameList(cat))
 			}
-			servers[name] = catalogServerEntry(name, def, installed)
+			servers[name] = catalogServerEntry(name, def, installed, minAge)
 		}
 	}
 
@@ -107,12 +109,6 @@ func buildMcpServers(answers types.WizardAnswers, cfg Config) (map[string]MCPSer
 		}
 	}
 	return servers, nil
-}
-
-// catalogDefToEntry converts a catalog MCP server definition to its pinned
-// launcher .mcp.json entry (mcpregistry.LauncherSpec).
-func catalogDefToEntry(def catalog.MCPServerDef) MCPServerEntry {
-	return launchSpecEntry(mcpregistry.LauncherSpec(def))
 }
 
 // launchSpecEntry converts a launch definition to a .mcp.json entry:

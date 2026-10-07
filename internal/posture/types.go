@@ -11,7 +11,7 @@ import (
 )
 
 // SchemaVersion is the current version of the PostureReport schema.
-const SchemaVersion = "1.2.0"
+const SchemaVersion = "1.3.0"
 
 // LayerStatus enumerates defense layer states.
 type LayerStatus string
@@ -63,6 +63,17 @@ type PostureReport struct {
 	PolicyPosture      *sarif.PolicyPosture      `json:"policyPosture,omitempty"`
 	PackageRiskPosture *sarif.PackageRiskPosture `json:"packageRiskPosture,omitempty"`
 	McpTrustPosture    *sarif.McpTrustPosture    `json:"mcpTrustPosture,omitempty"`
+	McpServers         []McpServerGrade          `json:"mcpServers,omitempty"`
+}
+
+// McpServerGrade is the compliance grade of one MCP server the project's
+// .mcp.json configures, the same grade `qsdev mcp grade` reports.
+type McpServerGrade struct {
+	Name  string `json:"name"`
+	Grade string `json:"grade"`
+	// InstallHint is the command that installs the server's pinned binary,
+	// set when the catalog pins one that the entry does not run.
+	InstallHint string `json:"installHint,omitempty"`
 }
 
 // AggregateScore holds the overall security posture grade and sub-scores.

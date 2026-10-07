@@ -1,9 +1,11 @@
 package posture
 
 import (
+	"encoding/json"
 	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -479,6 +481,94 @@ func TestBuildEcosystemStatuses_Subproject(t *testing.T) {
 
 			if len(statuses) != 1 || statuses[0].LockFile != tt.want {
 				t.Errorf("statuses = %+v, want javascript lock file %q", statuses, tt.want)
+			}
+		})
+	}
+}
+
+// initializedProject returns a temp project with a .qsdev.yaml and, when
+// mcpJSON is non-empty, that .mcp.json.
+func initializedProject(t *testing.T, mcpJSON string) string {
+	t.Helper()
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, ".qsdev.yaml"), []byte("version: 1\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if mcpJSON != "" {
+		if err := os.WriteFile(filepath.Join(root, ".mcp.json"), []byte(mcpJSON), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	return root
+}
+
+// TestAssess_McpServersSection pins that the report grades each server the
+// project's .mcp.json configures. The level itself is not asserted: the
+// verified-provenance criterion resolves the command on the host PATH.
+func TestAssess_McpServersSection(t *testing.T) {
+	t.Parallel()
+
+	root := initializedProject(t, `{"mcpServers": {
+		"context7": {"command": "npx", "args": ["-y", "@upstash/context7-mcp@4.1.1"],
+			"env": {"npm_config_ignore_scripts": "true", "npm_config_before": "2026-01-01T00:00:00Z"}},
+		"agent-postmortem": {"command": "qsdev", "args": ["mcp", "serve", "--module", "agent-postmortem"]}
+	}}`)
+	report, err := Assess(root, AssessOptions{})
+	if err != nil {
+		t.Fatalf("Assess: %v", err)
+	}
+	if len(report.McpServers) != 2 {
+		t.Fatalf("McpServers = %+v, want agent-postmortem and context7", report.McpServers)
+	}
+	for i, name := range []string{"agent-postmortem", "context7"} {
+		if got := report.McpServers[i]; got.Name != name || got.Grade == "" {
+			t.Errorf("McpServers[%d] = %+v, want %s with a grade", i, got, name)
+		}
+	}
+	if hint := report.McpServers[1].InstallHint; !strings.Contains(hint, "mcp install context7") {
+		t.Errorf("context7 InstallHint = %q, want the mcp install command for its pinned binary", hint)
+	}
+	if hint := report.McpServers[0].InstallHint; hint != "" {
+		t.Errorf("agent-postmortem InstallHint = %q, want none (no pinned binary)", hint)
+	}
+}
+
+// TestAssess_McpServersInstalledBinaryNoHint pins that an entry already
+// running the catalog's pinned binary gets no install hint.
+func TestAssess_McpServersInstalledBinaryNoHint(t *testing.T) {
+	t.Parallel()
+
+	root := initializedProject(t, `{"mcpServers": {"context7": {"command": "context7-mcp"}}}`)
+	report, err := Assess(root, AssessOptions{})
+	if err != nil {
+		t.Fatalf("Assess: %v", err)
+	}
+	if len(report.McpServers) != 1 || report.McpServers[0].InstallHint != "" {
+		t.Errorf("McpServers = %+v, want context7 without an install hint", report.McpServers)
+	}
+}
+
+// TestAssess_NoMcpJSON_NoSection pins that a project without a readable
+// .mcp.json reports exactly as before: no mcpServers in the JSON.
+func TestAssess_NoMcpJSON_NoSection(t *testing.T) {
+	t.Parallel()
+
+	for name, mcpJSON := range map[string]string{"missing": "", "malformed": "{not json"} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			report, err := Assess(initializedProject(t, mcpJSON), AssessOptions{})
+			if err != nil {
+				t.Fatalf("Assess: %v", err)
+			}
+			if report.McpServers != nil {
+				t.Errorf("McpServers = %+v, want none", report.McpServers)
+			}
+			data, err := json.Marshal(report)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if strings.Contains(string(data), "mcpServers") {
+				t.Errorf("report JSON has mcpServers: %s", data)
 			}
 		})
 	}

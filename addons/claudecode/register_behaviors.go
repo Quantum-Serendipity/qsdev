@@ -102,7 +102,7 @@ func mcpServerContentFunc(serverName string) toolreg.SharedContentFunc {
 		if !ok {
 			return nil, fmt.Errorf("unknown MCP server %q", serverName)
 		}
-		entry := catalogServerEntry(serverName, def, installedMCPServers(answers.ProjectRoot))
+		entry := catalogServerEntry(serverName, def, installedMCPServers(answers.ProjectRoot), mcpReleaseAge(answers))
 		if err := requirePinnedLaunch(serverName, entry); err != nil {
 			return nil, err
 		}

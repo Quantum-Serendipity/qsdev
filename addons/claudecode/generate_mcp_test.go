@@ -7,8 +7,10 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/Quantum-Serendipity/qsdev/addons/claudecode"
+	"github.com/Quantum-Serendipity/qsdev/internal/installer"
 	"github.com/Quantum-Serendipity/qsdev/internal/mcpconfig"
 	"github.com/Quantum-Serendipity/qsdev/pkg/types"
 )
@@ -322,12 +324,13 @@ func TestGenerateMcpJson_FetchServer(t *testing.T) {
 		t.Fatal("expected 'fetch' key in mcpServers")
 	}
 	// The reference fetch server is the PyPI package mcp-server-fetch,
-	// launched through uvx with an exact version pin.
+	// launched through uvx with an exact version pin, resolving only releases
+	// older than the release-age gate (U22-07).
 	if entry.Command != "uvx" {
 		t.Errorf("expected command 'uvx', got %q", entry.Command)
 	}
-	if len(entry.Args) != 3 || entry.Args[0] != "--from" ||
-		!strings.HasPrefix(entry.Args[1], "mcp-server-fetch==") || entry.Args[2] != "mcp-server-fetch" {
+	if len(entry.Args) != 4 || !strings.HasPrefix(entry.Args[0], "--exclude-newer=") || entry.Args[1] != "--from" ||
+		!strings.HasPrefix(entry.Args[2], "mcp-server-fetch==") || entry.Args[3] != "mcp-server-fetch" {
 		t.Errorf("unexpected args: %v", entry.Args)
 	}
 	// fetch server should have no env vars.
@@ -398,9 +401,18 @@ func TestGenerateMcpJson_Context7Server(t *testing.T) {
 	if len(entry.Args) != 1 || entry.Args[0] != "@upstash/context7-mcp@4.1.1" {
 		t.Errorf("unexpected args: %v", entry.Args)
 	}
-	// context7 should have no env vars.
-	if len(entry.Env) != 0 {
-		t.Errorf("expected no env for context7 server, got %v", entry.Env)
+	// The npx launcher must not run install scripts and must only resolve
+	// releases older than the release-age gate (U22-07); context7 needs no
+	// other env.
+	if len(entry.Env) != 2 || entry.Env["npm_config_ignore_scripts"] != "true" {
+		t.Errorf("expected only npm_config_ignore_scripts=true and npm_config_before, got %v", entry.Env)
+	}
+	before, err := time.Parse(time.RFC3339, entry.Env["npm_config_before"])
+	if err != nil {
+		t.Fatalf("npm_config_before %q is not RFC 3339: %v", entry.Env["npm_config_before"], err)
+	}
+	if limit := time.Now().Add(-installer.NpmMinReleaseAge); before.After(limit) {
+		t.Errorf("npm_config_before = %s, want no later than %s", before, limit)
 	}
 }
 

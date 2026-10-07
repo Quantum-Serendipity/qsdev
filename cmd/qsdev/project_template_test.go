@@ -92,12 +92,14 @@ func removeProjectTemplates() {
 	}
 }
 
-// templateCleanupRunner runs the tests and then removes the saved templates,
-// so the cleanup happens before gdev's TestMain exits.
+// templateCleanupRunner runs the tests and then removes the saved templates
+// and the guardrail PATH's bin dir, so the cleanup happens before gdev's
+// TestMain exits.
 type templateCleanupRunner struct{ m *testing.M }
 
 func (r templateCleanupRunner) Run() int {
 	code := r.m.Run()
 	removeProjectTemplates()
+	removeGuardrailBinDir()
 	return code
 }

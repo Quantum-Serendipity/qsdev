@@ -282,21 +282,23 @@ func printUpdateSummary(w io.Writer, plan UpdatePlan, out updateOutcome) {
 }
 
 // loadAndRefreshForUpdate loads saved answers, refreshes ecosystem detection,
-// applies the committed security floor and client policy (warning on w about
-// any setting the floor raised), and augments enabled tools with inferred
-// entries.
+// adopts the committed choices (language versions included, see
+// qsdevconfig.AdoptCommitted), applies the committed security floor and
+// client policy (warning on w about any setting the floor raised), and
+// augments enabled tools with inferred entries.
 func loadAndRefreshForUpdate(ctx context.Context, w io.Writer, projectRoot string) (types.WizardAnswers, error) {
 	answers, err := loadAnswers(projectRoot)
 	if err != nil {
 		return types.WizardAnswers{}, err
 	}
-	// The committed choices come first: the policy and tool reconciliation
-	// below depend on whether Claude Code is configured.
-	qsdevconfig.AdoptCommitted(projectRoot, &answers)
-
-	// Refresh detection.
+	// Refresh detection first: adopting the committed language versions
+	// raises them to what the refreshed detection requires.
 	answers.Detected = host.detectProject(ctx, projectRoot)
 	answers.ProjectRoot = projectRoot
+
+	// The committed choices come next: the policy and tool reconciliation
+	// below depend on whether Claude Code is configured.
+	qsdevconfig.AdoptCommitted(projectRoot, &answers)
 
 	if err := applyCommittedPolicy(w, projectRoot, &answers); err != nil {
 		return types.WizardAnswers{}, err

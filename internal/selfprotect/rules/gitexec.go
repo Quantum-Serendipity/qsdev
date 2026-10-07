@@ -18,7 +18,7 @@ const maxGitScriptDepth = 3
 // reGitWord finds git in a command that cannot be parsed (fail closed).
 var reGitWord = regexp.MustCompile(`(^|[^A-Za-z0-9_.-])git([^A-Za-z0-9_.-]|$)`)
 
-// GitCodeExecution reports why a Bash command runs git in a way that can run a
+// GitCodeExecution reports why a shell command runs git in a way that can run a
 // program no permission rule or hook inspects, or that skips the repository's
 // hooks; ok is false when it does neither. The generated permission rules deny
 // the plain spellings (`git -c *`, `git config *`, `git * --no-verify*`), but a
@@ -36,9 +36,24 @@ var reGitWord = regexp.MustCompile(`(^|[^A-Za-z0-9_.-])git([^A-Za-z0-9_.-]|$)`)
 //   - --no-verify (or an abbreviation of it) on a subcommand that runs hooks,
 //     and -n in a commit or am short-option cluster;
 //   - --output, which writes git's output to any file, .git/config included.
+//
+// It judges every shell tool (cmdscan.IsShellTool). A PowerShell line is
+// judged over the commands its tokenizer finds, whose names already drop a
+// directory and .exe (`C:\Tools\git.exe`), and which include the commands of
+// a quoted `$(...)` subexpression and of an assignment's value (`$x = git
+// commit --no-verify`); the tokenizer cannot fail, so there is no
+// unparseable fallback for it.
 func GitCodeExecution(ctx *EvalContext) (string, bool) {
-	if ctx.ToolName != "Bash" || ctx.Command == "" {
+	if !cmdscan.IsShellTool(ctx.ToolName) || ctx.Command == "" {
 		return "", false
+	}
+	if isPowerShell(ctx) {
+		ps := ctx.powerShell().cmds
+		cmds := make([]cmdscan.Command, len(ps))
+		for i, c := range ps {
+			cmds[i] = cmdscan.Command{Name: c.Name, Args: c.Args}
+		}
+		return gitCodeExecution(cmds, 0)
 	}
 	cmds, err := ctx.ParsedCommands()
 	if err != nil {

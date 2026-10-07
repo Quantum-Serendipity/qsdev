@@ -14,7 +14,6 @@ import (
 	"github.com/Quantum-Serendipity/qsdev/internal/projectctx"
 	"github.com/Quantum-Serendipity/qsdev/internal/selfprotect/canon"
 	"github.com/Quantum-Serendipity/qsdev/internal/selfprotect/cmdscan"
-	"github.com/Quantum-Serendipity/qsdev/internal/selfprotect/gatedodge"
 	"github.com/Quantum-Serendipity/qsdev/internal/selfprotect/hookio"
 	"github.com/Quantum-Serendipity/qsdev/internal/selfprotect/judge"
 	"github.com/Quantum-Serendipity/qsdev/internal/selfprotect/rules"
@@ -112,20 +111,7 @@ func evaluateSelfprotect(ctx context.Context, stdin io.Reader, stderr io.Writer,
 		}
 	}
 
-	if edited := input.EditedContent(); isWriteOrEditTool(call.ToolName) && edited != "" {
-		if blocked, ruleID, reason := gatedodge.Detect(input.FilePath, edited); blocked {
-			hookio.WriteDeny(stderr, ruleID, reason)
-			return errSelfprotectDeny
-		}
-	}
-
-	if isWriteOrEditTool(call.ToolName) {
-		if blocked, ruleID, reason := gatedodge.DetectChange(input.FilePath, evalCtx.FileChange); blocked {
-			hookio.WriteDeny(stderr, ruleID, reason)
-			return errSelfprotectDeny
-		}
-	}
-	if blocked, ruleID, reason := detectResultGateDodge(call.ToolName, input, evalCtx.CanonicalPath); blocked {
+	if blocked, ruleID, reason := detectGuardedFileChange(call.ToolName, input, evalCtx.CanonicalPath); blocked {
 		hookio.WriteDeny(stderr, ruleID, reason)
 		return errSelfprotectDeny
 	}

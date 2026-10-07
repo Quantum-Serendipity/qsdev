@@ -302,16 +302,30 @@ func (c *simpleCommand) setWord(i int, text string) {
 // appAliases returns the names words define as aliases for app: each
 // name=value word after an alias word whose value names app or is computed.
 func appAliases(words []string, app string) []string {
+	var names []string
+	for _, d := range aliasDefinitions(words) {
+		if strings.EqualFold(ProgramName(d.value), app) || IsDynamicWord(d.value) {
+			names = append(names, d.name)
+		}
+	}
+	return names
+}
+
+// aliasDefinition is one name=value word of an alias command.
+type aliasDefinition struct{ name, value string }
+
+// aliasDefinitions returns the aliases words define: each name=value word
+// after an alias word.
+func aliasDefinitions(words []string) []aliasDefinition {
 	at := slices.Index(words, "alias")
 	if at < 0 {
 		return nil
 	}
-	var names []string
+	var defs []aliasDefinition
 	for _, w := range words[at+1:] {
-		name, value, ok := strings.Cut(w, "=")
-		if ok && name != "" && (strings.EqualFold(ProgramName(value), app) || IsDynamicWord(value)) {
-			names = append(names, name)
+		if name, value, ok := strings.Cut(w, "="); ok && name != "" {
+			defs = append(defs, aliasDefinition{name, value})
 		}
 	}
-	return names
+	return defs
 }

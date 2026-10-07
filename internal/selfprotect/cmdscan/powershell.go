@@ -1,6 +1,7 @@
 package cmdscan
 
 import (
+	"slices"
 	"strings"
 	"unicode"
 	"unicode/utf8"
@@ -43,6 +44,17 @@ type PSCommand struct {
 	// ("..." or @"..."@) holding a `$(...)` subexpression, which runs code
 	// whatever the command is.
 	Subexpression bool
+	// Piped reports that the command receives pipeline input: it follows a
+	// `|` (`gci .npmrc | Remove-Item`), so a path it acts on may come from
+	// the command before it rather than from its own words.
+	Piped bool
+	// GroupArg reports that an argument is a parenthesised group
+	// (`Set-Content ('.npmrc') x`, `Remove-Item -Path (Resolve-Path f)`,
+	// `$f.Delete()`), whose value the tokenizer does not attach to the
+	// command: the group's commands are commands of their own. The `(` of a
+	// statement keyword's condition (`if (...)`) or of an operator (`-and
+	// (...)`) is not an argument.
+	GroupArg bool
 }
 
 // psReadVerbs are the cmdlets and aliases that only read the paths they are
@@ -62,6 +74,35 @@ func (c PSCommand) IsRead() bool {
 		return false
 	}
 	return psReadVerbs[c.Name] || IsSafeReadCommand(Command{Name: c.Name, Args: c.Args})
+}
+
+// psGroupKeywords are the statement keywords whose `(` opens a condition or
+// a loop header, not an argument (see PSCommand.GroupArg).
+var psGroupKeywords = map[string]bool{
+	"if": true, "elseif": true, "while": true, "until": true, "for": true,
+	"foreach": true, "switch": true, "param": true,
+}
+
+// psAliasVerbs are the cmdlets and aliases that define an alias.
+var psAliasVerbs = map[string]bool{"set-alias": true, "sal": true, "new-alias": true, "nal": true}
+
+// IsPSAliasVerb reports whether name (a PSCommand.Name) defines an alias.
+func IsPSAliasVerb(name string) bool {
+	return psAliasVerbs[name]
+}
+
+// MayRedefine reports whether c may give a command name another meaning: it
+// defines an alias (IsPSAliasVerb), a function or filter (the function and
+// filter keywords), or names the function: drive (`$function:gh = {...}`,
+// `Set-Item function:gh`). An alias or function takes precedence over a
+// cmdlet or program of the same name.
+func (c PSCommand) MayRedefine() bool {
+	if IsPSAliasVerb(c.Name) || c.Name == "function" || c.Name == "filter" {
+		return true
+	}
+	return slices.ContainsFunc(append([]string{c.Name}, c.Args...), func(w string) bool {
+		return strings.Contains(strings.ToLower(w), "function:")
+	})
 }
 
 // PSParamName returns the name of a PowerShell parameter word, lower-cased
@@ -92,7 +133,13 @@ func IsPSParamPrefix(word, param string) bool {
 // ParsePowerShell splits a PowerShell line into its commands in one linear
 // pass. Commands end at an unquoted newline, `;`, `|`, `&&`, `||`, a
 // background `&`, and at `(`, `)`, `{` and `}`, so the commands of a
-// subexpression or script block are commands of their own. It honours
+// subexpression or script block are commands of their own. The commands of
+// a `$(...)` subexpression inside an expandable string ("...", @"..."@) are
+// too, ahead of the command whose argument holds it, as they run first. An
+// assignment (`$x = git ...`, `$x=git ...`) is a command of its own, and the
+// word after its operator starts the next one. A command after a `|` is
+// marked Piped, and one whose argument is a `(` group is marked GroupArg, as
+// either may act on a path its own words do not show. It honours
 // '...' (a doubled quote is a literal one), "..." (with backtick escapes),
 // @'...'@ and @"..."@ here-strings, the typographic quotes PowerShell
 // accepts as the same, backtick escapes and line continuations, and
@@ -110,11 +157,21 @@ func ParsePowerShell(text string) []PSCommand {
 	return p.cmds
 }
 
+// maxPSSubexpressionDepth bounds how deep subexpressions nested in
+// expandable strings are tokenized; a deeper one is an opaque command (see
+// subexpression).
+const maxPSSubexpressionDepth = 32
+
 type psParser struct {
 	text string
 	i    int
 	cmds []PSCommand
 	cur  PSCommand
+	// depth is how many expandable-string subexpressions p is nested in;
+	// parens counts the `(` p has read and not yet closed. A nested p stops
+	// (closed) at the `)` that closes its subexpression.
+	depth, parens int
+	closed        bool
 	// buf holds the open word; inWord is set once a word has started (an
 	// empty quoted word counts), quoted once any part of it was quoted or
 	// escaped.
@@ -132,9 +189,26 @@ func (p *psParser) step() {
 	case c == ' ' || c == '\t' || c == '\r':
 		p.endWord()
 		p.i++
-	case c == '\n' || c == ';' || c == '|' || c == '(' || c == ')' || c == '{' || c == '}':
+	case c == '|' && strings.HasPrefix(p.text[p.i:], "||"):
 		p.endCommand()
+		p.i += 2
+	case c == '\n' || c == ';' || c == '|' || c == '(' || c == ')' || c == '{' || c == '}':
+		if c == '(' {
+			p.endWord()
+			p.cur.GroupArg = p.named && !psGroupKeywords[p.cur.Name] && !strings.HasPrefix(p.cur.Name, "-")
+		}
+		piped := c == '|' || (c == '\n' && p.cur.Piped && !p.named)
+		p.endCommand()
+		p.cur.Piped = piped
 		p.i++
+		switch {
+		case c == '(':
+			p.parens++
+		case c == ')' && p.parens > 0:
+			p.parens--
+		case c == ')' && p.depth > 0:
+			p.closed = true
+		}
 	case c == '&':
 		p.ampersand()
 	case c == '>':
@@ -291,10 +365,33 @@ func (p *psParser) doubleQuoted() {
 			return
 		case r == '$' && strings.HasPrefix(p.text[p.i+1:], "("):
 			p.cur.Subexpression = true
+			end := p.subexpression(p.text, p.i)
+			p.buf = append(p.buf, p.text[p.i:end]...)
+			p.i = end
+			continue
 		}
 		p.buf = append(p.buf, p.text[p.i:p.i+size]...)
 		p.i += size
 	}
+}
+
+// subexpression tokenizes the `$(` subexpression of an expandable string at
+// text[at:], appending its commands to p.cmds, and returns the index just
+// past the `)` that closes it, or len(text) when none does. Nested deeper
+// than maxPSSubexpressionDepth, it appends a command no read check accepts
+// (Subexpression is set) instead, and returns the index past `$(`.
+func (p *psParser) subexpression(text string, at int) int {
+	if p.depth >= maxPSSubexpressionDepth {
+		p.cmds = append(p.cmds, PSCommand{Name: "$(", Subexpression: true})
+		return at + 2
+	}
+	sub := psParser{text: text, i: at + 2, depth: p.depth + 1}
+	for sub.i < len(sub.text) && !sub.closed {
+		sub.step()
+	}
+	sub.endCommand()
+	p.cmds = append(p.cmds, sub.cmds...)
+	return sub.i
 }
 
 // hereString reads an @'...'@ or @"..."@ here-string at p.i, reporting
@@ -333,8 +430,14 @@ func (p *psParser) hereString() bool {
 		line += j + 1
 	}
 	body = strings.TrimSuffix(body, "\r")
-	if !single && strings.Contains(body, "$(") {
+	if j := strings.Index(body, "$("); !single && j >= 0 {
 		p.cur.Subexpression = true
+		for j >= 0 {
+			end := p.subexpression(body, j)
+			if j = strings.Index(body[end:], "$("); j >= 0 {
+				j += end
+			}
+		}
 	}
 	p.buf = append(p.buf, body...)
 	p.inWord, p.quoted = true, true
@@ -360,9 +463,37 @@ func (p *psParser) endWord() {
 		if !quoted && word == "." {
 			return // dot-source operator
 		}
+		if lhs, rhs, ok := strings.Cut(word, "="); ok && strings.HasPrefix(word, "$") {
+			p.cur.Name, p.named = PSCommandName(lhs+"="), true
+			p.assigned(rhs)
+			return
+		}
 		p.cur.Name, p.named = PSCommandName(word), true
+	case !quoted && len(p.cur.Args) == 0 && strings.HasPrefix(p.cur.Name, "$") && isPSAssignOp(word):
+		p.cur.Args = append(p.cur.Args, word)
+		p.assigned("")
 	default:
 		p.cur.Args = append(p.cur.Args, word)
+	}
+}
+
+// isPSAssignOp reports whether word is one of PowerShell's assignment
+// operators.
+func isPSAssignOp(word string) bool {
+	switch word {
+	case "=", "+=", "-=", "*=", "/=", "%=", "??=":
+		return true
+	}
+	return false
+}
+
+// assigned closes the open command, an assignment to a variable, and starts
+// the next command with rhs, the word after the operator, when it is not
+// empty: the value of `$x = git commit` is the output of a command.
+func (p *psParser) assigned(rhs string) {
+	p.endCommand()
+	if rhs != "" {
+		p.cur.Name, p.named = PSCommandName(rhs), true
 	}
 }
 

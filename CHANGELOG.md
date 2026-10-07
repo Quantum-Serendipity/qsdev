@@ -8,6 +8,58 @@ All notable changes to qsdev are recorded in this file. The format is based on
 
 ### Changed
 
+- Self-protection now applies the shell gate-dodge check (GD-003, GD-004),
+  the git code-execution check (GIT-001) and the shell-write half of SP-015
+  to every tool that runs a shell command, not only Bash: under Monitor and
+  PowerShell, `echo ignore-scripts=false >> .npmrc`, `rm .npmrc`,
+  `git commit --no-verify`, `git -c core.hooksPath=... commit`,
+  `git config ...` and `printf x >> ~/.bashrc` were allowed and are now
+  denied. PowerShell is judged in its own dialect (`Remove-Item C:\p\.npmrc`,
+  `Set-Content .npmrc x`, `git.exe commit --no-verify` are denied;
+  `Get-Content .npmrc` stays allowed). The commands of a PowerShell `$(...)`
+  subexpression inside a quoted string, and of an assignment's value
+  (`$x = git commit --no-verify`), are judged as commands of their own, so
+  `echo "$(Remove-Item .npmrc)"` and `Write-Host "$(git config ...)"` are
+  denied. A command a line redefines as an alias or function
+  (`alias gh='rm -f'; gh pr create .npmrc`, `alias cat='tee -a'`,
+  `Set-Alias`) no longer gets its read-only modelling, and neither does any
+  command on a line that sources a script (`. ./defs.sh`, `source x`), which
+  may define it as a function. Under PowerShell a writing cmdlet that takes
+  its path from pipeline input or a parenthesised argument fails closed when
+  the line names a guarded file (`gci .npmrc | ri`,
+  `Get-Item .qsdev.yaml | Clear-Content`, `Set-Content ('.npmrc') x`,
+  `Remove-Item -Path (Resolve-Path .qsdev.yaml)`); a read cmdlet in the
+  pipeline (`Get-Content .npmrc | Select-String x`) stays allowed, while any
+  other piped command (`gc .npmrc | Measure-Object`) is denied, as for
+  `.claude`. A Write or Edit of a guarded file through a name Windows strips
+  to it (`.qsdev.yaml.`, `.qsdev.yaml::$DATA`) gets that file's checks. A new architecture
+  test rejects code that compares a tool name with the literal `"Bash"`. A skill's bare `Bash`
+  or `PowerShell` grant is matched as every command of that tool by the
+  permission-rule matcher itself, as Claude Code does.
+
+- Self-protection now denies a shell rewrite of `.qsdev.yaml` (GD-001) under
+  every shell tool, as it already did for `.npmrc` and the other guarded
+  package-manager and pre-commit configs: `sed -i 's/level: strict/level:
+  minimal/' .qsdev.yaml` and `echo ... > .qsdev.yaml` were allowed and skipped
+  the security-level downgrade check that Edit and Write go through. Change
+  `.qsdev.yaml` with Edit or Write. `gh pr` and `gh issue` `create`,
+  `comment`, `edit`, `view` and `list` are now known to write no file, so a
+  pull request body that names a guarded file through `$(cat <<'EOF' ...)`
+  is allowed. Known limitation, deferred to U18-WS8: as for `.npmrc` before,
+  a line that names `.qsdev.yaml` is denied when another command on it is a
+  reader the write analysis does not model or writes an expansion operand
+  (`yq '.security.level' .qsdev.yaml`, `md5sum .qsdev.yaml`,
+  `qsdev check --config .qsdev.yaml`, `python3 -c "...open('.qsdev.yaml')"`,
+  the index-only `git restore --staged .qsdev.yaml` and
+  `git rm --cached .qsdev.yaml`, `rm -rf "$TMPDIR/b" && cat .qsdev.yaml`,
+  `cp .qsdev.yaml "$TMPDIR/b"`). Under Monitor and PowerShell the readers
+  Bash already denied for `.npmrc` (`md5sum`, `sha256sum`, `less`, `bat`,
+  `awk`, `find -name .npmrc`, `python3 scripts/check.py --config .npmrc`)
+  are now denied too. Also deferred to U18-WS8: a script handed to
+  `pwsh -c`/`powershell -c` or `cmd /c` (`cmd /c "echo x > .npmrc"`,
+  `cmd /c git commit --no-verify -m x`), and operands `xargs` reads from
+  standard input, are not judged by these checks.
+
 - The MCP server's opt-in `qsdev_nix_run` tool is now held to what a Bash call
   may do, not only to the Bash deny rules: a call whose Bash equivalent (the
   `nix run` line, the program it runs, a `-c` script or stdin) self-protection

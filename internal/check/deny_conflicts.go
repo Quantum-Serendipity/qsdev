@@ -101,14 +101,10 @@ func CheckSkillPreApprovals(ctx CheckContext) []CheckResult {
 	var results []CheckResult
 	for _, skill := range ctx.SkillOps {
 		for _, grant := range skill.PreApproved {
-			matcher := grant
-			if matcher == "Bash" {
-				// A bare tool name grants every command of that tool.
-				matcher = "Bash(*)"
-			}
 			for _, ask := range ctx.AskRules {
+				// A bare tool grant ("Bash") matches every command.
 				sample, ok := denyutil.SampleCommand(ask)
-				if !ok || !denyutil.MatchesBashRule(matcher, sample) {
+				if !ok || !denyutil.MatchesBashRule(grant, sample) {
 					continue
 				}
 				results = append(results, CheckResult{

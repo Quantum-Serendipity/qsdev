@@ -34,6 +34,13 @@ func TestMatchesBashRule(t *testing.T) {
 		{"Bash(deno npm:*)", "deno npm run", true},
 		{"Bash(deno *npm:**)", "deno run -A npm:evil-cli", true},
 		{"Bash(deno *npm:**)", "deno run main.ts", false},
+		// A bare tool rule, without parentheses, matches every command of
+		// the tool; an empty pattern is not a bare rule.
+		{"Bash", "npm install evil", true},
+		{"Bash", "", true},
+		{"Bash()", "npm install evil", false},
+		{"PowerShell", "npm install evil", false},
+		{"Read", "ls", false},
 	}
 	for _, tt := range tests {
 		t.Run(tt.rule+"|"+tt.command, func(t *testing.T) {
@@ -61,6 +68,9 @@ func TestMatchesPowerShellRule(t *testing.T) {
 		{"PowerShell(Install-Module *)", "INSTALL-MODULE", true},
 		{"PowerShell(install-module *)", "Install-Module Evil", true},
 		{"PowerShell(Install-Module *)", "install-modulex", false},
+		// A bare tool rule matches every command of the tool.
+		{"PowerShell", "Install-Module Evil -Force", true},
+		{"Bash", "Install-Module Evil", false},
 	}
 	for _, tt := range tests {
 		t.Run(tt.rule+"|"+tt.command, func(t *testing.T) {

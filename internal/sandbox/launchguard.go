@@ -33,6 +33,16 @@ const firstExtraFD = 3
 type LaunchGuard struct {
 	r, w *os.File
 	head headWriter
+	// pending is the read Started began on a pipe without deadline support;
+	// later calls wait on it instead of starting another.
+	pending *readyRead
+}
+
+// readyRead is a read of the ready byte running in its own goroutine. got is
+// written before done is closed and read only after it is.
+type readyRead struct {
+	done chan struct{}
+	got  bool
 }
 
 // NewLaunchGuard creates the guard's pipe. Close it when done.
@@ -41,7 +51,12 @@ func NewLaunchGuard() (*LaunchGuard, error) {
 	if err != nil {
 		return nil, fmt.Errorf("creating sandbox launch guard: %w", err)
 	}
-	return &LaunchGuard{r: r, w: w, head: headWriter{limit: stderrHeadLimit}}, nil
+	return newLaunchGuard(r, w), nil
+}
+
+// newLaunchGuard builds a guard over an existing pipe.
+func newLaunchGuard(r, w *os.File) *LaunchGuard {
+	return &LaunchGuard{r: r, w: w, head: headWriter{limit: stderrHeadLimit}}
 }
 
 // ChildFile is the write end to pass to the child in cmd.ExtraFiles.
@@ -86,17 +101,55 @@ func (g *LaunchGuard) Err(exitCode int, hint func() string) error {
 // arrived. Call it after the child has exited. It returns within
 // launchGuardWait even when another process still holds the write end, and
 // returns false whenever it cannot tell.
+//
+// The bound is a read deadline where the pipe supports one. An os.Pipe on
+// Windows is a synchronous anonymous pipe, which never does
+// (os.ErrNoDeadline); there the read runs in a goroutine that Started waits
+// on for launchGuardWait, and Close unblocks it if it is still pending.
 func (g *LaunchGuard) Started() bool {
 	if g.w != nil {
 		_ = g.w.Close()
 		g.w = nil
 	}
-	if err := g.r.SetReadDeadline(time.Now().Add(launchGuardWait)); err != nil {
+	if g.pending != nil {
+		return g.pending.wait()
+	}
+	err := g.r.SetReadDeadline(time.Now().Add(launchGuardWait))
+	if errors.Is(err, os.ErrNoDeadline) {
+		g.pending = startReadyRead(g.r)
+		return g.pending.wait()
+	}
+	if err != nil {
 		return false
 	}
 	var b [1]byte
 	n, _ := g.r.Read(b[:])
 	return n == 1
+}
+
+// startReadyRead reads the ready byte from r in a goroutine.
+func startReadyRead(r *os.File) *readyRead {
+	rr := &readyRead{done: make(chan struct{})}
+	go func() {
+		defer close(rr.done)
+		var b [1]byte
+		n, _ := r.Read(b[:])
+		rr.got = n == 1
+	}()
+	return rr
+}
+
+// wait reports the read's result, or false when it has not finished within
+// launchGuardWait.
+func (rr *readyRead) wait() bool {
+	timer := time.NewTimer(launchGuardWait)
+	defer timer.Stop()
+	select {
+	case <-rr.done:
+		return rr.got
+	case <-timer.C:
+		return false
+	}
 }
 
 // Close releases both ends of the pipe.

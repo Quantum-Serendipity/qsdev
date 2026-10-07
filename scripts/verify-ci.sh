@@ -36,9 +36,11 @@ required="$(tr -d '\r' < "$checks_file" | sed -e 's/^[[:space:]]*//' -e 's/[[:sp
 [ -n "$required" ] || die "$checks_file lists no checks"
 
 # One "name<TAB>status<TAB>conclusion" line per latest check run. --paginate
-# prints one JSON object per page; jq reads them all.
+# prints one JSON object per page; jq reads them all. A native Windows jq
+# ends its lines with CRLF, which would leave a \r on every conclusion, so
+# it is removed as from the checks file.
 if ! runs="$(gh api --paginate "repos/$repo/commits/$sha/check-runs?filter=latest&per_page=100" |
-  jq -r '.check_runs[] | [.name, .status, (.conclusion // "")] | @tsv')"; then
+  jq -r '.check_runs[] | [.name, .status, (.conclusion // "")] | @tsv' | tr -d '\r')"; then
   die "cannot list check runs for $repo@$sha"
 fi
 

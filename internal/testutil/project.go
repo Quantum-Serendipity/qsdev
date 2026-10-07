@@ -1,15 +1,29 @@
 package testutil
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/Quantum-Serendipity/qsdev/pkg/fileutil"
 )
 
 // isolatedName is the directory IsolatedDir returns, below its git ceiling.
 const isolatedName = "w"
+
+// tmpReleaseWait bounds how long IsolateUserDirs' cleanup waits for its temp
+// directory to become removable. Host probes run in os.TempDir
+// (procexec.NeutralDir) and, after a probe timeout, a grandchild the kill did
+// not reach (a docker CLI plugin) keeps running there. On Windows a process's
+// working directory cannot be deleted, so the directory is busy until that
+// grandchild finishes: briefly, but longer than testing's own two-second
+// retry. A handle qsdev itself leaks never goes away and still fails.
+const tmpReleaseWait = 30 * time.Second
+
+// tmpReleasePoll is how often that cleanup retries.
+const tmpReleasePoll = 100 * time.Millisecond
 
 // IsolatedDir returns a fresh, empty, symlink-resolved directory that no
 // upward project or repository walk can leave: its parent is a minimal git
@@ -84,7 +98,30 @@ func IsolateUserDirs(t testing.TB) string {
 	}
 	t.Setenv("GIT_CONFIG_GLOBAL", filepath.Join(home, ".gitconfig"))
 	t.Setenv("GIT_CONFIG_NOSYSTEM", "1")
+	// Registered after root's t.TempDir cleanup, so it runs first and
+	// root's removal finds tmp already gone.
+	t.Cleanup(func() {
+		if err := removeAllWithin(tmp, tmpReleaseWait, tmpReleasePoll, os.RemoveAll); err != nil {
+			t.Errorf("removing isolated temp directory: %v", err)
+		}
+	})
 	return home
+}
+
+// removeAllWithin calls remove on path until it succeeds or wait has passed,
+// pausing poll between attempts, and returns the last error.
+func removeAllWithin(path string, wait, poll time.Duration, remove func(string) error) error {
+	deadline := time.Now().Add(wait)
+	for {
+		err := remove(path)
+		if err == nil {
+			return nil
+		}
+		if !time.Now().Before(deadline) {
+			return fmt.Errorf("%s still busy after %v: %w", path, wait, err)
+		}
+		time.Sleep(poll)
+	}
 }
 
 // ProjectOptions configures Project.

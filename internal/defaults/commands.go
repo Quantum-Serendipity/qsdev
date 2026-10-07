@@ -37,7 +37,9 @@ func Command() *cobra.Command {
 		pinCmd(),
 	)
 
-	return cmd
+	// The defaults commands exist to diagnose and repair a defaults file
+	// that does not load, so the root catalog gate must not stop them.
+	return cmdutil.MarkCatalogOptional(cmd)
 }
 
 func initCmd() *cobra.Command {
@@ -148,15 +150,17 @@ func validateCmd() *cobra.Command {
 
 func runValidate(cmd *cobra.Command) error {
 	orgFile := catalog.OrgConfigFile()
-	projFile := catalog.ProjectConfigFile(catalog.ProjectRoot())
+	projFile, err := catalog.ProjectConfigFile(catalog.ProjectRoot())
+	if err != nil {
+		return err
+	}
 	if orgFile == "" && projFile == "" {
 		path := catalog.OrgConfigPath()
 		fmt.Fprintf(cmd.OutOrStdout(), "No defaults file found at %s. Using embedded defaults.\n", path)
 		return nil
 	}
 
-	_, err := loadFresh()
-	if err != nil {
+	if _, err := loadFresh(); err != nil {
 		fmt.Fprintf(cmd.ErrOrStderr(), "Validation errors: %v\n", err)
 		return fmt.Errorf("defaults file is invalid")
 	}
@@ -294,11 +298,17 @@ func runReset(cmd *cobra.Command, yes bool) error {
 }
 
 // loadFresh loads the catalog, with the same project and user defaults files
-// as Default, without using the cached Default() singleton.
+// as Default, without using the cached Default() singleton. Like Default, it
+// refuses a project defaults file that fails the trust rule (see
+// catalog.ProjectConfigFile).
 func loadFresh() (*catalog.Catalog, error) {
 	var opts []catalog.LoadOption
 
-	if projFile := catalog.ProjectConfigFile(catalog.ProjectRoot()); projFile != "" {
+	projFile, err := catalog.ProjectConfigFile(catalog.ProjectRoot())
+	if err != nil {
+		return nil, err
+	}
+	if projFile != "" {
 		opts = append(opts, catalog.WithProjectConfigFile(projFile))
 	}
 

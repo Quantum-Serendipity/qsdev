@@ -1,7 +1,9 @@
 package sandbox
 
 import (
+	"fmt"
 	"io"
+	"strings"
 	"time"
 )
 
@@ -49,6 +51,8 @@ const (
 	CategoryNetworkLinter                     // ro worktree, filtered network
 	CategoryGenerator                         // rw worktree, no network
 	CategoryTestRunner                        // rw worktree, filtered network
+
+	numHookCategories // count of the categories above; not a category
 )
 
 func (c HookCategory) String() string {
@@ -68,23 +72,26 @@ func (c HookCategory) String() string {
 	}
 }
 
-// ParseHookCategory converts a string to a HookCategory.
-// Returns CategoryLinter for unrecognized values.
-func ParseHookCategory(s string) HookCategory {
-	switch s {
-	case "linter":
-		return CategoryLinter
-	case "formatter":
-		return CategoryFormatter
-	case "network-linter":
-		return CategoryNetworkLinter
-	case "generator":
-		return CategoryGenerator
-	case "test-runner":
-		return CategoryTestRunner
-	default:
-		return CategoryLinter
+// HookCategoryNames returns the name of every hook category, in declaration
+// order. It is derived from String(), so the names are written only once.
+func HookCategoryNames() []string {
+	names := make([]string, 0, numHookCategories)
+	for c := range numHookCategories {
+		names = append(names, c.String())
 	}
+	return names
+}
+
+// ParseHookCategoryStrict converts a category name to a HookCategory. An
+// unknown name is an error listing the valid ones: a typo must never select a
+// profile the author did not ask for.
+func ParseHookCategoryStrict(s string) (HookCategory, error) {
+	for c := range numHookCategories {
+		if c.String() == s {
+			return c, nil
+		}
+	}
+	return 0, fmt.Errorf("unknown category %q (valid: %s)", s, strings.Join(HookCategoryNames(), ", "))
 }
 
 // WorktreeReadOnly reports whether this category's worktree mount is read-only.

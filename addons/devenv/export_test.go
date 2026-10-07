@@ -3,8 +3,19 @@ package devenv
 import (
 	"slices"
 
+	"github.com/Quantum-Serendipity/qsdev/pkg/ecosystem"
 	"github.com/Quantum-Serendipity/qsdev/pkg/types"
 )
+
+// renderDevenvNix renders devenv.nix before normalizeNixModule, loading the
+// generation context as GenerateDevenvNix does.
+func renderDevenvNix(answers types.WizardAnswers, registry *ecosystem.Registry) ([]byte, error) {
+	ctx, err := newGenContext(answers, registry)
+	if err != nil {
+		return nil, err
+	}
+	return ctx.renderDevenvNix()
+}
 
 // ExportServiceToTemplateData exposes serviceToTemplateData for external tests.
 var ExportServiceToTemplateData = func(svc types.ServiceChoice) (ServiceTemplateData, error) {

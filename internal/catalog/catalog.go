@@ -1,6 +1,7 @@
 package catalog
 
 import (
+	"errors"
 	"fmt"
 	"log/slog"
 	"sync"
@@ -24,6 +25,7 @@ type Catalog struct {
 	permissionRules PermissionRulesFile
 	mcpServers      map[string]MCPServerDef
 	bootstrapTools  map[string]BootstrapToolDef
+	mcpServe        MCPServeOptIns
 	docsCorpus      DocsCorpusConfig
 
 	// entryNodes holds, for a catalog parsed from a unified defaults file,
@@ -40,16 +42,39 @@ var (
 	defaultErr     error
 	orgOverlayErr  error
 	projectRootDir string
+	// loaded is set when Default reads projectRootDir to load the catalog;
+	// from then on the root can no longer change (see SetProjectRoot).
+	loaded bool
+	// rootConflictErr, once set by SetProjectRoot, is what every later
+	// Default returns instead of the cached catalog.
+	rootConflictErr error
 )
 
+// ErrCatalogAlreadyLoaded reports a SetProjectRoot for a different project
+// after Default has loaded the catalog for another one.
+var ErrCatalogAlreadyLoaded = errors.New("catalog already loaded")
+
 // SetProjectRoot sets the project whose defaults file
-// (<root>/.qsdev/defaults.yaml, see ProjectConfigPath) Default applies. main
-// calls it (via instance.UseProjectDefaults) before any command runs; it has
-// no effect once Default has loaded the catalog.
-func SetProjectRoot(root string) {
+// (<root>/.qsdev/defaults.yaml, see ProjectConfigFile) Default applies. The
+// runtime's cobra initializer calls it with the executing command's resolved
+// root (instance.Runtime.initCommand); nothing loads the catalog before that.
+// Once Default has loaded, restating the same root is a no-op, and a
+// different root fails closed: it returns an error wrapping
+// ErrCatalogAlreadyLoaded and poisons the cache, so every later Default
+// returns that error rather than serving one project's policy to another.
+// ResetDefault clears it.
+func SetProjectRoot(root string) error {
 	mu.Lock()
-	projectRootDir = root
-	mu.Unlock()
+	defer mu.Unlock()
+	if !loaded {
+		projectRootDir = root
+		return nil
+	}
+	if root == projectRootDir {
+		return nil
+	}
+	rootConflictErr = fmt.Errorf("setting project root %q: %w for project root %q", root, ErrCatalogAlreadyLoaded, projectRootDir)
+	return rootConflictErr
 }
 
 // ProjectRoot returns the root set by SetProjectRoot, or "" when none is set.
@@ -70,47 +95,79 @@ func ProjectRoot() string {
 // commands that exist to repair it. The overlay is skipped with a warning
 // instead, and the error is kept for OrgOverlayError. Errors in the embedded
 // or project-level catalog are still returned: the project file is policy
-// the repository declares, so one that fails to parse or tries to loosen the
-// defaults stops the command rather than being dropped.
+// the repository declares, so one that fails to parse, tries to loosen the
+// defaults, or fails the trust rule (see ProjectConfigFile) stops the
+// command rather than being dropped. After a SetProjectRoot conflict it
+// returns that error (see SetProjectRoot).
 func Default() (*Catalog, error) {
 	defaultOnce.Do(func() {
 		mu.Lock()
 		root := projectRootDir
+		loaded = true
 		mu.Unlock()
 
-		var projOpts []LoadOption
-		if projFile := ProjectConfigFile(root); projFile != "" {
-			projOpts = append(projOpts, WithProjectConfigFile(projFile))
-		}
-
-		orgFile := PolicyOrgConfigFile()
-		if orgFile == "" {
-			defaultCat, defaultErr = Load(projOpts...)
-			return
-		}
-
-		cat, err := Load(append([]LoadOption{WithOrgConfigFile(orgFile)}, projOpts...)...)
-		if err == nil {
-			defaultCat = cat
-			return
-		}
-
-		// Attribute the failure: when the catalog loads without the org
-		// overlay, the overlay is at fault and is skipped.
-		fallback, fbErr := Load(projOpts...)
-		if fbErr != nil {
-			defaultErr = err
-			return
-		}
+		cat, err := loadDefault(root)
 		mu.Lock()
-		orgOverlayErr = fmt.Errorf("user defaults %s: %w", orgFile, err)
+		defaultCat, defaultErr = cat, err
 		mu.Unlock()
-		slog.Warn("ignoring invalid user defaults file; using built-in defaults",
-			"path", orgFile, "error", err,
-			"fix", fmt.Sprintf("run '%s defaults validate', then edit or reset the file", branding.Get().AppName))
-		defaultCat = fallback
 	})
+	mu.Lock()
+	defer mu.Unlock()
+	if rootConflictErr != nil {
+		return nil, rootConflictErr
+	}
 	return defaultCat, defaultErr
+}
+
+// LoadError wraps an error from Default in the wording every command uses to
+// tell a person the defaults catalog did not load, so the root gate and
+// `check` report the failure identically.
+func LoadError(err error) error {
+	return fmt.Errorf("loading %s defaults: %w", branding.Get().AppName, err)
+}
+
+// ValidateCommand returns the command line that diagnoses a defaults file
+// that does not load, for repair hints.
+func ValidateCommand() string {
+	return branding.Get().AppName + " defaults validate"
+}
+
+// loadDefault loads the catalog Default caches for the project at root: the
+// embedded defaults, the project layer, and the pinned org overlay, which is
+// skipped with a warning (recorded for OrgOverlayError) when it alone fails.
+func loadDefault(root string) (*Catalog, error) {
+	projFile, err := ProjectConfigFile(root)
+	if err != nil {
+		return nil, err
+	}
+	var projOpts []LoadOption
+	if projFile != "" {
+		projOpts = append(projOpts, WithProjectConfigFile(projFile))
+	}
+
+	orgFile := PolicyOrgConfigFile()
+	if orgFile == "" {
+		return Load(projOpts...)
+	}
+
+	cat, err := Load(append([]LoadOption{WithOrgConfigFile(orgFile)}, projOpts...)...)
+	if err == nil {
+		return cat, nil
+	}
+
+	// Attribute the failure: when the catalog loads without the org
+	// overlay, the overlay is at fault and is skipped.
+	fallback, fbErr := Load(projOpts...)
+	if fbErr != nil {
+		return nil, err
+	}
+	mu.Lock()
+	orgOverlayErr = fmt.Errorf("user defaults %s: %w", orgFile, err)
+	mu.Unlock()
+	slog.Warn("ignoring invalid user defaults file; using built-in defaults",
+		"path", orgFile, "error", err,
+		"fix", fmt.Sprintf("run '%s', then edit or reset the file", ValidateCommand()))
+	return fallback, nil
 }
 
 // OrgOverlayError returns the error that made Default skip the user-level
@@ -143,5 +200,7 @@ func ResetDefault() {
 	defaultErr = nil
 	orgOverlayErr = nil
 	projectRootDir = ""
+	loaded = false
+	rootConflictErr = nil
 	mu.Unlock()
 }

@@ -375,9 +375,13 @@ func validateHook(variant string, dirs []string) ecosystem.HookConfig {
 
 // deniedSubcommands are the Terraform/OpenTofu subcommands the agent must not
 // run: ones that change real infrastructure or state (apply, destroy, import,
-// state push/rm/mv, force-unlock), fetch providers or modules past the lock
-// file (init, get, providers), and ones that print state secrets in plain
-// text (state pull, output, show -json).
+// refresh, taint, untaint, state push/rm/mv/replace-provider, workspace
+// delete, force-unlock), ones that run against real providers (test creates
+// and destroys real resources), fetch providers or modules past the lock file
+// (init, get, providers), handle registry credentials (login, logout), and
+// ones that print state secrets in plain text (state pull, output, show -json,
+// console, which evaluates any expression against state). workspace new and
+// select stay allowed: they only switch the local working state.
 var deniedSubcommands = []string{
 	"init",
 	"apply",
@@ -386,10 +390,19 @@ var deniedSubcommands = []string{
 	"import",
 	"force-unlock",
 	"providers",
+	"refresh",
+	"taint",
+	"untaint",
+	"test",
+	"console",
+	"login",
+	"logout",
 	"state pull",
 	"state push",
 	"state rm",
 	"state mv",
+	"state replace-provider",
+	"workspace delete",
 	"output",
 	"show *-json*",
 }
@@ -400,8 +413,13 @@ var deniedSubcommands = []string{
 var iacBinaries = []string{"terraform", "tofu"}
 
 // DenyRules returns Claude Code deny-rule patterns for Terraform/OpenTofu.
-// Each subcommand in deniedSubcommands is denied for both binaries, plain and
-// after global options such as -chdir=DIR (denyutil.SubcommandRules).
+// Each subcommand in deniedSubcommands is denied for both binaries, plain,
+// after global options such as -chdir=DIR and behind an env prefix
+// (denyutil.SubcommandRules). Because a global option is matched as any text
+// before the subcommand word, a later argument spelled like a denied
+// subcommand is over-blocked too (`terraform fmt test` for a directory named
+// test); that is an accepted residual, and such a command can be run by hand
+// in a terminal.
 func (m *Module) DenyRules(_ ecosystem.ModuleConfig) []string {
 	var rules []string
 	for _, bin := range iacBinaries {

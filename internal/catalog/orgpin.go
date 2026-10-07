@@ -59,9 +59,10 @@ var (
 
 // UseOrgConfigPin makes the catalog read the overlay pin allows for the
 // project at projectRoot ("" outside a project; see OrgConfigDrift and
-// PolicyOrgConfigFile) instead of whichever OrgConfigPath resolves. main
-// calls it (via instance.UseProjectDefaults) before any command runs; it has
-// no effect once Default has loaded the catalog.
+// PolicyOrgConfigFile) instead of whichever OrgConfigPath resolves. The
+// runtime's cobra initializer calls it with the executing command's resolved
+// root (instance.Runtime.initCommand), before the command runs; it has no
+// effect once Default has loaded the catalog.
 func UseOrgConfigPin(projectRoot string, pin OrgConfigPin) {
 	pinMu.Lock()
 	defer pinMu.Unlock()

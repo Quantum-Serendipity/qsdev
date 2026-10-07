@@ -140,6 +140,16 @@ type languageHookResult struct {
 // modules. It calls into each selected module to collect Nix fragments and hooks,
 // then merges them with security defaults.
 func BuildDevenvNixData(answers types.WizardAnswers, registry *ecosystem.Registry) (*DevenvNixTemplateData, error) {
+	ctx, err := newGenContext(answers, registry)
+	if err != nil {
+		return nil, err
+	}
+	return ctx.buildDevenvNixData()
+}
+
+// buildDevenvNixData is BuildDevenvNixData for an already-loaded context.
+func (c *genContext) buildDevenvNixData() (*DevenvNixTemplateData, error) {
+	answers, cat := c.answers, c.cat
 	data := &DevenvNixTemplateData{}
 
 	// 0. Overlays from user configuration.
@@ -157,8 +167,7 @@ func BuildDevenvNixData(answers types.WizardAnswers, registry *ecosystem.Registr
 			return nil, fmt.Errorf("extra packages: %w", err)
 		}
 	}
-	basePkgs := defaultBasePackages()
-	data.Packages = slices.Concat(basePkgs, answers.ExtraPackages)
+	data.Packages = slices.Concat(cat.BasePackages(), answers.ExtraPackages)
 
 	// 2. Environment variables.
 	data.EnvVars = buildEnvVars(answers)
@@ -171,7 +180,7 @@ func BuildDevenvNixData(answers types.WizardAnswers, registry *ecosystem.Registr
 	data.EnvVars["QSDEV_LSP_ENFORCEMENT"] = answers.LSP.EnforcementTier()
 
 	// 3. Unset env vars: credential-bearing variables.
-	data.UnsetEnvVars = defaultUnsetEnvVars()
+	data.UnsetEnvVars = cat.UnsetVars()
 
 	// 3b. The project's Cachix binary cache, from the effective infrastructure
 	// (an explicit infra profile's nix cache, or infrastructure.nix_cache).
@@ -180,11 +189,11 @@ func BuildDevenvNixData(answers types.WizardAnswers, registry *ecosystem.Registr
 	// 4. Language fragments and hooks from ecosystem modules. Hooks the
 	// catalog tiers above the project's security level are left out here and
 	// in step 6 (security hooks sit in the lowest tier and are always kept).
-	runsAtTier, err := hookTierFilter(answers.HookTier, answers.ComplianceLevel)
+	runsAtTier, err := hookTierFilter(cat, answers.HookTier, answers.ComplianceLevel)
 	if err != nil {
 		return nil, fmt.Errorf("selecting pre-commit hooks: %w", err)
 	}
-	hookResult, err := collectLanguageFragmentsAndHooks(answers, registry, runsAtTier)
+	hookResult, err := c.collectLanguageFragmentsAndHooks(runsAtTier)
 	if err != nil {
 		return nil, err
 	}
@@ -195,19 +204,19 @@ func BuildDevenvNixData(answers types.WizardAnswers, registry *ecosystem.Registr
 
 	// 4b. Collect packages from modules that implement PackageProvider and
 	// package expressions from modules that implement PackageExprProvider.
-	modPkgs, modExprs := collectModulePackages(answers, registry)
+	modPkgs, modExprs := c.collectModulePackages()
 	data.Packages = append(data.Packages, modPkgs...)
 	data.PackageExprs = append(data.PackageExprs, modExprs...)
 
 	// 4c. Collect packages for enabled tools that need binaries on PATH.
-	toolPkgs, toolExprs := collectToolPackages(answers)
+	toolPkgs, toolExprs := collectToolPackages(cat, answers)
 	data.Packages = append(data.Packages, toolPkgs...)
 	data.PackageExprs = append(data.PackageExprs, toolExprs...)
 
 	// 4d. MCP server runtime dependencies (e.g. pkgs.uv for semble's uvx).
-	mcpPkgs := collectMCPPackages(answers)
+	mcpPkgs := collectMCPPackages(cat, answers)
 	data.Packages = append(data.Packages, mcpPkgs...)
-	data.NeedsNativeLibPath = needsNativeLibPath(answers)
+	data.NeedsNativeLibPath = needsNativeLibPath(cat, answers)
 
 	// 4e. LSP servers: a single, registry-driven section that emits explicit
 	// enable/disable lines for every detected ecosystem (plus always-on nixd).
@@ -222,7 +231,7 @@ func BuildDevenvNixData(answers types.WizardAnswers, registry *ecosystem.Registr
 	// env var, commit-ticket/branch-naming hooks). Rendering them here makes
 	// the generator their single source: init, update and `enable` all emit
 	// them, so a routine update no longer drops a tool that is still enabled.
-	toolFragments, err := collectToolNixSections(answers)
+	toolFragments, err := collectToolNixSections(c.tools, answers)
 	if err != nil {
 		return nil, err
 	}
@@ -266,7 +275,7 @@ func BuildDevenvNixData(answers types.WizardAnswers, registry *ecosystem.Registr
 	// ecosystem module may declare the same hook (shellcheck for shell,
 	// statix for nix); rendering both defines one git-hooks attribute twice
 	// and devenv.nix fails to evaluate, so the always-on entry wins.
-	data.SecurityHooks = slices.DeleteFunc(defaultSecurityHooks(), func(id string) bool { return !runsAtTier(id) })
+	data.SecurityHooks = slices.DeleteFunc(cat.SecurityHooks(), func(id string) bool { return !runsAtTier(id) })
 	seenHookIDs := hookResult.SeenHookIDs
 	securityHookIDs := make(map[string]bool, len(data.SecurityHooks))
 	for _, id := range data.SecurityHooks {
@@ -285,11 +294,11 @@ func BuildDevenvNixData(answers types.WizardAnswers, registry *ecosystem.Registr
 		overridden[h.ID] = true
 		data.HookOverrides = append(data.HookOverrides, HookOverrideData{ID: h.ID, TypesOr: h.TypesOr, ExcludeTypes: h.ExcludeTypes})
 	}
-	data.HookOverrides = append(data.HookOverrides, securityHookOverrides(registry, data.SecurityHooks, overridden)...)
+	data.HookOverrides = append(data.HookOverrides, securityHookOverrides(c.modules, data.SecurityHooks, overridden)...)
 	data.BuiltInHooks = slices.DeleteFunc(data.BuiltInHooks, func(h BuiltInHookData) bool { return securityHookIDs[h.ID] })
 
 	// Specialized security custom hooks, deduped against ecosystem hooks.
-	for _, hook := range defaultSpecializedHooks(projectLockFiles(answers.Languages)) {
+	for _, hook := range specializedHooks(cat, projectLockFiles(answers.Languages)) {
 		if !seenHookIDs[hook.ID] && runsAtTier(hook.ID) {
 			seenHookIDs[hook.ID] = true
 			data.CustomHooks = append(data.CustomHooks, hook)
@@ -304,7 +313,7 @@ func BuildDevenvNixData(answers types.WizardAnswers, registry *ecosystem.Registr
 	data.EnterTest = buildEnterTestScript(data.UnsetEnvVars)
 
 	// 9. Task definitions from ecosystem modules.
-	data.TaskScripts = buildTaskScripts(collectTaskDefinitions(answers, registry))
+	data.TaskScripts = buildTaskScripts(c.collectTaskDefinitions())
 
 	// Sort built-in hooks for deterministic output.
 	slices.SortFunc(data.BuiltInHooks, func(a, b BuiltInHookData) int { return strings.Compare(a.ID, b.ID) })
@@ -363,18 +372,18 @@ func dropOverriddenEnv(fragments []LanguageFragment, env map[string]string) erro
 // their Nix fragments, and collects the pre-commit hooks (both built-in and
 // custom) for which runsAtTier reports true; a skipped hook contributes no
 // package either.
-func collectLanguageFragmentsAndHooks(answers types.WizardAnswers, registry *ecosystem.Registry, runsAtTier func(id string) bool) (languageHookResult, error) {
+func (c *genContext) collectLanguageFragmentsAndHooks(runsAtTier func(id string) bool) (languageHookResult, error) {
 	result := languageHookResult{
 		SeenHookIDs: make(map[string]bool),
 	}
 
-	for _, lang := range answers.Languages {
-		mod, ok := registry.ByName(lang.Name)
+	for _, lang := range c.answers.Languages {
+		mod, ok := c.modules.ByName(lang.Name)
 		if !ok {
 			return result, fmt.Errorf("unknown language module: %q", lang.Name)
 		}
 
-		cfg := generationConfig(lang, answers)
+		cfg := c.moduleConfig(mod)
 		fragment, err := mod.DevenvNixFragment(cfg)
 		if err != nil {
 			return result, fmt.Errorf("generating Nix fragment for %s: %w", lang.Name, err)
@@ -598,8 +607,8 @@ func collectLSPSection(answers types.WizardAnswers, data *DevenvNixTemplateData)
 // collectToolNixSections renders the devenv.nix section of every enabled tool
 // that declares one, in registry order, as fragments labelled with the tool's
 // display name.
-func collectToolNixSections(answers types.WizardAnswers) ([]LanguageFragment, error) {
-	sections, err := toolreg.DefaultRegistry().SharedSectionsFor(toolreg.DevenvNixFile, answers)
+func collectToolNixSections(tools *toolreg.Registry, answers types.WizardAnswers) ([]LanguageFragment, error) {
+	sections, err := tools.SharedSectionsFor(toolreg.DevenvNixFile, answers)
 	if err != nil {
 		return nil, fmt.Errorf("collecting tool devenv.nix sections: %w", err)
 	}
@@ -625,13 +634,13 @@ func nixIndentLine(line string) string {
 // collectModulePackages gathers Nix package names from ecosystem modules that
 // implement the PackageProvider interface and raw Nix package expressions from
 // modules that implement the PackageExprProvider interface.
-func collectModulePackages(answers types.WizardAnswers, registry *ecosystem.Registry) (pkgs []string, exprs []string) {
-	for _, lang := range answers.Languages {
-		mod, ok := registry.ByName(lang.Name)
+func (c *genContext) collectModulePackages() (pkgs []string, exprs []string) {
+	for _, lang := range c.answers.Languages {
+		mod, ok := c.modules.ByName(lang.Name)
 		if !ok {
 			continue
 		}
-		cfg := generationConfig(lang, answers)
+		cfg := c.moduleConfig(mod)
 		if pp, ok := mod.(ecosystem.PackageProvider); ok {
 			pkgs = append(pkgs, pp.DevenvPackages(cfg)...)
 		}
@@ -644,9 +653,9 @@ func collectModulePackages(answers types.WizardAnswers, registry *ecosystem.Regi
 
 // collectToolPackages returns Nix package names and raw Nix expressions for
 // enabled tools that need binaries on PATH.
-func collectToolPackages(answers types.WizardAnswers) (pkgs []string, exprs []string) {
-	nixPkgs := defaultToolNixPackages()
-	nixExprs := defaultToolNixExprs()
+func collectToolPackages(cat *catalog.Catalog, answers types.WizardAnswers) (pkgs []string, exprs []string) {
+	nixPkgs := cat.ToolNixPackages()
+	nixExprs := cat.ToolNixExprs()
 	// Iterate in sorted order so regenerating with identical answers yields a
 	// byte-identical devenv.nix (map order would reshuffle the package list).
 	for _, toolName := range slices.Sorted(maps.Keys(answers.EnabledTools)) {
@@ -670,12 +679,7 @@ var mcpServerNixDeps = map[string]string{
 }
 
 // collectMCPPackages returns Nix packages required by the selected MCP servers.
-func collectMCPPackages(answers types.WizardAnswers) []string {
-	cat, err := catalog.Default()
-	if err != nil {
-		return nil
-	}
-
+func collectMCPPackages(cat *catalog.Catalog, answers types.WizardAnswers) []string {
 	seen := make(map[string]bool)
 	var pkgs []string
 	for _, name := range answers.ConfiguredMCPServers() {
@@ -698,11 +702,7 @@ func collectMCPPackages(answers types.WizardAnswers) []string {
 // needsNativeLibPath returns true when any selected MCP server uses uv-tool
 // install method. On NixOS, Python packages with native C extensions (numpy)
 // need LD_LIBRARY_PATH to find libstdc++.
-func needsNativeLibPath(answers types.WizardAnswers) bool {
-	cat, err := catalog.Default()
-	if err != nil {
-		return false
-	}
+func needsNativeLibPath(cat *catalog.Catalog, answers types.WizardAnswers) bool {
 	for _, name := range answers.ConfiguredMCPServers() {
 		def, ok := cat.MCPServer(name)
 		if !ok {
@@ -716,23 +716,15 @@ func needsNativeLibPath(answers types.WizardAnswers) bool {
 }
 
 // collectTaskDefinitions builds development task definitions from ecosystem
-// modules registered in the given registry.
-func collectTaskDefinitions(answers types.WizardAnswers, registry *ecosystem.Registry) []ecosystem.TaskDefinition {
+// modules registered in the context's module registry.
+func (c *genContext) collectTaskDefinitions() []ecosystem.TaskDefinition {
 	var modules []ecosystem.EcosystemModule
-	configForFunc := func(mod ecosystem.EcosystemModule) ecosystem.ModuleConfig {
-		for _, lang := range answers.Languages {
-			if lang.Name == mod.Name() {
-				return generationConfig(lang, answers)
-			}
-		}
-		return ecosystem.ModuleConfig{}
-	}
-	for _, lang := range answers.Languages {
-		if mod, ok := registry.ByName(lang.Name); ok {
+	for _, lang := range c.answers.Languages {
+		if mod, ok := c.modules.ByName(lang.Name); ok {
 			modules = append(modules, mod)
 		}
 	}
-	return ecosystem.AggregateTaskDefinitions(modules, configForFunc, answers.EnabledTools)
+	return ecosystem.AggregateTaskDefinitions(modules, c.moduleConfig, c.answers.EnabledTools)
 }
 
 // taskScriptPrefix is prepended to task names to form script names. It must

@@ -113,7 +113,7 @@ func TestBuildSelfprotectContext_CanonicalizationFailureStaysProtected(t *testin
 	t.Cleanup(func() { _ = os.Chmod(locked, 0o755) })
 
 	target := filepath.Join(locked, ".claude", "hooks", "guard.sh")
-	ctx := buildSelfprotectContext("Write", &hookio.ToolInput{FilePath: target, Content: "exit 0"})
+	ctx := buildSelfprotectContext(&hookio.ToolCall{ToolName: "Write"}, &hookio.ToolInput{FilePath: target, Content: "exit 0"})
 
 	if ctx.CanonicalPath == "" {
 		t.Fatal("CanonicalPath is empty after a canonicalization failure")

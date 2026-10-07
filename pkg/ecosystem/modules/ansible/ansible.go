@@ -190,17 +190,91 @@ func (m *Module) PreCommitHooks(_ ecosystem.ModuleConfig) []ecosystem.HookConfig
 	}
 }
 
-// DenyRules returns Claude Code deny-rule patterns for the Ansible ecosystem.
-// They block Galaxy installs and downloads of roles and collections (in every
-// form, including `collection install`, `role install` and verbose flags
-// before the subcommand) outside controlled workflows, and ansible-vault
-// commands that print decrypted secrets.
+// DenyRules returns Claude Code deny-rule patterns for the Ansible ecosystem,
+// plain, after options and behind an env prefix (denyutil.SubcommandRules).
+// They block:
+//
+//   - Galaxy installs and downloads of roles and collections (in every form,
+//     including `collection install`, `role install` and verbose flags before
+//     the subcommand) outside controlled workflows;
+//   - ansible-vault commands that print decrypted secrets;
+//   - ansible and ansible-playbook runs given a vault password (the
+//     vaultFlags), which decrypt vault files the agent could then print, for
+//     example with `ansible localhost -m debug -e @vault.yml`;
+//   - ad-hoc `ansible` runs given module arguments (-a, --args): with no -m
+//     that is the default command module, so `ansible all -a id` executes
+//     arbitrary commands on inventory hosts, and every command-running module
+//     takes its command through -a. Argument-free runs such as
+//     `ansible all -m ping` stay allowed;
+//   - ad-hoc `ansible` runs of the adHocModules by any spelling of the module
+//     option (`-m shell`, `-mshell`, `--module-name=shell`) and any collection
+//     name (`ansible.builtin.shell`, `ansible.legacy.shell`, `win_shell`);
+//   - ansible-pull, which clones a playbook repository from a URL and runs it.
+//
+// The module rules match the module option's value per spelling (see
+// adHocModuleRules), so a later argument that merely ends in a module name
+// (`--limit webshell`, `-e x=debug`) stays allowed. A later word with a dot
+// or underscore before a module name (`-e x=my_shell`) is still
+// over-blocked; run such a command yourself in a terminal. Combined short
+// flags (`-ba id`) get past the -a rule.
+//
+// Playbook runs are not denied outright: running a playbook against a local
+// or dev inventory is a legitimate agent workflow. A policy requiring --check
+// for non-local inventories needs the argv parsed; it is planned for the
+// block-destructive.py hook (a cross-domain item of the U11 remediation
+// design), which today only gates playbooks run against production-named
+// inventories. A vault password configured through ansible.cfg
+// (vault_password_file) or the ANSIBLE_VAULT_PASSWORD_FILE environment
+// variable never appears on the command line, so it gets past the vault-flag
+// rules. Run a command these rules deny yourself in a terminal.
 func (m *Module) DenyRules(_ ecosystem.ModuleConfig) []string {
-	return append(
-		denyutil.SubcommandRules("ansible-galaxy", "install", "download"),
-		// edit prints the plaintext too when EDITOR is a pager or cat.
-		denyutil.SubcommandRules("ansible-vault", "view", "decrypt", "edit")...,
-	)
+	vault := []string{"* -J*"}
+	for _, flag := range vaultFlags {
+		vault = append(vault, "*"+flag+"*")
+	}
+	adHoc := append([]string{"* -a*", "*--args*"}, adHocModuleRules()...)
+	rules := denyutil.SubcommandRules("ansible-galaxy", "install", "download")
+	// edit prints the plaintext too when EDITOR is a pager or cat.
+	rules = append(rules, denyutil.SubcommandRules("ansible-vault", "view", "decrypt", "edit")...)
+	rules = append(rules, denyutil.SubcommandRules("ansible", append(vault, adHoc...)...)...)
+	rules = append(rules, denyutil.SubcommandRules("ansible-playbook", vault...)...)
+	return append(rules, denyutil.SubcommandRules("ansible-pull", "*")...)
+}
+
+// vaultFlags are the ansible and ansible-playbook long options that supply a
+// vault password, so the run can decrypt vault-encrypted files and variables
+// (-J, the short form of --ask-vault-pass, is denied alongside them; the
+// prefix also covers its --ask-vault-password alias).
+var vaultFlags = []string{
+	"--vault-password-file",
+	"--vault-pass-file",
+	"--ask-vault-pass",
+	"--vault-id",
+}
+
+// adHocModules are the modules an ad-hoc `ansible -m` run must not use:
+// debug prints variables (including decrypted vault values), and the others
+// execute arbitrary commands on the inventory hosts.
+var adHocModules = []string{"debug", "shell", "command", "raw", "script", "expect"}
+
+// adHocModuleRules returns the SubcommandRules subs that deny each of the
+// adHocModules as the value of the module option, in every option spelling
+// (`-m shell`, `-mshell`, `--module-name shell`, `--module-name=shell`) and
+// as the plain, collection-qualified (`ansible.builtin.shell`) or
+// underscore-prefixed (`win_shell`, `win_command`) module name. The `*` in a
+// qualified name already spans the separator after the option, so those
+// need only the bare option spellings.
+func adHocModuleRules() []string {
+	var subs []string
+	for _, mod := range adHocModules {
+		for _, opt := range []string{" -m ", " -m", " --module-name ", " --module-name="} {
+			subs = append(subs, "*"+opt+mod+" *")
+		}
+		for _, opt := range []string{" -m*", " --module-name*"} {
+			subs = append(subs, "*"+opt+"."+mod+" *", "*"+opt+"_"+mod+" *")
+		}
+	}
+	return subs
 }
 
 // ReadDenyRules returns the vault password files the agent's Read tool must

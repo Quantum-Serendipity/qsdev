@@ -38,15 +38,35 @@ func Configure(opts ...option) {
 }
 
 var (
-	profileRegistry     *ProjectProfileRegistry
-	profileRegistryOnce sync.Once
+	projectProfilesOnce sync.Once
+	projectProfilesReg  *ProjectProfileRegistry
+	projectProfilesErr  error
 )
 
-func ensureProfileRegistry() *ProjectProfileRegistry {
-	profileRegistryOnce.Do(func() {
-		profileRegistry = DefaultProjectProfileRegistry()
+// projectProfiles returns the project-type profile registry: the catalog's
+// built-in profiles, then the embedder's (addon.Config.Profiles). It loads on
+// first use rather than when the command tree is built, so the catalog is
+// read only after the running command has resolved its project root and the
+// root's project defaults layer applies.
+func projectProfiles() (*ProjectProfileRegistry, error) {
+	projectProfilesOnce.Do(func() {
+		projectProfilesReg, projectProfilesErr = newProjectProfiles(addon.Config.Profiles)
 	})
-	return profileRegistry
+	return projectProfilesReg, projectProfilesErr
+}
+
+// newProjectProfiles builds a registry of the catalog's built-in profiles and
+// the given embedder profiles. A built-in that fails to load or an embedder
+// profile that collides with one is an error, not a skipped entry.
+func newProjectProfiles(embedder map[string]Profile) (*ProjectProfileRegistry, error) {
+	reg, err := loadDefaultProjectProfiles()
+	if err != nil {
+		return nil, fmt.Errorf("loading built-in project profiles: %w", err)
+	}
+	if err := registerProfiles(reg, embedder); err != nil {
+		return nil, fmt.Errorf("configuring devinit profiles: %w", err)
+	}
+	return reg, nil
 }
 
 // registerProfiles adds the embedder-configured profiles to reg. A profile
@@ -63,10 +83,9 @@ func registerProfiles(reg *ProjectProfileRegistry, profiles map[string]Profile) 
 	return errors.Join(errs...)
 }
 
+// initialize builds the devinit commands. It must not load the catalog (see
+// projectProfiles): that waits until a command has resolved its project root.
 func initialize() error {
-	if err := registerProfiles(ensureProfileRegistry(), addon.Config.Profiles); err != nil {
-		return fmt.Errorf("configuring devinit profiles: %w", err)
-	}
 	gdevcmd.AddConfigCommandBuilder(configShowCmd, migrateCmd)
 	// instance.Main walks the finished tree; wrapping here as well keeps typo
 	// rejection for tools still launched through gdev's cmd.Main.

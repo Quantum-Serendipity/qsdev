@@ -92,10 +92,81 @@ func TestParse_Unloadable(t *testing.T) {
 		{"permissions an array", `{"permissions": []}`, `"permissions" is not an object`},
 		{"deny not an array", `{"permissions": {"deny": "Bash(curl *)"}}`, "permissions.deny is not an array"},
 		{"allow not an array", `{"permissions": {"allow": {}}}`, "permissions.allow is not an array"},
-		{"defaultMode not a string", `{"permissions": {"defaultMode": 1}}`, "permissions.defaultMode is not a string"},
+		{"defaultMode not a string", `{"permissions": {"defaultMode": 1}}`, "permissions.defaultMode is not one of"},
 		{"disableBypass other value", `{"permissions": {"disableBypassPermissionsMode": "enable"}}`, `permissions.disableBypassPermissionsMode is not "disable"`},
 		{"disableBypass boolean", `{"permissions": {"disableBypassPermissionsMode": true}}`, `is not "disable"`},
 		{"posture keys well typed", `{"disableAllHooks": false, "env": {"A": "b"}, "permissions": {"allow": [], "deny": [5], "ask": [], "defaultMode": "manual", "disableBypassPermissionsMode": "disable"}}`, ""},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			s, err := Parse([]byte(tt.doc))
+			if err != nil {
+				t.Fatal(err)
+			}
+			switch {
+			case tt.want == "" && s.Unloadable != "":
+				t.Errorf("Unloadable = %q, want the file loadable", s.Unloadable)
+			case tt.want != "" && !strings.Contains(s.Unloadable, tt.want):
+				t.Errorf("Unloadable = %q, want it to contain %q", s.Unloadable, tt.want)
+			}
+		})
+	}
+}
+
+// TestSettingsSchemaProblem pins that a key Claude Code 2.1.280 validates
+// strictly refuses the whole file when its value has the wrong type or is
+// outside its enum, while every valid value, an unknown key and a key it
+// reads leniently leave the file loadable.
+func TestSettingsSchemaProblem(t *testing.T) {
+	t.Parallel()
+	perms := func(kv string) string { return `{"permissions": {` + kv + `}}` }
+	tests := []struct {
+		name string
+		doc  string
+		want string // substring of Unloadable; "" means loadable
+	}{
+		{"defaultMode yolo", perms(`"defaultMode": "yolo"`), "permissions.defaultMode is not one of"},
+		{"defaultMode case differs", perms(`"defaultMode": "Default"`), "permissions.defaultMode is not one of"},
+		{"model number", `{"model": 5}`, `"model" is not a string`},
+		{"cleanupPeriodDays string", `{"cleanupPeriodDays": "30"}`, `"cleanupPeriodDays" is not a positive whole number`},
+		{"cleanupPeriodDays zero", `{"cleanupPeriodDays": 0}`, `"cleanupPeriodDays" is not a positive whole number`},
+		{"cleanupPeriodDays fraction", `{"cleanupPeriodDays": 1.5}`, `"cleanupPeriodDays" is not a positive whole number`},
+		{"cleanupPeriodDays negative", `{"cleanupPeriodDays": -1}`, `"cleanupPeriodDays" is not a positive whole number`},
+		{"cleanupPeriodDays beyond safe integers", `{"cleanupPeriodDays": 1e300}`, `"cleanupPeriodDays" is not a positive whole number`},
+		{"additionalDirectories string", perms(`"additionalDirectories": "x"`), "permissions.additionalDirectories is not an array of strings"},
+		{"additionalDirectories numbers", perms(`"additionalDirectories": [1]`), "permissions.additionalDirectories is not an array of strings"},
+		{"blockReadsOutsideWorkingDirectories string", perms(`"blockReadsOutsideWorkingDirectories": "true"`), "permissions.blockReadsOutsideWorkingDirectories is not a boolean"},
+		{"permissions disableAutoMode other value", perms(`"disableAutoMode": "off"`), `permissions.disableAutoMode is not "disable"`},
+		{"includeCoAuthoredBy string", `{"includeCoAuthoredBy": "false"}`, `"includeCoAuthoredBy" is not a boolean`},
+		{"enableAllProjectMcpServers string", `{"enableAllProjectMcpServers": "true"}`, `"enableAllProjectMcpServers" is not a boolean`},
+		{"enabledMcpjsonServers string", `{"enabledMcpjsonServers": "s"}`, `"enabledMcpjsonServers" is not an array of strings`},
+		{"defaultShell unknown", `{"defaultShell": "zsh"}`, `"defaultShell" is not one of "bash", "powershell"`},
+		{"apiKeyHelper null", `{"apiKeyHelper": null}`, `"apiKeyHelper" is not a string`},
+		{"feature-gated key", `{"voiceEnabled": "yes"}`, `"voiceEnabled" is not a boolean`},
+
+		{"defaultMode acceptEdits", perms(`"defaultMode": "acceptEdits"`), ""},
+		{"defaultMode auto", perms(`"defaultMode": "auto"`), ""},
+		{"defaultMode bypassPermissions", perms(`"defaultMode": "bypassPermissions"`), ""},
+		{"defaultMode default", perms(`"defaultMode": "default"`), ""},
+		{"defaultMode dontAsk", perms(`"defaultMode": "dontAsk"`), ""},
+		{"defaultMode plan", perms(`"defaultMode": "plan"`), ""},
+		{"defaultMode manual alias", perms(`"defaultMode": "manual"`), ""},
+		{"model opus", `{"model": "opus"}`, ""},
+		{"cleanupPeriodDays 30", `{"cleanupPeriodDays": 30}`, ""},
+		{"cleanupPeriodDays written as a float", `{"cleanupPeriodDays": 30.0}`, ""},
+		{"additionalDirectories list", perms(`"additionalDirectories": ["x"]`), ""},
+		{"blockReadsOutsideWorkingDirectories true", perms(`"blockReadsOutsideWorkingDirectories": true`), ""},
+		{"unknown top-level key", `{"futureSetting": {"x": 1}, "Model": 5}`, ""},
+		{"unknown permissions key", perms(`"futureRule": 5`), ""},
+		{"blockReadsOutsideWorkingDirectories only read under permissions", `{"blockReadsOutsideWorkingDirectories": "true"}`, ""},
+		// Claude Code catches these and drops the bad value.
+		{"lenient effortLevel", `{"effortLevel": 5}`, ""},
+		{"lenient theme", `{"theme": 5}`, ""},
+		// Claude Code deletes or repairs these before it validates the file.
+		{"repaired extraKnownMarketplaces", `{"extraKnownMarketplaces": 5}`, ""},
+		{"repaired allowedMcpServers", `{"allowedMcpServers": "x"}`, ""},
+		{"managed-only isolation", `{"isolation": 5}`, ""},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

@@ -15,15 +15,17 @@ import (
 	"github.com/Quantum-Serendipity/qsdev/pkg/types"
 )
 
+// configShowCmd prints .qsdev.yaml as written. It reads no defaults catalog,
+// so it runs when the catalog fails to load.
 func configShowCmd() *cobra.Command {
-	return cmdutil.MarkReadOnly(&cobra.Command{
+	return cmdutil.MarkCatalogOptional(cmdutil.MarkReadOnly(&cobra.Command{
 		Use:   "show",
 		Short: "Display current project configuration",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			return runConfigShow(cmd)
 		},
-	}, "")
+	}, ""))
 }
 
 func runConfigShow(cmd *cobra.Command) error {

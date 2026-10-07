@@ -180,7 +180,7 @@ func TestAssessDefenseLayers_ArtifactContent(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 			dir, genState := writeProjectFiles(t, tt.files)
-			cov := AssessDefenseLayers(dir, testAssessOpts, tt.tools, types.DetectedProject{}, genState, 3)
+			cov := AssessDefenseLayers(dir, testAssessOpts, tt.tools, types.DetectedProject{}, genState, 3, "")
 			if got := layerByName(t, cov, tt.layer); got.Status != tt.want {
 				t.Errorf("%s: status = %q (%s), want %q", tt.layer, got.Status, got.Reason, tt.want)
 			}
@@ -227,7 +227,7 @@ func TestAssessDefenseLayers_CountsAreTierRelative(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(fmt.Sprintf("tier %d", tt.tier), func(t *testing.T) {
 			t.Parallel()
-			cov := AssessDefenseLayers(dir, testAssessOpts, tools, types.DetectedProject{}, genState, tt.tier)
+			cov := AssessDefenseLayers(dir, testAssessOpts, tools, types.DetectedProject{}, genState, tt.tier, "")
 			if cov.Enabled != tt.wantEnabled || cov.Total != tt.total {
 				t.Errorf("tier %d: %d/%d layers, want %d/%d", tt.tier, cov.Enabled, cov.Total, tt.wantEnabled, tt.total)
 			}
@@ -270,7 +270,7 @@ func TestGuardModified_HookLibTampered(t *testing.T) {
 				PackageGuard: []byte(pristineGuard),
 				GuardSupport: map[string][]byte{lib: []byte(pristineLib)},
 			}
-			cov := AssessDefenseLayers(dir, opts, map[string]bool{"attach-guard": true}, types.DetectedProject{}, genState, 3)
+			cov := AssessDefenseLayers(dir, opts, map[string]bool{"attach-guard": true}, types.DetectedProject{}, genState, 3, "")
 			for _, name := range guardLayers {
 				got := layerByName(t, cov, name)
 				if got.Status != tt.wantStatus {

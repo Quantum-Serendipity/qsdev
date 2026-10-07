@@ -579,7 +579,7 @@ func resolveMissingReference(p string) (string, error) {
 		if err != nil {
 			return "", err
 		}
-		if isRooted(target) {
+		if IsRooted(target) {
 			targetVol := filepath.VolumeName(target)
 			target = target[len(targetVol):]
 			if targetVol == "" {

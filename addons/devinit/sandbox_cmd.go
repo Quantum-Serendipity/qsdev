@@ -1,6 +1,7 @@
 package devinit
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -66,11 +67,33 @@ automatically selected based on available kernel capabilities.
 Standard input is forwarded to COMMAND, and the project directory
 ($CLAUDE_PROJECT_DIR, or the current directory) is mounted inside the
 sandbox. A failure to set up the sandbox exits with status 2 so that a
-wrapped Claude Code hook fails closed.`,
+wrapped Claude Code hook fails closed.
+
+Categories with a writable project (formatter, generator, test-runner)
+still cannot change its control plane: git's hooks, config, info and
+modules, .claude (except the hook log directory .claude/logs), the
+project data and state directories, .envrc, the devenv configuration,
+lock and caches (.devenv, except devenv's state directory .devenv/state,
+which holds GOPATH and the language environments, and .direnv), .mcp.json, the project config and
+local overrides, and the package-manager and pre-commit configuration.
+Those that exist as files or directories in the project are read-only
+inside the sandbox. Staging and committing with git still work.
+
+A missing one, or one that is a symlink (such as a pre-commit
+configuration linked into the Nix store), cannot be made read-only.
+If a hook creates or replaces one, the command exits with status 2,
+naming it: whatever the hook left there is moved aside to
+<name>.<app>-quarantined-<time> (nothing is deleted) and a replaced symlink is
+put back, so the next shell entry or commit does not run it.`,
 		SilenceUsage: true,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if len(args) == 0 {
 				return fmt.Errorf("no command specified; use -- COMMAND [ARGS...]")
+			}
+
+			cat, err := sandbox.ParseHookCategoryStrict(category)
+			if err != nil {
+				return sandboxSetupFailure(err)
 			}
 
 			ctx := cmd.Context()
@@ -98,11 +121,16 @@ wrapped Claude Code hook fails closed.`,
 				hookName = defaultHookName(args[0])
 			}
 
-			cfg := policy.ToSandboxConfig(spec, sandbox.ParseHookCategory(category), hookName, projectDir)
+			cfg := policy.ToSandboxConfig(spec, cat, hookName, projectDir)
 			cfg.HookCommand = args
 			cfg.ExecOpts = hookStdio(cmd)
 
-			result, err := runSandboxed(ctx, cfg, probe(ctx), cmd.ErrOrStderr())
+			// Notices are held back until the hook's outcome is known: a
+			// blocking hook's stderr is the reason Claude Code shows, and must
+			// carry only what the hook wrote. A failing run (or a setup
+			// failure) drops them; runSandboxed has logged them already.
+			var notices bytes.Buffer
+			result, err := runSandboxed(ctx, cfg, probe(ctx), &notices)
 			if err != nil {
 				return sandboxSetupFailure(err)
 			}
@@ -117,15 +145,19 @@ wrapped Claude Code hook fails closed.`,
 			}
 
 			if result.ExitCode != 0 {
-				return exitcode.New(result.ExitCode, "sandboxed command exited with code %d", result.ExitCode)
+				// The hook's own stderr explains the failure; an empty message
+				// keeps anything from being appended to it.
+				slog.Debug("sandboxed command failed", "exit_code", result.ExitCode)
+				return &exitcode.Error{Code: result.ExitCode}
 			}
 
+			_, _ = notices.WriteTo(cmd.ErrOrStderr())
 			return nil
 		},
 	}
 
-	cmd.Flags().StringVar(&category, "category", "linter",
-		"Hook category (linter, formatter, network-linter, generator, test-runner)")
+	cmd.Flags().StringVar(&category, "category", sandbox.CategoryLinter.String(),
+		"Hook category ("+strings.Join(sandbox.HookCategoryNames(), ", ")+")")
 	addPolicyFlag(cmd, &policyPath)
 	cmd.Flags().StringVar(&hookName, "hook-name", "",
 		"Name used to look up the policy's hookOverrides (default: the command's base name without extension)")
@@ -365,8 +397,11 @@ func hookStdio(cmd *cobra.Command) sandbox.ExecOpts {
 // inside it. A backend the policy names that is unknown or unavailable is a
 // setup failure (sandbox.ErrSetupFailed), never silently replaced. Any
 // weaker-than-full isolation, and any layer the tier advertises but cannot
-// enforce, is reported on warn as well as the log: the log file is not visible
-// by default, and an unsandboxed run must never look like a sandboxed one.
+// enforce, is always logged (slog.Warn) and also written to warn. The caller
+// decides whether warn reaches the user: sandbox exec shows it only after a
+// successful run, since a blocking hook's stderr must carry only the hook's
+// reason, so a failing or blocked run records the degradation in the log
+// alone.
 func runSandboxed(ctx context.Context, cfg *sandbox.SandboxConfig, caps *sandbox.SystemCapabilities, warn io.Writer) (*sandbox.SandboxResult, error) {
 	backend, tier, err := backendselect.ResolvePreferredBackend(*caps, cfg.Backend)
 	if err != nil {

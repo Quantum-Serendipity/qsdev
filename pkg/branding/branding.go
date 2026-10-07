@@ -55,6 +55,14 @@ func (c Config) OrgConfigDir(home string) string {
 	return filepath.Join(home, ".config", c.AppName)
 }
 
+// DevenvAnswersCopy returns the project-relative, slash-separated path of the
+// devenv addon's mirror of the answers, .devenv/.<app>-answers.yaml. The
+// answers store writes it, and self-protection and the hook sandbox protect
+// it, so all derive it here.
+func (c Config) DevenvAnswersCopy() string {
+	return ".devenv/." + c.AppName + "-answers.yaml"
+}
+
 // active holds the current branding. It is initialized with the defaults at
 // package initialization, so Get never observes a nil configuration.
 var active = newActive()

@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"os/signal"
 	"sync"
@@ -17,6 +18,7 @@ import (
 	gdevconfig "fastcat.org/go/gdev/lib/config"
 
 	"github.com/Quantum-Serendipity/qsdev/internal/bugreport"
+	"github.com/Quantum-Serendipity/qsdev/internal/catalog"
 	"github.com/Quantum-Serendipity/qsdev/internal/cmdutil"
 	"github.com/Quantum-Serendipity/qsdev/internal/logcmd"
 	"github.com/Quantum-Serendipity/qsdev/internal/logging"
@@ -93,10 +95,20 @@ func run() int {
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer cancel()
 	if err := NewRootCommand().ExecuteContext(ctx); err != nil {
-		fmt.Fprintln(os.Stderr, err.Error())
+		reportError(os.Stderr, err)
 		return exitCode(err)
 	}
 	return 0
+}
+
+// reportError prints a command's error on w. An error with an empty message
+// prints nothing: a command returns one when it has already explained the
+// failure itself, as `sandbox exec` does when a blocking hook wrote the reason
+// on stderr.
+func reportError(w io.Writer, err error) {
+	if msg := err.Error(); msg != "" {
+		fmt.Fprintln(w, msg)
+	}
 }
 
 // exitCode maps a command error to a process exit code: the code an error in
@@ -118,24 +130,66 @@ func exitCode(err error) int {
 // also covers commands the framework builds itself (the root, `config`).
 //
 // It also installs the human gate (cmdutil.InstallHumanGate), which refuses
-// every command marked sensitive unless a human runs it, and gives the
-// commands the frameworks build (see markFrameworkProfiles) their runtime
-// profiles.
+// every command marked sensitive unless a human runs it, and the catalog gate
+// (installCatalogGate), which fails a command that needs the defaults catalog
+// cleanly when the catalog does not load, and gives the commands the
+// frameworks build (see markFrameworkProfiles) their runtime profiles.
 //
 // It must be called after customizations are locked down, as [Main] does.
 func NewRootCommand() *cobra.Command {
 	root := gdevcmd.Root()
 	markFrameworkProfiles(root)
 	cmdutil.RejectUnknownSubcommands(root)
-	cmdutil.InstallHumanGate(root)
+	installGates(root, loadCatalog)
 	return root
+}
+
+// installGates installs the human gate and the catalog gate on root. The
+// catalog gate is installed last so it runs first: the human gate's
+// sensitivity checks may read the catalog (disable's security-tool list
+// does), so the catalog must have loaded, or the command failed cleanly,
+// before they run. A catalog load is read-only, so loading before a refusal
+// costs nothing.
+func installGates(root *cobra.Command, load func() error) {
+	cmdutil.InstallHumanGate(root)
+	installCatalogGate(root, load)
+}
+
+// loadCatalog loads the defaults catalog (built-in, org and project layers).
+// catalog.Default caches its result, so later loads by the command reuse it.
+func loadCatalog() error {
+	_, err := catalog.Default()
+	return err
+}
+
+// installCatalogGate makes root fail every command that needs the defaults
+// catalog (cmdutil.CatalogRequired) with a wrapped error naming the repair
+// command when load fails, before the command runs. Once the gate passes the
+// catalog is cached as loaded, so the command's own catalog lookups cannot
+// fail. Commands that do not need it (hooks, the MCP server, global and
+// unlogged commands, catalog-optional ones) run regardless. It chains any
+// PersistentPreRunE root already has, as cmdutil.InstallHumanGate does.
+func installCatalogGate(root *cobra.Command, load func() error) {
+	next := root.PersistentPreRunE
+	root.PersistentPreRunE = func(cmd *cobra.Command, args []string) error {
+		if cmdutil.CatalogRequired(cmd) {
+			if err := load(); err != nil {
+				return fmt.Errorf("%w (run '%s')", catalog.LoadError(err), catalog.ValidateCommand())
+			}
+		}
+		if next != nil {
+			return next(cmd, args)
+		}
+		return nil
+	}
 }
 
 // markFrameworkProfiles marks the runtime profile (cmdutil.MarkProfile) of the
 // commands cobra and gdev build rather than an addon: cobra's help and
 // default completion commands, created here instead of at execution so they
 // can carry a mark, are unlogged, and gdev's version is global. A command an
-// addon registered under one of those names keeps its own mark.
+// addon registered under one of those names keeps its own mark. gdev's addons
+// command is also marked catalog-optional (cmdutil.MarkCatalogOptional).
 func markFrameworkProfiles(root *cobra.Command) {
 	root.InitDefaultHelpCmd()
 	root.InitDefaultCompletionCmd()
@@ -149,6 +203,11 @@ func markFrameworkProfiles(root *cobra.Command) {
 		if _, marked := c.Annotations[cmdutil.ProfileAnnotation]; ok && !marked {
 			cmdutil.MarkProfile(c, p)
 		}
+		// gdev's addons command lists the compiled-in addons and reads no
+		// defaults catalog.
+		if c.Name() == "addons" {
+			cmdutil.MarkCatalogOptional(c)
+		}
 	}
 }
 
@@ -158,11 +217,11 @@ func markFrameworkProfiles(root *cobra.Command) {
 //   - the universal MCP server's framework adapters and the external-log
 //     providers (RegisterFrameworkAdapters)
 //   - the release version stamped into VersionPackage (ApplyBuildVersion)
-//   - the project's .<app>/defaults.yaml catalog layer (UseProjectDefaults)
 //   - the standard commands: self-update, logs and bug-report
 //   - the --debug flag, and a cobra initializer (Runtime.initCommand) that
-//     resolves the executing command's project once and, per its runtime
-//     profile (cmdutil.ProfileOf), opens the redacting session log
+//     resolves the executing command's project once, applies that root's
+//     .<app>/defaults.yaml catalog layer and org overlay pin, and, per its
+//     runtime profile (cmdutil.ProfileOf), opens the redacting session log
 //     (per-project, global or automated) and starts the background
 //     self-update check, whose notice Finish prints
 //   - error logging for every command
@@ -183,7 +242,6 @@ func DefaultRuntime() *Runtime {
 func installDefaultRuntime() *Runtime {
 	RegisterFrameworkAdapters()
 	ApplyBuildVersion()
-	UseProjectDefaults()
 
 	rt := &Runtime{logsCmd: logcmd.Command()}
 	AddCommands(standardCommands(rt.logsCmd)...)

@@ -506,3 +506,34 @@ func TestRunContainerCheck_BrokenPodmanIsWarned(t *testing.T) {
 		t.Errorf("expected a podman info warning, got %v", cs.Warnings)
 	}
 }
+
+// TestRunContainerCheck_NoProjectOmitsNFS checks that the project-scoped NFS
+// item is reported only for a project: outside one, "no NFS mounts in project
+// tree" would be a claim about a tree that does not exist.
+func TestRunContainerCheck_NoProjectOmitsNFS(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name        string
+		projectRoot string
+		wantNFS     bool
+	}{
+		{name: "no project", projectRoot: "", wantNFS: false},
+		{name: "project", projectRoot: testProjectRoot, wantNFS: true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			cs := RunContainerCheck(context.Background(), newPodmanRootlessCleanProber(), defaultOSInfo(), tt.projectRoot)
+			if cs == nil {
+				t.Fatal("expected non-nil ContainerSection")
+				return
+			}
+			if got := findItem(cs, "NFS") != nil; got != tt.wantNFS {
+				t.Errorf("NFS item present = %v, want %v (items %+v)", got, tt.wantNFS, cs.Items)
+			}
+			if findItem(cs, "Cgroups") == nil {
+				t.Error("host-scoped Cgroups item missing")
+			}
+		})
+	}
+}

@@ -3,6 +3,7 @@ package instance
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -15,6 +16,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/Quantum-Serendipity/qsdev/internal/catalog"
+	"github.com/Quantum-Serendipity/qsdev/internal/exitcode"
 	"github.com/Quantum-Serendipity/qsdev/internal/logging"
 	"github.com/Quantum-Serendipity/qsdev/internal/mcpserve/spi"
 	"github.com/Quantum-Serendipity/qsdev/internal/projectctx"
@@ -49,6 +51,8 @@ func TestDefaultRuntime(t *testing.T) {
 	prevArgs := os.Args
 	t.Cleanup(func() { os.Args = prevArgs })
 	os.Args = []string{"app", "--debug", "status"}
+	catalog.ResetDefault()
+	t.Cleanup(catalog.ResetDefault)
 
 	rt := DefaultRuntime()
 	if again := DefaultRuntime(); again != rt {
@@ -64,8 +68,10 @@ func TestDefaultRuntime(t *testing.T) {
 	if n := len(spi.DefaultRegistry().All()); n == 0 {
 		t.Error("no framework adapters registered")
 	}
-	if catalog.ProjectRoot() == "" {
-		t.Error("project defaults root not set")
+	// The project defaults layer comes from the executing command's resolved
+	// root (Runtime.initCommand), never from a walk before argv is parsed.
+	if root := catalog.ProjectRoot(); root != "" {
+		t.Errorf("DefaultRuntime set the project defaults root %q before any command was resolved", root)
 	}
 	if rt.logsCmd == nil || rt.logsCmd.Name() != "logs" {
 		t.Errorf("runtime logs command = %v, want logs", rt.logsCmd)
@@ -332,4 +338,30 @@ func writeUpdateCache(t *testing.T, home string, checkedAt time.Time) string {
 		t.Fatalf("writing cache: %v", err)
 	}
 	return path
+}
+
+// TestReportError_EmptyMessageWritesNothing pins that an error with an empty
+// message (a blocking hook's exit status, whose reason the hook already wrote
+// on stderr) adds nothing to stderr, not even a blank line.
+func TestReportError_EmptyMessageWritesNothing(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name string
+		err  error
+		want string
+	}{
+		{name: "empty message", err: &exitcode.Error{Code: 2}, want: ""},
+		{name: "message", err: exitcode.New(2, "qsdev sandbox: setup failed"), want: "qsdev sandbox: setup failed\n"},
+		{name: "plain error", err: errors.New("boom"), want: "boom\n"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			var buf bytes.Buffer
+			reportError(&buf, tt.err)
+			if got := buf.String(); got != tt.want {
+				t.Errorf("reportError wrote %q, want %q", got, tt.want)
+			}
+		})
+	}
 }

@@ -2,9 +2,11 @@ package mcpserve
 
 import (
 	"context"
+	"crypto/subtle"
 	"crypto/tls"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"log"
 	"log/slog"
@@ -12,6 +14,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/mark3labs/mcp-go/server"
@@ -31,6 +34,10 @@ const (
 // mirrors mcp-go's default endpoint (server.WithEndpointPath default "/mcp"),
 // which the generated .mcp.json entry points at (http://host:port/mcp).
 const mcpEndpointPath = "/mcp"
+
+// healthPath is the standalone server's liveness endpoint. It is exempt from
+// the bearer token, so an orchestrator's plain probe keeps working.
+const healthPath = "/health"
 
 // httpShutdownTimeout bounds graceful shutdown of the HTTP transport.
 const httpShutdownTimeout = 5 * time.Second
@@ -80,13 +87,14 @@ func (s *Server) listenStdio(ctx context.Context, stdin io.Reader, stdout io.Wri
 // cert-identity middleware. When tlsConfig is non-nil the listener serves mutual
 // TLS (the certificates live in tlsConfig); otherwise it serves plain HTTP,
 // which the serve command only permits on a loopback bind in native/http mode.
-func (s *Server) ServeHTTP(ctx context.Context, addr string, tlsConfig *tls.Config) error {
+// On plain HTTP a non-nil token is required of every caller (see serveMux).
+func (s *Server) ServeHTTP(ctx context.Context, addr string, tlsConfig *tls.Config, token *httpToken) error {
 	streamable := newStreamableHTTP(s.mcp, httpSessionIdleTTL)
 
 	mux := http.NewServeMux()
 	mux.Handle(mcpEndpointPath, streamable)
 
-	return s.serveMux(ctx, addr, mux, streamable, tlsConfig)
+	return s.serveMux(ctx, addr, mux, streamable, tlsConfig, token)
 }
 
 // ServeHTTPWithHealth runs the server over Streamable HTTP on addr AND exposes a
@@ -102,15 +110,16 @@ func (s *Server) ServeHTTP(ctx context.Context, addr string, tlsConfig *tls.Conf
 // (hence before path routing) runs. This is the deliberate fail-closed choice:
 // the standalone server never exposes an unauthenticated surface. Configure the
 // orchestrator's health probe to present the client certificate (e.g. an
-// exec/curl probe with --cert/--key) rather than a bare HTTP GET.
-func (s *Server) ServeHTTPWithHealth(ctx context.Context, addr string, tlsConfig *tls.Config) error {
+// exec/curl probe with --cert/--key) rather than a bare HTTP GET. On plain
+// loopback HTTP the token is required everywhere except /health.
+func (s *Server) ServeHTTPWithHealth(ctx context.Context, addr string, tlsConfig *tls.Config, token *httpToken) error {
 	streamable := newStreamableHTTP(s.mcp, httpSessionIdleTTL)
 
 	mux := http.NewServeMux()
-	mux.HandleFunc("/health", s.handleHealth)
+	mux.HandleFunc(healthPath, s.handleHealth)
 	mux.Handle("/", streamable)
 
-	return s.serveMux(ctx, addr, mux, streamable, tlsConfig)
+	return s.serveMux(ctx, addr, mux, streamable, tlsConfig, token)
 }
 
 // newStreamableHTTP builds the Streamable HTTP handler both entrypoints serve,
@@ -124,13 +133,26 @@ func newStreamableHTTP(mcpSrv *server.MCPServer, idleTTL time.Duration) *server.
 }
 
 // serveMux builds the transport's *http.Server around mux — applying the shared
-// handler stack (cert-identity, plus a loopback Host/Origin guard on the
-// plain-HTTP path), read-header timeout, and TLS config — and serves it until
-// ctx is cancelled, shutting down gracefully. Both HTTP entrypoints route through
-// it so the server's timeouts, middleware, and TLS wiring stay identical; they
-// differ only in how they populate mux. When tlsConfig is nil the listener serves
-// plain HTTP, which the serve command permits only on a loopback bind.
-func (s *Server) serveMux(ctx context.Context, addr string, mux *http.ServeMux, streamable *server.StreamableHTTPServer, tlsConfig *tls.Config) error {
+// handler stack (cert-identity, plus a loopback Host/Origin guard and the
+// bearer token on the plain-HTTP path), read-header timeout, and TLS config —
+// and serves it until ctx is cancelled, shutting down gracefully. Both HTTP
+// entrypoints route through it so the server's timeouts, middleware, and TLS
+// wiring stay identical; they differ only in how they populate mux. When
+// tlsConfig is nil the listener serves plain HTTP, which the serve command
+// permits only on a loopback bind.
+//
+// A token is published only once the listener is bound, so a launch that
+// fails to bind (the port is another server's) never overwrites that server's
+// token file, and it is removed when serving ends. Under mTLS the token is
+// ignored: the client certificate is the authentication.
+func (s *Server) serveMux(ctx context.Context, addr string, mux *http.ServeMux, streamable *server.StreamableHTTPServer, tlsConfig *tls.Config, token *httpToken) error {
+	if tlsConfig != nil {
+		token = nil
+	}
+	var bearer string
+	if token != nil {
+		bearer = token.value
+	}
 	// Streams are ended as soon as shutdown begins: http.Server.Shutdown waits
 	// for active handlers but never cancels their contexts, so an open GET
 	// (SSE) stream would otherwise hold shutdown until its timeout.
@@ -138,7 +160,7 @@ func (s *Server) serveMux(ctx context.Context, addr string, mux *http.ServeMux, 
 	defer beginShutdown()
 	httpSrv := &http.Server{
 		Addr:              addr,
-		Handler:           httpHandler(endStreamsOnShutdown(shuttingDown, mux), tlsConfig),
+		Handler:           httpHandler(endStreamsOnShutdown(shuttingDown, mux), tlsConfig, bearer),
 		ReadHeaderTimeout: httpReadHeaderTimeout,
 		TLSConfig:         tlsConfig,
 	}
@@ -146,7 +168,19 @@ func (s *Server) serveMux(ctx context.Context, addr string, mux *http.ServeMux, 
 	// streamable is mounted as a handler, so its Shutdown only stops the idle
 	// session sweeper; it cannot fail in that case.
 	defer func() { _ = streamable.Shutdown(context.Background()) }()
-	return serveHTTPWithShutdown(ctx, httpSrv, tlsConfig != nil)
+
+	ln, err := net.Listen("tcp", addr)
+	if err != nil {
+		return fmt.Errorf("listening on %s: %w", addr, err)
+	}
+	if token != nil {
+		if err := token.publish(ln.Addr()); err != nil {
+			_ = ln.Close()
+			return err
+		}
+		defer token.remove()
+	}
+	return serveHTTPWithShutdown(ctx, httpSrv, ln, tlsConfig != nil)
 }
 
 // endStreamsOnShutdown cancels the context of every in-flight GET request — the
@@ -166,21 +200,21 @@ func endStreamsOnShutdown(shuttingDown context.Context, next http.Handler) http.
 	})
 }
 
-// serveHTTPWithShutdown starts httpSrv (TLS when useTLS) in a goroutine and
+// serveHTTPWithShutdown serves httpSrv on ln (TLS when useTLS) in a goroutine and
 // blocks until ctx is cancelled — at which point it shuts the server down within
 // httpShutdownTimeout — or the listener fails. A clean close
 // (http.ErrServerClosed) is reported as success. A requested shutdown returns
 // ctx's error even when the grace period runs out: the remaining connections
 // are then force-closed, since the server is stopping either way. When useTLS
-// is true the certificates come from httpSrv.TLSConfig, so ListenAndServeTLS is
-// called with empty cert/key paths.
-func serveHTTPWithShutdown(ctx context.Context, httpSrv *http.Server, useTLS bool) error {
+// is true the certificates come from httpSrv.TLSConfig, so ServeTLS is called
+// with empty cert/key paths.
+func serveHTTPWithShutdown(ctx context.Context, httpSrv *http.Server, ln net.Listener, useTLS bool) error {
 	errCh := make(chan error, 1)
 	go func() {
 		if useTLS {
-			errCh <- httpSrv.ListenAndServeTLS("", "")
+			errCh <- httpSrv.ServeTLS(ln, "", "")
 		} else {
-			errCh <- httpSrv.ListenAndServe()
+			errCh <- httpSrv.Serve(ln)
 		}
 	}()
 
@@ -233,19 +267,44 @@ func certIdentityMiddleware(next http.Handler) http.Handler {
 
 // httpHandler composes the transport's handler stack. Every request body is
 // capped at maxHTTPRequestBytes. certIdentityMiddleware always runs (it is a
-// no-op on plain HTTP). On the plain-HTTP path
-// (tlsConfig == nil) the stack is additionally wrapped in loopbackGuard: plain
-// HTTP is only ever served on a loopback bind (validateServeSecurity enforces
-// this), so requiring a loopback Host/Origin there costs nothing and blocks
-// DNS-rebinding. Under mTLS the verified client certificate is the gate and the
-// operator may legitimately bind a non-loopback DNS name, so the guard is omitted
-// to avoid rejecting legitimate requests.
-func httpHandler(mux http.Handler, tlsConfig *tls.Config) http.Handler {
+// no-op on plain HTTP). On the plain-HTTP path (tlsConfig == nil) the stack is
+// additionally wrapped in loopbackGuard: plain HTTP is only ever served on a
+// loopback bind (validateServeSecurity enforces this), so requiring a loopback
+// Host/Origin there costs nothing and blocks DNS-rebinding. A non-empty token
+// there also puts bearerAuth in front, since any local process can reach a
+// loopback port (an empty token is the operator's --http-no-auth). Under mTLS
+// the verified client certificate is the gate and the operator may
+// legitimately bind a non-loopback DNS name, so neither is applied.
+func httpHandler(mux http.Handler, tlsConfig *tls.Config, token string) http.Handler {
 	h := certIdentityMiddleware(mux)
 	if tlsConfig == nil {
+		if token != "" {
+			h = bearerAuth(token, h)
+		}
 		h = loopbackGuard(h)
 	}
 	return http.MaxBytesHandler(h, maxHTTPRequestBytes)
+}
+
+// bearerAuth rejects (401, before any tool handler runs) every request that
+// does not carry "Authorization: Bearer <token>", except the /health probe.
+// The comparison is constant-time, so response timing does not reveal how
+// much of a guess matched.
+func bearerAuth(token string, next http.Handler) http.Handler {
+	want := []byte(token)
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == healthPath {
+			next.ServeHTTP(w, r)
+			return
+		}
+		scheme, got, _ := strings.Cut(r.Header.Get("Authorization"), " ")
+		if !strings.EqualFold(scheme, "Bearer") || subtle.ConstantTimeCompare([]byte(strings.TrimSpace(got)), want) != 1 {
+			w.Header().Set("WWW-Authenticate", "Bearer")
+			http.Error(w, "unauthorized: missing or invalid bearer token", http.StatusUnauthorized)
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
 }
 
 // loopbackGuard rejects (403, before any tool handler runs) every request whose

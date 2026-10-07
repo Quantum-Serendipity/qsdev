@@ -42,6 +42,9 @@ func MergeCatalogs(base, overlay *Catalog) *Catalog {
 	// Bootstrap tools: merge maps.
 	result.bootstrapTools = mergeEntries(base.bootstrapTools, overlay.bootstrapTools, nodes[sectionBootstrapTools])
 
+	// MCP server opt-ins: an overlay that sets the section wins.
+	result.mcpServe = cmp.Or(overlay.mcpServe, base.mcpServe)
+
 	// Security: merge lists and sub-structures.
 	result.security.Hooks.Default = mergeStringSlice(base.security.Hooks.Default, overlay.security.Hooks.Default)
 	result.security.BasePackages = mergeStringSlice(base.security.BasePackages, overlay.security.BasePackages)

@@ -11,7 +11,9 @@ import (
 	"testing"
 
 	"github.com/Quantum-Serendipity/qsdev/internal/doctor"
+	"github.com/Quantum-Serendipity/qsdev/internal/testutil"
 	"github.com/Quantum-Serendipity/qsdev/internal/version"
+	"github.com/Quantum-Serendipity/qsdev/pkg/branding"
 	"github.com/Quantum-Serendipity/qsdev/pkg/ecosystem"
 )
 
@@ -232,5 +234,114 @@ func TestProjectToolchainWarnings(t *testing.T) {
 	got := projectToolchainWarnings(context.Background(), ecosystem.DefaultRegistry(), root)
 	if len(got) != 1 || !strings.HasPrefix(got[0], "Haskell: ") || !strings.Contains(got[0], "needs GHC 9.6.7") {
 		t.Errorf("projectToolchainWarnings() = %q, want one Haskell GHC 9.6.7 warning", got)
+	}
+}
+
+// writeDoctorProjectFixture writes a go.mod and a .mcp.json whose one server
+// names a command that does not exist into dir.
+func writeDoctorProjectFixture(t *testing.T, dir string) {
+	t.Helper()
+	mcp, err := json.Marshal(map[string]any{"mcpServers": map[string]any{
+		"broken": map[string]any{"command": filepath.Join(t.TempDir(), "absent-mcp")},
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	files := map[string]string{
+		".mcp.json": string(mcp),
+		"go.mod":    "module example.test/doctor\n\ngo 1.22\n",
+	}
+	for name, body := range files {
+		if err := os.WriteFile(filepath.Join(dir, name), []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+}
+
+// runDoctorFor runs `devenv doctor` with args in the current directory and
+// returns its output. Missing required tools on the host are not an error
+// here, since the tests look at the project-scoped sections only.
+func runDoctorFor(t *testing.T, args ...string) string {
+	t.Helper()
+	cmd := doctorCmd()
+	var buf bytes.Buffer
+	cmd.SetOut(&buf)
+	cmd.SetErr(&buf)
+	cmd.SetArgs(args)
+	_ = cmd.Execute()
+	return buf.String()
+}
+
+// doctorJSON runs `devenv doctor --json` and decodes the report as a generic
+// map, so the tests can tell an absent key from an empty one.
+func doctorJSON(t *testing.T) map[string]any {
+	t.Helper()
+	out := runDoctorFor(t, "--json")
+	var m map[string]any
+	if err := json.Unmarshal([]byte(out), &m); err != nil {
+		t.Fatalf("invalid JSON output: %v\n%s", err, out)
+	}
+	return m
+}
+
+// TestDoctor_NoProjectSkipsProjectSections is the U13-V01 regression: outside
+// a project doctor ran its project-scoped checks against the working
+// directory, reporting its .mcp.json and claiming it had no NFS mounts.
+func TestDoctor_NoProjectSkipsProjectSections(t *testing.T) {
+	isolateHome(t)
+	dir := testutil.MarkerFreeTempDir(t)
+	writeDoctorProjectFixture(t, dir)
+	t.Chdir(dir)
+
+	human := runDoctorFor(t)
+	if !strings.Contains(human, "project checks skipped") {
+		t.Errorf("doctor outside a project did not say project checks were skipped:\n%s", human)
+	}
+	if strings.Contains(human, "MCP Servers") {
+		t.Errorf("doctor outside a project reported MCP servers:\n%s", human)
+	}
+	if strings.Contains(human, "NFS:") {
+		t.Errorf("doctor outside a project reported an NFS check:\n%s", human)
+	}
+
+	m := doctorJSON(t)
+	root, ok := m["project_root"]
+	if !ok || root != "" {
+		t.Errorf("project_root = %v (present %v), want \"\"", root, ok)
+	}
+	for _, key := range []string{"mcp_servers", "module_checks"} {
+		if _, ok := m[key]; ok {
+			t.Errorf("JSON report has %s outside a project: %v", key, m[key])
+		}
+	}
+}
+
+// TestDoctor_InsideProjectRunsProjectSections checks that the U13-V01 gate
+// still runs the project-scoped checks from a subdirectory of a project.
+func TestDoctor_InsideProjectRunsProjectSections(t *testing.T) {
+	isolateHome(t)
+	proj := testutil.MarkerFreeTempDir(t)
+	writeDoctorProjectFixture(t, proj)
+	if err := os.WriteFile(filepath.Join(proj, branding.Get().ConfigFile), []byte("version: 1\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	sub := filepath.Join(proj, "sub")
+	if err := os.Mkdir(sub, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Chdir(sub)
+
+	m := doctorJSON(t)
+	root, _ := m["project_root"].(string)
+	got, err := filepath.EvalSymlinks(root)
+	if err != nil || got != proj {
+		t.Errorf("project_root = %q (resolved %q, err %v), want %q", root, got, err, proj)
+	}
+	if _, ok := m["mcp_servers"]; !ok {
+		t.Error("JSON report inside a project has no mcp_servers section")
+	}
+
+	if human := runDoctorFor(t); strings.Contains(human, "project checks skipped") {
+		t.Errorf("doctor inside a project said project checks were skipped:\n%s", human)
 	}
 }

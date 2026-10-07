@@ -4,7 +4,6 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
-	"os"
 	"strings"
 )
 
@@ -16,13 +15,13 @@ type TextEdit struct {
 }
 
 // FileChange returns the content of a Write/Edit/MultiEdit target before the
-// tool call (read from disk; empty when the file does not exist yet) and the
-// content it will have afterwards: the Write content, or the current content
-// with the Edits applied in order. Rules that guard a file's invariants
-// compare the two, since an Edit's new_string alone says nothing about what
-// the file loses. An edit whose old_string is absent is skipped, as Claude
-// Code rejects it without writing. An error means the change cannot be
-// reconstructed; callers must fail closed.
+// tool call (read from disk with ReadGuardedFile; empty when the file does not
+// exist yet) and the content it will have afterwards: the Write content, or
+// the current content with the Edits applied in order. Rules that guard a
+// file's invariants compare the two, since an Edit's new_string alone says
+// nothing about what the file loses. An edit whose old_string is absent is
+// skipped, as Claude Code rejects it without writing. An error means the
+// change cannot be reconstructed; callers must fail closed.
 func (ctx *EvalContext) FileChange() (before, after string, err error) {
 	target := ctx.CanonicalPath
 	if target == "" {
@@ -31,13 +30,13 @@ func (ctx *EvalContext) FileChange() (before, after string, err error) {
 	if target == "" {
 		return "", "", errors.New("tool call has no target file")
 	}
-	data, err := os.ReadFile(target)
+	data, err := ReadGuardedFile(target)
 	switch {
 	case err == nil:
 		before = string(data)
 	case errors.Is(err, fs.ErrNotExist):
 	default:
-		return "", "", fmt.Errorf("reading %s: %w", target, err)
+		return "", "", err
 	}
 
 	switch ctx.ToolName {

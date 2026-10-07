@@ -71,13 +71,13 @@ func needsGitHooks(_ types.WizardAnswers, _ *ecosystem.Registry) bool {
 }
 
 // collectEcosystemInputs gathers DevenvYamlInputs from every selected module.
-func collectEcosystemInputs(answers types.WizardAnswers, registry *ecosystem.Registry) map[string]DevenvYamlInput {
-	if registry == nil {
+func (c *genContext) collectEcosystemInputs() map[string]DevenvYamlInput {
+	if c.modules == nil {
 		return nil
 	}
 	merged := make(map[string]DevenvYamlInput)
-	for _, lang := range answers.Languages {
-		mod, ok := registry.ByName(lang.Name)
+	for _, lang := range c.answers.Languages {
+		mod, ok := c.modules.ByName(lang.Name)
 		if !ok {
 			continue
 		}
@@ -85,8 +85,7 @@ func collectEcosystemInputs(answers types.WizardAnswers, registry *ecosystem.Reg
 		if !ok {
 			continue
 		}
-		cfg := ecosystem.ToModuleConfig(lang)
-		for _, inp := range yip.DevenvYamlInputs(cfg) {
+		for _, inp := range yip.DevenvYamlInputs(c.moduleConfig(mod)) {
 			key := inputKeyFromURL(inp.URL)
 			entry := DevenvYamlInput{
 				URL: inp.URL,
@@ -108,6 +107,16 @@ func collectEcosystemInputs(answers types.WizardAnswers, registry *ecosystem.Reg
 // GenerateDevenvYaml produces a security-hardened devenv.yaml from the wizard
 // answers and ecosystem registry.
 func GenerateDevenvYaml(answers types.WizardAnswers, registry *ecosystem.Registry) (*types.GeneratedFile, error) {
+	ctx, err := newGenContext(answers, registry)
+	if err != nil {
+		return nil, err
+	}
+	return generateDevenvYaml(ctx)
+}
+
+// generateDevenvYaml is GenerateDevenvYaml for an already-loaded context.
+func generateDevenvYaml(ctx *genContext) (*types.GeneratedFile, error) {
+	answers, registry := ctx.answers, ctx.modules
 	dy := DevenvYaml{
 		RequireVersion: requireVersion,
 		Inputs: map[string]DevenvYamlInput{
@@ -122,7 +131,7 @@ func GenerateDevenvYaml(answers types.WizardAnswers, registry *ecosystem.Registr
 		},
 		Clean: DevenvClean{
 			Enabled: true,
-			Keep:    defaultCleanKeep(),
+			Keep:    ctx.cat.KeepVars(),
 		},
 	}
 
@@ -137,7 +146,7 @@ func GenerateDevenvYaml(answers types.WizardAnswers, registry *ecosystem.Registr
 	}
 
 	// Merge ecosystem module inputs.
-	ecoInputs := collectEcosystemInputs(answers, registry)
+	ecoInputs := ctx.collectEcosystemInputs()
 	for k, v := range ecoInputs {
 		if _, exists := dy.Inputs[k]; !exists {
 			dy.Inputs[k] = v

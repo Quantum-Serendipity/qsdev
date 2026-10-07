@@ -463,10 +463,15 @@ func checkLocalOverride(projectRoot, userDir string, project claudesettings.Sett
 		add(StatusWarn, SeverityMedium, fmt.Sprintf("sets %s.%s to %q; the committed settings require %q",
 			claudesettings.KeyPermissions, claudesettings.KeyDisableBypassPermissionsMode, eff.DisableBypassPermissionsMode, wantBypass))
 	}
+	// Env names are case-insensitive on Windows, so any spelling of a policy
+	// variable can override it there; every spelling is flagged on every OS.
+	localKeys := slices.Sorted(maps.Keys(local.Env))
 	for _, key := range slices.Sorted(maps.Keys(wantEnv)) {
-		if got, ok := local.Env[key]; ok && got != wantEnv[key] {
-			add(StatusWarn, SeverityMedium, fmt.Sprintf("sets %s %s to %q; the committed hook policy sets it to %q",
-				claudesettings.KeyEnv, key, got, wantEnv[key]))
+		for _, k := range localKeys {
+			if got := local.Env[k]; strings.EqualFold(k, key) && got != wantEnv[key] {
+				add(StatusWarn, SeverityMedium, fmt.Sprintf("sets %s %s to %q; the committed hook policy sets %s to %q",
+					claudesettings.KeyEnv, k, got, key, wantEnv[key]))
+			}
 		}
 	}
 	for _, msg := range launchEnvOverrides(local.Env) {

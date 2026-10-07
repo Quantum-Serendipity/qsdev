@@ -80,23 +80,26 @@ func TestProjectConfigFile_ExistingFile(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	result := ProjectConfigFile(dir)
+	result, err := ProjectConfigFile(dir)
+	if err != nil {
+		t.Fatalf("ProjectConfigFile() error: %v", err)
+	}
 	if result != defaultsFile {
 		t.Errorf("ProjectConfigFile() = %q, want %q", result, defaultsFile)
 	}
 }
 
 func TestProjectConfigFile_MissingFile(t *testing.T) {
-	result := ProjectConfigFile(t.TempDir())
-	if result != "" {
-		t.Errorf("ProjectConfigFile() = %q, want empty", result)
+	result, err := ProjectConfigFile(t.TempDir())
+	if err != nil || result != "" {
+		t.Errorf("ProjectConfigFile() = (%q, %v), want empty", result, err)
 	}
 }
 
 func TestProjectConfigFile_EmptyRoot(t *testing.T) {
-	result := ProjectConfigFile("")
-	if result != "" {
-		t.Errorf("ProjectConfigFile() = %q, want empty", result)
+	result, err := ProjectConfigFile("")
+	if err != nil || result != "" {
+		t.Errorf("ProjectConfigFile() = (%q, %v), want empty", result, err)
 	}
 }
 

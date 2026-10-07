@@ -3,9 +3,9 @@ package devinit
 import (
 	"errors"
 	"io/fs"
-	"os"
 	"path"
 
+	"github.com/Quantum-Serendipity/qsdev/internal/selfprotect/canon"
 	"github.com/Quantum-Serendipity/qsdev/internal/selfprotect/gatedodge"
 	"github.com/Quantum-Serendipity/qsdev/internal/selfprotect/hookio"
 	"github.com/Quantum-Serendipity/qsdev/internal/selfprotect/rules"
@@ -36,7 +36,7 @@ func detectResultGateDodge(toolName string, input hookio.ToolInput, canonicalPat
 		return false, "", ""
 	}
 
-	current, err := os.ReadFile(target)
+	current, err := rules.ReadGuardedFile(target)
 	if err != nil && !errors.Is(err, fs.ErrNotExist) {
 		return true, rule.ID, "cannot read the current file to check what this change removes: " + err.Error()
 	}
@@ -55,7 +55,7 @@ func detectResultGateDodge(toolName string, input hookio.ToolInput, canonicalPat
 // so a shell append, delete or in-place edit, or a package manager's config
 // command, would skip it. Reading the file stays allowed.
 func detectBashGateDodge(ctx *rules.EvalContext) (bool, string, string) {
-	name, ok := rules.BashRewritesFile(ctx, gatedodge.GuardedFileNames())
+	name, ok := rules.BashRewritesFile(ctx, canon.GuardedConfigFiles())
 	if !ok {
 		name = configCommandTarget(ctx)
 	}

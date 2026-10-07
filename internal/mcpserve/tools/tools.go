@@ -49,6 +49,10 @@ type Options struct {
 	CredentialVend types.CredentialVendConfig
 	// NixRun registers qsdev_nix_run.
 	NixRun bool
+	// NixRunDenyRules are the Bash deny rules qsdev_nix_run checks each call
+	// against, as the Bash commands the call is equivalent to. The serve
+	// command builds them only when NixRun is set.
+	NixRunDenyRules []string
 }
 
 // module is a named group of tool registrations, built only when mounted.
@@ -64,7 +68,7 @@ func modules() []module {
 			return security.Tools(root, enforced, opts.CredentialVend)
 		}},
 		{ModuleDevenv, func(root string, _ *middleware.Policy, opts Options) []spi.ToolRegistration {
-			return devenv.Tools(root, opts.NixRun)
+			return devenv.Tools(root, opts.NixRun, opts.NixRunDenyRules)
 		}},
 		{ModuleStatus, func(root string, _ *middleware.Policy, _ Options) []spi.ToolRegistration {
 			return status.Tools(root)

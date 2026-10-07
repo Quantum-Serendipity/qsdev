@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/Quantum-Serendipity/qsdev/internal/catalog"
+	"github.com/Quantum-Serendipity/qsdev/internal/claudesettings"
 	"github.com/Quantum-Serendipity/qsdev/internal/merge"
 	"github.com/Quantum-Serendipity/qsdev/internal/policyengine/trust"
 	"github.com/Quantum-Serendipity/qsdev/internal/sliceutil"
@@ -42,7 +43,7 @@ const (
 
 // PackageGuardMinAgeDaysEnv is the variable through which the package-guard
 // hook receives the compliance level's release-age window, in whole days.
-const PackageGuardMinAgeDaysEnv = "PACKAGE_GUARD_MIN_AGE_DAYS"
+const PackageGuardMinAgeDaysEnv = claudesettings.EnvPackageGuardMinAgeDays
 
 // Permissions defines the permission rules for Claude Code.
 type Permissions struct {

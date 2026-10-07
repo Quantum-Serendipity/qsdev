@@ -18,6 +18,7 @@ import (
 	"mvdan.cc/sh/v3/syntax"
 
 	claudecode "github.com/Quantum-Serendipity/qsdev/addons/claudecode"
+	"github.com/Quantum-Serendipity/qsdev/internal/sandbox"
 	"github.com/Quantum-Serendipity/qsdev/internal/selfprotect/hookio"
 	"github.com/Quantum-Serendipity/qsdev/pkg/types"
 )
@@ -410,6 +411,22 @@ func TestDefaultHookRegistry_AllTemplatesExist(t *testing.T) {
 
 	if len(seen) == 0 {
 		t.Error("no hook templates found to validate")
+	}
+}
+
+// TestDefaultHookRegistry_SandboxCategoriesValid pins that every hook's
+// sandbox category is one `sandbox exec --category` accepts: it rejects an
+// unknown name with a blocking exit, so a typo here would block the hook's
+// tool calls.
+func TestDefaultHookRegistry_SandboxCategoriesValid(t *testing.T) {
+	t.Parallel()
+	for _, d := range claudecode.ExportDefaultHookRegistry().Definitions() {
+		if d.SandboxCategory == "" {
+			continue // sandboxHookCommand defaults it to linter
+		}
+		if _, err := sandbox.ParseHookCategoryStrict(d.SandboxCategory); err != nil {
+			t.Errorf("hook %q (event=%s): %v", d.Owner, d.Event, err)
+		}
 	}
 }
 

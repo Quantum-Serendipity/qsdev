@@ -2,6 +2,7 @@ package catalog
 
 import (
 	"fmt"
+	"log/slog"
 	"maps"
 	"os"
 	"slices"
@@ -54,6 +55,27 @@ func Load(opts ...LoadOption) (*Catalog, error) {
 	}
 
 	return cat, nil
+}
+
+// LoadUserScope loads the catalog qsdev and the user vouch for: the embedded
+// defaults plus the user's org overlay (PolicyOrgConfigFile), never the
+// project defaults file, which is repository content. It is the source of
+// launch trust (mcpregistry.TrustedDefinitions) and of the MCP server's
+// operator opt-ins (MCPServeOptIns). An overlay that fails to load is
+// skipped with a warning, so everything it would grant fails closed; only a
+// broken embedded catalog is an error.
+func LoadUserScope() (*Catalog, error) {
+	org := PolicyOrgConfigFile()
+	if org == "" {
+		return Load()
+	}
+	cat, err := Load(WithOrgConfigFile(org))
+	if err == nil {
+		return cat, nil
+	}
+	slog.Warn("ignoring invalid user defaults file; using built-in defaults",
+		"path", org, "error", err)
+	return Load()
 }
 
 // applyProjectConfigFile applies the project defaults file at path to cat.

@@ -1,11 +1,13 @@
 package testutil
 
 import (
+	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/Quantum-Serendipity/qsdev/internal/projectctx"
 	"github.com/Quantum-Serendipity/qsdev/pkg/branding"
@@ -255,5 +257,53 @@ func TestProject_NoGit(t *testing.T) {
 	}
 	if pc.Found || pc.Root != dir || pc.GitTop != filepath.Dir(dir) {
 		t.Errorf("ResolveWorkingDir() = %+v, want Root %q, GitTop its parent, Found false", pc, dir)
+	}
+}
+
+// TestRemoveAllWithin: the isolated temp directory's cleanup outlasts a
+// directory that is busy for a while (on Windows, the working directory of a
+// probe grandchild still running) and reports one that stays busy.
+func TestRemoveAllWithin(t *testing.T) {
+	t.Parallel()
+	errBusy := errors.New("the process cannot access the file because it is being used by another process")
+	tests := []struct {
+		name     string
+		busyFor  int // attempts that fail before removal succeeds; -1 for always
+		wantErr  bool
+		attempts int // minimum attempts expected
+	}{
+		{name: "free at once", busyFor: 0, attempts: 1},
+		{name: "busy for a while", busyFor: 3, attempts: 4},
+		{name: "busy for good", busyFor: -1, wantErr: true, attempts: 2},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			calls := 0
+			remove := func(path string) error {
+				calls++
+				if path != "tmpdir" {
+					t.Errorf("remove(%q), want %q", path, "tmpdir")
+				}
+				if tt.busyFor < 0 || calls <= tt.busyFor {
+					return errBusy
+				}
+				return nil
+			}
+			wait := time.Second
+			if tt.wantErr {
+				wait = 20 * time.Millisecond
+			}
+			err := removeAllWithin("tmpdir", wait, time.Millisecond, remove)
+			if (err != nil) != tt.wantErr {
+				t.Fatalf("removeAllWithin = %v, want error %v", err, tt.wantErr)
+			}
+			if tt.wantErr && (!errors.Is(err, errBusy) || !strings.Contains(err.Error(), "tmpdir")) {
+				t.Errorf("removeAllWithin = %v, want it to wrap the busy error and name the path", err)
+			}
+			if calls < tt.attempts || (!tt.wantErr && calls != tt.attempts) {
+				t.Errorf("remove called %d times, want %d", calls, tt.attempts)
+			}
+		})
 	}
 }

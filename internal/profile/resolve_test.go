@@ -232,6 +232,8 @@ func TestResolveProjectInfrastructure(t *testing.T) {
 		{"cache URL", types.InfraConfig{NixCache: "https://cache.corp.internal", NixCachePublicKey: testCacheKey}, "https://cache.corp.internal", nil, ""},
 		{"key missing", types.InfraConfig{NixCache: "corp"}, "", ErrEndpointNotConfigured, "infrastructure.nix_cache"},
 		{"placeholder cache", types.InfraConfig{NixCache: "https://myorg.cachix.org", NixCachePublicKey: testCacheKey}, "", ErrPlaceholderEndpoint, "infrastructure.nix_cache"},
+		{"placeholder cache trailing dot", types.InfraConfig{NixCache: "https://myorg.cachix.org.", NixCachePublicKey: testCacheKey}, "", ErrPlaceholderEndpoint, "infrastructure.nix_cache"},
+		{"cache port out of range", types.InfraConfig{NixCache: "https://cache.corp.internal:70000", NixCachePublicKey: testCacheKey}, "", ErrInvalidEndpoint, "infrastructure.nix_cache"},
 		{"all-zero key", types.InfraConfig{NixCache: "corp", NixCachePublicKey: placeholderZeroKey}, "", ErrPlaceholderEndpoint, "infrastructure.nix_cache"},
 		{"plain http", types.InfraConfig{NixCache: "http://cache.corp.internal", NixCachePublicKey: testCacheKey}, "", ErrInvalidEndpoint, "infrastructure.nix_cache"},
 		{"registry proxy plain http", types.InfraConfig{RegistryProxy: "http://alice:s3cret@proxy.corp.lan:8081"}, "", ErrInvalidEndpoint, "infrastructure.registry_proxy"},
@@ -306,7 +308,12 @@ func TestValidateInfra_NoProfile(t *testing.T) {
 		{"embedded credentials", "https://alice:s3cret@proxy.corp.lan", ErrInvalidEndpoint, "environment"},
 		{"placeholder host", "https://proxy.example.com", ErrPlaceholderEndpoint, "example host"},
 		{"embedded newline", "https://proxy.corp.lan\nregistry=https://evil.io", ErrInvalidEndpoint, "not an absolute http(s) URL"},
+		{"port above 65535", "https://proxy.corp.lan:65536", ErrInvalidEndpoint, "port"},
+		{"port far out of range", "https://proxy.corp.lan:99999999999", ErrInvalidEndpoint, "port"},
+		{"port zero", "https://proxy.corp.lan:0", ErrInvalidEndpoint, "port"},
+		{"example cachix cache with trailing dot", "https://myorg.cachix.org.", ErrPlaceholderEndpoint, "example Cachix cache"},
 		{"https", "https://proxy.corp.lan/artifactory", nil, ""},
+		{"highest port", "https://proxy.corp.lan:65535", nil, ""},
 		{"loopback http", "http://localhost:8081", nil, ""},
 	}
 	for _, f := range fields {

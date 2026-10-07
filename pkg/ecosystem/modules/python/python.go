@@ -453,7 +453,7 @@ func uvExcludeNewer(config ecosystem.ModuleConfig) string {
 // the user pinned a version.
 func (m *Module) DevenvYamlInputs(_ ecosystem.ModuleConfig) []ecosystem.DevenvInput {
 	return []ecosystem.DevenvInput{
-		{URL: "github:cachix/nixpkgs-python", Follows: "nixpkgs"},
+		{URL: "github:cachix/nixpkgs-python", Follows: "nixpkgs", Options: []string{"languages.python.version"}},
 	}
 }
 

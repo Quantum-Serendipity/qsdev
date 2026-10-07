@@ -537,6 +537,7 @@ func applyToolChange(projectRoot string, change toolChange, st types.GeneratedSt
 	sharedWritten := outcome.written
 	result.nixResult = outcome.nixResult
 	result.notices = append(result.notices, change.notices...)
+	result.notices = append(result.notices, outcome.held...)
 
 	writtenPaths := make(map[string]bool, len(sharedWritten))
 	for _, f := range sharedWritten {

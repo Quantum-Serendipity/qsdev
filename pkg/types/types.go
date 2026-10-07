@@ -158,6 +158,17 @@ type DetectedProject struct {
 	HasEnvrc          bool `yaml:"has_envrc"           json:"has_envrc"`
 	HasMcpJson        bool `yaml:"has_mcp_json"        json:"has_mcp_json"`
 
+	// UpdateBotConfigs are the dependency-update bot config files present
+	// in the repository (slash-separated, sorted), whoever wrote them.
+	UpdateBotConfigs []string `yaml:"update_bot_configs,omitempty" json:"update_bot_configs,omitempty"`
+	// ProjectUpdateBots names the update tools ("dependabot", "renovate")
+	// the project configures itself rather than through qsdev, sorted. The
+	// generators never add a different bot's config next to one of them.
+	// Detection alone cannot tell qsdev's output from the project's, so
+	// init, join and update (addons/devinit) set it from UpdateBotConfigs
+	// and the recorded state; elsewhere it is empty.
+	ProjectUpdateBots []string `yaml:"project_update_bots,omitempty" json:"project_update_bots,omitempty"`
+
 	IsGitRepo   bool `yaml:"is_git_repo"   json:"is_git_repo"`
 	HasGitHooks bool `yaml:"has_git_hooks" json:"has_git_hooks"`
 	// RemoteURL is the origin remote with any embedded credentials removed

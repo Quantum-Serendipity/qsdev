@@ -6,6 +6,24 @@ All notable changes to qsdev are recorded in this file. The format is based on
 
 ## [Unreleased]
 
+### Added
+
+- Team package policy for the package guard, committed in `.qsdev.yaml` as
+  `hooks.package_guard` (U17-WS4): `denylist`, an exclusive `allowlist`,
+  `min_age_days` and `new_dep_gate` (`allow`, `ask` or `deny` for packages
+  missing from the lockfiles). Entries are package names, optionally
+  ecosystem-qualified (`npm:evil`, `pypi:requests`). `min_age_days` only
+  raises the compliance level's release-age window, and merged layers union
+  the lists and keep the larger window and the stricter gate. `qsdev check`
+  and init reject an unknown qualifier, a malformed name, `min_age_days`
+  below 1 and an unknown `new_dep_gate`. Init writes the policy to the
+  `PACKAGE_GUARD_*` variables in `.claude/settings.json`, and with the
+  `soc2-audit` hook on also `PACKAGE_GUARD_SOC2_AUDIT=true`, so the guard
+  records its dependency decisions under `$CLAUDE_AUDIT_DIR` (default
+  `~/.claude/audit/`). `PACKAGE_GUARD_MIN_AGE_DAYS` is now written whenever
+  the package guard is registered, not only when the safety-block choice is
+  recorded. Run `qsdev init --update` to pick it up.
+
 ### Changed
 
 - Self-protection now applies the shell gate-dodge check (GD-003, GD-004),
@@ -361,6 +379,13 @@ All notable changes to qsdev are recorded in this file. The format is based on
 
 ### Security
 
+- A package on the package guard's team allowlist
+  (`PACKAGE_GUARD_TEAM_ALLOWLIST`) no longer skips the OSV.dev and
+  release-age checks, so a hijacked release of an approved package published
+  today is blocked like any other (U17-WS4). The allowlist still blocks every
+  package not on it and satisfies the new-dependency gate. The developer's
+  own `PACKAGE_GUARD_DENYLIST` is now applied before the team allowlist, so a
+  personal list can only narrow team policy.
 - A committed `security.credential_vend.enabled: true` no longer mounts
   `qsdev_credential_vend` by itself (U21-V02, U21-07). The operator must
   confirm it with `--allow-credential-vend`,

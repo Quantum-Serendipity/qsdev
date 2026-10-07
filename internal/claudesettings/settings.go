@@ -63,9 +63,19 @@ const (
 // every hook command: set, it decides whether the hook's own command runs.
 const EnvShellPrefix = "CLAUDE_CODE_SHELL_PREFIX"
 
-// EnvPackageGuardMinAgeDays is the env variable through which the package
-// guard hook receives its release-age window, in whole days.
-const EnvPackageGuardMinAgeDays = "PACKAGE_GUARD_MIN_AGE_DAYS"
+// The env variables through which the package guard hook receives its
+// policy: EnvPackageGuardMinAgeDays the release-age window, in whole days;
+// EnvPackageGuardTeamAllowlist and EnvPackageGuardTeamDenylist the committed
+// hooks.package_guard lists, comma-separated; EnvPackageGuardNewDepGate what
+// it does with a package missing from the lockfiles; and
+// EnvPackageGuardSOC2Audit, "true", its dependency-decision trail.
+const (
+	EnvPackageGuardMinAgeDays    = "PACKAGE_GUARD_MIN_AGE_DAYS"
+	EnvPackageGuardTeamAllowlist = "PACKAGE_GUARD_TEAM_ALLOWLIST"
+	EnvPackageGuardTeamDenylist  = "PACKAGE_GUARD_TEAM_DENYLIST"
+	EnvPackageGuardNewDepGate    = "PACKAGE_GUARD_NEW_DEP_GATE"
+	EnvPackageGuardSOC2Audit     = "PACKAGE_GUARD_SOC2_AUDIT"
+)
 
 // launchEnvNames and launchEnvPrefixes name the env variables that decide
 // which program a hook command runs or what code it loads before the hook's

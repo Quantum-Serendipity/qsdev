@@ -395,12 +395,18 @@ func validateProfiles(cfg *types.QsdevConfig, opts ValidateOptions) []Validation
 // policyEntryErrors converts the invalid entries of a policy block (the hooks
 // block: file-boundary extra read paths the hook can resolve that do not lift
 // the read boundary, and tool name patterns; claude_code.permissions:
-// permission rules) to validation errors.
+// permission rules; the package-guard policy) to validation errors. A list
+// entry's field carries its [index]; a scalar's (Index < 0) is the bare key
+// path.
 func policyEntryErrors(entries []validation.PolicyEntryError) []ValidationError {
 	var errs []ValidationError
 	for _, e := range entries {
+		field := e.Field
+		if e.Index >= 0 {
+			field = fmt.Sprintf("%s[%d]", e.Field, e.Index)
+		}
 		errs = append(errs, ValidationError{
-			Field:   fmt.Sprintf("%s[%d]", e.Field, e.Index),
+			Field:   field,
 			Value:   e.Value,
 			Message: e.Err.Error(),
 		})

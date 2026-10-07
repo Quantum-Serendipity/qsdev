@@ -686,6 +686,25 @@ func TestPackageGuard_HookDecisions(t *testing.T) {
 		{name: "gate: invalid value blocks", command: "npm install left-pad", decision: "deny",
 			reason: "PACKAGE_GUARD_NEW_DEP_GATE", env: []string{"PACKAGE_GUARD_NEW_DEP_GATE=block"}},
 
+		// U17-WS4: the team allowlist narrows what may be installed; it never skips the
+		// release-age or vulnerability checks, and a personal list can only narrow it.
+		{name: "team-allowlisted too-new release is still quarantined", command: "npm install --ignore-scripts evil-new",
+			decision: "deny", reason: "published", env: []string{"PACKAGE_GUARD_TEAM_ALLOWLIST=npm:evil-new"}},
+		{name: "team-allowlisted established package passes", command: "npm install --ignore-scripts left-pad",
+			decision: "silent", env: []string{"PACKAGE_GUARD_TEAM_ALLOWLIST=left-pad,lodash"}},
+		{name: "name missing from the team allowlist is denied", command: "npm install --ignore-scripts express",
+			decision: "deny", reason: "not on the team-approved list",
+			env: []string{"PACKAGE_GUARD_TEAM_ALLOWLIST=left-pad"}},
+		{name: "personal denylist narrows the team allowlist", command: "npm install --ignore-scripts left-pad",
+			decision: "deny", reason: "explicit denylist",
+			env: []string{"PACKAGE_GUARD_TEAM_ALLOWLIST=left-pad", "PACKAGE_GUARD_DENYLIST=left-pad"}},
+		{name: "team-allowlisted name satisfies the new-dependency gate", command: "npm install --ignore-scripts left-pad",
+			decision: "silent", env: []string{"PACKAGE_GUARD_TEAM_ALLOWLIST=npm:left-pad", "PACKAGE_GUARD_NEW_DEP_GATE=deny"},
+			files: map[string]string{"package-lock.json": `{"packages": {"": {}, "node_modules/lodash": {}}}`}},
+		{name: "personal allowlist cannot lift the team denylist", command: "npm install --ignore-scripts left-pad",
+			decision: "deny", reason: "team denylist",
+			env: []string{"PACKAGE_GUARD_TEAM_DENYLIST=left-pad", "PACKAGE_GUARD_ALLOWLIST=left-pad"}},
+
 		// W031/W076: option values are not package names.
 		{name: "cargo add -F value", command: "cargo add ripgrep -F derive", decision: "silent",
 			lookupsLack: "crates/derive"},

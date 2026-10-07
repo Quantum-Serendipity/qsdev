@@ -139,3 +139,42 @@ func TestMergeMapStringAny_OverrideKey(t *testing.T) {
 		t.Errorf("expected overlay-value, got %v", result["tool"]["key"])
 	}
 }
+
+// TestMergePackageGuard checks that no layer loosens hooks.package_guard:
+// lists union, min_age_days takes the larger, new_dep_gate the stricter.
+func TestMergePackageGuard(t *testing.T) {
+	t.Parallel()
+	three, seven := 3, 7
+	tests := []struct {
+		name          string
+		base, overlay types.PackageGuardConfig
+		wantDays      *int
+		wantGate      string
+	}{
+		{name: "empty"},
+		{name: "overlay raises", base: types.PackageGuardConfig{MinAgeDays: &three, NewDepGate: types.NewDepGateAsk},
+			overlay: types.PackageGuardConfig{MinAgeDays: &seven, NewDepGate: types.NewDepGateDeny}, wantDays: &seven, wantGate: types.NewDepGateDeny},
+		{name: "overlay cannot lower", base: types.PackageGuardConfig{MinAgeDays: &seven, NewDepGate: types.NewDepGateDeny},
+			overlay: types.PackageGuardConfig{MinAgeDays: &three, NewDepGate: types.NewDepGateAllow}, wantDays: &seven, wantGate: types.NewDepGateDeny},
+		{name: "overlay only", overlay: types.PackageGuardConfig{MinAgeDays: &three, NewDepGate: types.NewDepGateAllow}, wantDays: &three, wantGate: types.NewDepGateAllow},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			tt.base.Denylist, tt.overlay.Denylist = []string{"a"}, []string{"b", "a"}
+			got := mergePackageGuard(tt.base, tt.overlay)
+			if (got.MinAgeDays == nil) != (tt.wantDays == nil) || (got.MinAgeDays != nil && *got.MinAgeDays != *tt.wantDays) {
+				t.Errorf("min_age_days = %v, want %v", got.MinAgeDays, tt.wantDays)
+			}
+			if got.MinAgeDays != nil && (got.MinAgeDays == tt.base.MinAgeDays || got.MinAgeDays == tt.overlay.MinAgeDays) {
+				t.Error("min_age_days aliases an input pointer")
+			}
+			if got.NewDepGate != tt.wantGate {
+				t.Errorf("new_dep_gate = %q, want %q", got.NewDepGate, tt.wantGate)
+			}
+			if len(got.Denylist) != 2 || got.Denylist[0] != "a" || got.Denylist[1] != "b" {
+				t.Errorf("denylist = %v, want [a b]", got.Denylist)
+			}
+		})
+	}
+}

@@ -569,6 +569,11 @@ hooks:
   tool_gates:
     allowed: [Read, Grep, Glob, Edit, Write, Bash, "mcp__context7__*"]
     denied: [WebFetch, WebSearch, "mcp__github__delete_*"]
+  package_guard:
+    denylist: ["npm:event-stream", "pypi:colourama"]
+    allowlist: [left-pad, "pypi:requests", "go:golang.org/x/net"]
+    min_age_days: 7
+    new_dep_gate: ask
 ```
 
 - **`file_boundary.extra_read_paths`** widens what the `file-boundary` hook
@@ -609,6 +614,50 @@ hooks:
   tool. `qsdev claude hooks list` then shows it as `yes (no policy)`, the
   init preview as `tool-gates (no policy)`, and `qsdev check` reports a
   `claude_hook_no_policy` warning.
+- **`package_guard`** is the team policy the package guard
+  (`package-guard.py`) applies to every package install it checks. Without
+  it the guard runs with its defaults.
+  - **`denylist`**: packages that are always blocked, before any registry
+    lookup.
+  - **`allowlist`**: when non-empty, the only packages that may be
+    installed; every other package is blocked as "not on the team-approved
+    list". A team-allowed package is **not** exempt from the checks: it is
+    still resolved, checked against OSV.dev and held to the release-age
+    window, so a hijacked release published today is blocked even under a
+    committed allowlist. It does satisfy the new-dependency gate.
+  - **`min_age_days`**: the minimum release age in days, at least 1. It
+    only raises the compliance level's window (3, 7 or 14 days, see
+    [Release-age window](#release-age-window)); a smaller value leaves the
+    level's window in place.
+  - **`new_dep_gate`**: `allow`, `ask` or `deny`, what the guard does with
+    a package that is in neither the project's lockfiles nor the team
+    allowlist. Unset keeps the guard's default, `allow`.
+
+  List entries are package names, optionally qualified by ecosystem as
+  `<ecosystem>:<name>` (`npm:evil`, `pypi:Flask_Cors`, `jsr:@scope/name`,
+  `go:github.com/a/b`). An unqualified name matches in every ecosystem. The
+  qualifiers are `npm`, `pypi` (or `pip`), `crates` (or `crates.io`,
+  `cargo`), `go` (or `golang`), `rubygems` (or `gem`), `packagist` (or
+  `composer`), `nuget`, `pub` and `jsr`, compared case-insensitively. Names
+  are compared the way each registry does (PyPI per PEP 503, crates.io with
+  `-` equal to `_`, the others case-insensitively). A name may contain only
+  letters, digits, `@`, `.`, `_`, `/` and `-`, so it is comma-free;
+  anything else (an unknown qualifier, a comma, whitespace, an empty name,
+  control or invisible characters), a `min_age_days` below 1 and an unknown
+  `new_dep_gate` are rejected by `qsdev check` and stop init with an error.
+  Merging the configuration layers never loosens the policy: the lists of
+  each layer are unioned, `min_age_days` takes the largest value and
+  `new_dep_gate` the strictest. The guard applies the lists in this order:
+  team denylist, the developer's own `PACKAGE_GUARD_DENYLIST`, team
+  allowlist, the developer's own `PACKAGE_GUARD_ALLOWLIST` (which skips the
+  checks), then the registry checks, so a personal list can only narrow
+  the team policy. The policy reaches the hook through
+  `PACKAGE_GUARD_TEAM_DENYLIST`, `PACKAGE_GUARD_TEAM_ALLOWLIST`,
+  `PACKAGE_GUARD_MIN_AGE_DAYS` and `PACKAGE_GUARD_NEW_DEP_GATE` in the
+  `env` block of `.claude/settings.json`. With the `soc2-audit` hook on,
+  `PACKAGE_GUARD_SOC2_AUDIT=true` also makes the guard record each
+  decision in `$CLAUDE_AUDIT_DIR/dependency-changes-YYYY-MM.jsonl`
+  (default `~/.claude/audit/`), next to the soc2-audit hook's own trail.
 
 `qsdev check` also fails (`claude_hook_env_changed`, high severity) when a
 variable qsdev generates from this block is missing from, or holds another
@@ -1074,8 +1123,12 @@ The three-way merge during updates preserves any custom allow/deny rules you hav
 `env` holds variables qsdev generates to configure its hooks
 (`FILE_BOUNDARY_EXTRA_READ_PATHS`, from `hooks.file_boundary.extra_read_paths`;
 `TOOL_GATES_ALLOWED` and `TOOL_GATES_DENIED`, from `hooks.tool_gates`;
-`PACKAGE_GUARD_MIN_AGE_DAYS`, the package guard's release-age gate in days
-from the compliance level, when the safety-block hook is on)
+and, while the package guard is registered, `PACKAGE_GUARD_MIN_AGE_DAYS`,
+its release-age gate in days from the compliance level raised by
+`hooks.package_guard.min_age_days`; `PACKAGE_GUARD_TEAM_ALLOWLIST`,
+`PACKAGE_GUARD_TEAM_DENYLIST` and `PACKAGE_GUARD_NEW_DEP_GATE`, from
+`hooks.package_guard`; and `PACKAGE_GUARD_SOC2_AUDIT=true` when the
+`soc2-audit` hook is on)
 alongside any you add. A regeneration sets the generated variables to the
 committed policy's values, removes one the policy no longer produces unless
 you changed it, and keeps your own variables.

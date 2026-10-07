@@ -357,13 +357,35 @@ func buildHookEnv(answers types.WizardAnswers) (map[string]string, error) {
 		setListEnv(env, ToolGatesAllowedEnv, answers.HookPolicy.ToolGates.Allowed)
 		setListEnv(env, ToolGatesDeniedEnv, answers.HookPolicy.ToolGates.Denied)
 	}
-	if answers.Hooks.SafetyBlock {
-		env[PackageGuardMinAgeDaysEnv] = strconv.Itoa(packageGuardMinAgeDays(catalog.EffectiveAgeGate(answers.ComplianceLevel)))
+	if packageGuardEnabled(answers) {
+		packageGuardEnv(answers, env)
 	}
 	if len(env) == 0 {
 		return nil, nil
 	}
 	return env, nil
+}
+
+// packageGuardEnv adds the package-guard hook's env entries to env: the
+// compliance level's release-age window, raised (never lowered, D18) by
+// hooks.package_guard.min_age_days; the committed team lists and
+// new-dependency gate; and the dependency-decision trail when the soc2-audit
+// hook is chosen. The policy was validated by the caller.
+func packageGuardEnv(answers types.WizardAnswers, env map[string]string) {
+	policy := answers.HookPolicy.PackageGuard
+	days := packageGuardMinAgeDays(catalog.EffectiveAgeGate(answers.ComplianceLevel))
+	if policy.MinAgeDays != nil {
+		days = max(days, *policy.MinAgeDays)
+	}
+	env[PackageGuardMinAgeDaysEnv] = strconv.Itoa(days)
+	setListEnv(env, claudesettings.EnvPackageGuardTeamAllowlist, policy.Allowlist)
+	setListEnv(env, claudesettings.EnvPackageGuardTeamDenylist, policy.Denylist)
+	if policy.NewDepGate != "" {
+		env[claudesettings.EnvPackageGuardNewDepGate] = policy.NewDepGate
+	}
+	if answers.Hooks.SOC2Audit {
+		env[claudesettings.EnvPackageGuardSOC2Audit] = "true"
+	}
 }
 
 // setListEnv sets env[key] to values, deduplicated and comma-separated, when

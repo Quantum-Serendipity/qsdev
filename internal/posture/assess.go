@@ -50,6 +50,9 @@ var ErrNotInitialized = errors.New("project not initialized: run 'qsdev init' fi
 // assembles a PostureReport. Returns ErrNotInitialized if no state files or
 // .qsdev.yaml exist.
 func Assess(projectPath string, opts AssessOptions) (*PostureReport, error) {
+	// One root context bounds the assessment's detection and MCP grading.
+	ctx := context.Background()
+
 	// Validate that the project path exists.
 	info, err := os.Stat(projectPath)
 	if err != nil {
@@ -176,7 +179,7 @@ func Assess(projectPath string, opts AssessOptions) (*PostureReport, error) {
 		Files:        merged.Files,
 		EnabledTools: merged.EnabledTools,
 	}
-	detected := detect.Detect(context.Background(), projectPath, opts.DetectOptions...)
+	detected := detect.Detect(ctx, projectPath, opts.DetectOptions...)
 
 	// Defense and conformance also credit protection the project has outside
 	// qsdev's state, such as a hand-written pre-commit config. That goes into a
@@ -267,7 +270,7 @@ func Assess(projectPath string, opts AssessOptions) (*PostureReport, error) {
 		return nil, fmt.Errorf("assessing tools: %w", err)
 	}
 	report.Tools = tools
-	report.McpServers = gradeMcpServers(context.Background(), projectPath, mcpregistry.DefaultRegistry())
+	report.McpServers = gradeMcpServers(ctx, projectPath, mcpregistry.DefaultRegistry())
 
 	// Compute aggregate score.
 	report.Score = ComputeAggregateScore(report.Defense.Score, configScore, report.Dependencies.Score)

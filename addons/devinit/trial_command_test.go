@@ -9,6 +9,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/Quantum-Serendipity/qsdev/internal/testutil"
 )
 
 // initTrialTestRepo creates a real repository with one commit on branch
@@ -156,17 +158,7 @@ func TestTrialCmd_HasCorrectUseAndFlags(t *testing.T) {
 }
 
 func TestTrialCmd_DryRun(t *testing.T) {
-	// Create a temp dir that looks like a git repo.
-	dir := t.TempDir()
-	if err := os.MkdirAll(filepath.Join(dir, ".git"), 0o755); err != nil {
-		t.Fatalf("setup .git: %v", err)
-	}
-
-	origDir, _ := os.Getwd()
-	defer func() { _ = os.Chdir(origDir) }()
-	if err := os.Chdir(dir); err != nil {
-		t.Fatalf("chdir: %v", err)
-	}
+	testutil.Project(t, testutil.ProjectOptions{})
 
 	cmd := trialCmd()
 	var buf bytes.Buffer
@@ -192,13 +184,7 @@ func TestTrialCmd_DryRun(t *testing.T) {
 }
 
 func TestTrialCmd_FailsOutsideGitRepo(t *testing.T) {
-	dir := t.TempDir()
-
-	origDir, _ := os.Getwd()
-	defer func() { _ = os.Chdir(origDir) }()
-	if err := os.Chdir(dir); err != nil {
-		t.Fatalf("chdir: %v", err)
-	}
+	testutil.Project(t, testutil.ProjectOptions{NoGit: true})
 
 	cmd := trialCmd()
 	var buf bytes.Buffer
@@ -216,21 +202,12 @@ func TestTrialCmd_FailsOutsideGitRepo(t *testing.T) {
 }
 
 func TestTrialCmd_FailsWhenPathExists(t *testing.T) {
-	dir := t.TempDir()
-	if err := os.MkdirAll(filepath.Join(dir, ".git"), 0o755); err != nil {
-		t.Fatalf("setup .git: %v", err)
-	}
+	dir := testutil.Project(t, testutil.ProjectOptions{})
 
 	// Create the target path so it already exists.
 	targetPath := filepath.Join(dir, "existing-target")
 	if err := os.MkdirAll(targetPath, 0o755); err != nil {
 		t.Fatalf("setup target: %v", err)
-	}
-
-	origDir, _ := os.Getwd()
-	defer func() { _ = os.Chdir(origDir) }()
-	if err := os.Chdir(dir); err != nil {
-		t.Fatalf("chdir: %v", err)
 	}
 
 	cmd := trialCmd()
@@ -292,16 +269,7 @@ func TestValidateBranchName(t *testing.T) {
 }
 
 func TestTrialCmd_RejectsInvalidBranchName(t *testing.T) {
-	dir := t.TempDir()
-	if err := os.MkdirAll(filepath.Join(dir, ".git"), 0o755); err != nil {
-		t.Fatalf("setup .git: %v", err)
-	}
-
-	origDir, _ := os.Getwd()
-	defer func() { _ = os.Chdir(origDir) }()
-	if err := os.Chdir(dir); err != nil {
-		t.Fatalf("chdir: %v", err)
-	}
+	testutil.Project(t, testutil.ProjectOptions{})
 
 	cmd := trialCmd()
 	var buf bytes.Buffer

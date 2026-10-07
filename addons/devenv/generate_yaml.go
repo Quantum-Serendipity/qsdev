@@ -2,6 +2,7 @@ package devenv
 
 import (
 	"fmt"
+	"slices"
 	"sort"
 
 	"gopkg.in/yaml.v3"
@@ -15,7 +16,7 @@ import (
 const (
 	nixpkgsURL     = "github:NixOS/nixpkgs/nixpkgs-unstable"
 	gitHooksURL    = "github:cachix/git-hooks.nix"
-	requireVersion = ">=2.1"
+	requireVersion = ">=" + types.MinDevenv
 	yamlHeaderFmt  = "# %s init — security-hardened devenv configuration.\n# See https://devenv.sh/reference/yaml-options/ for all options.\n"
 )
 
@@ -104,6 +105,34 @@ func (c *genContext) collectEcosystemInputs() map[string]DevenvYamlInput {
 	return merged
 }
 
+// cleanKeep returns the devenv.yaml clean.keep list: the catalog keep_vars in
+// order, then the selector variables every selected module keeps
+// (ecosystem.EnvKeeper) that the catalog does not already list, sorted and
+// deduplicated so the output is stable.
+func (c *genContext) cleanKeep() []string {
+	keep := c.cat.KeepVars()
+	if c.modules == nil {
+		return keep
+	}
+	var extra []string
+	for _, lang := range c.answers.Languages {
+		mod, ok := c.modules.ByName(lang.Name)
+		if !ok {
+			continue
+		}
+		if keeper, ok := mod.(ecosystem.EnvKeeper); ok {
+			extra = append(extra, keeper.KeepEnvVars()...)
+		}
+	}
+	slices.Sort(extra)
+	for _, name := range slices.Compact(extra) {
+		if !slices.Contains(keep, name) {
+			keep = append(keep, name)
+		}
+	}
+	return keep
+}
+
 // GenerateDevenvYaml produces a security-hardened devenv.yaml from the wizard
 // answers and ecosystem registry.
 func GenerateDevenvYaml(answers types.WizardAnswers, registry *ecosystem.Registry) (*types.GeneratedFile, error) {
@@ -131,7 +160,7 @@ func generateDevenvYaml(ctx *genContext) (*types.GeneratedFile, error) {
 		},
 		Clean: DevenvClean{
 			Enabled: true,
-			Keep:    ctx.cat.KeepVars(),
+			Keep:    ctx.cleanKeep(),
 		},
 	}
 

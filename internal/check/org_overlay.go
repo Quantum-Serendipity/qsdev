@@ -7,8 +7,10 @@ import (
 // CheckOrgOverlay reports whether the org overlay this run resolves is the
 // one the CLI reads for the project (ctx.OrgConfigDrift): the overlay a human
 // pinned with 'defaults pin', or the account's home overlay when none is
-// pinned. When it is not, the CLI ignores it and reads that one instead, so
-// what <EnvPrefix>ORG_CONFIG names and what regenerations apply differ.
+// pinned. With <EnvPrefix>ORG_CONFIG unset the run names the pinned overlay,
+// so it passes and reports that overlay (ctx.OrgConfigSource). When the
+// variable names another overlay, the CLI ignores it and reads the pinned one
+// instead, so what the variable names and what regenerations apply differ.
 func CheckOrgOverlay(ctx CheckContext) CheckResult {
 	b := branding.Get()
 	if ctx.OrgConfigDrift == "" {

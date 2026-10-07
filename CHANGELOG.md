@@ -8,6 +8,88 @@ All notable changes to qsdev are recorded in this file. The format is based on
 
 ### Changed
 
+- `qsdev devenv doctor` enforces host version floors: devenv >= 2.1 (the
+  `require_version` the generated `devenv.yaml` declares) and nix >= 2.4 (the
+  first release with `nix profile` and flakes) are required, and python3 >=
+  3.9 is required by projects with Python hooks. A host with devenv 1.x, nix
+  below 2.4, or a required tool whose version cannot be read now fails
+  `doctor --check`, which lists each problem as "Install X: <fix>", "Upgrade
+  X to >= Y: <fix>" or "Could not determine X version (need >= Y)" instead of
+  "All required tools are present.". The full report marks such a required
+  tool as failed rather than a warning, and the JSON report gains each tool's
+  `min_version`. No generated files change.
+- `qsdev devenv setup`, the init/join auto-setup and the bootstrap devenv step
+  verify what they installed. Setup re-runs the checks and fails (exit
+  non-zero) when a selected tool is still missing from PATH or below its
+  floor, naming the PATH fix or the version found; auto-setup prints
+  "Prerequisites installed." only after that verification passes. The
+  bootstrap step upgrades a devenv below 2.1 instead of reporting it
+  "already installed", and fails when the version on PATH is still too old
+  afterwards. An installed nix below 2.4 is not reinstalled: the Nix
+  installer cannot upgrade it, so setup and doctor point at the in-place
+  upgrade instead. The init/join prerequisite gate applies the same floors,
+  so an outdated devenv or nix reaches the verified auto-setup instead of
+  being reported "OK". Setup also fails when it leaves a required tool
+  missing or outdated (an installed nix below 2.4, or a tool deselected at
+  the prompt), listing each with its upgrade hint.
+- `qsdev devenv doctor` (and the MCP `doctor` tool) require the programs the
+  project's Claude Code hooks look up on PATH, including the interpreter of
+  each hook script and programs inside the generated fail-closed wrappers. A
+  python3 inside the project (an activated `.venv`, devenv's
+  `.devenv/state/venv`) is never run; its version is read from the
+  environment's `pyvenv.cfg`. Doctor and `qsdev check` resolve hook programs
+  on the PATH of the shell they run in, which they assume is the PATH Claude
+  Code starts hooks with: run them from the activated devenv shell (in CI,
+  inside `devenv shell`). A hook program spelled as another Python version
+  (`python`, `python3.11`) or, on Windows, in another case or with a
+  PATHEXT extension keeps the python3 floor. When the Claude Code settings
+  cannot be read, every doctor output warns that the hook programs were not
+  checked.
+- The user (org) defaults file can no longer lower the built-in security
+  floor. Its `security_hooks` and `unset_vars` now add to the built-in
+  lists instead of replacing them, and a file that keeps a stripped
+  credential in `keep_vars`, weakens a built-in compliance level (drops a
+  required hook, shortens the age gate, turns off script blocking, the
+  Claude audit log or license scanning, loosens the Claude permission
+  preset, or renumbers it), maps a tier to a lower or weaker compliance
+  level, or tiers an always-on hook out of a security level now fails to
+  load (`qsdev defaults validate` names each
+  field; previously it reported such a file as valid). `qsdev defaults
+  validate` now checks the overlay it reports (`$QSDEV_ORG_CONFIG` or the
+  home overlay) even before it is pinned, instead of silently validating
+  the pinned overlay. Catalog layers now
+  apply in the order built-in, user, project, so the committed project
+  policy, which may only add, can no longer be erased by a user file: where
+  both set the same deny set, the result is the user list plus the
+  project's additions; the project file is still judged against the
+  built-in catalog, so a user file never makes it fail to load. A compliance level's required hook that is listed
+  only in `hook_tiers` (which never enables a hook) is rejected.
+
+- `qsdev check` now fails (high severity, `devenv_security_floor`) when the
+  hand-edited `devenv.nix`, together with `devenv.local.nix`, no longer
+  enables a security git hook (the always-on hooks, the custom hooks, and
+  the compliance level's required hooks) or no longer strips a credential
+  variable that the generated `devenv.nix` does. Before, a `devenv.nix`
+  with `ripsecrets.enable = false;` or a deleted `unsetEnvVars` entry
+  passed, because the generated-file checks skip `devenv.nix`. It also
+  fails when a security hook's settings (`entry`, `excludes`, ...) differ
+  from the generated file, or when a module cannot be verified statically
+  (`imports`, a computed `unsetEnvVars`). Disabling a formatter or linter
+  hook is still allowed.
+
+- Cloud selector variables are no longer stripped from the devenv shell
+  (U11-WS4). `AWS_DEFAULT_REGION`, `GCLOUD_PROJECT`, `CLOUDSDK_CORE_PROJECT`,
+  `AZURE_TENANT_ID` and `AZURE_SUBSCRIPTION_ID` pick an account context but
+  grant no access, so they left the credential list and the generated
+  `unsetEnvVars`; a region set by the `aws_default_region` extra used to be
+  unset again right after devenv exported it. The selected AWS, GCP and Azure
+  modules now add their selectors to devenv.yaml `clean.keep`, so these values
+  pass through from your shell: `AWS_PROFILE`, `AWS_REGION`,
+  `AWS_DEFAULT_REGION`, `CLOUDSDK_ACTIVE_CONFIG_NAME`,
+  `CLOUDSDK_CORE_PROJECT`, `GOOGLE_CLOUD_PROJECT`, `ARM_SUBSCRIPTION_ID` and
+  `ARM_TENANT_ID`. The `aws_default_region` extra now sets `AWS_REGION` as
+  well as `AWS_DEFAULT_REGION`, and the wizard asks for the `aws_profile`
+  extra. Run `qsdev init --update` to regenerate devenv.nix and devenv.yaml.
 - `qsdev sandbox exec` keeps the project's control plane read-only for the
   hook categories with a writable project (formatter, generator,
   test-runner): git's hooks, config, info and modules, `.claude` (except the

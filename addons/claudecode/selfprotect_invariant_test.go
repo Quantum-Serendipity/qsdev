@@ -12,6 +12,7 @@ import (
 	"github.com/Quantum-Serendipity/qsdev/addons/claudecode"
 	"github.com/Quantum-Serendipity/qsdev/internal/answers"
 	qsdevconfig "github.com/Quantum-Serendipity/qsdev/internal/config"
+	"github.com/Quantum-Serendipity/qsdev/internal/testutil"
 	"github.com/Quantum-Serendipity/qsdev/pkg/branding"
 	"github.com/Quantum-Serendipity/qsdev/pkg/types"
 )
@@ -228,12 +229,10 @@ func settingsHasSelfprotect(t *testing.T, dir string) bool {
 }
 
 // claudeInitProject runs `claude init --yes` in a fresh project with its own
-// HOME and returns the project directory.
+// isolated user directories and returns the project directory.
 func claudeInitProject(t *testing.T) string {
 	t.Helper()
-	t.Setenv("HOME", t.TempDir())
-	dir := t.TempDir()
-	chdir(t, dir)
+	dir := testutil.Project(t, testutil.ProjectOptions{})
 	mustRunClaude(t, "init", "--yes")
 	return dir
 }

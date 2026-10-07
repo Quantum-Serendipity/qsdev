@@ -56,45 +56,62 @@ except Exception as _exc:
 # the call through.
 _HOOK_DEADLINE_S = 8
 
+# Checked in every file: the credential token shapes of the qsdev canon
+# (internal/secrets ValuePatterns, in canon order), then the scan-only
+# assignment heuristics (addons/claudecode ScanHeuristicPatterns). Kept equal to
+# the Go side by TestSecretPatterns_MatchPythonHook; every canon entry must
+# compile in both Go RE2 and Python re.
 DEFAULT_PATTERNS: list[str] = [
     # AWS access key IDs (long-term AKIA and temporary STS ASIA)
     r'(AKIA|ASIA)[0-9A-Z]{16}',
-    # AWS secret/session token assignments
-    r'(?i)aws[_-]?(secret[_-]?access[_-]?key|session[_-]?token)\s*[=:]\s*[A-Za-z0-9/+=]{20,}',
     # GitHub classic, OAuth, user-to-server, server and refresh tokens
     r'gh[pousr]_[A-Za-z0-9_]{36,}',
-    # GitLab personal access tokens
-    r'glpat-[A-Za-z0-9_-]{20,}',
-    # Generic API key assignments
-    r"""["']?[Aa](pi|PI)[_-]?[Kk](ey|EY)["']?\s*[=:]\s*["'][A-Za-z0-9_-]{20,}["']""",
-    # PEM private keys, including encrypted keys and PGP secret key blocks
-    r'-----BEGIN ((RSA|EC|DSA|OPENSSH|ENCRYPTED|PGP) )?PRIVATE KEY( BLOCK)?-----',
-    # JWT tokens (three base64url segments)
-    r'eyJ[A-Za-z0-9_-]{10,}\.eyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}',
-    # Database connection strings with credentials
-    r"""(mongodb(\+srv)?|postgres(ql)?|mysql|redis)://[^\s"':]+:[^\s"'@]+@[^\s"']{5,}""",
-    # Slack API tokens
-    r'xox[bprase]-[A-Za-z0-9-]{10,}',
-    # Stripe secret keys
-    r'sk_(live|test)_[A-Za-z0-9]{20,}',
-    # SendGrid API keys
-    r'SG\.[A-Za-z0-9_-]{22}\.[A-Za-z0-9_-]{43}',
-    # Generic secret/password assignments; the key may be quoted (JSON)
-    r"""(?i)(password|passwd|secret|token|credential)["']?\s*[=:]\s*["'][^\s"']{8,}["']""",
     # GitHub fine-grained personal access tokens
     r'github_pat_[A-Za-z0-9_]{22,}',
-    # Anthropic API keys
+    # GitLab personal access tokens
+    r'glpat-[A-Za-z0-9_-]{20,}',
+    # Stripe secret keys
+    r'sk_(live|test)_[A-Za-z0-9]{20,}',
+    # Stripe restricted keys
+    r'rk_(live|test)_[A-Za-z0-9]{20,}',
+    # npm access tokens
+    r'npm_[A-Za-z0-9]{36,}',
+    # JWT tokens (three base64url segments; the signature may be short or empty)
+    r'eyJ[A-Za-z0-9_-]{10,}\.eyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]*',
+    # PEM private keys, including encrypted keys and PGP secret key blocks
+    r'-----BEGIN [A-Z0-9 ]*PRIVATE KEY(?: BLOCK)?-----',
+    # Azure storage account keys in connection strings
+    r'AccountKey=[A-Za-z0-9+/=]{44,}',
+    # Google API keys
+    r'AIza[0-9A-Za-z_-]{35}',
+    # Database connection strings with credentials
+    r"""(mongodb(\+srv)?|postgres(ql)?|mysql|redis)://[^\s"':]+:[^\s"'@]+@[^\s"']{5,}""",
+    # HashiCorp Vault service, batch and recovery tokens
+    r'hv[sbr]\.[A-Za-z0-9_-]{24,}',
+    # Slack API tokens
+    r'xox[bprase]-[A-Za-z0-9-]{10,}',
+    # SendGrid API keys
+    r'SG\.[A-Za-z0-9_-]{22}\.[A-Za-z0-9_-]{43}',
+    # Anthropic API and admin keys
     r'sk-ant-[A-Za-z0-9_-]{20,}',
     # OpenAI API keys (project, service-account, admin and legacy)
     r'sk-(proj|svcacct|admin)-[A-Za-z0-9_-]{20,}|sk-[A-Za-z0-9]{20}T3BlbkFJ[A-Za-z0-9]{20}',
-    # Google API keys
-    r'AIza[0-9A-Za-z_-]{35}',
-    # npm access tokens
-    r'npm_[A-Za-z0-9]{36}',
     # PyPI API tokens
     r'pypi-[A-Za-z0-9_-]{50,}',
-    # Slack incoming webhooks
-    r'https://hooks\.slack\.com/services/T[A-Za-z0-9]+/B[A-Za-z0-9]+/[A-Za-z0-9]+',
+    # Slack incoming webhooks; the zero-width (?:^|\b) keeps the match the bare URL
+    r'(?:^|\b)https://hooks\.slack\.com/services/T[A-Za-z0-9]+/B[A-Za-z0-9]+/[A-Za-z0-9]+',
+    # Docker Hub personal access tokens
+    r'dckr_pat_[A-Za-z0-9_-]{20,}',
+    # Hugging Face access tokens
+    r'hf_[A-Za-z0-9]{30,}',
+    # age secret keys
+    r'AGE-SECRET-KEY-1[0-9A-Z]{58}',
+    # Heuristic: AWS secret/session token assignments
+    r'(?i)aws[_-]?(secret[_-]?access[_-]?key|session[_-]?token)\s*[=:]\s*[A-Za-z0-9/+=]{20,}',
+    # Heuristic: generic API key assignments
+    r"""["']?[Aa](pi|PI)[_-]?[Kk](ey|EY)["']?\s*[=:]\s*["'][A-Za-z0-9_-]{20,}["']""",
+    # Heuristic: generic secret/password assignments; the key may be quoted (JSON)
+    r"""(?i)(password|passwd|secret|token|credential)["']?\s*[=:]\s*["'][^\s"']{8,}["']""",
 ]
 
 # Unquoted `KEY=value` / `key: value` assignments, checked only in dotenv and

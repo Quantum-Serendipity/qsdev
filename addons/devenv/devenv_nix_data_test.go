@@ -1,12 +1,16 @@
 package devenv
 
 import (
+	"os"
+	"path/filepath"
 	"slices"
 	"strconv"
 	"strings"
 	"testing"
 
 	"github.com/Quantum-Serendipity/qsdev/internal/catalog"
+	"github.com/Quantum-Serendipity/qsdev/internal/toolreg"
+	"github.com/Quantum-Serendipity/qsdev/pkg/branding"
 	"github.com/Quantum-Serendipity/qsdev/pkg/ecosystem"
 	"github.com/Quantum-Serendipity/qsdev/pkg/types"
 )
@@ -577,5 +581,66 @@ func TestBuildDevenvNixData_BuiltInHookRejectsPackage(t *testing.T) {
 	}
 	if _, err := buildWithHook(t, ecosystem.HookConfig{ID: "mix-format", BuiltIn: true}); err != nil {
 		t.Fatalf("plain built-in hook: %v", err)
+	}
+}
+
+// TestBuildDevenvNixData_HostileOrgHooksStillEmitRipsecrets checks that an
+// org defaults file replacing security_hooks cannot drop a built-in
+// always-on hook or stripped variable from the generated devenv.nix: the org
+// layer only adds to both (G-01). It changes the process-wide catalog, so
+// it does not run in parallel.
+func TestBuildDevenvNixData_HostileOrgHooksStillEmitRipsecrets(t *testing.T) {
+	embedded, err := catalog.Load()
+	if err != nil {
+		t.Fatalf("loading the embedded catalog: %v", err)
+	}
+	overlay := filepath.Join(t.TempDir(), "defaults.yaml")
+	if err := os.WriteFile(overlay, []byte("security_hooks:\n  - check-merge-conflicts\nunset_vars:\n  - MY_TEAM_TOKEN\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv(branding.Get().EnvPrefix+"ORG_CONFIG", overlay)
+	prior := catalog.ProjectRoot()
+	t.Cleanup(func() {
+		catalog.ResetDefault()
+		if err := catalog.SetProjectRoot(prior); err != nil {
+			t.Errorf("restoring the catalog project root: %v", err)
+		}
+		toolreg.ResetDefaultRegistry()
+	})
+	catalog.ResetDefault()
+	toolreg.ResetDefaultRegistry()
+	cat, err := catalog.Default()
+	if err != nil {
+		t.Fatalf("catalog.Default: %v", err)
+	}
+	if catalog.OrgOverlayError() != nil {
+		t.Fatalf("the org overlay was skipped: %v", catalog.OrgOverlayError())
+	}
+
+	answers := types.WizardAnswers{ProjectName: "hostile-org", Tier: "full"}
+	answers.FillDefaults(types.DetectedProject{}, cat)
+	file, err := GenerateDevenvNix(answers, ecosystem.NewRegistry())
+	if err != nil {
+		t.Fatalf("GenerateDevenvNix: %v", err)
+	}
+	src := string(file.Content)
+	if !strings.Contains(src, "ripsecrets.enable = true;") {
+		t.Errorf("devenv.nix at tier full does not emit ripsecrets.enable = true:\n%s", src)
+	}
+	declared, err := DeclaredSecurity(src)
+	if err != nil {
+		t.Fatalf("DeclaredSecurity: %v", err)
+	}
+	hooks, vars := declared.Hooks, declared.UnsetVars
+	for _, h := range embedded.SecurityHooks() {
+		if !slices.Contains(hooks, h) {
+			t.Errorf("devenv.nix does not enable embedded always-on hook %q (enabled: %v)", h, hooks)
+		}
+	}
+	// MY_TEAM_TOKEN shows the overlay was applied.
+	for _, v := range append(embedded.UnsetVars(), "MY_TEAM_TOKEN") {
+		if !slices.Contains(vars, v) {
+			t.Errorf("devenv.nix does not strip variable %q", v)
+		}
 	}
 }

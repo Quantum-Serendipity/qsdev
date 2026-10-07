@@ -982,3 +982,106 @@ func TestRunCheck_InvalidProjectDefaults_Human(t *testing.T) {
 		t.Errorf("check returned %v, want a CheckFailedError", err)
 	}
 }
+
+// TestRunCheck_WeakenedDevenvNixFails is the G-01 independent check: a
+// devenv.nix hand-edited to disable ripsecrets and keep
+// AWS_SECRET_ACCESS_KEY in the shell fails check, though file_state skips
+// devenv.nix (it is human-edited), while a hand-disabled formatter does not.
+func TestRunCheck_WeakenedDevenvNixFails(t *testing.T) {
+	floorResult := func(t *testing.T, report check.CheckReport) check.CheckResult {
+		t.Helper()
+		for _, c := range report.Checks {
+			if c.Name == "devenv_security_floor" {
+				return c
+			}
+		}
+		t.Fatalf("check reports no devenv_security_floor result: %+v", report.Checks)
+		return check.CheckResult{}
+	}
+	dir := initLifecycleProject(t)
+	if r := floorResult(t, runCheckJSON(t, dir)); r.Status != check.StatusPass {
+		t.Fatalf("freshly generated devenv.nix: devenv_security_floor = %+v, want pass", r)
+	}
+
+	path := filepath.Join(dir, "devenv.nix")
+	src := readProjectFile(t, dir, "devenv.nix")
+	for _, want := range []string{"ripsecrets.enable = true;", `"AWS_SECRET_ACCESS_KEY" `, "gofmt"} {
+		if !strings.Contains(src, want) {
+			t.Fatalf("generated devenv.nix lacks %s:\n%s", want, src)
+		}
+	}
+	formatterOff := strings.Replace(src, "gofmt.enable = true;", "gofmt.enable = false;", 1)
+	if formatterOff == src {
+		t.Fatalf("generated devenv.nix has no gofmt.enable = true:\n%s", src)
+	}
+	if err := os.WriteFile(path, []byte(formatterOff), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if r := floorResult(t, runCheckJSON(t, dir)); r.Status != check.StatusPass {
+		t.Errorf("disabling the gofmt formatter: devenv_security_floor = %+v, want pass", r)
+	}
+
+	weakened := strings.Replace(src, "ripsecrets.enable = true;", "ripsecrets.enable = false;", 1)
+	weakened = strings.Replace(weakened, `"AWS_SECRET_ACCESS_KEY" `, "", 1)
+	if err := os.WriteFile(path, []byte(weakened), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	report := runCheckJSON(t, dir)
+	r := floorResult(t, report)
+	if r.Status != check.StatusFail || r.Severity != check.SeverityHigh {
+		t.Errorf("weakened devenv.nix: devenv_security_floor = %+v, want a high-severity failure", r)
+	}
+	for _, want := range []string{"ripsecrets", "AWS_SECRET_ACCESS_KEY"} {
+		if !strings.Contains(r.Message, want) {
+			t.Errorf("devenv_security_floor message %q does not name %s", r.Message, want)
+		}
+	}
+	if report.Summary.Fail < 1 {
+		t.Errorf("summary %+v counts no failure", report.Summary)
+	}
+}
+
+// TestRunCheck_NeutralisedDevenvNixFails covers ways to defeat the security
+// hooks or stripped variables of devenv.nix without touching an enable line
+// or deleting a list item: importing a module that force-disables them,
+// replacing a hook's entry, excluding every file, or filtering the list.
+func TestRunCheck_NeutralisedDevenvNixFails(t *testing.T) {
+	dir := initLifecycleProject(t)
+	src := readProjectFile(t, dir, "devenv.nix")
+	const weak = "{ lib, ... }: { git-hooks.hooks.ripsecrets.enable = lib.mkForce false; unsetEnvVars = lib.mkForce [ ]; }\n"
+	if err := os.WriteFile(filepath.Join(dir, "weak.nix"), []byte(weak), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	const unsetPrefix = "unsetEnvVars = options.unsetEnvVars.default ++ "
+	if !strings.Contains(src, unsetPrefix) || !strings.Contains(src, "ripsecrets.enable = true;") {
+		t.Fatalf("generated devenv.nix lacks the expected shapes:\n%s", src)
+	}
+	tests := []struct{ name, nix, wantInText string }{
+		{"imports a weakening module", strings.Replace(src, "  # Base packages", "  imports = [ ./weak.nix ];\n\n  # Base packages", 1), "imports"},
+		{"no-op entry", strings.Replace(src, "ripsecrets.enable = true;", "ripsecrets.enable = true;\n    ripsecrets.entry = \"true\";", 1), "git-hooks.hooks.ripsecrets.entry"},
+		{"exclude every file", strings.Replace(src, "ripsecrets.enable = true;", "ripsecrets.enable = true;\n    ripsecrets.excludes = [ \".*\" ];", 1), "git-hooks.hooks.ripsecrets.excludes"},
+		{"filtered variables", strings.Replace(src, unsetPrefix, "unsetEnvVars = builtins.filter (v: v != \"AWS_SECRET_ACCESS_KEY\") ", 1), "builtins.filter"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if tt.nix == src {
+				t.Fatalf("the edit did not apply to devenv.nix:\n%s", src)
+			}
+			if err := os.WriteFile(filepath.Join(dir, "devenv.nix"), []byte(tt.nix), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			var r check.CheckResult
+			for _, c := range runCheckJSON(t, dir).Checks {
+				if c.Name == "devenv_security_floor" {
+					r = c
+				}
+			}
+			if r.Status != check.StatusFail || r.Severity != check.SeverityHigh {
+				t.Errorf("devenv_security_floor = %+v, want a high-severity failure", r)
+			}
+			if !strings.Contains(r.Message, tt.wantInText) {
+				t.Errorf("devenv_security_floor message %q does not name %s", r.Message, tt.wantInText)
+			}
+		})
+	}
+}

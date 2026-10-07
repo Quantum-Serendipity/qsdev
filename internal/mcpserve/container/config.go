@@ -18,8 +18,12 @@ import (
 // Defaults for the generated gateway deployment. They are overridable per call
 // via GenerateOptions; the constants keep a single source of truth.
 const (
-	// ImageRepository is the repository the gateway image is published to. The
-	// generator pins it to a release tag (see ImageForVersion).
+	// ImageRepository is the GHCR repository of the gateway image. Every
+	// release publishes build/docker/Dockerfile there (release.yml's
+	// gateway-image job) for linux/amd64 and linux/arm64, tagged X.Y.Z and
+	// latest, keyless-signed by the release workflow and carrying build
+	// provenance. The generator pins it to a release tag and, for a release
+	// build, that release's index digest (see ImageForVersion).
 	ImageRepository = "ghcr.io/quantum-serendipity/qsdev"
 	// DefaultServiceName is the docker-compose service name.
 	DefaultServiceName = "qsdev-mcp-gateway"
@@ -227,6 +231,12 @@ type Artifacts struct {
 	MCPServerConfig MCPServerConfig
 	// MCPJSON is the full {"mcpServers": {name: cfg}} document.
 	MCPJSON string
+	// Image is the gateway image reference in ComposeYAML.
+	Image string
+	// ReleasedImage is true when Image is published: a release tag, or an
+	// image the caller chose via GenerateOptions.Image. It is false for a
+	// development build's :latest fallback, which may not match this build.
+	ReleasedImage bool
 	// EnvVars are the container's deploy env settings.
 	EnvVars map[string]string
 }
@@ -262,7 +272,10 @@ func (ContainerConfigGenerator) Generate(opts GenerateOptions) (*Artifacts, erro
 	if port <= 0 {
 		port = DefaultGatewayPort
 	}
-	image := orDefault(opts.Image, ImageForVersion(version.Info().Version))
+	image, released := opts.Image, true
+	if image == "" {
+		image, released = imageForVersion(version.Info().Version, version.GatewayImageDigest())
+	}
 	service := orDefault(opts.ServiceName, DefaultServiceName)
 	mcpName := orDefault(opts.MCPServerName, DefaultMCPServerName)
 
@@ -302,6 +315,8 @@ func (ContainerConfigGenerator) Generate(opts GenerateOptions) (*Artifacts, erro
 	art.MCPServerName = mcpName
 	art.MCPServerConfig = httpEntry
 	art.MCPJSON = mcpJSON
+	art.Image = image
+	art.ReleasedImage = released
 	return art, nil
 }
 
@@ -313,14 +328,33 @@ var releaseVersionPattern = regexp.MustCompile(`^v?(\d+\.\d+\.\d+)`)
 // ImageForVersion returns the gateway image reference pinned to the release a
 // build version descends from, matching the published tags (which carry no
 // "v" prefix). A floating tag like :latest would let a re-tag silently swap the
-// enforcing gateway binary. A development build with no release version has no
-// published image of its own, so it falls back to :latest; pass
-// GenerateOptions.Image to pin one (ideally by digest).
-func ImageForVersion(buildVersion string) string {
-	if m := releaseVersionPattern.FindStringSubmatch(strings.TrimSpace(buildVersion)); m != nil {
-		return ImageRepository + ":" + m[1]
+// enforcing gateway binary. When digest is the release's published index
+// digest (version.GatewayImageDigest), the reference also pins it,
+// repo:X.Y.Z@sha256:..., so even a re-pushed release tag cannot swap the
+// image. An empty or malformed digest keeps the tag-only reference.
+//
+// A development build with no release version has no published image of its
+// own, so it falls back to :latest, the newest release's image, which need
+// not match the build (Artifacts.ReleasedImage is false) and ignores digest;
+// build it locally from build/docker/Dockerfile and pass GenerateOptions.Image
+// to pin it.
+func ImageForVersion(buildVersion, digest string) string {
+	ref, _ := imageForVersion(buildVersion, digest)
+	return ref
+}
+
+// imageForVersion is ImageForVersion, also reporting whether the reference is
+// a release tag rather than the development fallback.
+func imageForVersion(buildVersion, digest string) (ref string, released bool) {
+	m := releaseVersionPattern.FindStringSubmatch(strings.TrimSpace(buildVersion))
+	if m == nil {
+		return ImageRepository + ":latest", false
 	}
-	return ImageRepository + ":latest"
+	ref = ImageRepository + ":" + m[1]
+	if d := strings.TrimSpace(digest); version.IsImageDigest(d) {
+		ref += "@" + d
+	}
+	return ref, true
 }
 
 // gatewayFrameworks filters profiles to those needing the gateway, returning

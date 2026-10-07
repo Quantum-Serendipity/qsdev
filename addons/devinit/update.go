@@ -109,6 +109,20 @@ type updateOutcome struct {
 }
 
 func runUpdate(cmd *cobra.Command, opts UpdateOptions) error {
+	return runUpdateWith(cmd, opts, nil)
+}
+
+// answersEdit changes the refreshed answers before an update regenerates
+// from them, and reports whether it changed anything.
+type answersEdit func(*types.WizardAnswers) (changed bool, err error)
+
+// runUpdateWith regenerates every file from the project's answers, as
+// update does, after applying edit (when non-nil) to them. The edit runs on
+// the answers already settled against .qsdev.yaml, so the settling cannot
+// undo it, and the edited answers are what is saved and synced to the
+// committed config. An edit that changes nothing ends the run before any
+// file is planned or written.
+func runUpdateWith(cmd *cobra.Command, opts UpdateOptions, edit answersEdit) error {
 	pc, err := cmdutil.Project(cmd)
 	if err != nil {
 		return err
@@ -122,6 +136,12 @@ func runUpdate(cmd *cobra.Command, opts UpdateOptions) error {
 	answers, err := loadAndRefreshForUpdate(cmd.Context(), cmd.ErrOrStderr(), projectRoot)
 	if err != nil {
 		return err
+	}
+	if edit != nil {
+		changed, err := edit(&answers)
+		if err != nil || !changed {
+			return err
+		}
 	}
 
 	// 2. Load stored state.

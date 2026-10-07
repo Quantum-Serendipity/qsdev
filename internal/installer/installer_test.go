@@ -273,3 +273,125 @@ func TestSimulate_NoManager(t *testing.T) {
 		t.Errorf("expected manager name in output, got: %s", out)
 	}
 }
+
+// floorSpec is testSpec with a version floor and a parser for the fake
+// tool's "fake-tool X.Y.Z" output.
+func floorSpec() installer.ToolSpec {
+	spec := testSpec()
+	spec.MinVersion = "2.1"
+	spec.ParseVersion = func(raw string) string {
+		fields := strings.Fields(raw)
+		if len(fields) < 2 {
+			return ""
+		}
+		return fields[1]
+	}
+	return spec
+}
+
+// writeUpgradingManager writes a fake manager that records it ran (in
+// marker) and replaces the fake tool with one printing newVersion.
+func writeUpgradingManager(t *testing.T, dir, marker, newVersion string) {
+	t.Helper()
+	chmod, err := exec.LookPath("chmod")
+	if err != nil {
+		t.Skipf("chmod not found: %v", err)
+	}
+	tool := filepath.Join(dir, "fake-tool-binary")
+	writeScript(t, dir, "fake-mgr", fmt.Sprintf(
+		"echo ran > %q\nprintf '#!/bin/sh\\necho fake-tool %s\\n' > %q\n%q +x %q\n",
+		marker, newVersion, tool, chmod, tool))
+}
+
+// TestInstall_UpgradesOutdated covers U13-09: a found binary below the
+// floor is not "already installed"; the install command runs and the new
+// version is verified. With no floor, a found binary is left alone.
+func TestInstall_UpgradesOutdated(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("installer tests use Unix shell scripts")
+	}
+	tests := []struct {
+		name        string
+		spec        installer.ToolSpec
+		wantInstall bool
+	}{
+		{"below floor upgrades", floorSpec(), true},
+		{"no floor keeps found binary", testSpec(), false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			tmp := t.TempDir()
+			marker := filepath.Join(t.TempDir(), "ran")
+			writeScript(t, tmp, "fake-tool-binary", `echo "fake-tool 1.4.1"`)
+			writeUpgradingManager(t, tmp, marker, "2.1.2")
+			withPATH(t, tmp)
+
+			var installErr error
+			out := captureStdout(t, func() {
+				installErr = installer.Install(context.Background(), tt.spec)
+			})
+			if installErr != nil {
+				t.Fatalf("Install: %v\n%s", installErr, out)
+			}
+			_, statErr := os.Stat(marker)
+			if ran := statErr == nil; ran != tt.wantInstall {
+				t.Fatalf("install command ran = %v, want %v\n%s", ran, tt.wantInstall, out)
+			}
+			if tt.wantInstall && !strings.Contains(out, "below the minimum 2.1") {
+				t.Errorf("output does not explain the upgrade:\n%s", out)
+			}
+			if !tt.wantInstall && !strings.Contains(out, "already installed") {
+				t.Errorf("output = %q, want 'already installed'", out)
+			}
+		})
+	}
+}
+
+// TestInstall_OutdatedAfterInstall covers U13-09: an install that exits 0
+// but leaves a version below the floor first on PATH fails with
+// ErrOutdatedAfterInstall instead of reporting success.
+func TestInstall_OutdatedAfterInstall(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("installer tests use Unix shell scripts")
+	}
+	tmp := t.TempDir()
+	marker := filepath.Join(t.TempDir(), "ran")
+	writeScript(t, tmp, "fake-tool-binary", `echo "fake-tool 1.4.1"`)
+	writeUpgradingManager(t, tmp, marker, "2.0.9")
+	withPATH(t, tmp)
+
+	var installErr error
+	out := captureStdout(t, func() {
+		installErr = installer.Install(context.Background(), floorSpec())
+	})
+	if !errors.Is(installErr, installer.ErrOutdatedAfterInstall) {
+		t.Fatalf("error = %v, want %v", installErr, installer.ErrOutdatedAfterInstall)
+	}
+	if !strings.Contains(installErr.Error(), "2.0.9") {
+		t.Errorf("error %q does not name the version found", installErr)
+	}
+	if strings.Contains(out, "installed successfully") {
+		t.Errorf("reported success although the version is below the floor: %s", out)
+	}
+}
+
+// TestSimulate_Outdated covers U13-09: a dry run reports that it would
+// upgrade a binary below the floor.
+func TestSimulate_Outdated(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("installer tests use Unix shell scripts")
+	}
+	tmp := t.TempDir()
+	writeScript(t, tmp, "fake-tool-binary", `echo "fake-tool 1.4.1"`)
+	writeScript(t, tmp, "fake-mgr", `exit 0`)
+	withPATH(t, tmp)
+
+	out := captureStdout(t, func() {
+		if err := installer.Simulate(context.Background(), floorSpec()); err != nil {
+			t.Fatalf("Simulate: %v", err)
+		}
+	})
+	if !strings.Contains(out, "Would upgrade fake-tool from 1.4.1 to >= 2.1") || !strings.Contains(out, "fake-mgr install fake-tool") {
+		t.Errorf("output = %q, want the upgrade and its command", out)
+	}
+}

@@ -434,8 +434,8 @@ This ensures consistent security policies, tooling versions, and Claude Code per
 | `qsdev status` | Security posture assessment (score + grade) |
 | `qsdev check` | CI enforcement (config integrity, hardening) |
 | `qsdev update` | Update binary + configs + devenv inputs (3-stage coordinated update) |
-| `qsdev enable <tool>` | Enable a security/AI tool |
-| `qsdev disable <tool>` | Disable a tool |
+| `qsdev enable <tool\|language>` | Enable a security/AI tool, or add a language module such as `gcp` |
+| `qsdev disable <tool\|language>` | Disable a tool, or remove a language module |
 | `qsdev list` | Show all available tools |
 | `qsdev devenv doctor` | Diagnose environment issues |
 | `qsdev devenv setup` | Install prerequisites (Nix, devenv, direnv) |

@@ -458,9 +458,71 @@ an existing hook (a custom hook id cannot reuse a built-in hook or tool
 name), change an MCP server's command, touch tools, tiers,
 compliance definitions, allow or ask rules, or lower compliance. A file that
 tries is rejected with an error naming each violation, and the command
-stops. The project layer is applied beneath the developer's own user
-defaults file, so a repository cannot override the user's policy. See the
+stops. See the
 [configuration reference](configuration-reference.md#qsdevdefaultsyaml).
+
+### Catalog security floor
+
+Catalog layers apply in the order built-in, user (the org overlay:
+`~/.config/qsdev/defaults.yaml` or the pinned `$QSDEV_ORG_CONFIG` file),
+project. The built-in catalog sets a security floor that no layer can
+lower:
+
+- `security_hooks` (ripsecrets, check-added-large-files,
+  no-commit-to-branch, ...) and `unset_vars` (the credentials stripped from
+  the dev shell) only ever grow: a user or project list is added to the
+  built-in one, never substituted for it.
+- `keep_vars` may not keep a variable that `unset_vars` strips.
+- A built-in compliance level keeps its `order` and is never weakened: it
+  keeps every required pre-commit hook, its age gate may not shrink, and
+  script blocking, the Claude audit log and license scanning stay on, and
+  its Claude permission preset may not get less strict.
+  `mcp_server_policy` and `sbom_policy` have no strictness order and are
+  not compared.
+- A built-in tier never maps to a compliance level of lower order, nor to
+  a new level that is weaker than its built-in one in any of those ways.
+- The built-in hook tiers stay first in `hook_tier_order`, in order, and
+  no always-on hook (`security_hooks`, `custom_hooks`) moves to a higher
+  hook tier, where `devenv.nix` would drop it at lower security levels.
+- A required hook must be a tool or an always-on hook; a hook listed only
+  in `hook_tiers` is never enabled, so it cannot satisfy a level.
+
+An org overlay that breaks the floor fails to load
+(`ErrOverlayLoosens`), naming the file and each field, instead of quietly
+generating a weaker `devenv.nix`; `qsdev defaults validate` reports it,
+and commands that read only the user scope fall back to the built-in
+catalog with a warning. The rules carry no exemption for a managed or
+root-owned overlay: the built-in catalog satisfies them, so no legitimate
+distribution needs to un-strip a credential or drop a required hook. The
+committed project layer applies last and may only add, so a developer's
+own file can neither weaken the floor nor erase the project's additions.
+
+`devenv.nix` is human-edited, so the generated-file checks do not compare
+it. `qsdev check` holds it to the floor separately (`devenv_security_floor`,
+high severity). It regenerates `devenv.nix` from the project's settings
+with the effective catalog (built-in, the user's file, the committed
+project policy; the floor above means the user's file can only add to what
+the other two demand), then reads the git hooks, their settings and
+`unsetEnvVars` of the on-disk `devenv.nix` and `devenv.local.nix`
+statically. A hook the local file sets to anything but `true` is disabled,
+and a local `unsetEnvVars` set through `lib.mkForce` replaces the list. The
+check fails when:
+
+- a security hook the generated file enables (an always-on hook, a custom
+  hook, or one the compliance level requires) is no longer enabled;
+- a variable the generated file strips is no longer stripped;
+- a setting of one of those hooks (its `entry`, `files`, `excludes`, ...)
+  or a setting for every hook (such as `git-hooks.excludes`) differs from
+  the generated file, so a hook cannot be neutralised by a no-op entry or
+  an exclude of every file;
+- a module cannot be verified statically: it sets `imports`, `config` or
+  `disabledModules`, names an attribute through interpolation, or builds
+  `unsetEnvVars` from anything but string lists, `++`,
+  `options.unsetEnvVars.default` and priority wrappers such as
+  `lib.mkForce` (so `builtins.filter` over the list fails).
+
+A deleted or unparsable module also fails. Hooks and variables added on top
+pass, as does a disabled formatter or linter.
 
 ## Project File Write Containment
 
@@ -492,7 +554,7 @@ in your home or cache directories are not confined to the project.
 
 The self-protection layer (Layer 14) runs as the first PreToolUse hook. It evaluates before package-guard, credential-scan, and all other hooks, so the guardrail-tampering spellings it recognises are rejected before any other hook logic executes.
 
-The security hooks fail closed. They are self-protection, package-guard, credential-scan, destructive-prevention, file-boundary, tool-gates and `qsdev enforce`. Each needs `python3` 3.9 or newer and `qsdev` on the `PATH` that Claude Code runs hooks with. A hook that cannot start (missing interpreter or binary), crashes, or runs on an older Python blocks every tool call it matches, with the reason on stderr, rather than letting the call through. Each Python hook also stops itself 2 seconds before its registered timeout and blocks the call, because Claude Code lets a call through when a hook times out. `qsdev devenv doctor` warns when `python3` is older than 3.9. A blocked call whose reason says "could not run" means `python3` or `qsdev` is missing.
+The security hooks fail closed. They are self-protection, package-guard, credential-scan, destructive-prevention, file-boundary, tool-gates and `qsdev enforce`. Each needs `python3` 3.9 or newer and `qsdev` on the `PATH` that Claude Code runs hooks with. A hook that cannot start (missing interpreter or binary), crashes, or runs on an older Python blocks every tool call it matches, with the reason on stderr, rather than letting the call through. Each Python hook also stops itself 2 seconds before its registered timeout and blocks the call, because Claude Code lets a call through when a hook times out. In a project whose hooks run these programs, `qsdev devenv doctor` requires `python3` 3.9 or newer and every other program the hooks look up on `PATH` (resolved on the `PATH` of the shell doctor runs in), and `doctor --check` fails while one is missing or too old. An in-project virtualenv interpreter is not run; doctor reads its version from `pyvenv.cfg`. A blocked call whose reason says "could not run" means `python3` or `qsdev` is missing.
 
 **Status:** the hook sandbox is experimental and not yet enableable from the CLI (planned opt-in `--claude-hooks sandbox`, Linux/Nix builds). No generated hook is wrapped in it today. `qsdev sandbox exec -- CMD` runs a command you invoke by hand with restricted filesystem access, network, and syscalls, degrading by the kernel features available:
 

@@ -10,6 +10,7 @@ package procexec
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -76,6 +77,10 @@ func LookPath(file string) (string, error) {
 	}
 	return path, nil
 }
+
+// ErrInsideProject marks a version probe VersionProbe refused because the
+// binary lies inside the project.
+var ErrInsideProject = errors.New("binary is inside the project; it would run project code")
 
 // versionFlags are the arguments VersionProbe accepts.
 var versionFlags = []string{"--version", "version", "-v"}
@@ -148,7 +153,7 @@ func checkOutsideProject(project, absPath string) error {
 	}
 	for _, p := range []string{absPath, resolved} {
 		if isUnder(projectInfo, filepath.Dir(p)) {
-			return fmt.Errorf("procexec: version probe binary %q is inside the project %s; it would run project code", absPath, project)
+			return fmt.Errorf("procexec: version probe binary %q under %s: %w", absPath, project, ErrInsideProject)
 		}
 	}
 	return nil

@@ -15,6 +15,7 @@ import (
 
 	"github.com/Quantum-Serendipity/qsdev/internal/procexec"
 	"github.com/Quantum-Serendipity/qsdev/internal/selfupdate"
+	"github.com/Quantum-Serendipity/qsdev/internal/testutil"
 	"github.com/Quantum-Serendipity/qsdev/pkg/branding"
 	"github.com/Quantum-Serendipity/qsdev/pkg/types"
 )
@@ -157,7 +158,7 @@ func TestRunFullUpdate_SelectiveStages(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Setenv("PATH", t.TempDir())
 			// Run outside any project so a config stage cannot touch the repo.
-			t.Chdir(t.TempDir())
+			t.Chdir(testutil.IsolatedDir(t))
 
 			cmd, buf := newTestCmd()
 			err := runFullUpdate(cmd, tt.opts)
@@ -234,7 +235,7 @@ func TestRunFullUpdate_AllStages(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Setenv("PATH", t.TempDir())
-			dir := t.TempDir()
+			dir := testutil.IsolatedDir(t)
 			tt.setup(t, dir)
 			t.Chdir(dir)
 
@@ -299,7 +300,7 @@ func TestRunFullUpdate_ForceWithoutSelfUpdateWarns(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Setenv("PATH", t.TempDir())
-			t.Chdir(t.TempDir())
+			t.Chdir(testutil.IsolatedDir(t))
 
 			cmd, buf := newTestCmd()
 			_ = runFullUpdate(cmd, tt.opts)
@@ -401,7 +402,7 @@ func TestRunDevenvInputStage_ClaudeOnlySkipped(t *testing.T) {
 	writeFakeExecutable(t, binDir, "devenv", fmt.Sprintf("touch %q\n", marker))
 	t.Setenv("PATH", binDir)
 
-	dir := t.TempDir()
+	dir := testutil.IsolatedDir(t)
 	if err := saveAnswers(dir, types.WizardAnswers{ClaudeCode: true, MergeMode: mergeModeClaudeOnly}); err != nil {
 		t.Fatal(err)
 	}
@@ -432,7 +433,7 @@ func TestRunConfigUpdateStage_ForceOnlyAffectsBinary(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			dir := t.TempDir()
+			dir := testutil.IsolatedDir(t)
 			if _, err := executeInitCmd(t, dir, "--lang", "go", "--yes"); err != nil {
 				t.Fatalf("init failed: %v", err)
 			}
@@ -564,7 +565,7 @@ func TestPrintStageSummary_PropagatesStageExitCode(t *testing.T) {
 // `devenv update`, so devenv.lock stays byte-identical and devenv is never
 // started, even though it is on PATH.
 func TestUpdateDryRunNoLockChange(t *testing.T) {
-	dir := t.TempDir()
+	dir := testutil.IsolatedDir(t)
 	if err := os.WriteFile(filepath.Join(dir, "go.mod"), []byte("module example.com/dry\n\ngo 1.24\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -617,7 +618,7 @@ func TestUpdateDryRunNoLockChange(t *testing.T) {
 // stage but makes no release metadata query (no network), download, install
 // or exec. `update --check` is the explicit network query.
 func TestUpdateDryRun_ReleaseBuildQueriesNothing(t *testing.T) {
-	t.Chdir(t.TempDir())
+	t.Chdir(testutil.IsolatedDir(t))
 	t.Setenv(procexec.ForbidExecEnv, "1")
 
 	origVersion, origCheck, origDo := binaryVersion, checkForUpdate, doSelfUpdate

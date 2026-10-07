@@ -16,6 +16,7 @@ import (
 	"github.com/Quantum-Serendipity/qsdev/internal/mcpserve/adapters/cursor"
 	"github.com/Quantum-Serendipity/qsdev/internal/mcpserve/container"
 	"github.com/Quantum-Serendipity/qsdev/internal/mcpserve/spi"
+	"github.com/Quantum-Serendipity/qsdev/internal/version"
 	"github.com/Quantum-Serendipity/qsdev/pkg/aiframework"
 	"github.com/Quantum-Serendipity/qsdev/pkg/types"
 )
@@ -79,8 +80,11 @@ func TestPlanGatewayCompose(t *testing.T) {
 			if (g.file != nil) != tt.wantFile {
 				t.Fatalf("file = %v, want present=%v", g.file, tt.wantFile)
 			}
-			if buf.Len() != 0 {
-				t.Errorf("unexpected warning output: %q", buf.String())
+			// A generated fragment in this dev-build test binary also carries
+			// the unpublished-image warning
+			// (TestPlanGatewayCompose_DevBuildWarnsUnpublishedImage).
+			if out := buf.String(); strings.Contains(out, "generation skipped") || (!tt.wantFile && out != "") {
+				t.Errorf("unexpected warning output: %q", out)
 			}
 			assertNoCompose(t, dir) // planning never writes
 
@@ -108,6 +112,57 @@ func TestPlanGatewayCompose(t *testing.T) {
 			}
 		})
 	}
+}
+
+// TestPlanGatewayCompose_DevBuildWarnsUnpublishedImage is the U26-04
+// regression test for the dev-build fallback: a build with no release
+// version references :latest, which only releases publish, so planning the
+// fragment says how to build the image locally. A released image prints
+// nothing.
+func TestPlanGatewayCompose_DevBuildWarnsUnpublishedImage(t *testing.T) {
+	registerCursor(t)
+	if v := version.Info().Version; container.ImageForVersion(v, version.GatewayImageDigest()) != container.ImageRepository+":latest" {
+		t.Fatalf("test binary version %q is a release version; this test needs a dev build", v)
+	}
+
+	t.Run("dev build warns", func(t *testing.T) {
+		dir := t.TempDir()
+		writeCursorMarker(t, dir)
+		var buf bytes.Buffer
+		g := planGatewayCompose(&buf, dir, types.WizardAnswers{}, UpdateOptions{})
+		if g.file == nil {
+			t.Fatal("no fragment planned for a hookless framework")
+		}
+		want := fmt.Sprintf("Warning: gateway image %s is only published for release builds; build it locally with build/docker/Dockerfile\n",
+			container.ImageRepository+":latest")
+		if got := buf.String(); got != want {
+			t.Errorf("output = %q, want %q", got, want)
+		}
+		if !strings.Contains(string(g.file.Content), "image: "+container.ImageRepository+":latest") {
+			t.Errorf("fragment does not reference the image the warning names:\n%s", g.file.Content)
+		}
+	})
+
+	t.Run("no gateway needed prints nothing", func(t *testing.T) {
+		var buf bytes.Buffer
+		planGatewayCompose(&buf, t.TempDir(), types.WizardAnswers{ClaudeCode: true}, UpdateOptions{})
+		if buf.Len() != 0 {
+			t.Errorf("output = %q, want none", buf.String())
+		}
+	})
+
+	t.Run("released image prints nothing", func(t *testing.T) {
+		t.Parallel()
+		var buf bytes.Buffer
+		warnUnpublishedImage(&buf, &container.Artifacts{
+			NeedsGateway:  true,
+			Image:         container.ImageForVersion("1.2.3", ""),
+			ReleasedImage: true,
+		})
+		if buf.Len() != 0 {
+			t.Errorf("output = %q, want none", buf.String())
+		}
+	})
 }
 
 func TestGatewayComposeKeepHeld(t *testing.T) {
@@ -143,11 +198,7 @@ func TestGatewayComposeKeepHeld(t *testing.T) {
 func runGatewayUpdate(t *testing.T, dir string, opts UpdateOptions) string {
 	t.Helper()
 	t.Setenv("QSDEV_SKIP_SETUP", "1")
-	origDir, _ := os.Getwd()
-	defer func() { _ = os.Chdir(origDir) }()
-	if err := os.Chdir(dir); err != nil {
-		t.Fatalf("chdir: %v", err)
-	}
+	t.Chdir(dir)
 	cmd := &cobra.Command{}
 	var buf bytes.Buffer
 	cmd.SetOut(&buf)

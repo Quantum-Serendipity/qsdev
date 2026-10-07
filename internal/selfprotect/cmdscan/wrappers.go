@@ -36,6 +36,12 @@ var wrapperOptionArgs = map[string][]string{
 	"ionice":  {"-c", "--class", "-n", "--classdata", "-p", "--pid", "-P", "--pgid", "-u", "--uid"},
 }
 
+// wrapperPositionals are the wrappers whose first operand is not the program
+// but one word of their own (timeout's DURATION, chrt's priority, taskset's
+// mask), whatever it looks like: `timeout inf`, `timeout .5`, `taskset ff`.
+// The word after it is the program.
+var wrapperPositionals = map[string]bool{"timeout": true, "chrt": true, "taskset": true}
+
 // wrapperCommandStrings are options whose argument is itself a command line
 // (`env -S 'python3 -u'`), so the program is not a single later word.
 var wrapperCommandStrings = map[string][]string{
@@ -115,8 +121,9 @@ func CommandWordIndexes(words []string) []int {
 
 // ProgramWordIndex returns the index of the word naming the program the words
 // run, following wrappers (`env A=1 timeout 30 nice -n 5 python3 x.py` runs
-// python3): a wrapper's options and their arguments, numeric operands
-// (durations, priorities, CPU masks) and VAR=value assignments are skipped up
+// python3): a wrapper's options and their arguments, its own operand
+// (wrapperPositionals: a duration, priority or CPU mask), numeric operands
+// and VAR=value assignments are skipped up
 // to the next command word. It returns -1 when no single word names the
 // program (no words, a wrapper given no command, `command -v`, which only
 // looks its operands up, or a wrapper that takes the command as one string;
@@ -201,6 +208,9 @@ func Program(words []string) ProgramRun {
 				})
 				run.DirChanged = run.DirChanged || slices.ContainsFunc(opts, func(o WrapperOption) bool { return o.Is(wrapperChdirs[name]...) })
 				i += n
+			case wrapperPositionals[name]:
+				i++ // the wrapper's own operand; the next word is the program
+				break operands
 			case w != "" && w[0] >= '0' && w[0] <= '9', isAssignment(w):
 				run.PathChanged = run.PathChanged || wrapperSetsEnv[name] && strings.HasPrefix(w, "PATH=")
 				i++

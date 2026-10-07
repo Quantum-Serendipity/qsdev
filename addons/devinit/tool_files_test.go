@@ -5,6 +5,7 @@ import (
 
 	"github.com/Quantum-Serendipity/qsdev/internal/tier"
 	"github.com/Quantum-Serendipity/qsdev/internal/toolreg"
+	"github.com/Quantum-Serendipity/qsdev/internal/toolreg/toolregtest"
 	"github.com/Quantum-Serendipity/qsdev/pkg/types"
 )
 
@@ -119,7 +120,7 @@ func TestToolFilesGenerator_TierDefaults(t *testing.T) {
 			want:    map[string]bool{".commitlintrc.yml": true},
 		},
 	}
-	gen := toolFilesGenerator{registry: toolreg.DefaultRegistry()}
+	gen := toolFilesGenerator{registry: toolregtest.Default(t)}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
@@ -154,7 +155,7 @@ func TestToolFilesGenerator_TierDefaults(t *testing.T) {
 // agent tool to the claudecode generator, even when enabled.
 func TestToolFilesGenerator_SkipsAgentTools(t *testing.T) {
 	t.Parallel()
-	reg := toolreg.DefaultRegistry()
+	reg := toolregtest.Default(t)
 	enabled := make(map[string]bool)
 	for _, tool := range reg.All() {
 		enabled[tool.Name] = true

@@ -3,52 +3,21 @@ package devinit
 import (
 	"errors"
 	"fmt"
-	"log/slog"
+	"maps"
 	"slices"
 
 	"github.com/Quantum-Serendipity/qsdev/internal/catalog"
 )
 
-// projectProfileOrder defines the canonical registration order for project profiles.
-var projectProfileOrder = []string{
-	"go-web", "ts-fullstack", "ts-backend", "python-data", "python-web",
-	"rust-cli", "rust-web", "java-web", "elixir-web", "dotnet-web",
-}
-
-// errCatalogLoad marks a loadDefaultProjectProfiles failure caused by the
-// catalog itself rather than by one profile.
-var errCatalogLoad = errors.New("loading catalog")
-
-// DefaultProjectProfileRegistry returns a ProjectProfileRegistry pre-loaded
-// with the built-in project-type profiles. A profile that cannot be loaded
-// from the catalog is logged and left unregistered, so selecting it fails with
-// "unknown profile" instead of silently producing an empty configuration.
-//
-// A catalog that does not load at all registers nothing and is logged at
-// debug only: the root catalog gate or check reports that failure to the
-// user for the commands that need the catalog.
-func DefaultProjectProfileRegistry() *ProjectProfileRegistry {
-	r, err := loadDefaultProjectProfiles()
-	switch {
-	case errors.Is(err, errCatalogLoad):
-		slog.Debug("loading built-in project profiles", "error", err)
-	case err != nil:
-		slog.Error("loading built-in project profiles", "error", err)
-	}
-	return r
-}
-
-// loadDefaultProjectProfiles registers every built-in profile that loads and
-// returns the joined errors for those that do not, or an error wrapping
-// errCatalogLoad when the catalog does not load.
-func loadDefaultProjectProfiles() (*ProjectProfileRegistry, error) {
+// catalogProjectProfiles returns a registry of every project profile the
+// catalog defines, registered in name order. The catalog is the single source
+// of the built-in profile set, so an org or project overlay that adds a
+// profile makes it selectable. Profiles that fail to convert or register are
+// returned as joined errors next to the ones that succeeded.
+func catalogProjectProfiles(cat *catalog.Catalog) (*ProjectProfileRegistry, error) {
 	r := NewProjectProfileRegistry()
-	cat, err := catalog.Default()
-	if err != nil {
-		return r, fmt.Errorf("%w: %w", errCatalogLoad, err)
-	}
 	var errs []error
-	for _, name := range projectProfileOrder {
+	for _, name := range slices.Sorted(maps.Keys(cat.ProjectProfiles())) {
 		p, err := catalogProfile(cat, name)
 		if err != nil {
 			errs = append(errs, err)

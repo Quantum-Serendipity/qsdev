@@ -1,6 +1,8 @@
 package cmdscan
 
 import (
+	"errors"
+	"slices"
 	"strings"
 	"testing"
 
@@ -182,6 +184,63 @@ func TestInvokedSpecs(t *testing.T) {
 				t.Errorf("InvokedSpecs(%q) = %d, want %d (0 none, 1 literal, 2 computed, 3 mention)", tt.command, got, tt.want)
 			}
 		})
+	}
+}
+
+// TestSpecArgsErrorMatchesEveryInvocation pins that a spec whose Args fails
+// (the catalog behind it did not load) fails closed: it matches every
+// invocation of its path, as an unconditional spec would, while a read-only
+// flag still clears one and another path still does not match.
+func TestSpecArgsErrorMatchesEveryInvocation(t *testing.T) {
+	t.Parallel()
+	failing := CommandSpec{
+		Path:     [][]string{{"disable"}},
+		ReadOnly: []string{"--help"},
+		Args:     func() ([]string, error) { return nil, errors.New("catalog rejected") },
+	}
+	listing := CommandSpec{
+		Path:     [][]string{{"disable"}},
+		ReadOnly: []string{"--help"},
+		Args:     func() ([]string, error) { return []string{"semgrep"}, nil },
+	}
+	tests := []struct {
+		argv             []string
+		failing, listing bool
+	}{
+		{[]string{"disable", "anything"}, true, false},
+		{[]string{"disable", "changelog", "--force"}, true, false},
+		{[]string{"disable"}, true, false},
+		{[]string{"disable", "semgrep"}, true, true},
+		{[]string{"disable", "anything", "--help"}, false, false},
+		{[]string{"enable", "anything"}, false, false},
+	}
+	for _, tt := range tests {
+		if got := failing.Matches(tt.argv); got != tt.failing {
+			t.Errorf("failing spec Matches(%q) = %v, want %v", tt.argv, got, tt.failing)
+		}
+		if got := listing.Matches(tt.argv); got != tt.listing {
+			t.Errorf("listing spec Matches(%q) = %v, want %v", tt.argv, got, tt.listing)
+		}
+	}
+	// In shell text it is judged exactly as the unconditional spec is.
+	always := CommandSpec{Path: failing.Path, ReadOnly: failing.ReadOnly}
+	for _, command := range []string{
+		"cd /tmp && qsdev disable anything",
+		`echo "qsdev disable x"`,
+		"qsdev disable $T",
+		"qsdev disable x --help",
+	} {
+		kinds := func(hit []Invoked) (out [][2]bool) {
+			for _, h := range hit {
+				out = append(out, [2]bool{h.Computed, h.Mention})
+			}
+			return out
+		}
+		got := kinds(InvokedSpecs(command, "qsdev", []CommandSpec{failing}))
+		want := kinds(InvokedSpecs(command, "qsdev", []CommandSpec{always}))
+		if !slices.Equal(got, want) {
+			t.Errorf("InvokedSpecs(%q) (computed, mention) = %v, want %v as for an unconditional spec", command, got, want)
+		}
 	}
 }
 

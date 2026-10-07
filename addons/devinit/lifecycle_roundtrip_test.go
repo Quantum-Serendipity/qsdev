@@ -19,6 +19,7 @@ import (
 	"github.com/Quantum-Serendipity/qsdev/internal/state"
 	"github.com/Quantum-Serendipity/qsdev/internal/testutil"
 	"github.com/Quantum-Serendipity/qsdev/internal/toolreg"
+	"github.com/Quantum-Serendipity/qsdev/internal/toolreg/toolregtest"
 	"github.com/Quantum-Serendipity/qsdev/pkg/fileutil"
 	"github.com/Quantum-Serendipity/qsdev/pkg/types"
 )
@@ -179,7 +180,7 @@ func assertSharedFilesWellFormed(t *testing.T, dir string) {
 func TestLifecycle_SharedContentMatchesFileFormat(t *testing.T) {
 	t.Parallel()
 	answers := types.WizardAnswers{ProjectName: "demo"}
-	for _, tool := range toolreg.DefaultRegistry().All() {
+	for _, tool := range toolregtest.Default(t).All() {
 		for key, fn := range tool.SharedContent {
 			content, err := fn(answers)
 			if err != nil {
@@ -536,7 +537,7 @@ func TestLifecycle_EveryToolRoundTrip(t *testing.T) {
 		t.Skip("runs enable/disable for every registered tool")
 	}
 	template := initLifecycleProject(t)
-	for _, tool := range toolreg.DefaultRegistry().All() {
+	for _, tool := range toolregtest.Default(t).All() {
 		t.Run(tool.Name, func(t *testing.T) {
 			dir := testutil.IsolatedDir(t)
 			if err := os.CopyFS(dir, os.DirFS(template)); err != nil {

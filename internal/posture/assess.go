@@ -19,6 +19,7 @@ import (
 	"github.com/Quantum-Serendipity/qsdev/internal/posture/drift"
 	"github.com/Quantum-Serendipity/qsdev/internal/state"
 	"github.com/Quantum-Serendipity/qsdev/internal/tier"
+	"github.com/Quantum-Serendipity/qsdev/internal/toolreg"
 	"github.com/Quantum-Serendipity/qsdev/internal/version"
 	"github.com/Quantum-Serendipity/qsdev/internal/vulnscan"
 	"github.com/Quantum-Serendipity/qsdev/pkg/branding"
@@ -258,7 +259,11 @@ func Assess(projectPath string, opts AssessOptions) (*PostureReport, error) {
 		}
 	}
 
-	report.Tools = buildToolStatuses(enabledTools)
+	tools, err := buildToolStatuses(toolreg.Default, enabledTools)
+	if err != nil {
+		return nil, fmt.Errorf("assessing tools: %w", err)
+	}
+	report.Tools = tools
 
 	// Compute aggregate score.
 	report.Score = ComputeAggregateScore(report.Defense.Score, configScore, report.Dependencies.Score)

@@ -1638,7 +1638,7 @@ var sensitiveFixture = withInfoFlags([]cmdscan.CommandSpec{
 		{Spellings: []string{"--no-strict"}, Value: true},
 		{Spellings: []string{"--strict"}, Value: false},
 	}},
-	{Path: [][]string{{"disable"}}, Args: func() []string { return []string{"attach-guard", "gitleaks"} }},
+	{Path: [][]string{{"disable"}}, Args: func() ([]string, error) { return []string{"attach-guard", "gitleaks"}, nil }},
 })
 
 // withInfoFlags adds cobra's help and version flags to each spec's

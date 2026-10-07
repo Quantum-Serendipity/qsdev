@@ -11,12 +11,76 @@ import (
 	"testing"
 	"time"
 
+	"github.com/spf13/cobra"
+
+	"github.com/Quantum-Serendipity/qsdev/internal/catalog"
+	"github.com/Quantum-Serendipity/qsdev/internal/cmdutil"
 	"github.com/Quantum-Serendipity/qsdev/internal/selfprotect/canon"
 	"github.com/Quantum-Serendipity/qsdev/internal/selfprotect/cmdscan"
 	"github.com/Quantum-Serendipity/qsdev/internal/selfprotect/hookio"
 	"github.com/Quantum-Serendipity/qsdev/internal/selfprotect/rules"
+	"github.com/Quantum-Serendipity/qsdev/internal/toolreg"
 	"github.com/Quantum-Serendipity/qsdev/pkg/branding"
 )
+
+// TestSelfprotectDisableFailsClosedOnBrokenCatalog pins that the hook still
+// blocks `qsdev disable` when the project's defaults file breaks the catalog,
+// as it did before the provider errors were propagated, but now because the
+// security-tool list fails closed rather than because its lookup panicked:
+// every disable is denied, with no panic, and other commands are allowed.
+// With a valid catalog only a security tool's disable is denied. Not
+// parallel: it swaps the global catalog and tool registry.
+func TestSelfprotectDisableFailsClosedOnBrokenCatalog(t *testing.T) {
+	app := branding.Get().AppName
+	judge := func(t *testing.T, command string) (denied bool, stderr string) {
+		t.Helper()
+		root := &cobra.Command{Use: app}
+		root.AddCommand(disableCmd())
+		payload := toolCallJSON(t, "Bash", map[string]any{"command": command})
+		hook := &cobra.Command{}
+		hook.SetIn(strings.NewReader(payload))
+		var errOut bytes.Buffer
+		hook.SetErr(&errOut)
+		err := runSelfprotectWith(hook, hookio.EvalDeadline, selfprotectEvaluatorFor(cmdutil.SensitiveCommands(root)))
+		if err != nil && !errors.Is(err, errSelfprotectDeny) {
+			t.Fatalf("%s: unexpected error %v", command, err)
+		}
+		return err != nil, errOut.String()
+	}
+	tests := []struct {
+		name    string
+		broken  bool
+		command string
+		deny    bool
+	}{
+		{"broken catalog, security tool", true, app + " disable semgrep", true},
+		{"broken catalog, other tool", true, app + " disable changelog", true},
+		{"broken catalog, unrelated command", true, "ls", false},
+		{"valid catalog, security tool", false, app + " disable semgrep", true},
+		{"valid catalog, other tool", false, app + " disable changelog", false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if tt.broken {
+				invalidDefaultsProject(t)
+			} else {
+				catalog.ResetDefault()
+				toolreg.ResetDefaultRegistry()
+				t.Cleanup(func() {
+					catalog.ResetDefault()
+					toolreg.ResetDefaultRegistry()
+				})
+			}
+			denied, stderr := judge(t, tt.command)
+			if denied != tt.deny {
+				t.Errorf("%q denied = %v, want %v (stderr %q)", tt.command, denied, tt.deny, stderr)
+			}
+			if strings.Contains(stderr, "panicked") {
+				t.Errorf("%q: the hook panicked: %q", tt.command, stderr)
+			}
+		})
+	}
+}
 
 // TestBuildContext_EditContentReachesRules is the end-to-end guard for the
 // Edit/MultiEdit content fix: an Edit's new_string (not `content`) must flow

@@ -72,7 +72,11 @@ func localGenerationAnswers(projectRoot string, answers types.WizardAnswers) (ty
 	if err := ValidateAnswers(gen); err != nil {
 		return types.WizardAnswers{}, fmt.Errorf("applying %s: %w", branding.Get().LocalConfig, err)
 	}
-	toolreg.MergeInferredTools(&gen, toolreg.DefaultRegistry())
+	registry, err := toolreg.Default()
+	if err != nil {
+		return types.WizardAnswers{}, fmt.Errorf("loading the tool registry for local generation answers: %w", err)
+	}
+	toolreg.MergeInferredTools(&gen, registry)
 	qsdevanswers.EnforceInvariants(&gen)
 	return gen, nil
 }

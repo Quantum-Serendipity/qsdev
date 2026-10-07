@@ -6,6 +6,7 @@ import (
 
 	"github.com/Quantum-Serendipity/qsdev/addons/claudecode"
 	"github.com/Quantum-Serendipity/qsdev/internal/toolreg"
+	"github.com/Quantum-Serendipity/qsdev/internal/toolreg/toolregtest"
 	"github.com/Quantum-Serendipity/qsdev/pkg/ecosystem"
 	"github.com/Quantum-Serendipity/qsdev/pkg/types"
 )
@@ -20,7 +21,7 @@ func TestOperationSkillsRegisteredFromManifest(t *testing.T) {
 	if len(names) == 0 {
 		t.Fatal("no operation skills in manifest")
 	}
-	reg := toolreg.DefaultRegistry()
+	reg := toolregtest.Default(t)
 
 	for _, name := range names {
 		tool, ok := reg.ByName(name)
@@ -47,7 +48,7 @@ func TestOperationSkillsRegisteredFromManifest(t *testing.T) {
 		deployed[f.Path] = true
 	}
 	advertised := make(map[string]bool)
-	for _, s := range claudecode.BuildClaudeMdData(answers, ecosystem.DefaultRegistry()).AvailableSkills {
+	for _, s := range buildClaudeMdData(t, answers, ecosystem.DefaultRegistry()).AvailableSkills {
 		advertised[s.Name] = true
 	}
 	for _, name := range names {
@@ -64,7 +65,7 @@ func TestOperationSkillsRegisteredFromManifest(t *testing.T) {
 // the operation skills that deployOperationSkills actually writes.
 func TestClaudeMdOmitsDisabledOperationSkills(t *testing.T) {
 	answers := types.WizardAnswers{Tier: "full", EnabledTools: map[string]bool{"qsdev-doctor": true}}
-	data := claudecode.BuildClaudeMdData(answers, ecosystem.DefaultRegistry())
+	data := buildClaudeMdData(t, answers, ecosystem.DefaultRegistry())
 
 	found := false
 	for _, s := range data.AvailableSkills {

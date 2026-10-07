@@ -1,6 +1,7 @@
 package posture
 
 import (
+	"fmt"
 	"slices"
 	"strings"
 
@@ -10,11 +11,16 @@ import (
 
 // buildToolStatuses lists every tool in the catalog, plus any enabled tool the
 // catalog does not know, with whether it is enabled and whether the binary it
-// needs is on PATH. The result is sorted by name.
-func buildToolStatuses(enabledTools map[string]bool) []ToolStatus {
+// needs is on PATH. The result is sorted by name. loadRegistry supplies the
+// tool registry (toolreg.Default outside tests); its error is returned.
+func buildToolStatuses(loadRegistry func() (*toolreg.Registry, error), enabledTools map[string]bool) ([]ToolStatus, error) {
+	reg, err := loadRegistry()
+	if err != nil {
+		return nil, fmt.Errorf("loading the tool registry for the tool listing: %w", err)
+	}
 	statuses := []ToolStatus{}
 	known := make(map[string]bool)
-	for _, t := range toolreg.DefaultRegistry().All() {
+	for _, t := range reg.All() {
 		known[t.Name] = true
 		statuses = append(statuses, ToolStatus{
 			Name:        t.Name,
@@ -38,7 +44,7 @@ func buildToolStatuses(enabledTools map[string]bool) []ToolStatus {
 		})
 	}
 	slices.SortFunc(statuses, func(a, b ToolStatus) int { return strings.Compare(a.Name, b.Name) })
-	return statuses
+	return statuses, nil
 }
 
 // exclusiveFile returns the first file the tool owns outright, which is its

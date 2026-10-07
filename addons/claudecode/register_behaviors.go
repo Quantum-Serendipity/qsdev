@@ -13,22 +13,33 @@ import (
 )
 
 // init only records the provider; the catalog and tool registry are built on
-// first use (see toolreg.Default), after main has configured the process. The
-// manifests the provider reads are embedded at build time, so a load failure
-// there is a broken build and panics rather than leaving tools silently
-// without their GenerateFuncs (which would surface later as "no files
-// needed").
+// first use (see toolreg.Default), after main has configured the process.
+//
+// The operation-skill manifest is embedded and guarded at build time by
+// generate_operation_skills_test.go; if it still fails to load at run time,
+// registerOperationSkillTools warns and skips the operation skills. Any other
+// failure of the provider (a catalog that does not load, an embedded agent or
+// consulting-skill manifest that does not parse) is returned, so
+// toolreg.Default reports it rather than handing out a registry whose tools
+// silently lack their GenerateFuncs.
 func init() {
 	toolreg.RegisterBehaviors(registerToolBehaviors)
 }
 
-func registerToolBehaviors(r *toolreg.Registry) {
+func registerToolBehaviors(r *toolreg.Registry) error {
 	registerOperationSkillTools(r)
-	registerMCPServerContent(r)
+	if err := registerMCPServerContent(r); err != nil {
+		return err
+	}
 	registerAgentToolGenerators(r)
-	registerConsultingAgentGenerators(r)
-	registerConsultingWorkflowGenerators(r)
+	if err := registerConsultingAgentGenerators(r); err != nil {
+		return err
+	}
+	if err := registerConsultingWorkflowGenerators(r); err != nil {
+		return err
+	}
 	registerDocToolBehaviors(r)
+	return nil
 }
 
 // registerOperationSkillTools registers one always-on tool per entry of the
@@ -47,10 +58,13 @@ func registerOperationSkillTools(r *toolreg.Registry) {
 	}
 }
 
-func registerMCPServerContent(r *toolreg.Registry) {
+// registerMCPServerContent attaches the .mcp.json section renderer to every
+// catalog tool that contributes an MCP server. It returns the catalog's load
+// error, which names the offending file, when the catalog does not load.
+func registerMCPServerContent(r *toolreg.Registry) error {
 	cat, err := catalog.Default()
 	if err != nil {
-		panic(fmt.Sprintf("claudecode: loading embedded catalog: %v", err))
+		return fmt.Errorf("registering MCP server content: %w", err)
 	}
 	for name, def := range cat.Tools() {
 		if def.MCPServerName == "" {
@@ -75,6 +89,7 @@ func registerMCPServerContent(r *toolreg.Registry) {
 			},
 		})
 	}
+	return nil
 }
 
 func mcpServerContentFunc(serverName string) toolreg.SharedContentFunc {
@@ -124,10 +139,10 @@ func registerAgentToolGenerators(r *toolreg.Registry) {
 	})
 }
 
-func registerConsultingAgentGenerators(r *toolreg.Registry) {
+func registerConsultingAgentGenerators(r *toolreg.Registry) error {
 	manifest, err := loadAgentManifest()
 	if err != nil {
-		panic(fmt.Sprintf("claudecode: loading embedded agent manifest: %v", err))
+		return fmt.Errorf("loading embedded agent manifest: %w", err)
 	}
 
 	for _, a := range manifest.Agents {
@@ -138,6 +153,7 @@ func registerConsultingAgentGenerators(r *toolreg.Registry) {
 			}),
 		})
 	}
+	return nil
 }
 
 // fullTierFile adapts a single-file builder into a tool GenerateFunc that
@@ -158,10 +174,10 @@ func fullTierFile(build func() (types.GeneratedFile, error)) toolreg.GenerateFun
 	}
 }
 
-func registerConsultingWorkflowGenerators(r *toolreg.Registry) {
+func registerConsultingWorkflowGenerators(r *toolreg.Registry) error {
 	manifest, err := loadConsultingSkillManifest()
 	if err != nil {
-		panic(fmt.Sprintf("claudecode: loading embedded consulting skill manifest: %v", err))
+		return fmt.Errorf("loading embedded consulting skill manifest: %w", err)
 	}
 
 	for _, skill := range manifest.Skills {
@@ -172,6 +188,7 @@ func registerConsultingWorkflowGenerators(r *toolreg.Registry) {
 			}),
 		})
 	}
+	return nil
 }
 
 func registerDocToolBehaviors(r *toolreg.Registry) {

@@ -21,12 +21,12 @@ var gitWorkflowToolNames = []string{
 }
 
 func TestGitWorkflowToolsRegistered(t *testing.T) {
-	reg := DefaultRegistry()
+	reg := mustDefault(t)
 
 	for _, name := range gitWorkflowToolNames {
 		tool, ok := reg.ByName(name)
 		if !ok {
-			t.Errorf("git workflow tool %q not found in DefaultRegistry", name)
+			t.Errorf("git workflow tool %q not found in the default registry", name)
 			continue
 		}
 		if tool.DisplayName == "" {
@@ -45,7 +45,7 @@ func TestGitWorkflowToolsRegistered(t *testing.T) {
 }
 
 func TestGitWorkflowToolDefaults(t *testing.T) {
-	reg := DefaultRegistry()
+	reg := mustDefault(t)
 
 	expectations := map[string]DefaultPolicy{
 		"pr-templates":  AlwaysOn,
@@ -67,7 +67,7 @@ func TestGitWorkflowToolDefaults(t *testing.T) {
 }
 
 func TestGitWorkflowToolsLifecycleOnly(t *testing.T) {
-	assertLifecycleOnly(t, DefaultRegistry(), gitWorkflowToolNames...)
+	assertLifecycleOnly(t, mustDefault(t), gitWorkflowToolNames...)
 }
 
 // renderInDevenvModule wraps a devenv.nix shared section in a minimal devenv
@@ -272,7 +272,7 @@ func TestBranchNamingNixContent_Pattern(t *testing.T) {
 }
 
 func TestGitWorkflowSharedContent_BranchNaming(t *testing.T) {
-	reg := DefaultRegistry()
+	reg := mustDefault(t)
 
 	tool, ok := reg.ByName("branch-naming")
 	if !ok {
@@ -307,7 +307,7 @@ func TestGitWorkflowSharedContent_BranchNaming(t *testing.T) {
 }
 
 func TestGitWorkflowSharedContent_CommitTicket(t *testing.T) {
-	reg := DefaultRegistry()
+	reg := mustDefault(t)
 
 	tool, ok := reg.ByName("commit-ticket")
 	if !ok {
@@ -345,7 +345,7 @@ func TestGitWorkflowSharedContent_CommitTicket(t *testing.T) {
 }
 
 func TestGitWorkflowGenerateFunc_PRTemplates(t *testing.T) {
-	reg := DefaultRegistry()
+	reg := mustDefault(t)
 
 	tool, ok := reg.ByName("pr-templates")
 	if !ok {
@@ -374,7 +374,7 @@ func TestGitWorkflowGenerateFunc_PRTemplates(t *testing.T) {
 }
 
 func TestGitWorkflowGenerateFunc_PRLabels(t *testing.T) {
-	reg := DefaultRegistry()
+	reg := mustDefault(t)
 
 	tool, ok := reg.ByName("pr-labels")
 	if !ok {
@@ -407,7 +407,7 @@ func TestGitWorkflowGenerateFunc_PRLabels(t *testing.T) {
 }
 
 func TestGitWorkflowBranchNamingNoGenerateFunc(t *testing.T) {
-	reg := DefaultRegistry()
+	reg := mustDefault(t)
 
 	tool, ok := reg.ByName("branch-naming")
 	if !ok {
@@ -419,7 +419,7 @@ func TestGitWorkflowBranchNamingNoGenerateFunc(t *testing.T) {
 }
 
 func TestGitWorkflowCommitTicketNoGenerateFunc(t *testing.T) {
-	reg := DefaultRegistry()
+	reg := mustDefault(t)
 
 	tool, ok := reg.ByName("commit-ticket")
 	if !ok {

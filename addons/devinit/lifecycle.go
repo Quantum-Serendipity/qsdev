@@ -72,7 +72,10 @@ func runEnable(cmd *cobra.Command, toolName string, opts enableOptions) error {
 	}
 	devenv.PrintProjectDefaults(cmd.OutOrStdout())
 
-	registry := toolreg.DefaultRegistry()
+	registry, err := toolreg.Default()
+	if err != nil {
+		return fmt.Errorf("loading the tool registry for enable: %w", err)
+	}
 	tool, isTool := registry.ByName(toolName)
 	if !isTool {
 		return runLanguageChange(cmd, toolName, true, opts.DryRun, opts.Force)
@@ -206,7 +209,11 @@ func loadLifecycleAnswers(ctx context.Context, w io.Writer, projectRoot string) 
 	}
 	answers.ProjectRoot = projectRoot
 	answers.Detected = host.detectProject(ctx, projectRoot)
-	if err := toolreg.SettleProject(w, projectRoot, &answers, toolreg.DefaultRegistry()); err != nil {
+	registry, err := toolreg.Default()
+	if err != nil {
+		return types.WizardAnswers{}, fmt.Errorf("loading the tool registry for settling the project's tools: %w", err)
+	}
+	if err := toolreg.SettleProject(w, projectRoot, &answers, registry); err != nil {
 		return types.WizardAnswers{}, err
 	}
 	return answers, nil
@@ -631,7 +638,10 @@ func runDisable(cmd *cobra.Command, toolName string, opts disableOptions) error 
 	}
 	devenv.PrintProjectDefaults(cmd.OutOrStdout())
 
-	registry := toolreg.DefaultRegistry()
+	registry, err := toolreg.Default()
+	if err != nil {
+		return fmt.Errorf("loading the tool registry for disable: %w", err)
+	}
 	tool, ok := registry.ByName(toolName)
 	if !ok {
 		return runLanguageChange(cmd, toolName, false, false, opts.Force)
@@ -1009,7 +1019,10 @@ func dedupeStrings(items []string) []string {
 
 // runList prints all registered tools grouped by category.
 func runList(cmd *cobra.Command, opts listOptions) error {
-	registry := toolreg.DefaultRegistry()
+	registry, err := toolreg.Default()
+	if err != nil {
+		return fmt.Errorf("loading the tool registry for list: %w", err)
+	}
 
 	// Load project state for enabled/disabled display.
 	var projectRoot string

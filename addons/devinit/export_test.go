@@ -30,8 +30,8 @@ var (
 	// ExportNewProjectProfileRegistry exposes NewProjectProfileRegistry for external tests.
 	ExportNewProjectProfileRegistry = NewProjectProfileRegistry
 
-	// ExportDefaultProjectProfileRegistry exposes DefaultProjectProfileRegistry for external tests.
-	ExportDefaultProjectProfileRegistry = DefaultProjectProfileRegistry
+	// ExportCatalogProjectProfiles exposes catalogProjectProfiles for external tests.
+	ExportCatalogProjectProfiles = catalogProjectProfiles
 
 	// ExportNewProjectProfiles exposes newProjectProfiles for external tests.
 	ExportNewProjectProfiles = newProjectProfiles

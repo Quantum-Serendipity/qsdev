@@ -25,8 +25,10 @@ type CommandSpec struct {
 	// Flags match an invocation that sets any of them to its Value.
 	Flags []FlagCond
 	// Args returns the positional arguments that match an invocation; it is
-	// called only once an invocation may match. Nil matches none.
-	Args func() []string
+	// called only once an invocation may match. Nil matches none. An error
+	// fails closed: the spec then matches every invocation of its path, as
+	// an unconditional one does.
+	Args func() ([]string, error)
 }
 
 // FlagCond is a boolean flag set to Value, written as any of Spellings
@@ -264,13 +266,18 @@ type restIndex struct {
 	cond, dynamic []bool
 }
 
-// indexRest indexes words for the spec.
+// indexRest indexes words for the spec. When the spec's Args fails, every
+// position holds a condition, so the spec fails closed (see CommandSpec.Args).
 func (s CommandSpec) indexRest(words []string) *restIndex {
 	n := len(words)
 	r := &restIndex{readOnly: make([]bool, n+1), cond: make([]bool, n+1), dynamic: make([]bool, n+1)}
 	var args []string
 	if s.Args != nil {
-		args = s.Args()
+		var err error
+		if args, err = s.Args(); err != nil {
+			// cond[i] carries cond[i+1], so this marks every position.
+			r.cond[n] = true
+		}
 	}
 	for i := n - 1; i >= 0; i-- {
 		w := words[i]

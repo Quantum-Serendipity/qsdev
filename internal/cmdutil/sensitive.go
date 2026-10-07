@@ -36,8 +36,9 @@ type Sensitivity struct {
 	Flags map[string]bool
 	// Args returns the positional arguments that make an invocation
 	// sensitive. It is called when a matching invocation is judged, not when
-	// the command is built, so it may read the catalog.
-	Args func() []string
+	// the command is built, so it may read the catalog. An error fails
+	// closed: every invocation is then sensitive.
+	Args func() ([]string, error)
 }
 
 // sensitivities holds the Sensitivity of every command MarkSensitive marked.
@@ -68,7 +69,8 @@ func sensitivityOf(cmd *cobra.Command) (Sensitivity, bool) {
 }
 
 // IsSensitiveInvocation reports whether running cmd with the parsed flags
-// and positional args needs a human.
+// and positional args needs a human. When the Sensitivity's Args fails, it
+// does: which arguments are safe is then unknown.
 func IsSensitiveInvocation(cmd *cobra.Command, args []string) bool {
 	s, ok := sensitivityOf(cmd)
 	if !ok || readOnlyInvocation(cmd) {
@@ -87,7 +89,10 @@ func IsSensitiveInvocation(cmd *cobra.Command, args []string) bool {
 		}
 	}
 	if s.Args != nil {
-		sensitive := s.Args()
+		sensitive, err := s.Args()
+		if err != nil {
+			return true
+		}
 		return slices.ContainsFunc(args, func(a string) bool { return slices.Contains(sensitive, a) })
 	}
 	return false

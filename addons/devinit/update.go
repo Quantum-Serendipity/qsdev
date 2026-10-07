@@ -341,7 +341,11 @@ func loadAndRefreshForUpdate(ctx context.Context, w io.Writer, projectRoot strin
 	}
 
 	// Augment EnabledTools with inferred tools and keep always-on tools.
-	if err := toolreg.ReconcileProject(w, projectRoot, &answers, toolreg.DefaultRegistry()); err != nil {
+	registry, err := toolreg.Default()
+	if err != nil {
+		return types.WizardAnswers{}, fmt.Errorf("loading the tool registry for update: %w", err)
+	}
+	if err := toolreg.ReconcileProject(w, projectRoot, &answers, registry); err != nil {
 		return types.WizardAnswers{}, err
 	}
 	qsdevanswers.EnforceInvariants(&answers)

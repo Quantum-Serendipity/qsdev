@@ -5,7 +5,7 @@ import (
 )
 
 func TestDevExToolsRegistered(t *testing.T) {
-	reg := DefaultRegistry()
+	reg := mustDefault(t)
 
 	tools := []struct {
 		name     string
@@ -38,5 +38,5 @@ func TestDevExToolsRegistered(t *testing.T) {
 }
 
 func TestDevExToolsLifecycleOnly(t *testing.T) {
-	assertLifecycleOnly(t, DefaultRegistry(), "changelog", "commitlint", "secretspec")
+	assertLifecycleOnly(t, mustDefault(t), "changelog", "commitlint", "secretspec")
 }

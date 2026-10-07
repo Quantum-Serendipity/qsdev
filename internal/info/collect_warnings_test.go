@@ -116,6 +116,45 @@ func TestCollectInfo_InvalidProjectDefaultsWarns(t *testing.T) {
 	}
 }
 
+// TestCollectInfo_BrokenCatalogDefaultProfileUnknown covers a project with no
+// security level whose defaults file the catalog rejects: the default profile
+// cannot be derived, so it is reported as unknown, and the catalog failure is
+// still reported exactly once (by the registry warning). The catalog and tool
+// registry are process globals, so this test does not run in parallel.
+func TestCollectInfo_BrokenCatalogDefaultProfileUnknown(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, ".qsdev.yaml"), []byte("version: 1\n"), 0o644); err != nil {
+		t.Fatalf("writing config: %v", err)
+	}
+	defaultsFile := catalog.ProjectConfigPath(dir)
+	if err := os.MkdirAll(filepath.Dir(defaultsFile), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(defaultsFile, []byte("tools: [\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	catalog.ResetDefault()
+	if err := catalog.SetProjectRoot(dir); err != nil {
+		t.Fatal(err)
+	}
+	toolreg.ResetDefaultRegistry()
+	t.Cleanup(func() {
+		catalog.ResetDefault()
+		toolreg.ResetDefaultRegistry()
+	})
+
+	got, err := CollectInfo(dir)
+	if err != nil {
+		t.Fatalf("CollectInfo: %v", err)
+	}
+	if got.SecurityProfile != SecurityProfileUnknown {
+		t.Errorf("SecurityProfile = %q, want %q", got.SecurityProfile, SecurityProfileUnknown)
+	}
+	if len(got.Warnings) != 1 {
+		t.Errorf("Warnings = %q, want exactly one", got.Warnings)
+	}
+}
+
 func TestFormatDefault_StableCategoryOrderAndWarnings(t *testing.T) {
 	t.Parallel()
 

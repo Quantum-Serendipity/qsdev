@@ -4,9 +4,11 @@ import (
 	"context"
 	"errors"
 	"log/slog"
+	"maps"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -15,10 +17,25 @@ import (
 	"github.com/Quantum-Serendipity/qsdev/internal/catalog"
 )
 
+// builtinRegistry builds the built-in profile registry from the default
+// catalog, failing the test on any error.
+func builtinRegistry(t *testing.T) *devinit.ExportProjectProfileRegistry {
+	t.Helper()
+	cat, err := catalog.Default()
+	if err != nil {
+		t.Fatalf("loading catalog: %v", err)
+	}
+	r, err := devinit.ExportCatalogProjectProfiles(cat)
+	if err != nil {
+		t.Fatalf("building built-in profiles: %v", err)
+	}
+	return r
+}
+
 // builtinProfile returns a built-in profile from the default registry.
 func builtinProfile(t *testing.T, name string) devinit.ExportProfile {
 	t.Helper()
-	p, ok := devinit.ExportDefaultProjectProfileRegistry().Get(name)
+	p, ok := builtinRegistry(t).Get(name)
 	if !ok {
 		t.Fatalf("built-in profile %q not registered", name)
 	}
@@ -169,8 +186,8 @@ func TestBuiltinProfiles_WebProfiles_HaveServices(t *testing.T) {
 	}
 }
 
-func TestDefaultProjectProfileRegistry_AllBuiltinsRegistered(t *testing.T) {
-	r := devinit.ExportDefaultProjectProfileRegistry()
+func TestCatalogProjectProfiles_AllBuiltinsRegistered(t *testing.T) {
+	r := builtinRegistry(t)
 
 	builtins := []string{
 		"go-web", "ts-fullstack", "ts-backend", "python-data", "python-web",
@@ -179,7 +196,7 @@ func TestDefaultProjectProfileRegistry_AllBuiltinsRegistered(t *testing.T) {
 	for _, name := range builtins {
 		p, ok := r.Get(name)
 		if !ok {
-			t.Errorf("built-in profile %q not found in DefaultProjectProfileRegistry", name)
+			t.Errorf("built-in profile %q not found in the catalog profile registry", name)
 			continue
 		}
 		if p.Description == "" {
@@ -196,21 +213,64 @@ func TestDefaultProjectProfileRegistry_AllBuiltinsRegistered(t *testing.T) {
 	}
 }
 
-func TestDefaultProjectProfileRegistry_InsertionOrder(t *testing.T) {
-	r := devinit.ExportDefaultProjectProfileRegistry()
+// TestProfileNamesDerivedFromCatalog verifies the built-in profile set is the
+// catalog's project_profiles keys in name order, not a curated list that can
+// drift from the catalog.
+func TestProfileNamesDerivedFromCatalog(t *testing.T) {
+	t.Parallel()
+	cat, err := catalog.Default()
+	if err != nil {
+		t.Fatal(err)
+	}
+	r, err := devinit.ExportCatalogProjectProfiles(cat)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := slices.Sorted(maps.Keys(cat.ProjectProfiles()))
+	if got := r.Names(); !slices.Equal(got, want) {
+		t.Errorf("Names = %q, want %q", got, want)
+	}
+}
 
-	want := []string{
-		"go-web", "ts-fullstack", "ts-backend", "python-data", "python-web",
-		"rust-cli", "rust-web", "java-web", "elixir-web", "dotnet-web",
+// TestOverlayProjectProfileSelectable verifies a profile added by an org
+// overlay is registered and listed, so --profile can select it.
+func TestOverlayProjectProfileSelectable(t *testing.T) {
+	t.Parallel()
+	overlay := `project_profiles:
+  go-custom:
+    description: 'Custom Go service'
+    tier: full
+    languages:
+      - name: go
+    services: []
+    direnv: true
+    claude_code: true
+    permission_level: standard
+`
+	f := filepath.Join(t.TempDir(), "defaults.yaml")
+	if err := os.WriteFile(f, []byte(overlay), 0o600); err != nil {
+		t.Fatal(err)
 	}
-	names := r.Names()
-	if len(names) != len(want) {
-		t.Fatalf("Names length = %d, want %d", len(names), len(want))
+	cat, err := catalog.Load(catalog.WithOrgConfigFile(f))
+	if err != nil {
+		t.Fatalf("loading catalog with overlay: %v", err)
 	}
-	for i, n := range names {
-		if n != want[i] {
-			t.Errorf("Names[%d] = %q, want %q", i, n, want[i])
-		}
+	r, err := devinit.ExportCatalogProjectProfiles(cat)
+	if err != nil {
+		t.Fatalf("building profiles: %v", err)
+	}
+	p, ok := r.Get("go-custom")
+	if !ok {
+		t.Fatalf("overlay profile go-custom not registered; names = %q", r.Names())
+	}
+	if p.Description != "Custom Go service" {
+		t.Errorf("go-custom description = %q", p.Description)
+	}
+	if !slices.Contains(r.Names(), "go-custom") {
+		t.Errorf("Names = %q, want go-custom listed", r.Names())
+	}
+	if _, ok := r.Get("go-web"); !ok {
+		t.Error("built-in go-web missing next to the overlay profile")
 	}
 }
 
@@ -232,13 +292,11 @@ func (h *recordingHandler) Handle(_ context.Context, r slog.Record) error {
 func (h *recordingHandler) WithAttrs([]slog.Attr) slog.Handler { return h }
 func (h *recordingHandler) WithGroup(string) slog.Handler      { return h }
 
-// TestDefaultProjectProfileRegistry_CatalogErrorNotLoggedAsError: a catalog
-// that fails to load is reported to the user by the root catalog gate or by
-// check, so building the profile registry (which every command does at
-// addon initialization) logs it at debug, not as a startup ERROR line on
-// every command. It mutates the process-global catalog, so it is not
-// parallel.
-func TestDefaultProjectProfileRegistry_CatalogErrorNotLoggedAsError(t *testing.T) {
+// TestNewProjectProfilesCatalogErrorReturnedNotLogged: a catalog that fails
+// to load is returned by newProjectProfiles to the command that needs the
+// profiles, and nothing is logged. It mutates the process-global catalog, so
+// it is not parallel.
+func TestNewProjectProfilesCatalogErrorReturnedNotLogged(t *testing.T) {
 	dir := t.TempDir()
 	bad := catalog.ProjectConfigPath(dir)
 	if err := os.MkdirAll(filepath.Dir(bad), 0o755); err != nil {
@@ -259,30 +317,25 @@ func TestDefaultProjectProfileRegistry_CatalogErrorNotLoggedAsError(t *testing.T
 		catalog.ResetDefault()
 	})
 
-	if r := devinit.ExportDefaultProjectProfileRegistry(); len(r.Names()) != 0 {
-		t.Errorf("registered %q without a catalog", r.Names())
+	r, err := devinit.ExportNewProjectProfiles(nil)
+	if err == nil || !strings.Contains(err.Error(), "loading built-in project profiles") {
+		t.Fatalf("newProjectProfiles err = %v, want a built-in profile loading error", err)
+	}
+	if r != nil {
+		t.Errorf("registry = %q, want nil on a catalog failure", r.Names())
 	}
 	h.mu.Lock()
 	defer h.mu.Unlock()
-	var debug int
 	for _, rec := range h.records {
-		switch {
-		case rec.Level >= slog.LevelWarn:
-			t.Errorf("catalog failure logged at %s: %s", rec.Level, rec.Message)
-		case rec.Level == slog.LevelDebug:
-			debug++
-		}
-	}
-	if debug == 0 {
-		t.Error("catalog failure not logged at debug")
+		t.Errorf("catalog failure logged at %s: %s", rec.Level, rec.Message)
 	}
 }
 
-// TestProjectProfilesEmbedderCollisionReported verifies an embedder profile
-// whose name collides with a built-in is returned as an error (not logged and
+// TestEmbedderProfileCollisionReported verifies an embedder profile whose
+// name collides with a built-in is returned as an error (not logged and
 // skipped), while non-colliding embedder profiles register next to the
-// built-ins.
-func TestProjectProfilesEmbedderCollisionReported(t *testing.T) {
+// built-ins. TestRegisterProfiles checks the built-in itself is kept.
+func TestEmbedderProfileCollisionReported(t *testing.T) {
 	t.Parallel()
 	custom := devinit.ExportProfile{Description: "custom"}
 

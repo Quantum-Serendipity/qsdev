@@ -510,14 +510,15 @@ def skip_wrapper(argv: list, i: int, name: str) -> WrapperStep:
     j, scripts = opts.j, opts.scripts
     if spec.joins:
         return WrapperStep(n, scripts + (" ".join(argv[j:]),), False, None)  # `watch 'rm x'` runs `sh -c`
+    # The positional is exactly one word, whatever it looks like: timeout's
+    # DURATION may be `.5`, `+5`, `inf`, `infinity` or ` 5`, not only digits.
     if spec.positional and j < n and not argv[j].startswith("-"):
-        if spec.positional == "one" or re.match(r"^[0-9]", argv[j]):
-            # Options may follow the positional (`flock FILE -c CMD`,
-            # `script FILE -q -c CMD`): GNU getopt permutes.
-            opts = _skip_options(argv, j + 1, spec, name, scripts)
-            if opts.no_exec or opts.split is not None:
-                return WrapperStep(opts.j, opts.scripts, opts.no_exec, opts.split)
-            j, scripts = opts.j, opts.scripts
+        # Options may follow the positional (`flock FILE -c CMD`,
+        # `script FILE -q -c CMD`): GNU getopt permutes.
+        opts = _skip_options(argv, j + 1, spec, name, scripts)
+        if opts.no_exec or opts.split is not None:
+            return WrapperStep(opts.j, opts.scripts, opts.no_exec, opts.split)
+        j, scripts = opts.j, opts.scripts
     if scripts:
         return WrapperStep(n, scripts, False, None)  # flock/script -c: the script is the command
     return WrapperStep(j, scripts, False, None)

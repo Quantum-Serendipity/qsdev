@@ -6,6 +6,7 @@ import (
 	"slices"
 	"strings"
 
+	"github.com/Quantum-Serendipity/qsdev/internal/profile"
 	"github.com/Quantum-Serendipity/qsdev/internal/validation"
 	"github.com/Quantum-Serendipity/qsdev/pkg/types"
 )
@@ -17,7 +18,8 @@ import (
 // Answers reach generation from team-shared inputs (the committed .qsdev.yaml
 // in join mode, --answers-file), so besides the enumerated names this also
 // enforces the syntax of every free-form value that is spliced into devenv.nix
-// (versions, package managers, extra packages, env keys, service settings).
+// (versions, package managers, extra packages, env keys, service settings)
+// and of the infrastructure endpoints (see profile.ValidateInfra).
 func ValidateAnswers(answers types.WizardAnswers) error {
 	var errs []string
 
@@ -51,6 +53,13 @@ func ValidateAnswers(answers types.WizardAnswers) error {
 	}
 
 	errs = append(errs, validateJavaConfig(answers.Java)...)
+
+	// Infrastructure endpoints are recorded in .qsdev.yaml and the answers
+	// file whichever generators run, so they are checked here and not only
+	// by the devenv generator, which a --claude-only init never reaches.
+	for _, err := range profile.ValidateInfra(answers.Infrastructure) {
+		errs = append(errs, err.Error())
+	}
 
 	// Validate environment variable names; keys are emitted unquoted.
 	for _, k := range slices.Sorted(maps.Keys(answers.EnvVars)) {

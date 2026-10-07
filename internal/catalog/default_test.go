@@ -400,7 +400,9 @@ func TestSetProjectRootAfterLoadErrors(t *testing.T) {
 	if !errors.Is(err, ErrCatalogAlreadyLoaded) {
 		t.Fatalf("SetProjectRoot(other root) after load = %v, want ErrCatalogAlreadyLoaded", err)
 	}
-	if !strings.Contains(err.Error(), first) || !strings.Contains(err.Error(), second) {
+	// The error quotes the roots (%q), which on Windows doubles each
+	// backslash, so look for them quoted.
+	if !strings.Contains(err.Error(), fmt.Sprintf("%q", first)) || !strings.Contains(err.Error(), fmt.Sprintf("%q", second)) {
 		t.Errorf("error %q does not name both roots %q and %q", err, first, second)
 	}
 	cat, err := Default()

@@ -15,7 +15,6 @@ config-parseqsdevconfig	internal/mcpserve/projectctx	1
 config-parseqsdevconfig	internal/mcpserve/tools/security	1
 config-parseqsdevconfig	internal/mcpserve/tools/status	1
 config-parseqsdevconfig	internal/posture	1
-context-background	addons/claudecode	1
 context-background	addons/devenv	2
 context-background	addons/devinit	8
 context-background	internal/detect	1

@@ -357,12 +357,12 @@ func TestProvenanceResolverVerified(t *testing.T) {
 	}
 }
 
-func TestHasExternalAttestation(t *testing.T) {
+func TestAttestationCheckerDefault(t *testing.T) {
 	t.Parallel()
 
 	def := &McpServerDefinition{Command: "anything"}
-	if hasExternalAttestation(def) {
-		t.Error("hasExternalAttestation() = true, want false (default no-op checker)")
+	if AttestationChecker(t.Context(), def) {
+		t.Error("AttestationChecker() = true, want false (default no-op checker)")
 	}
 }
 
@@ -394,8 +394,8 @@ func TestLaunchesUnpinnedPackage_HardenedCatalogLaunchers(t *testing.T) {
 				t.Errorf("%s (gate %s): hardened %s %q reported unpinned", name, gate, spec.Command, spec.Args)
 			}
 			plain := LauncherSpec(def)
-			got := GradeServer(&McpServerDefinition{Command: spec.Command, Args: spec.Args, Env: spec.Env, Transport: TransportStdio})
-			want := GradeServer(&McpServerDefinition{Command: plain.Command, Args: plain.Args, Env: plain.Env, Transport: TransportStdio})
+			got := GradeServer(t.Context(), &McpServerDefinition{Command: spec.Command, Args: spec.Args, Env: spec.Env, Transport: TransportStdio})
+			want := GradeServer(t.Context(), &McpServerDefinition{Command: plain.Command, Args: plain.Args, Env: plain.Env, Transport: TransportStdio})
 			if !reflect.DeepEqual(got, want) {
 				t.Errorf("%s (gate %s): hardening changed the grade:\n%#v\nwant\n%#v", name, gate, got, want)
 			}

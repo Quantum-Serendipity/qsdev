@@ -8,6 +8,7 @@ import (
 	"net/url"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"slices"
 	"strings"
 )
@@ -32,7 +33,7 @@ func ValidateConfig(servers map[string]ServerConfig) []ConfigWarning {
 		if cfg.URL != "" {
 			warnings = append(warnings, validateURL(name, expandVars(cfg.URL, os.LookupEnv))...)
 		} else {
-			warnings = append(warnings, validateCommand(name, expandVars(cfg.Command, os.LookupEnv))...)
+			warnings = append(warnings, validateCommand(name, expandVars(cfg.Command, os.LookupEnv), cfg.Dir)...)
 		}
 		warnings = append(warnings, validateRequiredEnv(name, cfg.RequiredEnv, envSet)...)
 		warnings = append(warnings, validateEnvRefs(name, cfg, envSet)...)
@@ -41,7 +42,10 @@ func ValidateConfig(servers map[string]ServerConfig) []ConfigWarning {
 	return warnings
 }
 
-func validateCommand(server, command string) []ConfigWarning {
+// validateCommand checks that command can be started from dir, the directory
+// the server runs in: a bare name is looked up on PATH, and a relative path
+// (one containing a separator) is resolved against dir, as startServer runs it.
+func validateCommand(server, command, dir string) []ConfigWarning {
 	if command == "" {
 		return []ConfigWarning{{
 			Server:      server,
@@ -51,7 +55,7 @@ func validateCommand(server, command string) []ConfigWarning {
 		}}
 	}
 
-	if _, err := exec.LookPath(command); err != nil {
+	if _, err := exec.LookPath(commandPath(command, dir)); err != nil {
 		return []ConfigWarning{{
 			Server:      server,
 			Severity:    SeverityError,
@@ -61,6 +65,16 @@ func validateCommand(server, command string) []ConfigWarning {
 	}
 
 	return nil
+}
+
+// commandPath returns the path exec resolves command to when it is started in
+// dir: a relative path containing a separator is joined onto dir, while a bare
+// name (looked up on PATH) and an absolute path are returned unchanged.
+func commandPath(command, dir string) string {
+	if dir == "" || filepath.IsAbs(command) || !strings.ContainsAny(command, `/`+string(filepath.Separator)) {
+		return command
+	}
+	return filepath.Join(dir, command)
 }
 
 // Reasons ProbeableURL rejects a URL.

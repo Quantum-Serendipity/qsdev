@@ -267,7 +267,7 @@ func Assess(projectPath string, opts AssessOptions) (*PostureReport, error) {
 		return nil, fmt.Errorf("assessing tools: %w", err)
 	}
 	report.Tools = tools
-	report.McpServers = gradeMcpServers(projectPath, mcpregistry.DefaultRegistry())
+	report.McpServers = gradeMcpServers(context.Background(), projectPath, mcpregistry.DefaultRegistry())
 
 	// Compute aggregate score.
 	report.Score = ComputeAggregateScore(report.Defense.Score, configScore, report.Dependencies.Score)
@@ -302,8 +302,8 @@ func resolveTierAndLevel(configPath string) (tierName, level string, err error) 
 // (mcpregistry.GradeConfigured). A server whose registry definition in reg
 // pins a binary the entry does not run carries the command that installs it.
 // A missing or unreadable .mcp.json yields no section; it never fails the
-// assessment.
-func gradeMcpServers(projectPath string, reg *mcpregistry.McpServerRegistry) []McpServerGrade {
+// assessment. ctx bounds each server's attestation check.
+func gradeMcpServers(ctx context.Context, projectPath string, reg *mcpregistry.McpServerRegistry) []McpServerGrade {
 	configured, err := mcpregistry.ScanMcpJSON(projectPath)
 	if err != nil {
 		slog.Warn("posture: MCP server grades omitted", "error", err)
@@ -312,7 +312,7 @@ func gradeMcpServers(projectPath string, reg *mcpregistry.McpServerRegistry) []M
 	var grades []McpServerGrade
 	for _, name := range slices.Sorted(maps.Keys(configured)) {
 		def := configured[name]
-		g := McpServerGrade{Name: name, Grade: mcpregistry.GradeConfigured(def).Level.String()}
+		g := McpServerGrade{Name: name, Grade: mcpregistry.GradeConfigured(ctx, def).Level.String()}
 		if known, ok := reg.ByName(name); ok && mcpregistry.SuggestsPinnedInstall(known, &def) {
 			g.InstallHint = fmt.Sprintf("%s mcp install %s", branding.Get().AppName, name)
 		}

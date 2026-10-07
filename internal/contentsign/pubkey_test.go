@@ -228,3 +228,112 @@ func TestVerifyExplicitEmptyKeySetDoesNotFallBack(t *testing.T) {
 		})
 	}
 }
+
+// TestLoadCodeTrustedKeys pins U16-16: code attestation trusts only the
+// embedded release key and ~/.<app>/keys/code, never the top-level keys a
+// docs or content signer was trusted with.
+func TestLoadCodeTrustedKeys(t *testing.T) {
+	docs := newKeyPair(t, t.TempDir(), "docs", "")
+	code := newKeyPair(t, t.TempDir(), "code", "")
+
+	t.Run("dir is the code subdir of the keys dir", func(t *testing.T) {
+		home := t.TempDir()
+		setHome(t, home)
+		dir, err := CodeTrustedKeysDir()
+		if want := filepath.Join(userKeysDir(home), "code"); err != nil || dir != want {
+			t.Errorf("CodeTrustedKeysDir() = %q, %v; want %q", dir, err, want)
+		}
+	})
+
+	t.Run("missing code dir yields no keys", func(t *testing.T) {
+		home := t.TempDir()
+		setHome(t, home)
+		copyPub(t, docs, userKeysDir(home), "docs.pub")
+		keys, err := LoadCodeTrustedKeys()
+		if err != nil {
+			t.Fatalf("LoadCodeTrustedKeys: %v", err)
+		}
+		if keys == nil || len(keys) != 0 {
+			t.Errorf("keys = %#v, want a non-nil empty set (the docs key must not be trusted for code)", keys)
+		}
+	})
+
+	t.Run("loads only the code dir", func(t *testing.T) {
+		home := t.TempDir()
+		setHome(t, home)
+		copyPub(t, docs, userKeysDir(home), "docs.pub")
+		copyPub(t, code, filepath.Join(userKeysDir(home), "code"), "code.pub")
+		keys, err := LoadCodeTrustedKeys()
+		if err != nil {
+			t.Fatalf("LoadCodeTrustedKeys: %v", err)
+		}
+		if len(keys) != 1 || keys[0].ID() != code.pub.ID() {
+			t.Errorf("keys = %v, want exactly %s", keys, code.pub.ID())
+		}
+	})
+
+	t.Run("malformed code key is an error", func(t *testing.T) {
+		home := t.TempDir()
+		setHome(t, home)
+		dir := filepath.Join(userKeysDir(home), "code")
+		copyPub(t, code, dir, "code.pub")
+		if err := os.WriteFile(filepath.Join(dir, "bad.pub"), []byte("garbage"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := LoadCodeTrustedKeys(); err == nil {
+			t.Error("expected an error for a malformed code key")
+		}
+	})
+}
+
+// TestLoadTrustedKeys_DocsKeyringUnchanged: the docs and content keyring still
+// loads exactly the top-level keys and does not pick up the code subdirectory.
+func TestLoadTrustedKeys_DocsKeyringUnchanged(t *testing.T) {
+	docs := newKeyPair(t, t.TempDir(), "docs", "")
+	code := newKeyPair(t, t.TempDir(), "code", "")
+	home := t.TempDir()
+	setHome(t, home)
+	copyPub(t, docs, userKeysDir(home), "docs.pub")
+	copyPub(t, code, filepath.Join(userKeysDir(home), "code"), "code.pub")
+
+	keys, err := LoadTrustedKeys("")
+	if err != nil {
+		t.Fatalf("LoadTrustedKeys: %v", err)
+	}
+	if len(keys) != 1 || keys[0].ID() != docs.pub.ID() {
+		t.Errorf("LoadTrustedKeys(\"\") = %v; want exactly %s", keys, docs.pub.ID())
+	}
+}
+
+// TestCodeKeyringNeedsMigration covers the predicate behind the hint telling
+// users whose code-signing keys sit in the top-level keys dir to move them
+// into the code subdirectory.
+func TestCodeKeyringNeedsMigration(t *testing.T) {
+	kp := newKeyPair(t, t.TempDir(), "k", "")
+	tests := []struct {
+		name      string
+		topLevel  bool
+		codeLevel bool
+		want      bool
+	}{
+		{name: "no keys"},
+		{name: "top-level keys, no code keys", topLevel: true, want: true},
+		{name: "top-level and code keys", topLevel: true, codeLevel: true},
+		{name: "code keys only", codeLevel: true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			home := t.TempDir()
+			setHome(t, home)
+			if tt.topLevel {
+				copyPub(t, kp, userKeysDir(home), "k.pub")
+			}
+			if tt.codeLevel {
+				copyPub(t, kp, filepath.Join(userKeysDir(home), "code"), "k.pub")
+			}
+			if got := CodeKeyringNeedsMigration(); got != tt.want {
+				t.Errorf("CodeKeyringNeedsMigration() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}

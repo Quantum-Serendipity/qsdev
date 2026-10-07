@@ -56,7 +56,7 @@ func CheckServer(ctx context.Context, cfg ServerConfig) *ServerHealth {
 		return checkHTTPServer(ctx, cfg, h, start)
 	}
 
-	proc, err := startServer(cfg.Command, cfg.Args, cfg.Env)
+	proc, err := startServer(cfg)
 	if err != nil {
 		h.Status = StatusUnreachable
 		h.Error = fmt.Sprintf("starting server: %s", err)

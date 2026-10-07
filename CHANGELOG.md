@@ -78,6 +78,19 @@ All notable changes to qsdev are recorded in this file. The format is based on
   `cmd /c git commit --no-verify -m x`), and operands `xargs` reads from
   standard input, are not judged by these checks.
 
+- MCP server code attestation (the `external-attestation` criterion of
+  `qsdev mcp grade`) now trusts only the embedded qsdev release key and the
+  keys in the new code keyring `~/.qsdev/keys/code/` (U16-16). Keys in
+  `~/.qsdev/keys/` stay trusted for docs and content signatures but no longer
+  attest the code an MCP server runs, so a docs-signing key cannot vouch for
+  an executable. Move code-signing `.pub` files into `~/.qsdev/keys/code/`:
+  while the top-level directory holds keys and the code keyring is empty,
+  `qsdev mcp grade` prints one line on stderr naming the code keyring, whether
+  or not any server reaches Verified. The attestation check also runs under
+  the caller's context, so cancelling `qsdev mcp grade` (or an MCP `mcp_list`
+  call or `qsdev://project/mcp-servers` resource read) stops signature
+  verification.
+
 - The MCP server's opt-in `qsdev_nix_run` tool is now held to what a Bash call
   may do, not only to the Bash deny rules: a call whose Bash equivalent (the
   `nix run` line, the program it runs, a `-c` script or stdin) self-protection
@@ -357,6 +370,32 @@ All notable changes to qsdev are recorded in this file. The format is based on
 
 ### Fixed
 
+- `qsdev mcp grade`'s `matches-registry-definition` criterion now uses the
+  same trust check as `qsdev mcp status` and is reported for every configured
+  server (U16-01, U16-13). An entry passes only when it is exactly a
+  definition qsdev trusts (a catalog launcher, its hardened form at any valid
+  release cutoff, or the binary `qsdev mcp install` provides, with any catalog optional arguments; an organization
+  overlay server; or a server built into qsdev), comparing command,
+  arguments, URL, headers and environment. qsdev's own installed binaries
+  (e.g. `context7-mcp`) now pass, and an exact catalog launcher with an
+  injected variable such as `LD_PRELOAD` now fails. A failing criterion, and
+  the not-probed reason in `qsdev mcp status`, name the first field that
+  differs (e.g. `env "LD_PRELOAD" not in trusted definition`) without
+  printing env or header values, and a package launcher that is also
+  untrusted names both. The criterion name is unchanged and it still does
+  not affect the grade level.
+- `qsdev mcp status`/`health` probes, `qsdev devenv doctor` and `qsdev mcp
+  grade` now treat an `.mcp.json` server as Claude Code does: it runs from
+  the project root, so a relative command (`./server.sh`) or script argument
+  (`server.js`) resolves against the root, not the directory qsdev is run
+  from (U16-10). Run from a subdirectory, `--probe-untrusted` used to fail
+  with `fork/exec ./server.sh: no such file or directory`, the doctor flagged
+  the command as missing, and attestation checked the wrong file. A bare
+  command name is still looked up on `PATH` only. Accepted risk: because a
+  probed server now starts in the project root, toolchain shims it runs
+  (asdf, mise, pyenv, nvm and the like) read the repository's version pins,
+  as they do under Claude Code itself; only trusted catalog launches are
+  probed unless `--probe-untrusted` is given.
 - The generated `devenv.nix` for an Elixir project failed to evaluate: qsdev
   and devenv's Elixir module both defined the `mix-format` hook's package at
   the same priority, which Nix rejects as "defined multiple times" (U10-01).
@@ -386,6 +425,50 @@ All notable changes to qsdev are recorded in this file. The format is based on
   package not on it and satisfies the new-dependency gate. The developer's
   own `PACKAGE_GUARD_DENYLIST` is now applied before the team allowlist, so a
   personal list can only narrow team policy.
+
+- `qsdev check` now vouches for the `.mcp.json` entries of required
+  always-on MCP tools (such as context7) instead of only checking that they
+  exist (W0N-08). An entry must be exactly a definition qsdev trusts, using
+  the same check as `qsdev mcp status` and `qsdev mcp grade` (a catalog
+  launcher or installed binary, with any optional arguments), or the entry
+  the project's own generation writes. A replaced command, changed arguments
+  or an injected variable such as `LD_PRELOAD` now fails
+  `tool_mcp_server_untrusted_<tool>`, naming the first differing field
+  without printing env or header values. To fix it, run `qsdev update
+  --configs-only --overwrite-modified`, which restores the generated
+  `.mcp.json` (`qsdev init --update` keeps an edited entry), or `qsdev
+  disable <tool> --force` to opt out.
+
+- qsdev now refuses an `.mcp.json` that spells a field two ways, such as
+  `"command"` and `"Command"`, `"env"` and `"ENV"`, or `"mcpServers"` and
+  `"MCPSERVERS"`. Go's JSON decoder matched keys case-insensitively (the last
+  spelling won) while Claude Code reads only the exact one, so such a file
+  could pass `qsdev check`, `qsdev mcp grade` and `qsdev mcp status` as a
+  trusted launch while Claude Code ran another command or kept an injected
+  `LD_PRELOAD`. `qsdev mcp grade` and `qsdev mcp status` now exit with an
+  error naming the key, and `qsdev check` fails
+  `tool_mcp_server_missing_<tool>` for each required server with the same
+  reason and the `qsdev update --configs-only --overwrite-modified`
+  remediation. Keys inside `env` and `headers` are the user's and still match
+  exactly.
+- The not-probed reason in `qsdev mcp status` and the trust failures of
+  `qsdev mcp grade` and `qsdev check` show only the scheme and host of a
+  configured URL (`https://example.invalid/…`), so a credential in its path,
+  query or userinfo (`?apiKey=...`) is not printed.
+- An `.mcp.json` entry that keeps a trusted remote URL but adds a command,
+  such as `{"type":"stdio","command":"./evil.sh","url":"https://mcp.socket.dev/"}`,
+  no longer passes as the trusted endpoint. Claude Code launches such an
+  entry as a stdio server running the command, so `qsdev mcp grade`,
+  `qsdev mcp status` and `qsdev check` now compare the whole launch (command,
+  arguments, URL, headers and environment) whatever the transport, and name
+  the extra command (`command "./evil.sh" where the trusted definition is
+  remote url ...`).
+- qsdev now refuses an `.mcp.json` that repeats a key, such as two
+  `"mcpServers"` objects or two `"env"` maps in one entry. Go's JSON decoder
+  merged them while Claude Code keeps only the last, so a required server
+  defined only in the first `"mcpServers"` object passed `qsdev check` though
+  Claude Code never loaded it. It is reported like a miscased key.
+
 - A committed `security.credential_vend.enabled: true` no longer mounts
   `qsdev_credential_vend` by itself (U21-V02, U21-07). The operator must
   confirm it with `--allow-credential-vend`,

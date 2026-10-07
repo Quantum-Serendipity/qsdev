@@ -1,11 +1,10 @@
 package claudecode
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
-	"slices"
 	"sort"
-	"strings"
 
 	"github.com/spf13/cobra"
 
@@ -28,8 +27,9 @@ type gradeCriterionJSON struct {
 	Detail string `json:"detail"`
 }
 
-// criterionMatchesRegistry names the extra criterion reported for a configured
-// server that shares its name with a built-in registry definition.
+// criterionMatchesRegistry names the extra criterion reported for every
+// configured server: whether its entry is a definition qsdev vouches for. The
+// name predates the trust set and is kept for JSON consumers.
 const criterionMatchesRegistry = "matches-registry-definition"
 
 // gradeTarget is one server to grade. def is the definition that is graded:
@@ -39,9 +39,6 @@ type gradeTarget struct {
 	name       string
 	def        *mcpregistry.McpServerDefinition
 	configured bool
-	// registry is the same-named registry definition of a configured server,
-	// or nil when the name is not in the registry.
-	registry *mcpregistry.McpServerDefinition
 }
 
 func mcpGradeCmd() *cobra.Command {
@@ -60,11 +57,13 @@ verified, attested. Each level requires all criteria from previous levels
 plus its own criteria to be satisfied.
 
 Servers configured in .mcp.json are graded from the command, arguments and
-environment actually configured there. When a configured server shares its
-name with a built-in registry server, the extra matches-registry-definition
-criterion reports whether the configured command still matches the registry
-or an entry qsdev generates for it (the hardened launcher or the installed
-binary).
+environment actually configured there. For every configured server, the extra
+matches-registry-definition criterion reports whether the entry is exactly a
+definition qsdev trusts (a catalog launcher, its hardened form with any valid
+release cutoff, or its installed binary, an organization overlay server, or a
+server built into qsdev), comparing the command, arguments, URL, headers and
+environment, and otherwise names the first field that differs. It is the same
+check mcp status uses before probing, and it does not change the grade level.
 Registry servers the project does not configure are graded only with --all or
 when named explicitly, and are marked as not configured.`,
 		Args: cobra.MaximumNArgs(1),
@@ -94,10 +93,11 @@ when named explicitly, and are marked as not configured.`,
 				return nil
 			}
 
+			printCodeKeyringMigrationHint(cmd.ErrOrStderr())
 			trusted := mcpregistry.TrustedDefinitions(configuredServerSpecs())
 			results := make([]mcpregistry.GradeResult, len(targets))
 			for i, t := range targets {
-				results[i] = gradeTargetResult(t, trusted[t.name])
+				results[i] = gradeTargetResult(cmd.Context(), t, trusted[t.name])
 			}
 
 			if jsonOutput {
@@ -131,7 +131,7 @@ func selectGradeTargets(configured map[string]mcpregistry.McpServerDefinition, k
 			continue
 		}
 		defCopy := cfgDef
-		targets = append(targets, gradeTarget{name: name, def: &defCopy, configured: true, registry: registry[name]})
+		targets = append(targets, gradeTarget{name: name, def: &defCopy, configured: true})
 	}
 	for name, def := range registry {
 		if _, ok := configured[name]; ok {
@@ -152,55 +152,31 @@ func selectGradeTargets(configured map[string]mcpregistry.McpServerDefinition, k
 
 // gradeTargetResult grades the target's definition (a configured one through
 // mcpregistry.GradeConfigured, the grade `qsdev status` reports too) and, for
-// a configured server that shadows a registry server, appends whether the
-// configured launch command still matches the registry definition. trusted
-// holds the launch definitions qsdev generates for the target's name
-// (TrustedDefinitions).
-func gradeTargetResult(t gradeTarget, trusted []mcpregistry.LaunchSpec) mcpregistry.GradeResult {
+// a configured server, appends whether its entry is one of trusted, the
+// definitions qsdev trusts for its name (TrustedDefinitions). The appended
+// criterion is informational: the level is already set. ctx bounds the
+// attestation check.
+func gradeTargetResult(ctx context.Context, t gradeTarget, trusted []mcpregistry.LaunchSpec) mcpregistry.GradeResult {
 	if !t.configured {
-		return mcpregistry.GradeServer(t.def)
+		return mcpregistry.GradeServer(ctx, t.def)
 	}
-	gr := mcpregistry.GradeConfigured(*t.def)
-	if t.registry != nil {
-		gr.Criteria = append(gr.Criteria, registryMatchCriterion(t.def, t.registry, trusted))
-	}
+	gr := mcpregistry.GradeConfigured(ctx, *t.def)
+	gr.Criteria = append(gr.Criteria, registryMatchCriterion(t.def, trusted))
 	return gr
 }
 
-// registryMatchCriterion reports whether a configured server launches the same
-// command, arguments and URL as the registry definition of the same name, or
-// as one of the trusted definitions qsdev generates for that name (the
-// hardened launcher at any valid cutoff, or the installed binary). Env and
-// headers are not compared. A mismatch means the name no longer identifies
-// the reviewed registry server.
-func registryMatchCriterion(configured, registry *mcpregistry.McpServerDefinition, trusted []mcpregistry.LaunchSpec) mcpregistry.CriterionResult {
-	if sameRegistryLaunch(configured, registry) || mcpregistry.MatchesTrustedLaunch(configured.ServerConfig(), trusted) {
-		return mcpregistry.CriterionResult{
-			Name:   criterionMatchesRegistry,
-			Passed: true,
-			Detail: "configured command matches the built-in registry definition",
-		}
+// registryMatchCriterion reports whether a configured server is exactly one of
+// the trusted definitions of its name (mcpregistry.TrustMismatch, the check the
+// probe gate applies), naming the first differing field when it is not.
+func registryMatchCriterion(configured *mcpregistry.McpServerDefinition, trusted []mcpregistry.LaunchSpec) mcpregistry.CriterionResult {
+	if mismatch := mcpregistry.TrustMismatch(configured.ServerConfig(), trusted); mismatch != "" {
+		return mcpregistry.CriterionResult{Name: criterionMatchesRegistry, Detail: mismatch}
 	}
 	return mcpregistry.CriterionResult{
-		Name: criterionMatchesRegistry,
-		Detail: fmt.Sprintf("configured %q differs from the built-in registry definition %q",
-			launchSummary(configured), launchSummary(registry)),
+		Name:   criterionMatchesRegistry,
+		Passed: true,
+		Detail: "configured entry matches a trusted definition",
 	}
-}
-
-// sameRegistryLaunch reports whether configured launches exactly the
-// registry definition's command, arguments and URL.
-func sameRegistryLaunch(configured, registry *mcpregistry.McpServerDefinition) bool {
-	return configured.Command == registry.Command && slices.Equal(configured.Args, registry.Args) && configured.URL == registry.URL
-}
-
-// launchSummary renders what a server definition launches: its URL for a
-// remote server, otherwise its command line.
-func launchSummary(def *mcpregistry.McpServerDefinition) string {
-	if def.URL != "" {
-		return def.URL
-	}
-	return strings.Join(append([]string{def.Command}, def.Args...), " ")
 }
 
 func printGradeJSON(cmd *cobra.Command, targets []gradeTarget, results []mcpregistry.GradeResult) error {

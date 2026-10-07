@@ -1,6 +1,9 @@
 package mcpregistry
 
-import "testing"
+import (
+	"context"
+	"testing"
+)
 
 // testStorePath is a well-formed Nix store path (32-char nix-base32 hash).
 const testStorePath = "/nix/store/0123456789abcdfghijklmnpqrsvwxyz-server/bin/server"
@@ -149,7 +152,7 @@ func TestGradeServer(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 
-			result := gradeServer(&tt.def, fakeProvenance(t, "/opt/qsdev/bin/qsdev"))
+			result := gradeServer(t.Context(), &tt.def, fakeProvenance(t, "/opt/qsdev/bin/qsdev"))
 			if result.Level != tt.expected {
 				t.Errorf("gradeServer().Level = %v (%d), want %v (%d)",
 					result.Level, result.Level, tt.expected, tt.expected)
@@ -161,7 +164,7 @@ func TestGradeServer(t *testing.T) {
 func TestGradeServerAttestationLiftsVerifiedToAttested(t *testing.T) {
 	// Not parallel: it mutates the package-level AttestationChecker.
 	t.Cleanup(func() {
-		AttestationChecker = func(*McpServerDefinition) bool { return false }
+		AttestationChecker = func(context.Context, *McpServerDefinition) bool { return false }
 	})
 
 	// A definition that already satisfies every Verified criterion: stdio
@@ -176,15 +179,15 @@ func TestGradeServerAttestationLiftsVerifiedToAttested(t *testing.T) {
 
 	// With the default checker (false) the definition grades to Verified, one
 	// below Attested.
-	AttestationChecker = func(*McpServerDefinition) bool { return false }
-	if got := gradeServer(def, prov); got.Level != ComplianceVerified {
+	AttestationChecker = func(context.Context, *McpServerDefinition) bool { return false }
+	if got := gradeServer(t.Context(), def, prov); got.Level != ComplianceVerified {
 		t.Fatalf("default checker: Level = %v, want %v", got.Level, ComplianceVerified)
 	}
 
 	// With an injected checker returning true, the same definition reaches
 	// Attested and the external-attestation criterion passes.
-	AttestationChecker = func(*McpServerDefinition) bool { return true }
-	result := gradeServer(def, prov)
+	AttestationChecker = func(context.Context, *McpServerDefinition) bool { return true }
+	result := gradeServer(t.Context(), def, prov)
 	if result.Level != ComplianceAttested {
 		t.Errorf("attested checker: Level = %v, want %v", result.Level, ComplianceAttested)
 	}
@@ -211,7 +214,7 @@ func TestGradeServerNpxReportsAutoInstall(t *testing.T) {
 
 	for _, args := range [][]string{{"pkg"}, {"-y", "pkg"}} {
 		def := &McpServerDefinition{Command: "npx", Args: args, Transport: TransportStdio}
-		result := gradeServer(def, fakeProvenance(t, "/opt/qsdev/bin/qsdev"))
+		result := gradeServer(t.Context(), def, fakeProvenance(t, "/opt/qsdev/bin/qsdev"))
 		var found bool
 		for _, c := range result.Criteria {
 			if c.Name == "no-runtime-auto-install" {
@@ -234,7 +237,7 @@ func TestGradeServerCriteriaPopulated(t *testing.T) {
 		Command:   "qsdev",
 		Transport: TransportStdio,
 	}
-	result := GradeServer(def)
+	result := GradeServer(t.Context(), def)
 
 	if len(result.Criteria) == 0 {
 		t.Fatal("GradeServer().Criteria is empty, expected criterion results")
@@ -278,8 +281,8 @@ func TestGradeServerDeterministic(t *testing.T) {
 		Env:       map[string]string{"FOO": "${BAR}"},
 	}
 
-	first := GradeServer(def)
-	second := GradeServer(def)
+	first := GradeServer(t.Context(), def)
+	second := GradeServer(t.Context(), def)
 
 	if first.Level != second.Level {
 		t.Errorf("non-deterministic: first=%v, second=%v", first.Level, second.Level)
@@ -319,7 +322,7 @@ func TestGradeConfigured_CommandlessEntryIsNotStdio(t *testing.T) {
 			if got := def.Transport == TransportStdio; got != tt.wantStdio {
 				t.Errorf("transport = %q, want stdio=%v", def.Transport, tt.wantStdio)
 			}
-			if got := criterionPassed(t, GradeConfigured(tt.def), "stdio-transport"); got != tt.wantStdio {
+			if got := criterionPassed(t, GradeConfigured(t.Context(), tt.def), "stdio-transport"); got != tt.wantStdio {
 				t.Errorf("GradeConfigured stdio-transport passed = %v, want %v", got, tt.wantStdio)
 			}
 		})
@@ -362,5 +365,32 @@ func TestSuggestsPinnedInstall(t *testing.T) {
 				t.Errorf("SuggestsPinnedInstall = %v, want %v", got, tt.want)
 			}
 		})
+	}
+}
+
+// TestGradeServer_ThreadsContext pins U16-16: the attestation checker runs
+// under the caller's context (so a cancelled `mcp grade` stops verifying
+// signatures), not a context.Background() of its own.
+func TestGradeServer_ThreadsContext(t *testing.T) {
+	// Not parallel: it mutates the package-level AttestationChecker.
+	t.Cleanup(func() {
+		AttestationChecker = func(context.Context, *McpServerDefinition) bool { return false }
+	})
+
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel()
+	var got context.Context
+	AttestationChecker = func(c context.Context, _ *McpServerDefinition) bool {
+		got = c
+		return false
+	}
+	def := &McpServerDefinition{Command: "qsdev", Args: []string{"mcp", "serve"}, Transport: TransportStdio}
+	gradeServer(ctx, def, fakeProvenance(t, "/opt/qsdev/bin/qsdev"))
+
+	if got == nil {
+		t.Fatal("AttestationChecker was not called for a Verified server")
+	}
+	if got.Err() == nil {
+		t.Error("AttestationChecker context is not the caller's cancelled context")
 	}
 }

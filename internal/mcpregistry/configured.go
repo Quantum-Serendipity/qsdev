@@ -21,9 +21,7 @@ func ConfiguredServers(projectRoot string, reg *McpServerRegistry) ([]mcphealth.
 	}
 	out := make([]mcphealth.ServerConfig, 0, len(defs))
 	for _, name := range slices.Sorted(maps.Keys(defs)) {
-		def := defs[name]
-		cfg := def.ServerConfig()
-		cfg.Name = name
+		cfg := defs[name].ServerConfig()
 		if reg != nil {
 			if known, ok := reg.ByName(name); ok {
 				cfg.RequiredEnv = known.RequiredEnv
@@ -32,18 +30,4 @@ func ConfiguredServers(projectRoot string, reg *McpServerRegistry) ([]mcphealth.
 		out = append(out, cfg)
 	}
 	return out, nil
-}
-
-// ServerConfig returns d's name and launch fields (command, args, URL, env and
-// headers) as the probe and trust gates read them. Required environment
-// variables are not part of a launch and are left unset.
-func (d McpServerDefinition) ServerConfig() mcphealth.ServerConfig {
-	return mcphealth.ServerConfig{
-		Name:    d.Name,
-		Command: d.Command,
-		Args:    d.Args,
-		URL:     d.URL,
-		Env:     d.Env,
-		Headers: d.Headers,
-	}
 }

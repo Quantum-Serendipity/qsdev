@@ -1,6 +1,7 @@
 package mcpregistry
 
 import (
+	"context"
 	"net"
 	"net/url"
 	"os"
@@ -538,11 +539,8 @@ func isNixStorePath(p string) bool {
 // external attestation (a trusted Minisign signature). It defaults to a no-op
 // that returns false; the claudecode addon overrides it at startup with a
 // contentsign-backed implementation (mcpregistry must not import contentsign).
-var AttestationChecker = func(*McpServerDefinition) bool { return false }
-
-func hasExternalAttestation(def *McpServerDefinition) bool {
-	return AttestationChecker(def)
-}
+// It runs under the grading caller's ctx.
+var AttestationChecker = func(context.Context, *McpServerDefinition) bool { return false }
 
 // isLoopbackURL reports whether raw points at localhost or a loopback address.
 func isLoopbackURL(raw string) bool {

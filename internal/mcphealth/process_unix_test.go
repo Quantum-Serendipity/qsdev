@@ -25,7 +25,7 @@ func TestMCPProcessShutdown_KillsGrandchildren(t *testing.T) {
 	pidFile := filepath.Join(t.TempDir(), "child.pid")
 	script := "sleep 60 & echo $! > " + pidFile + "; sleep 60"
 
-	p, err := startServer("sh", []string{"-c", script}, nil)
+	p, err := startServer(ServerConfig{Command: "sh", Args: []string{"-c", script}})
 	if err != nil {
 		t.Fatalf("startServer: %v", err)
 	}
@@ -53,7 +53,7 @@ func TestMCPProcessShutdown_KillsGrandchildren(t *testing.T) {
 func TestMCPProcessClose_Idempotent(t *testing.T) {
 	t.Parallel()
 
-	p, err := startServer("sh", []string{"-c", "cat >/dev/null"}, nil)
+	p, err := startServer(ServerConfig{Command: "sh", Args: []string{"-c", "cat >/dev/null"}})
 	if err != nil {
 		t.Fatalf("startServer: %v", err)
 	}

@@ -1,5 +1,7 @@
 package mcpregistry
 
+import "context"
+
 // CriterionResult records whether a single compliance criterion was met.
 type CriterionResult struct {
 	Name   string
@@ -20,17 +22,19 @@ type GradeResult struct {
 // filesystem) and external-attestation is pure; the result is deterministic
 // given the filesystem and the injected AttestationChecker (which the claudecode
 // addon wires to a contentsign-backed verifier at startup, and which defaults
-// to a no-op returning false).
-func GradeServer(def *McpServerDefinition) GradeResult {
-	return gradeServer(def, defaultProvenance)
+// to a no-op returning false). ctx bounds the attestation check, which reads
+// and verifies the server's code.
+func GradeServer(ctx context.Context, def *McpServerDefinition) GradeResult {
+	return gradeServer(ctx, def, defaultProvenance)
 }
 
 // GradeConfigured grades a server as .mcp.json configures it (a definition
 // from ScanMcpJSON). It is the one grade `qsdev mcp grade` and `qsdev status`
-// report for a configured server, so the two always agree.
-func GradeConfigured(def McpServerDefinition) GradeResult {
+// report for a configured server, so the two always agree. ctx bounds the
+// attestation check, as for GradeServer.
+func GradeConfigured(ctx context.Context, def McpServerDefinition) GradeResult {
 	graded := configuredDefinition(def)
-	return GradeServer(&graded)
+	return GradeServer(ctx, &graded)
 }
 
 // transportUnknown marks a configured entry whose transport could not be
@@ -60,7 +64,7 @@ func SuggestsPinnedInstall(known, configured *McpServerDefinition) bool {
 }
 
 // gradeServer is GradeServer with the provenance lookups injected.
-func gradeServer(def *McpServerDefinition, prov provenanceResolver) GradeResult {
+func gradeServer(ctx context.Context, def *McpServerDefinition, prov provenanceResolver) GradeResult {
 	var criteria []CriterionResult
 
 	// Basic — always satisfied.
@@ -135,7 +139,7 @@ func gradeServer(def *McpServerDefinition, prov provenanceResolver) GradeResult 
 	switch {
 	case !verifiedMet:
 		attestationDetail = "not evaluated (server has not reached Verified)"
-	case hasExternalAttestation(def):
+	case AttestationChecker(ctx, def):
 		attestationPassed = true
 		attestationDetail = "verified attestation signature present"
 	default:

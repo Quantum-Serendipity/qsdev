@@ -1,13 +1,16 @@
 package mcpregistry
 
 import (
+	"fmt"
 	"maps"
+	"net/url"
 	"slices"
 	"strings"
 	"time"
 
 	"github.com/Quantum-Serendipity/qsdev/internal/catalog"
 	"github.com/Quantum-Serendipity/qsdev/internal/installer"
+	"github.com/Quantum-Serendipity/qsdev/internal/mcpconfig"
 	"github.com/Quantum-Serendipity/qsdev/internal/mcphealth"
 	"github.com/Quantum-Serendipity/qsdev/pkg/ecosystem"
 )
@@ -22,10 +25,18 @@ type LaunchSpec struct {
 	URL     string
 }
 
-// MatchesTrusted reports whether cfg is exactly one of specs, comparing the
-// templates before expansion. A stdio entry must match the command, args and
-// env; a remote entry (URL set) must match the URL, headers and env, since
-// those decide where the expanded references are sent.
+// MatchesTrusted reports whether cfg is exactly one of specs; see TrustMismatch.
+func MatchesTrusted(cfg mcphealth.ServerConfig, specs []LaunchSpec) bool {
+	return TrustMismatch(cfg, specs) == ""
+}
+
+// TrustMismatch returns "" when cfg is exactly one of specs, comparing the
+// templates before expansion. The whole launch tuple — command, args, URL,
+// headers and env — must be equal whatever the transport: an entry carrying
+// both a command and a trusted URL is launched as stdio by Claude Code (an
+// explicit "type":"stdio", or a schema that reads the command), so a remote
+// spec only matches an entry with no command, and a stdio spec only matches
+// one with no URL or headers.
 //
 // The release cutoff of a hardened launcher (see HardenedLauncherSpec)
 // depends on the day and compliance level it was generated for, so an entry
@@ -33,70 +44,173 @@ type LaunchSpec struct {
 // the placeholder LaunchVariants uses: any RFC 3339 cutoff at least the
 // manager's baseline floor old then matches. A malformed cutoff, or one
 // recent enough to loosen the baseline gate, matches nothing.
-func MatchesTrusted(cfg mcphealth.ServerConfig, specs []LaunchSpec) bool {
-	if anyMatch(cfg, specs, false, sameDefinition) {
-		return true
+//
+// Otherwise it names the cutoff that cannot be trusted, or the first field
+// that differs from the closest spec (one of the same hardening form with the
+// same launch line or endpoint, else the same command or URL, else the
+// first). Repository strings are quoted, and env and header values are never
+// included.
+func TrustMismatch(cfg mcphealth.ServerConfig, specs []LaunchSpec) string {
+	if len(specs) == 0 {
+		return fmt.Sprintf("no trusted definition named %q", cfg.Name)
 	}
-	now := time.Now()
+	if anyMatch(cfg, specs, false) {
+		return ""
+	}
+	canon, reason := canonicalCutoffs(cfg, time.Now())
+	if reason != "" {
+		return reason
+	}
+	if anyMatch(canon, specs, true) {
+		return ""
+	}
+	return specDiff(canon, closestSpec(canon, specs))
+}
+
+// anyMatch reports whether cfg is exactly one of the specs that do
+// (placeholder) or do not carry the cutoff placeholder. Keeping the passes
+// apart means an entry holding the placeholder literally never matches.
+func anyMatch(cfg mcphealth.ServerConfig, specs []LaunchSpec, placeholder bool) bool {
+	return slices.ContainsFunc(specs, func(s LaunchSpec) bool {
+		return hasCutoffPlaceholder(s) == placeholder && specMatches(cfg, s)
+	})
+}
+
+// canonicalCutoffs returns cfg with its release cutoffs replaced by the
+// placeholder (canonicalArgs, canonicalEnv), on copies of its args and env.
+// When a cutoff is not one generation writes it returns the reason instead,
+// naming the argument or the env key but never an env value.
+func canonicalCutoffs(cfg mcphealth.ServerConfig, now time.Time) (mcphealth.ServerConfig, string) {
 	args, ok := canonicalArgs(cfg.Args, now)
 	if !ok {
-		return false
+		return cfg, fmt.Sprintf("args %q carry a release cutoff that is malformed or newer than the baseline release-age gate", cfg.Args)
 	}
 	env, ok := canonicalEnv(cfg.Env, now)
 	if !ok {
-		return false
+		return cfg, fmt.Sprintf("env %q is a release cutoff that is malformed or newer than the baseline release-age gate", npmBeforeEnv)
 	}
 	cfg.Args, cfg.Env = args, env
-	return anyMatch(cfg, specs, true, sameDefinition)
+	return cfg, ""
 }
 
-// MatchesTrustedLaunch reports whether cfg launches what one of specs
-// launches: the same command and args, or the same URL. Unlike
-// MatchesTrusted it ignores env and headers, so it answers "is this the
-// registry's server" rather than "may qsdev expand this entry's references".
-// Launcher cutoffs in args are canonicalised as MatchesTrusted does.
-func MatchesTrustedLaunch(cfg mcphealth.ServerConfig, specs []LaunchSpec) bool {
-	if anyMatch(cfg, specs, false, sameLaunch) {
-		return true
-	}
-	args, ok := canonicalArgs(cfg.Args, time.Now())
-	if !ok {
-		return false
-	}
-	cfg.Args = args
-	return anyMatch(cfg, specs, true, sameLaunch)
+// specMatches reports whether cfg is exactly s: every launch field is equal.
+func specMatches(cfg mcphealth.ServerConfig, s LaunchSpec) bool {
+	return (s.Command != "" || s.URL != "") &&
+		s.Command == cfg.Command && slices.Equal(s.Args, cfg.Args) &&
+		s.URL == cfg.URL && maps.Equal(s.Headers, cfg.Headers) &&
+		maps.Equal(s.Env, cfg.Env)
 }
 
-// anyMatch reports whether cfg equals, under eq, one of the specs that do
-// (placeholder) or do not carry the cutoff placeholder. Keeping the passes
-// apart means an entry holding the placeholder literally never matches.
-func anyMatch(cfg mcphealth.ServerConfig, specs []LaunchSpec, placeholder bool, eq func(mcphealth.ServerConfig, LaunchSpec) bool) bool {
-	for _, s := range specs {
-		if hasCutoffPlaceholder(s) == placeholder && eq(cfg, s) {
-			return true
+// sameTarget reports whether cfg dials s's URL or, without a URL, runs s's
+// command. It only picks the spec a diff is reported against.
+func sameTarget(cfg mcphealth.ServerConfig, s LaunchSpec) bool {
+	if cfg.URL != "" {
+		return s.URL == cfg.URL
+	}
+	return s.Command != "" && s.Command == cfg.Command
+}
+
+// sameLaunch reports whether cfg is s's launch line, or s's URL and headers.
+// It only picks the spec a diff is reported against.
+func sameLaunch(cfg mcphealth.ServerConfig, s LaunchSpec) bool {
+	if cfg.URL != "" {
+		return sameTarget(cfg, s) && maps.Equal(s.Headers, cfg.Headers)
+	}
+	return sameTarget(cfg, s) && slices.Equal(s.Args, cfg.Args)
+}
+
+// closestSpec returns the spec cfg is best compared against: one with the
+// same launch line (or URL and headers), else the same command (or URL), else
+// the first, looking first at the specs of cfg's hardening form (whether it
+// carries the cutoff placeholder), so a hardened entry is compared with the
+// hardened launcher. specs must not be empty.
+func closestSpec(cfg mcphealth.ServerConfig, specs []LaunchSpec) LaunchSpec {
+	hardened := hasCutoffPlaceholder(LaunchSpec{Args: cfg.Args, Env: cfg.Env})
+	sameForm := func(s LaunchSpec) bool { return hasCutoffPlaceholder(s) == hardened }
+	for _, same := range []func(mcphealth.ServerConfig, LaunchSpec) bool{sameLaunch, sameTarget} {
+		for _, pass := range []func(LaunchSpec) bool{sameForm, func(LaunchSpec) bool { return true }} {
+			if i := slices.IndexFunc(specs, func(s LaunchSpec) bool { return pass(s) && same(cfg, s) }); i >= 0 {
+				return specs[i]
+			}
 		}
 	}
-	return false
+	return specs[0]
 }
 
-// sameDefinition is MatchesTrusted's equality: command, args and env for a
-// stdio entry; URL, headers and env for a remote one.
-func sameDefinition(cfg mcphealth.ServerConfig, s LaunchSpec) bool {
-	if !maps.Equal(s.Env, cfg.Env) {
-		return false
+// specDiff names the first field in which cfg differs from s: the launch
+// line or endpoint, then headers, then env.
+func specDiff(cfg mcphealth.ServerConfig, s LaunchSpec) string {
+	if d := launchDiff(cfg, s); d != "" {
+		return d
 	}
-	if cfg.URL != "" {
-		return s.URL == cfg.URL && maps.Equal(s.Headers, cfg.Headers)
+	if d := mapDiff("header", cfg.Headers, s.Headers); d != "" {
+		return d
 	}
-	return s.Command != "" && s.Command == cfg.Command && slices.Equal(s.Args, cfg.Args)
+	if d := mapDiff("env", cfg.Env, s.Env); d != "" {
+		return d
+	}
+	return "matches no trusted definition"
 }
 
-// sameLaunch is MatchesTrustedLaunch's equality: command, args and URL.
-func sameLaunch(cfg mcphealth.ServerConfig, s LaunchSpec) bool {
-	if s.Command == "" && s.URL == "" {
-		return false
+// launchDiff names how cfg's command, args or URL differ from s's, or "".
+func launchDiff(cfg mcphealth.ServerConfig, s LaunchSpec) string {
+	switch {
+	case cfg.URL != "" && s.URL == "":
+		return fmt.Sprintf("url %q where the trusted definition runs command %q", displayURL(cfg.URL), s.Command)
+	case cfg.Command != "" && s.Command == "":
+		return fmt.Sprintf("command %q where the trusted definition is remote url %q", cfg.Command, s.URL)
+	case cfg.URL == "" && s.URL != "":
+		return fmt.Sprintf("no url where the trusted definition is remote url %q", s.URL)
+	case cfg.URL != s.URL:
+		return fmt.Sprintf("url %q is not %q", displayURL(cfg.URL), s.URL)
+	case cfg.Command != s.Command:
+		return fmt.Sprintf("command %q is not %q", cfg.Command, s.Command)
+	case !slices.Equal(cfg.Args, s.Args):
+		return fmt.Sprintf("args %q differ from %q", cfg.Args, s.Args)
 	}
-	return s.Command == cfg.Command && slices.Equal(s.Args, cfg.Args) && s.URL == cfg.URL
+	return ""
+}
+
+// displayURL returns the scheme and host of a configured URL, the part safe to
+// print. Like header and env values, the rest (userinfo, path, query,
+// fragment) may carry a literal credential such as ?apiKey=..., so it is
+// replaced by "/…". A URL without a host prints as "<unparseable>".
+func displayURL(raw string) string {
+	u, err := url.Parse(raw)
+	if err != nil || u.Host == "" {
+		return "<unparseable>"
+	}
+	shown := u.Scheme + "://" + u.Host
+	if u.User != nil || strings.Trim(u.EscapedPath(), "/") != "" || u.RawQuery != "" || u.ForceQuery || u.Fragment != "" {
+		shown += "/…"
+	}
+	return shown
+}
+
+// mapDiff names the first key (in sorted order) in which got differs from
+// want, without either value, or returns "".
+func mapDiff(kind string, got, want map[string]string) string {
+	for _, k := range slices.Sorted(maps.Keys(got)) {
+		w, ok := want[k]
+		switch {
+		case !ok:
+			return fmt.Sprintf("%s %q not in trusted definition", kind, k)
+		case got[k] != w:
+			return fmt.Sprintf("%s %q differs from trusted definition", kind, k)
+		}
+	}
+	for _, k := range slices.Sorted(maps.Keys(want)) {
+		if _, ok := got[k]; !ok {
+			return fmt.Sprintf("%s %q missing from configuration", kind, k)
+		}
+	}
+	return ""
+}
+
+// EntrySpec is the definition an .mcp.json entry declares, such as one in
+// output qsdev has just generated.
+func EntrySpec(s mcpconfig.Server) LaunchSpec {
+	return LaunchSpec{Command: s.Command, Args: s.Args, Env: s.Env, Headers: s.Headers, URL: s.URL}
 }
 
 // LauncherSpec is the definition generation writes for def when no installed

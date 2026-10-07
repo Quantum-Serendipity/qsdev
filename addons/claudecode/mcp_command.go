@@ -2,6 +2,8 @@ package claudecode
 
 import (
 	"context"
+	"fmt"
+	"io"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -66,14 +68,15 @@ var (
 )
 
 // attestationChecker reports whether a server's launched code is attested,
-// reusing a single loaded key set across invocations.
-func attestationChecker(def *mcpregistry.McpServerDefinition) bool {
+// under the grading caller's ctx, reusing a single loaded key set across
+// invocations. Only the code keyring attests code, never the docs keys.
+func attestationChecker(ctx context.Context, def *mcpregistry.McpServerDefinition) bool {
 	attestationStoreOnce.Do(func() {
 		// A missing keys dir yields no keys (not an error); any other load
 		// failure is surfaced, since it silently disables attestation.
-		keys, err := contentsign.LoadTrustedKeys("")
+		keys, err := contentsign.LoadCodeTrustedKeys()
 		if err != nil {
-			slog.Warn("loading trusted keys for MCP attestation; no server can be graded attested", "error", err)
+			slog.Warn("loading code-signing keys for MCP attestation; no server can be graded attested", "error", err)
 		}
 		attestationStore = contentsign.AttestationStore{TrustedKeys: keys}
 	})
@@ -82,7 +85,23 @@ func attestationChecker(def *mcpregistry.McpServerDefinition) bool {
 		// AttestationStore reload the keys directory on every IsAttested call.
 		return false
 	}
-	return isServerAttested(context.Background(), attestationStore, def)
+	return isServerAttested(ctx, attestationStore, def)
+}
+
+// printCodeKeyringMigrationHint writes one line to w when the user's trusted
+// keys predate the code keyring (contentsign.CodeKeyringNeedsMigration), so
+// keys that used to attest MCP server code are not silently ignored. It is
+// checked eagerly, not when attestation runs, because attestation is only
+// evaluated for a server that reached Verified.
+func printCodeKeyringMigrationHint(w io.Writer) {
+	if !contentsign.CodeKeyringNeedsMigration() {
+		return
+	}
+	dir, err := contentsign.CodeTrustedKeysDir()
+	if err != nil {
+		return
+	}
+	fmt.Fprintf(w, "Note: trusted keys outside %s no longer attest MCP server code; move code-signing .pub keys there.\n", dir)
 }
 
 // isServerAttested reports whether the code a server runs is covered by
@@ -97,7 +116,7 @@ func isServerAttested(ctx context.Context, store contentsign.AttestationStore, d
 		return false
 	}
 	for _, arg := range def.Args {
-		path, ok := localFileArg(arg)
+		path, ok := localFileArg(arg, def.Dir)
 		if ok && !store.IsAttested(ctx, path) {
 			return false
 		}
@@ -106,11 +125,12 @@ func isServerAttested(ctx context.Context, store contentsign.AttestationStore, d
 }
 
 // localFileArg returns the absolute path of the existing regular file an
-// argument names, resolved against the working directory the server is
-// launched from. Both positional arguments and the value of a --flag=value
-// argument are considered, since interpreters also load code from flag values
-// (as in `node --require=./preload.js`).
-func localFileArg(arg string) (string, bool) {
+// argument names, resolved against dir, the directory the server is launched
+// from (the project root; "" means the current directory). Both positional
+// arguments and the value of a --flag=value argument are considered, since
+// interpreters also load code from flag values (as in
+// `node --require=./preload.js`).
+func localFileArg(arg, dir string) (string, bool) {
 	if strings.HasPrefix(arg, "-") {
 		_, value, ok := strings.Cut(arg, "=")
 		if !ok {
@@ -120,6 +140,9 @@ func localFileArg(arg string) (string, bool) {
 	}
 	if arg == "" {
 		return "", false
+	}
+	if dir != "" && !filepath.IsAbs(arg) {
+		arg = filepath.Join(dir, arg)
 	}
 	path, err := filepath.Abs(arg)
 	if err != nil {

@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/Quantum-Serendipity/qsdev/internal/catalog"
+	"github.com/Quantum-Serendipity/qsdev/internal/mcpconfig"
 	"github.com/Quantum-Serendipity/qsdev/internal/mcphealth"
 	"github.com/Quantum-Serendipity/qsdev/pkg/branding"
 )
@@ -49,6 +50,12 @@ func TestMatchesTrusted(t *testing.T) {
 		{"http header template changed", mcphealth.ServerConfig{URL: "https://mcp.example.invalid/mcp", Headers: map[string]string{"X-Key": "${AWS_SECRET_ACCESS_KEY}"}}, false},
 		{"http added env", mcphealth.ServerConfig{URL: "https://mcp.example.invalid/mcp", Headers: map[string]string{"X-Key": "${KEY}"}, Env: map[string]string{"A": "b"}}, false},
 		{"http url is not a stdio match", mcphealth.ServerConfig{Command: "srv", Args: []string{"--stdio"}, Env: map[string]string{"K": "${K}"}, URL: "https://evil.invalid/mcp"}, false},
+		// Transport confusion: Claude Code launches an entry with a command as
+		// stdio, so a trusted URL beside it must not vouch for the command.
+		{"command beside trusted url", mcphealth.ServerConfig{Command: "./evil.sh", URL: "https://mcp.example.invalid/mcp", Headers: map[string]string{"X-Key": "${KEY}"}}, false},
+		{"args beside trusted url", mcphealth.ServerConfig{Args: []string{"-c", "evil"}, URL: "https://mcp.example.invalid/mcp", Headers: map[string]string{"X-Key": "${KEY}"}}, false},
+		{"trusted url beside trusted stdio line", mcphealth.ServerConfig{Command: "srv", Args: []string{"--stdio"}, Env: map[string]string{"K": "${K}"}, URL: "https://mcp.example.invalid/mcp", Headers: map[string]string{"X-Key": "${KEY}"}}, false},
+		{"headers on a stdio line", mcphealth.ServerConfig{Command: "srv", Args: []string{"--stdio"}, Env: map[string]string{"K": "${K}"}, Headers: map[string]string{"X-Key": "${KEY}"}}, false},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
@@ -359,6 +366,122 @@ func TestHardenedLauncherSpec(t *testing.T) {
 	}
 }
 
+// writtenEntry returns the entry generation writes for the launch variant s:
+// a hardened variant's cutoff placeholder becomes a valid release cutoff.
+func writtenEntry(s LaunchSpec) LaunchSpec {
+	const cutoff = "2025-01-02T03:04:05Z"
+	if !hasCutoffPlaceholder(s) {
+		return s
+	}
+	s.Env = maps.Clone(s.Env)
+	if _, ok := s.Env[npmBeforeEnv]; ok {
+		s.Env[npmBeforeEnv] = cutoff
+	}
+	s.Args = slices.Clone(s.Args)
+	for i, a := range s.Args {
+		if a == uvExcludeNewerFlag+releaseCutoffPlaceholder {
+			s.Args[i] = uvExcludeNewerFlag + cutoff
+		}
+	}
+	return s
+}
+
+// trustCase is an entry checked against a trusted-definition list.
+type trustCase struct {
+	cfg   mcphealth.ServerConfig
+	specs []LaunchSpec
+}
+
+// TestTrustMismatch pins the one trust answer with a diff (U16-WS1): empty
+// exactly when cfg is a trusted definition, otherwise the first differing
+// field, with repository strings quoted and env and header values never shown.
+func TestTrustMismatch(t *testing.T) {
+	t.Parallel()
+
+	def := catalog.MCPServerDef{
+		Command:      "uvx",
+		Args:         []string{"--from", "srv==1.0", "srv"},
+		Env:          map[string]string{"K": "${K}"},
+		Bin:          "srv",
+		Version:      "1.0",
+		OptionalArgs: [][]string{{"--extra"}},
+	}
+	specs := LaunchVariants(def)
+	remote := []LaunchSpec{{URL: "https://mcp.example.invalid/mcp", Headers: map[string]string{"X-Key": "${KEY}"}}}
+
+	// Every launch variant (launcher, hardened launcher as generation writes
+	// it, installed bin, each optional-args variant) and the remote endpoint
+	// is a match.
+	matching := []trustCase{{cfg: mcphealth.ServerConfig{Name: "r", URL: remote[0].URL, Headers: remote[0].Headers}, specs: remote}}
+	for _, s := range specs {
+		s = writtenEntry(s)
+		matching = append(matching, trustCase{cfg: mcphealth.ServerConfig{Name: "srv", Command: s.Command, Args: s.Args, Env: s.Env}, specs: specs})
+	}
+	if len(matching) < 4 {
+		t.Fatalf("LaunchVariants = %v, want launcher, bin and optional-args variants", specs)
+	}
+	for _, m := range matching {
+		if got := TrustMismatch(m.cfg, m.specs); got != "" {
+			t.Errorf("TrustMismatch(%v %v %v) = %q, want empty", m.cfg.Command, m.cfg.Args, m.cfg.URL, got)
+		}
+		if !MatchesTrusted(m.cfg, m.specs) {
+			t.Errorf("MatchesTrusted(%v %v %v) = false for an exact match", m.cfg.Command, m.cfg.Args, m.cfg.URL)
+		}
+	}
+
+	const secret = "sekrit-value-123"
+	tests := []struct {
+		name   string
+		cfg    mcphealth.ServerConfig
+		specs  []LaunchSpec
+		want   []string
+		absent []string
+	}{
+		{name: "no definition", cfg: mcphealth.ServerConfig{Name: "x", Command: "evil"}, want: []string{`no trusted definition named "x"`}},
+		{name: "command", cfg: mcphealth.ServerConfig{Name: "srv", Command: "evil\x1b[2J", Env: map[string]string{"K": "${K}"}}, specs: specs, want: []string{`command "evil\x1b[2J" is not "uvx"`}, absent: []string{"\x1b"}},
+		{name: "args", cfg: mcphealth.ServerConfig{Name: "srv", Command: "srv", Args: []string{"--evil"}, Env: map[string]string{"K": "${K}"}}, specs: specs, want: []string{"args", `"--evil"`}},
+		{name: "env extra", cfg: mcphealth.ServerConfig{Name: "srv", Command: "uvx", Args: []string{"--from", "srv==1.0", "srv"}, Env: map[string]string{"K": "${K}", "LD_PRELOAD": secret}}, specs: specs, want: []string{`env "LD_PRELOAD" not in trusted definition`}, absent: []string{secret}},
+		{name: "env extra on optional-args variant", cfg: mcphealth.ServerConfig{Name: "srv", Command: "srv", Args: []string{"--extra"}, Env: map[string]string{"K": "${K}", "LD_PRELOAD": secret}}, specs: specs, want: []string{`env "LD_PRELOAD" not in trusted definition`}, absent: []string{secret}},
+		{name: "env changed", cfg: mcphealth.ServerConfig{Name: "srv", Command: "srv", Env: map[string]string{"K": secret}}, specs: specs, want: []string{`env "K" differs`}, absent: []string{secret}},
+		{name: "env missing", cfg: mcphealth.ServerConfig{Name: "srv", Command: "srv"}, specs: specs, want: []string{`env "K" missing`}},
+		{name: "url", cfg: mcphealth.ServerConfig{Name: "r", URL: "https://evil.invalid/mcp", Headers: map[string]string{"X-Key": "${KEY}"}}, specs: remote, want: []string{`url "https://evil.invalid/…" is not "https://mcp.example.invalid/mcp"`}},
+		{name: "url query secret", cfg: mcphealth.ServerConfig{Name: "r", URL: "https://evil.invalid/mcp?apiKey=" + secret, Headers: map[string]string{"X-Key": "${KEY}"}}, specs: remote, want: []string{`url "https://evil.invalid/…"`}, absent: []string{secret, "apiKey"}},
+		{name: "url userinfo secret", cfg: mcphealth.ServerConfig{Name: "r", URL: "https://user:" + secret + "@evil.invalid", Headers: map[string]string{"X-Key": "${KEY}"}}, specs: remote, want: []string{`url "https://evil.invalid/…"`}, absent: []string{secret, "user"}},
+		{name: "url path secret where stdio trusted", cfg: mcphealth.ServerConfig{Name: "srv", URL: "https://evil.invalid/" + secret + "/mcp#" + secret}, specs: specs, want: []string{`url "https://evil.invalid/…" where`}, absent: []string{secret}},
+		{name: "url bare host", cfg: mcphealth.ServerConfig{Name: "r", URL: "https://evil.invalid/", Headers: map[string]string{"X-Key": "${KEY}"}}, specs: remote, want: []string{`url "https://evil.invalid" is not`}},
+		{name: "url unparseable", cfg: mcphealth.ServerConfig{Name: "r", URL: "::" + secret, Headers: map[string]string{"X-Key": "${KEY}"}}, specs: remote, want: []string{`url "<unparseable>"`}, absent: []string{secret}},
+		{name: "headers", cfg: mcphealth.ServerConfig{Name: "r", URL: "https://mcp.example.invalid/mcp", Headers: map[string]string{"X-Key": secret}}, specs: remote, want: []string{`header "X-Key" differs`}, absent: []string{secret}},
+		{name: "url where stdio trusted", cfg: mcphealth.ServerConfig{Name: "srv", URL: "https://evil.invalid/mcp", Env: map[string]string{"K": "${K}"}}, specs: specs, want: []string{`url "https://evil.invalid/…"`}},
+		{name: "command where remote trusted", cfg: mcphealth.ServerConfig{Name: "r", Command: "evil"}, specs: remote, want: []string{`command "evil"`}},
+		{name: "command beside trusted url", cfg: mcphealth.ServerConfig{Name: "r", Command: "./evil.sh", URL: remote[0].URL, Headers: remote[0].Headers}, specs: remote, want: []string{`command "./evil.sh" where the trusted definition is remote url "https://mcp.example.invalid/mcp"`}},
+		{name: "args beside trusted url", cfg: mcphealth.ServerConfig{Name: "r", Args: []string{"-c"}, URL: remote[0].URL, Headers: remote[0].Headers}, specs: remote, want: []string{"args", `"-c"`}},
+		{name: "no url where remote trusted", cfg: mcphealth.ServerConfig{Name: "r", Headers: remote[0].Headers}, specs: remote, want: []string{`no url where the trusted definition is remote url`}},
+		{name: "headers on a stdio line", cfg: mcphealth.ServerConfig{Name: "srv", Command: "srv", Env: map[string]string{"K": "${K}"}, Headers: map[string]string{"X-Key": secret}}, specs: specs, want: []string{`header "X-Key" not in trusted definition`}, absent: []string{secret}},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			got := TrustMismatch(tc.cfg, tc.specs)
+			if got == "" {
+				t.Fatal("TrustMismatch = \"\", want a mismatch")
+			}
+			if MatchesTrusted(tc.cfg, tc.specs) {
+				t.Error("MatchesTrusted = true for a mismatching entry")
+			}
+			for _, w := range tc.want {
+				if !strings.Contains(got, w) {
+					t.Errorf("TrustMismatch = %q, want it to contain %q", got, w)
+				}
+			}
+			for _, a := range tc.absent {
+				if strings.Contains(got, a) {
+					t.Errorf("TrustMismatch = %q, must not contain %q", got, a)
+				}
+			}
+		})
+	}
+}
+
 // TestHardenedLauncherSpec_StrictCutoffsAtLeastGateOld: whatever the time of
 // day, a strict (14-day) launcher admits no release younger than 14 days.
 func TestHardenedLauncherSpec_StrictCutoffsAtLeastGateOld(t *testing.T) {
@@ -517,8 +640,8 @@ func TestMatchesTrusted_DoesNotMutateConfig(t *testing.T) {
 	} {
 		spec := HardenedLauncherSpec(def, 0, hardenNow)
 		cfg := mcphealth.ServerConfig{Command: spec.Command, Args: slices.Clone(spec.Args), Env: maps.Clone(spec.Env)}
-		if !MatchesTrusted(cfg, LaunchVariants(def)) || !MatchesTrustedLaunch(cfg, LaunchVariants(def)) {
-			t.Fatalf("generated hardened %s entry does not match", def.Command)
+		if d := TrustMismatch(cfg, LaunchVariants(def)); d != "" {
+			t.Fatalf("generated hardened %s entry does not match: %s", def.Command, d)
 		}
 		if !maps.Equal(cfg.Env, spec.Env) || !slices.Equal(cfg.Args, spec.Args) {
 			t.Errorf("matching rewrote the config: %#v", cfg)
@@ -526,42 +649,96 @@ func TestMatchesTrusted_DoesNotMutateConfig(t *testing.T) {
 	}
 }
 
-// TestMatchesTrustedLaunch: the launch-only match compares what runs (the
-// command line, or the URL) with the same cutoff canonicalisation as
-// MatchesTrusted, and ignores env and headers.
-func TestMatchesTrustedLaunch(t *testing.T) {
+// TestTrustMismatch_Hardened: a hardened launcher entry is matched at any
+// valid cutoff and, when it does not match, the diff names the untrusted
+// cutoff, or compares the entry with the hardened launcher rather than
+// reporting the hardening itself; env values are never shown.
+func TestTrustMismatch_Hardened(t *testing.T) {
 	t.Parallel()
 
+	const valid = "2025-01-02T03:04:05Z"
 	npxDef := catalog.MCPServerDef{Command: "npx", Args: []string{"pkg@1.0.0"}, Env: map[string]string{"K": "${K}"}}
 	uvxDef := catalog.MCPServerDef{Command: "uvx", Args: []string{"srv==1.0.0", "--db", "x"}, Version: "1.0.0", Bin: "srv", BinArgs: []string{"--db", "x"}}
-	httpDef := catalog.MCPServerDef{URL: "https://mcp.example.invalid/mcp", Transport: "http", Env: map[string]string{"K": "${K}"}}
+	npxEnv := func(before string, extra ...string) map[string]string {
+		m := map[string]string{"K": "${K}", npmIgnoreScriptsEnv: "true", npmBeforeEnv: before}
+		for i := 0; i+1 < len(extra); i += 2 {
+			m[extra[i]] = extra[i+1]
+		}
+		return m
+	}
 	tests := []struct {
-		name string
-		def  catalog.MCPServerDef
-		cfg  mcphealth.ServerConfig
-		want bool
+		name   string
+		def    catalog.MCPServerDef
+		cfg    mcphealth.ServerConfig
+		want   []string // empty: the entry matches
+		absent []string
 	}{
-		{"npx unhardened", npxDef, mcphealth.ServerConfig{Command: "npx", Args: []string{"pkg@1.0.0"}}, true},
-		{"npx hardened, env ignored", npxDef, mcphealth.ServerConfig{Command: "npx", Args: []string{"pkg@1.0.0"}, Env: map[string]string{npmBeforeEnv: "2025-01-02T03:04:05Z"}}, true},
-		{"npx user-added env key", npxDef, mcphealth.ServerConfig{Command: "npx", Args: []string{"pkg@1.0.0"}, Env: map[string]string{"EXTRA": "1"}}, true},
-		{"npx extra arg", npxDef, mcphealth.ServerConfig{Command: "npx", Args: []string{"pkg@1.0.0", "-x"}}, false},
-		{"uvx hardened", uvxDef, mcphealth.ServerConfig{Command: "uvx", Args: []string{"--exclude-newer=2025-01-02T03:04:05Z", "srv==1.0.0", "--db", "x"}}, true},
-		{"uvx unhardened", uvxDef, mcphealth.ServerConfig{Command: "uvx", Args: []string{"srv==1.0.0", "--db", "x"}}, true},
-		{"uvx malformed cutoff", uvxDef, mcphealth.ServerConfig{Command: "uvx", Args: []string{"--exclude-newer=soon", "srv==1.0.0", "--db", "x"}}, false},
-		{"uvx future cutoff", uvxDef, mcphealth.ServerConfig{Command: "uvx", Args: []string{"--exclude-newer=2999-01-01T00:00:00Z", "srv==1.0.0", "--db", "x"}}, false},
-		{"uvx placeholder literal", uvxDef, mcphealth.ServerConfig{Command: "uvx", Args: []string{uvExcludeNewerFlag + releaseCutoffPlaceholder, "srv==1.0.0", "--db", "x"}}, false},
-		{"installed binary", uvxDef, mcphealth.ServerConfig{Command: "srv", Args: []string{"--db", "x"}}, true},
-		{"foreign command", uvxDef, mcphealth.ServerConfig{Command: "evil", Args: []string{"srv==1.0.0", "--db", "x"}}, false},
-		{"http, headers and env ignored", httpDef, mcphealth.ServerConfig{URL: "https://mcp.example.invalid/mcp", Headers: map[string]string{"X": "y"}}, true},
-		{"http different url", httpDef, mcphealth.ServerConfig{URL: "https://evil.invalid/mcp"}, false},
-		{"empty config", npxDef, mcphealth.ServerConfig{}, false},
+		{name: "npx hardened", def: npxDef, cfg: mcphealth.ServerConfig{Command: "npx", Args: []string{"pkg@1.0.0"}, Env: npxEnv(valid)}},
+		{name: "uvx hardened", def: uvxDef, cfg: mcphealth.ServerConfig{Command: "uvx", Args: []string{uvExcludeNewerFlag + valid, "srv==1.0.0", "--db", "x"}}},
+		{name: "installed binary", def: uvxDef, cfg: mcphealth.ServerConfig{Command: "srv", Args: []string{"--db", "x"}}},
+		{name: "npx future cutoff", def: npxDef, cfg: mcphealth.ServerConfig{Command: "npx", Args: []string{"pkg@1.0.0"}, Env: npxEnv("2999-01-01T00:00:00Z")}, want: []string{`env "npm_config_before"`, "release cutoff"}, absent: []string{"2999"}},
+		{name: "uvx malformed cutoff", def: uvxDef, cfg: mcphealth.ServerConfig{Command: "uvx", Args: []string{"--exclude-newer=soon", "srv==1.0.0", "--db", "x"}}, want: []string{`"--exclude-newer=soon"`, "release cutoff"}},
+		{name: "uvx placeholder literal", def: uvxDef, cfg: mcphealth.ServerConfig{Command: "uvx", Args: []string{uvExcludeNewerFlag + releaseCutoffPlaceholder, "srv==1.0.0", "--db", "x"}}, want: []string{"release cutoff"}},
+		{name: "npx hardened with an injected env key", def: npxDef, cfg: mcphealth.ServerConfig{Command: "npx", Args: []string{"pkg@1.0.0"}, Env: npxEnv(valid, "NODE_OPTIONS", "--require=/tmp/x.js")}, want: []string{`env "NODE_OPTIONS" not in trusted definition`}, absent: []string{"/tmp/x.js"}},
+		{name: "npx hardened with an extra arg", def: npxDef, cfg: mcphealth.ServerConfig{Command: "npx", Args: []string{"pkg@1.0.0", "-x"}, Env: npxEnv(valid)}, want: []string{"args", `"-x"`}},
+		{name: "uvx hardened foreign command", def: uvxDef, cfg: mcphealth.ServerConfig{Command: "evil", Args: []string{uvExcludeNewerFlag + valid, "srv==1.0.0"}}, want: []string{`command "evil" is not`}},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			if got := MatchesTrustedLaunch(tc.cfg, LaunchVariants(tc.def)); got != tc.want {
-				t.Errorf("MatchesTrustedLaunch(%#v) = %v, want %v", tc.cfg, got, tc.want)
+			got := TrustMismatch(tc.cfg, LaunchVariants(tc.def))
+			if len(tc.want) == 0 {
+				if got != "" {
+					t.Errorf("TrustMismatch = %q, want a match", got)
+				}
+				return
+			}
+			if got == "" {
+				t.Fatal("TrustMismatch = \"\", want a mismatch")
+			}
+			for _, w := range tc.want {
+				if !strings.Contains(got, w) {
+					t.Errorf("TrustMismatch = %q, want it to contain %q", got, w)
+				}
+			}
+			for _, a := range tc.absent {
+				if strings.Contains(got, a) {
+					t.Errorf("TrustMismatch = %q, must not contain %q", got, a)
+				}
 			}
 		})
+	}
+}
+
+// TestServerConfig checks the one definition-to-probe-config conversion.
+func TestServerConfig(t *testing.T) {
+	t.Parallel()
+	def := McpServerDefinition{
+		Name: "s", Command: "c", Args: []string{"a"}, URL: "https://u.invalid",
+		Env: map[string]string{"E": "v"}, Headers: map[string]string{"H": "v"}, RequiredEnv: []string{"E"},
+	}
+	want := mcphealth.ServerConfig{
+		Name: "s", Command: "c", Args: []string{"a"}, URL: "https://u.invalid",
+		Env: map[string]string{"E": "v"}, Headers: map[string]string{"H": "v"}, RequiredEnv: []string{"E"},
+	}
+	if got := def.ServerConfig(); !reflect.DeepEqual(got, want) {
+		t.Errorf("ServerConfig() = %+v, want %+v", got, want)
+	}
+}
+
+// TestEntrySpec verifies an .mcp.json entry's spec is exactly what that
+// entry, read back as configured, matches.
+func TestEntrySpec(t *testing.T) {
+	t.Parallel()
+	entries := map[string]mcpconfig.Server{
+		"stdio":  {Command: "c", Args: []string{"a"}, Env: map[string]string{"E": "${E}"}},
+		"remote": {URL: "https://u.invalid", Headers: map[string]string{"H": "${H}"}, Env: map[string]string{"E": "${E}"}},
+	}
+	for name, entry := range entries {
+		spec := EntrySpec(entry)
+		def := McpServerDefinition{Name: name, Command: entry.Command, Args: entry.Args, URL: entry.URL, Env: entry.Env, Headers: entry.Headers}
+		if d := TrustMismatch(def.ServerConfig(), []LaunchSpec{spec}); d != "" {
+			t.Errorf("%s: TrustMismatch against its own EntrySpec = %q, want empty", name, d)
+		}
 	}
 }

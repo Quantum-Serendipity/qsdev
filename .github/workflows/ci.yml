@@ -261,8 +261,12 @@ jobs:
       - name: Install gotestsum
         run: go install gotest.tools/gotestsum@${{ env.GOTESTSUM_VERSION }}
 
+      # The official release tarball, checked against its pinned SHA-256 in
+      # .github/tool-versions.env before it runs; no third-party action.
       - name: Install Nix
-        uses: cachix/install-nix-action@13d8dd58da0234aa297dedd986986ccb8e7f3e24 # v31.11.1
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: .github/scripts/install-nix.sh
 
       # Ubuntu 24.04 confines unprivileged user namespaces with AppArmor,
       # and bwrap needs one.

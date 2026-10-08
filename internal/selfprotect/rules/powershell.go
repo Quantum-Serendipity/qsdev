@@ -253,32 +253,54 @@ func psMutatesMcpConfig(ctx *EvalContext) bool {
 // keep what it sets for the commands and the programs it starts later.
 var psSessionEnv = append(slices.Clone(canon.AgentEnvMarkers), settingsOverrideEnv...)
 
-// rePSEnvWrite finds, in a PowerShell line's loose text (lower-cased, quotes
-// removed), a write to one of psSessionEnv: an assignment to $env:NAME (any
-// operator but a comparison), a reference to the Env: drive (env:NAME,
-// env:\NAME), which only a non-read command (Remove-Item, Set-Item, ...)
-// changes, or a [Environment]::SetEnvironmentVariable call.
-var rePSEnvWrite, rePSEnvDrive, rePSSetEnvVar = func() (*regexp.Regexp, *regexp.Regexp, *regexp.Regexp) {
-	names := make([]string, len(psSessionEnv))
-	for i, n := range psSessionEnv {
+// psEnvWrites finds, in lower-cased PowerShell text, a write to one of a list
+// of environment variables: an assignment to $env:NAME (any operator but a
+// comparison), a reference to the Env: drive (env:NAME, env:\NAME), which only
+// a non-read command (Remove-Item, Set-Item, ...) changes, or a
+// [Environment]::SetEnvironmentVariable call.
+type psEnvWrites struct {
+	assign, drive, setVar *regexp.Regexp
+}
+
+// newPSEnvWrites returns the psEnvWrites for the variables vars.
+func newPSEnvWrites(vars []string) psEnvWrites {
+	names := make([]string, len(vars))
+	for i, n := range vars {
 		names[i] = regexp.QuoteMeta(strings.ToLower(n))
 	}
 	alt := `(` + strings.Join(names, "|") + `)\b`
-	return regexp.MustCompile(`\$\{?env:` + alt + `\}?\s*[-+*/%?]*=([^=]|$)`),
-		regexp.MustCompile(`(^|[^a-z0-9_$:{])env:[/\\]*` + alt),
-		regexp.MustCompile(`setenvironmentvariable\W*` + alt)
-}()
+	return psEnvWrites{
+		assign: regexp.MustCompile(`\$\{?env:` + alt + `\}?\s*[-+*/%?]*=([^=]|$)`),
+		drive:  regexp.MustCompile(`(^|[^a-z0-9_$:{])env:[/\\]*` + alt),
+		setVar: regexp.MustCompile(`setenvironmentvariable\W*` + alt),
+	}
+}
+
+// inText reports whether lower-cased text assigns or sets one of the
+// variables, or names it on the Env: drive when driveWrites holds.
+func (w psEnvWrites) inText(text string, driveWrites func() bool) bool {
+	return w.assign.MatchString(text) || w.setVar.MatchString(text) ||
+		w.drive.MatchString(text) && driveWrites()
+}
+
+// inLine reports whether the PowerShell line of ctx sets or clears one of the
+// variables: in its normalized or loose text (lower-cased, quotes removed),
+// through the Env: drive only when the line may write.
+func (w psEnvWrites) inLine(ctx *EvalContext) bool {
+	line := ctx.powerShell()
+	mutates := func() bool { return psMutates(ctx) }
+	return w.inText(line.norm, mutates) || w.inText(line.loose, mutates)
+}
+
+// psSessionEnvWrites finds a write to one of psSessionEnv.
+var psSessionEnvWrites = newPSEnvWrites(psSessionEnv)
 
 // psEnvOverride reports why a PowerShell line sets or clears one of
 // psSessionEnv, or "".
 func psEnvOverride(ctx *EvalContext) string {
-	line := ctx.powerShell()
-	for _, text := range []string{line.norm, line.loose} {
-		if rePSEnvWrite.MatchString(text) || rePSSetEnvVar.MatchString(text) ||
-			rePSEnvDrive.MatchString(text) && psMutates(ctx) {
-			return "the PowerShell session would set or clear an agent marker or Claude Code settings variable, " +
-				"which the commands and programs it runs later inherit"
-		}
+	if psSessionEnvWrites.inLine(ctx) {
+		return "the PowerShell session would set or clear an agent marker or Claude Code settings variable, " +
+			"which the commands and programs it runs later inherit"
 	}
 	return ""
 }

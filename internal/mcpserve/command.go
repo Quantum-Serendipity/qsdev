@@ -32,6 +32,7 @@ import (
 	"github.com/Quantum-Serendipity/qsdev/internal/mcpserve/tools/devenv"
 	"github.com/Quantum-Serendipity/qsdev/internal/selfprotect/canon"
 	"github.com/Quantum-Serendipity/qsdev/internal/selfprotect/cmdscan"
+	"github.com/Quantum-Serendipity/qsdev/internal/selfprotect/hookio"
 	"github.com/Quantum-Serendipity/qsdev/internal/selfprotect/judge"
 	"github.com/Quantum-Serendipity/qsdev/internal/selfprotect/rules"
 	"github.com/Quantum-Serendipity/qsdev/pkg/branding"
@@ -690,10 +691,14 @@ func withNixRunPolicy(opts tools.Options, load func() (devenv.NixRunPolicy, erro
 // nixRunJudge returns the self-protection verdict qsdev_nix_run holds each
 // Bash command line it is equivalent to: the checks the selfprotect hook
 // applies to a Bash call run in the project root (judge.Evaluate), with
-// SP-014 blocking the CLI's human-only commands, sensitive.
-func nixRunJudge(root string, sensitive []cmdscan.CommandSpec) func(string) (string, string, bool) {
-	return func(line string) (string, string, bool) {
-		d, denied := judge.Evaluate(&rules.EvalContext{ToolName: "Bash", Command: line, CWD: root, SensitiveCommands: sensitive})
+// SP-014 blocking the CLI's human-only commands, sensitive. Each line is
+// judged under the hook's evaluation deadline, which bounds the read-only
+// git queries of the worktree-rewrite check as it does in the hook.
+func nixRunJudge(root string, sensitive []cmdscan.CommandSpec) func(context.Context, string) (string, string, bool) {
+	return func(ctx context.Context, line string) (string, string, bool) {
+		ctx, cancel := context.WithTimeout(ctx, hookio.EvalDeadline)
+		defer cancel()
+		d, denied := judge.Evaluate(&rules.EvalContext{ToolName: "Bash", Command: line, CWD: root, SensitiveCommands: sensitive, Ctx: ctx})
 		return d.RuleID, d.Reason, denied
 	}
 }

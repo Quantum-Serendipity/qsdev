@@ -105,9 +105,10 @@ type NixRunPolicy struct {
 	// stands in for, refuses the call: the server cannot ask anyone.
 	AskRules []string
 	// Judge returns the self-protection verdict on one line as a Bash call
-	// (the rule and reason when it is denied). Nil refuses every call, so a
-	// server that forgot to set it fails closed.
-	Judge func(line string) (rule, reason string, denied bool)
+	// (the rule and reason when it is denied); ctx is the call's context,
+	// which bounds the read-only git queries a rule may run. Nil refuses
+	// every call, so a server that forgot to set it fails closed.
+	Judge func(ctx context.Context, line string) (rule, reason string, denied bool)
 }
 
 func newNixRunner(projectRoot string, policy NixRunPolicy) *nixRunner {
@@ -117,7 +118,7 @@ func newNixRunner(projectRoot string, policy NixRunPolicy) *nixRunner {
 // refusal returns why policy refuses a call equivalent to lines (lines[0]
 // being the literal `nix run` line), as the structured fields of the error
 // result, or nil when it allows the call.
-func (p NixRunPolicy) refusal(lines []string) (summary string, fields map[string]any) {
+func (p NixRunPolicy) refusal(ctx context.Context, lines []string) (summary string, fields map[string]any) {
 	if rule, denied := denyutil.FirstMatchingBashRule(p.DenyRules, lines...); denied {
 		return "refused by a Bash deny rule", map[string]any{"deny_rule": rule}
 	}
@@ -131,7 +132,7 @@ func (p NixRunPolicy) refusal(lines []string) (summary string, fields map[string
 		return "refused: no self-protection check is configured", map[string]any{}
 	}
 	for _, line := range lines {
-		if rule, reason, denied := p.Judge(line); denied {
+		if rule, reason, denied := p.Judge(ctx, line); denied {
 			return "refused by self-protection", map[string]any{"selfprotect_rule": rule, "reason": reason, "line": line}
 		}
 	}
@@ -157,7 +158,7 @@ func (n *nixRunner) handle(ctx context.Context, _ *spi.ToolCallContext, req *spi
 	stdin := toolutil.StringArgOr(req.Arguments, "stdin", "")
 	// The policy check, like the installable policy, runs before nix is
 	// looked up, so a refusal is deterministic and never starts anything.
-	if summary, fields := n.policy.refusal(cmdscan.NixRunCommandLines(command, extraArgs, stdin)); fields != nil {
+	if summary, fields := n.policy.refusal(ctx, cmdscan.NixRunCommandLines(command, extraArgs, stdin)); fields != nil {
 		fields["command"], fields["args"] = command, extraArgs
 		return toolutil.ErrorResult(summary, fields), nil
 	}

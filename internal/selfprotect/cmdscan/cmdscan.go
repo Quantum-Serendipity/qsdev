@@ -142,6 +142,7 @@ var safeReadVerbs = map[string]bool{
 	"printf": true, "test": true, "[": true, "true": true, "false": true,
 	"pwd": true, "stat": true, "file": true, "diff": true, "cmp": true,
 	"cut": true, "jq": true, "tac": true, "nl": true, "printenv": true,
+	"du": true,
 }
 
 // argReadOnly holds, for commands whose effect depends on their arguments, a

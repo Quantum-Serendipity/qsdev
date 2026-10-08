@@ -69,6 +69,8 @@ func TestForbidExec(t *testing.T) {
 		{"npx launcher forbidden", true, []string{"npx", "-y", "@socketsecurity/mcp"}, true},
 		{"version with extra arg forbidden", true, []string{"node", "--version", "x"}, true},
 		{"git fetch forbidden", true, []string{"git", "-C", "d", "fetch"}, true},
+		{"git diff --output forbidden", true, []string{"git", "diff", "--output", "x"}, true},
+		{"git -c x diff forbidden", true, []string{"git", "-c", "x", "diff"}, true},
 		{"git -C without dir forbidden", true, []string{"git", "-C"}, true},
 		{"go list forbidden", true, []string{"go", "list", "-m", "-u", "all"}, true},
 		{"devenv update forbidden", true, []string{"devenv", "update"}, true},
@@ -109,6 +111,47 @@ func TestForbidExec(t *testing.T) {
 				}
 				if tt.panics && !strings.Contains(msg, strings.Join(tt.argv, " ")) {
 					t.Errorf("%s: panic message %q does not name argv %q", ctor, msg, tt.argv)
+				}
+			}
+		})
+	}
+}
+
+// TestLocalProbes_GitDiffShapes pins the exact read-only diff and stash-show
+// argv prefixes internal/gitrepo runs. A diff that writes a file (--output),
+// carries caller config (-c before the subcommand) or drops the hardening
+// flags is not a probe.
+func TestLocalProbes_GitDiffShapes(t *testing.T) {
+	diff := []string{"git", "--no-optional-locks", "-c", "core.fsmonitor=false", "diff",
+		"--name-only", "-z", "--no-relative", "--no-ext-diff", "--no-textconv", "--end-of-options"}
+	stash := []string{"git", "--no-optional-locks", "stash", "show",
+		"--name-only", "-z", "--include-untracked", "--end-of-options"}
+	tests := []struct {
+		name   string
+		argv   []string
+		panics bool
+	}{
+		{"diff index vs worktree", diff, false},
+		{"diff rev vs worktree with pathspec", append(slices.Clone(diff), "evil", "--", ".claude"), false},
+		{"diff rev vs rev", append(slices.Clone(diff), "HEAD", "evil", "--"), false},
+		{"stash show", append(slices.Clone(stash), "stash@{0}"), false},
+		{"git diff --output forbidden", []string{"git", "diff", "--output", "x"}, true},
+		{"git -c x diff forbidden", []string{"git", "-c", "x", "diff", "--name-only"}, true},
+		{"diff without hardening forbidden", []string{"git", "--no-optional-locks", "diff", "--name-only", "-z"}, true},
+		{"diff with fsmonitor left on forbidden", slices.Concat([]string{"git", "--no-optional-locks", "diff"}, diff[5:]), true},
+		{"ls-files", []string{"git", "--no-optional-locks", "-c", "core.fsmonitor=false", "ls-files", "-z"}, false},
+		{"ls-files with a pathspec forbidden", []string{"git", "--no-optional-locks", "-c", "core.fsmonitor=false", "ls-files", "-z", "--", "x"}, true},
+		{"ls-files without hardening forbidden", []string{"git", "ls-files", "-z"}, true},
+		{"stash pop forbidden", []string{"git", "--no-optional-locks", "stash", "pop"}, true},
+		{"stash show without end-of-options forbidden", []string{"git", "--no-optional-locks", "stash", "show", "--name-only", "-z", "--include-untracked", "--output=x"}, true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Setenv(ForbidExecEnv, "1")
+			for _, ctor := range slices.Sorted(maps.Keys(constructors)) {
+				msg := guardPanic(t, constructors[ctor], tt.argv[0], tt.argv[1:]...)
+				if got := msg != ""; got != tt.panics {
+					t.Errorf("%s argv %q: panicked=%v (%q), want %v", ctor, tt.argv, got, msg, tt.panics)
 				}
 			}
 		})

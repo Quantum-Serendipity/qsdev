@@ -42,6 +42,17 @@ var localProbes = []localProbe{
 	{Name: "podman", Args: []string{"info", "--format"}, Prefix: true},
 	{Name: "podman", Args: []string{"version", "--format"}, Prefix: true},
 	{Name: "git", Args: []string{"rev-parse"}, Prefix: true},
+	// internal/gitrepo's diff and stash show: no lock, fsmonitor, external
+	// diff or textconv, and every later argument is a revision or pathspec.
+	{Name: "git", Args: []string{
+		"--no-optional-locks", "-c", "core.fsmonitor=false", "diff",
+		"--name-only", "-z", "--no-relative", "--no-ext-diff", "--no-textconv", "--end-of-options",
+	}, Prefix: true},
+	{Name: "git", Args: []string{
+		"--no-optional-locks", "stash", "show", "--name-only", "-z", "--include-untracked", "--end-of-options",
+	}, Prefix: true},
+	// internal/gitrepo's index listing, exactly: no pathspec, no options.
+	{Name: "git", Args: []string{"--no-optional-locks", "-c", "core.fsmonitor=false", "ls-files", "-z"}},
 	{Name: "getent", Args: []string{"passwd"}, Prefix: true},
 	{Name: "nix-instantiate", Args: []string{"--parse", "-"}},
 	{Name: "bash", Args: []string{"-n"}},

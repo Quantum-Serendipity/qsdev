@@ -86,6 +86,7 @@ func ensureInit() error {
 		if dirs, err := userDirs(); err == nil {
 			protectedPrefixes = append(protectedPrefixes, userDirEntries(dirs)...)
 		}
+		protectedPrefixes = append(protectedPrefixes, gitGlobalConfigEntries(home, os.Getenv)...)
 		// The CLI reads the overlay below the account's home directory
 		// (catalog.OrgConfigPath); the one below HOME is protected too.
 		protectedHomes = []string{home}
@@ -203,17 +204,21 @@ func orgConfigEnv(cfg branding.Config) string {
 // ShellPathVars returns the shell variables that name a home-anchored
 // protected location, with the values a command the agent runs sees: HOME
 // (the home directory), USERPROFILE (the Windows profile directory, which
-// Git Bash also exports) and <EnvPrefix>ORG_CONFIG when they are set. A
-// command scan renders them (cmdscan.ParseWithVars) so
-// `$HOME/.config/<app>/x`, `cd $HOME/.config` and `"$QSDEV_ORG_CONFIG"` are
-// checked as the paths they expand to.
+// Git Bash also exports), XDG_CONFIG_HOME (which holds the global git
+// config) and <EnvPrefix>ORG_CONFIG when they are set. A command scan renders
+// them (cmdscan.ParseWithVars) so `$HOME/.config/<app>/x`, `cd $HOME/.config`,
+// `$XDG_CONFIG_HOME/git/config` and `"$QSDEV_ORG_CONFIG"` are checked as the
+// paths they expand to.
 func ShellPathVars() map[string]string {
-	vars := make(map[string]string, 3)
+	vars := make(map[string]string, 4)
 	if home, err := userHomeDir(); err == nil {
 		vars["HOME"] = home
 	}
 	if profile := os.Getenv("USERPROFILE"); profile != "" {
 		vars["USERPROFILE"] = profile
+	}
+	if cfg := os.Getenv(xdgConfigHomeEnv); cfg != "" {
+		vars[xdgConfigHomeEnv] = cfg
 	}
 	env := orgConfigEnv(branding.Get())
 	if v := os.Getenv(env); v != "" {
@@ -683,6 +688,12 @@ func isProtected(canonicalPath string, opts pathmatch.Options) (bool, string) {
 		return true, category
 	}
 
+	// Check the git control files inside any .git directory, matched by
+	// structure rather than segment (see isGitControl).
+	if isGitControl(key) {
+		return true, GitControlCategory
+	}
+
 	// Check suffix-based protected paths.
 	for i, entryKey := range suffixKeys.under(opts) {
 		entry := protectedSuffixes[i]
@@ -833,7 +844,7 @@ var staticFileTokens = []string{
 // are added by newPathTables.
 var staticProbeMembers = []string{
 	"config.yaml", "defaults.yaml", "package-guard.py", "audit-log.sh",
-	"agent.md", "audit.jsonl", "events.log",
+	"agent.md", "audit.jsonl", "events.log", "pre-commit",
 }
 
 // pathTables are the location-independent protection tables: the static
@@ -914,6 +925,10 @@ var brandedTables = sync.OnceValue(func() *pathTables {
 //     directory;
 //   - .envrc, which direnv runs on every shell entry.
 //
+// The git-control fragments (gitControlSubstrings) are substrings too; the
+// locations they name are matched by isGitControl and the global git config
+// entries rather than by segment.
+//
 // Each segment is covered by a substring or a token, so the raw-command scan
 // sees every location IsProtected guards. The org overlay is home-anchored
 // (orgOverlayEntries), so it has no segment; its raw-command fragments are
@@ -930,7 +945,7 @@ func newPathTables(cfg branding.Config, getenv func(string) string) *pathTables 
 			segmentEntry{cfg.DevenvAnswersCopy(), "answers"},
 			segmentEntry{".envrc", "config"},
 		),
-		substrings: append(slices.Clone(staticSubstringPatterns), stateDir+"/", ".config/"+cfg.AppName+"/"),
+		substrings: slices.Concat(staticSubstringPatterns, []string{stateDir + "/", ".config/" + cfg.AppName + "/"}, gitControlSubstrings),
 	}
 	for _, p := range t.substrings {
 		t.tokens = append(t.tokens, strings.TrimSuffix(p, "/"))
@@ -1055,6 +1070,28 @@ func HomeEnvVars() []string {
 	return slices.Clone(homeEnvVars)
 }
 
+// commitGateEnvVars are the variables the commit gate's hook managers read to
+// skip hooks (SKIP for pre-commit, PREK_SKIP for prek) or to pass when the
+// repository has no hook configuration (*_ALLOW_NO_CONFIG).
+var commitGateEnvVars = []string{"SKIP", "PREK_SKIP", "PRE_COMMIT_ALLOW_NO_CONFIG", "PREK_ALLOW_NO_CONFIG"}
+
+// CommitGateEnvVars returns the environment variables that skip or disable
+// the commit gate's checks for a git command that runs hooks (see
+// commitGateEnvVars).
+func CommitGateEnvVars() []string {
+	return slices.Clone(commitGateEnvVars)
+}
+
+// commitGateManagers are the programs that install the commit gate into
+// $GIT_DIR/hooks: pre-commit and its drop-in replacement prek.
+var commitGateManagers = []string{"pre-commit", "prek"}
+
+// CommitGateManagers returns the program names of the hook managers that
+// install the commit gate (see commitGateManagers).
+func CommitGateManagers() []string {
+	return slices.Clone(commitGateManagers)
+}
+
 // ProtectedNames returns the single-component names protected wherever they
 // appear (.claude, the state directory, .envrc, ...), for a check that must
 // decide whether a glob segment can expand to one of them.
@@ -1107,6 +1144,9 @@ func FindProbes() (relative, absolute []string) {
 	t := brandedTables()
 	for _, seg := range t.segments {
 		relative = appendProbes(relative, seg.segment, t.probeMembers)
+	}
+	for _, entry := range gitControlEntries {
+		relative = appendProbes(relative, entry, t.probeMembers)
 	}
 	for _, loc := range ProtectedLocations() {
 		absolute = appendProbes(absolute, filepath.ToSlash(loc), t.probeMembers)

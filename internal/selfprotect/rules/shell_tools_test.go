@@ -155,6 +155,17 @@ func testGitCodeExecutionEveryShellTool(t *testing.T) {
 		{"git -c core.hooksPath=/tmp commit -m x", true},
 		{"git config core.hooksPath /tmp", true},
 		{"git commit -m x", false},
+		// The commit gate's integrity (U18-09).
+		{"pre-commit uninstall", true},
+		{"prek uninstall", true},
+		{"pre-commit install -c /tmp/empty.yaml", true},
+		{"pre-commit install --allow-missing-config", true},
+		{"prek install --config=/tmp/e.yaml", true},
+		{"git init --template=/tmp/t", true},
+		{"git clone --templ=/tmp/t url", true},
+		{"pre-commit install", false},
+		{"prek install", false},
+		{"pre-commit run --all-files", false},
 	}
 	for _, tool := range cmdscan.ShellTools {
 		for _, tt := range cases {
@@ -165,6 +176,25 @@ func testGitCodeExecutionEveryShellTool(t *testing.T) {
 				}
 			})
 		}
+	}
+	// A commit-gate variable set for a commit, in each tool's own spelling.
+	skipCommit := map[string]string{
+		"Bash":       "SKIP=gitleaks git commit -m x",
+		"Monitor":    "SKIP=gitleaks git commit -m x",
+		"PowerShell": "$env:SKIP='gitleaks'; git commit -m x",
+	}
+	for _, tool := range cmdscan.ShellTools {
+		command, ok := skipCommit[tool]
+		if !ok {
+			t.Errorf("no commit-gate variable row for shell tool %s", tool)
+			continue
+		}
+		t.Run("GitCodeExecution/"+tool+"/"+command, func(t *testing.T) {
+			t.Parallel()
+			if reason, deny := GitCodeExecution(&EvalContext{ToolName: tool, Command: command}); !deny {
+				t.Errorf("GitCodeExecution = (%q, false), want deny", reason)
+			}
+		})
 	}
 	t.Run("GitCodeExecution/non-shell tool", func(t *testing.T) {
 		t.Parallel()

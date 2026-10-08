@@ -5,6 +5,8 @@ import (
 	"os/exec"
 	"path/filepath"
 	"testing"
+
+	"github.com/Quantum-Serendipity/qsdev/internal/gitrepo"
 )
 
 // findingSubjects returns the subjects of a category's findings.
@@ -96,7 +98,7 @@ func runGit(t *testing.T, dir string, args ...string) {
 	t.Helper()
 	full := append([]string{"-c", "user.name=test", "-c", "user.email=test@example.com", "-C", dir}, args...)
 	cmd := exec.Command("git", full...)
-	cmd.Env = repoScopedEnv(os.Environ())
+	cmd.Env = gitrepo.ScopedEnv(os.Environ())
 	if out, err := cmd.CombinedOutput(); err != nil {
 		t.Fatalf("git %v: %v\n%s", args, err, out)
 	}

@@ -72,7 +72,8 @@ func TestIsProtected_ControlFilesAnyLocation(t *testing.T) {
 // TestProtectedSegmentsCoveredByCommandScan keeps the Write/Edit table and the
 // Bash raw-command scan consistent: every location IsProtected guards must also
 // be recognized by ContainsProtectedPath, or a Bash command could reach a file
-// the Write tool cannot.
+// the Write tool cannot. The git-control locations, matched structurally
+// rather than by segment, are checked by representative examples.
 func TestProtectedSegmentsCoveredByCommandScan(t *testing.T) {
 	t.Parallel()
 
@@ -88,6 +89,7 @@ func TestProtectedSegmentsCoveredByCommandScan(t *testing.T) {
 			}
 		})
 	}
+	t.Run("git-control", checkGitControlCoveredByCommandScan)
 }
 
 // TestIsProtected_CaseInsensitiveFilesystems verifies that on a case-folding

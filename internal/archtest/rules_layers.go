@@ -32,7 +32,7 @@ type layerRule struct {
 var foundationPkgs = []string{
 	"internal/projectctx", "internal/finding", "internal/procexec", "internal/nixexpr",
 	"internal/pathmatch", "internal/secrets", "internal/claudesettings", "internal/mcpconfig",
-	"pkg/fileutil",
+	"internal/gitrepo", "pkg/fileutil",
 }
 
 // layerTable is the §3.1 layer matrix. Import cycles need no rule: the

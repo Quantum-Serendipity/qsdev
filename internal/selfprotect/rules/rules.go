@@ -335,6 +335,10 @@ var sp007 = Rule{
 		if copyIsDangerous(ctx) {
 			return Deny, "command modifies or exfiltrates a protected config path"
 		}
+		// git rewriting tracked files names none of them (U18-02c).
+		if reason := worktreeRewriteReason(ctx); reason != "" {
+			return Deny, reason
+		}
 		return Allow, ""
 	},
 }

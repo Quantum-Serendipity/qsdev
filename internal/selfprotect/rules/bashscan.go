@@ -219,7 +219,8 @@ func shellSegMatch(pattern, name string) bool {
 
 // globProtected reports whether a glob word can expand to a protected path: a
 // glob segment that matches a name protected in any location (`.c*e`,
-// `.env?c`), or an absolute pattern whose leading segments match a home- or
+// `.env?c`), segments that match a git-control location (`.gi?/hooks/x`), or
+// an absolute pattern whose leading segments match a home- or
 // system-anchored protected location (`/etc/g?ev/...`, `~/.config/q*/x`).
 // Both tables come from canon, so a newly protected location is covered here
 // without a second list.
@@ -228,6 +229,9 @@ func globProtected(p string) bool {
 		return false
 	}
 	cleaned := filepath.Clean(expandTilde(p))
+	if control, _ := canon.GitControlReach(pathmatch.Key(cleaned), shellSegMatch); control {
+		return true // `.gi?/hooks/x`, `.git/*/pre-commit`
+	}
 	segs := strings.Split(filepath.ToSlash(cleaned), "/")
 	names := canon.ProtectedNames()
 	for _, seg := range segs {
@@ -514,6 +518,15 @@ func posixMentionsProtected(ctx *EvalContext) bool {
 	if containsProtectedPathStr(ctx.Command) || containsProtectedPathStr(looseText(ctx.Command)) {
 		return true
 	}
+	// A command may build a git-control path from a git directory the line
+	// names through a variable (`d=.git; rm $d/hooks/pre-commit`). PowerShell
+	// judges any write on a mentioning line, so there the name only counts on
+	// a line that expands a variable; otherwise its commands' operands decide
+	// (`Remove-Item .git\index.lock` stays allowed).
+	if (!isPowerShell(ctx) || strings.Contains(ctx.Command, "$")) &&
+		(canon.MentionsGitDir(ctx.Command) || canon.MentionsGitDir(looseText(ctx.Command))) {
+		return true
+	}
 	scs, err := ctx.scannedCommands()
 	if err != nil {
 		return false
@@ -521,6 +534,7 @@ func posixMentionsProtected(ctx *EvalContext) bool {
 	for _, sc := range scs {
 		if sc.inProtectedDir ||
 			anyArgRefersProtected(sc, sc.Args) ||
+			anyGitControlHolder(sc, sc.Args) ||
 			anyRefersProtected(sc, sc.WriteRedirects) ||
 			anyRefersProtected(sc, sc.ReadRedirects) {
 			return true
@@ -799,7 +813,8 @@ func relativeWriteTarget(sc scannedCommand) bool {
 // line references a protected path (lineMentionsProtected). A command then
 // counts as a mutation when:
 //
-//   - any of its mutation targets or write redirects names a protected path;
+//   - any of its mutation targets or write redirects names a protected path,
+//     or an operand target is a git directory (gitControlHolder);
 //   - it is not read-only and uses an expansion (a variable can carry the
 //     protected path named elsewhere on the line: `V=.claude/x; foo "$V"`);
 //   - it is not read-only and consumes a protected path on its input: from an
@@ -823,6 +838,11 @@ func protectedMutation(scs []scannedCommand) bool {
 			return true
 		}
 		if anyArgRefersProtected(sc, mutationTargets(sc)) || anyRefersProtected(sc, sc.WriteRedirects) {
+			return true
+		}
+		// `chmod -R a-x .git` disables the hooks inside; a find's start
+		// points are judged by what its expression selects (below).
+		if sc.Name != "find" && anyGitControlHolder(sc, mutationTargets(sc)) {
 			return true
 		}
 		if len(sc.WriteRedirects) > 0 && sc.HasExpansion {

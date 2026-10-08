@@ -2,6 +2,7 @@ package rules
 
 import (
 	"path/filepath"
+	"regexp"
 	"slices"
 	"strings"
 
@@ -280,9 +281,52 @@ func envFileRelocation(ctx *EvalContext) string {
 	if err != nil {
 		return "cannot verify the change to " + name + ": " + err.Error()
 	}
-	if before != after && (mentionsProtectedEnv(before) || mentionsProtectedEnv(after)) {
+	if before == after {
+		return ""
+	}
+	if mentionsProtectedEnv(before) || mentionsProtectedEnv(after) {
 		return name + " sets the environment " + branding.Get().AppName + " runs in; changing " +
 			strings.Join(canon.ProtectedEnvVars(), " or ") + " there would relocate the org overlay"
 	}
+	if assignsCommitGateEnv(before) || assignsCommitGateEnv(after) {
+		return name + " sets the environment git commits run in; setting or removing " +
+			strings.Join(commitGateEnvVars, " or ") + " there skips or disables the pre-commit checks of every later commit"
+	}
 	return ""
+}
+
+// commitGateAssigns finds an assignment of a commit-gate variable
+// (canon.CommitGateEnvVars) in an environment source file: NAME followed by
+// `=` (`export SKIP=x`, `env.SKIP = "x";`, `SKIP = "x";` in a Nix env set,
+// `${SKIP:=x}`), but not a comparison or a reference (`[ "$SKIP" = 1 ]`) and
+// not the name inside a longer identifier (QSDEV_SKIP_SETUP) or in text
+// (`echo "SKIP: ..."`) (assign); fish's `set [-flags] NAME` (set); and, in
+// text with its references (ref) and then envMentionNoise removed, an
+// assignment whose name quotes or concatenation split (`env."SK" + "IP" =`),
+// where the name may follow a keyword the removed spaces joined it to
+// (split). PowerShell's $env:NAME forms are psCommitGateWrites.
+var commitGateAssigns = func() struct{ assign, set, split, ref *regexp.Regexp } {
+	names := make([]string, len(commitGateEnvVars))
+	for i, n := range commitGateEnvVars {
+		names[i] = regexp.QuoteMeta(n)
+	}
+	alt := `(` + strings.Join(names, "|") + `)`
+	return struct{ assign, set, split, ref *regexp.Regexp }{
+		assign: regexp.MustCompile(`(^|[^A-Za-z0-9_$])` + alt + `\s*:?=([^=]|$)`),
+		set:    regexp.MustCompile(`(^|[^A-Za-z0-9_])set(\s+-\S+)*\s+` + alt + `([^A-Za-z0-9_]|$)`),
+		split:  regexp.MustCompile(`(^|[^A-Za-z0-9_]|export|declare|typeset|readonly|local)` + alt + `:?=([^=]|$)`),
+		ref:    regexp.MustCompile(`\$\{?` + alt + `\b`),
+	}
+}()
+
+// assignsCommitGateEnv reports whether the content of an environment source
+// file assigns a commit-gate variable (see commitGateAssigns). Unlike
+// mentionsProtectedEnv it does not match the bare name, which the generated
+// devenv.nix prints ("SKIP: not a git repository"), nor a reference to it,
+// which removing the noise would otherwise join to a comparison's `=`.
+func assignsCommitGateEnv(text string) bool {
+	re := commitGateAssigns
+	return re.assign.MatchString(text) || re.set.MatchString(text) ||
+		re.split.MatchString(envMentionNoise.Replace(re.ref.ReplaceAllString(text, "#"))) ||
+		psCommitGateWrites.inText(strings.ToLower(text), func() bool { return true })
 }

@@ -68,6 +68,14 @@ func TestDenyRules_CommandForms(t *testing.T) {
 		"PowerShell((isres Evil))",
 		"PowerShell(Get-Date&&isres Evil)",
 		"PowerShell(isres;Get-Date)",
+		// PowerShellGet's own aliases and PackageManagement's Save-Package.
+		"PowerShell(inmo Evil)",
+		"PowerShell(INMO Evil)",
+		"PowerShell(upmo Evil)",
+		"PowerShell(Get-Date; inmo Evil)",
+		"PowerShell(Find-Module Evil | upmo)",
+		"PowerShell(Save-Package Evil -Path .)",
+		"Bash(pwsh -c 'Save-Package Evil')",
 	} {
 		if _, ok := denyutil.FirstMatch(rules, op); !ok {
 			t.Errorf("%q is not denied", op)
@@ -86,6 +94,8 @@ func TestDenyRules_CommandForms(t *testing.T) {
 		"PowerShell(New-ModuleManifest -Path ./My.psd1)",
 		"PowerShell(Get-Date; Update-ModuleManifest -Path ./My.psd1)",
 		"PowerShell(Get-Content isres.txt)",
+		"PowerShell(Get-Content inmo.txt)",
+		"PowerShell(Get-Content upmost.txt)",
 	} {
 		if rule, ok := denyutil.FirstMatch(rules, op); ok {
 			t.Errorf("%s is unexpectedly denied by %q", op, rule)

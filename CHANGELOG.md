@@ -418,6 +418,62 @@ All notable changes to qsdev are recorded in this file. The format is based on
 
 ### Security
 
+- The package guard now sees an install written with `--` before the verb
+  (`npm -- install x`, `pnpm -- add x`, `uv -- pip install x`), for every
+  manager, and the `--ignore-scripts` rewrite lands after the verb
+  (U17-03). `npm rebuild`, `npm rb`, `pnpm rebuild`, `pnpm rb` and
+  `yarn rebuild` now ask, because they run the lifecycle scripts of every
+  installed package; they stay silent when scripts are already disabled
+  (`--ignore-scripts`, `npm_config_ignore_scripts=true`) (U17-10).
+
+- The package guard now asks before installing a local package archive
+  (`npm install --ignore-scripts ./x.tgz`, `gem install ./x.gem`,
+  `pip install ./x.whl`) unless the file is byte-for-byte the copy committed
+  at HEAD (U17-10). One lock-free `git ls-tree` reads the committed blob id,
+  which the hook compares with the git hash of the file's bytes; it applies
+  no filters, so the repository's config cannot make the hook run a program.
+  Untracked or modified files, symlinks, non-regular files, files over
+  64 MiB, paths outside the repository and any git error ask. A glob
+  over local files (`npm install ./dist/*.tgz`, `./x.tg[z]`) and an
+  archive the same command line also names elsewhere (`cp evil.tgz x.tgz &&
+  npm i ./x.tgz`) ask without starting git. The reason names the path,
+  never the file's content. Installs without a local archive start no
+  process.
+
+- The package guard reads PowerShell in its own dialect (U17-02). Through
+  the PowerShell tool, `Install-Module`, `Install-PSResource`,
+  `PowerShellGet\Install-Module`, `Find-Module X | Install-Module` and the
+  other PSGallery installer cmdlets were allowed and are now denied, while
+  `Get-Help Install-Module` stays allowed. `iex "npm install evil"`,
+  `Invoke-Expression -Command:'...'` and `Start-Process npm -ArgumentList
+  @('install','evil')` (or a string or comma list) are now validated like
+  the command they run, and a computed or piped Invoke-Expression string
+  asks. The same holds for a script handed to `pwsh -Command` or
+  `-EncodedCommand` from the Bash tool, which is now also found past value
+  parameters (`pwsh -ExecutionPolicy Bypass -Command ...`), and for
+  Windows PowerShell's positional command (`powershell npm install x`).
+  The command an assignment (`$null = Install-Module X`), the dot-source
+  operator (`. Install-Module X`) or a script block (`Invoke-Command {
+  Install-Module X }`, `% { ... }`) runs is judged too, `<# ... #>` block
+  comments and backtick escapes (`` In`stall-Module ``) no longer hide a
+  command, `Start-Process -ArgumentList 'install x' npm` starts npm as
+  PowerShell binds it, and a cmdlet that names an installer cmdlet as a
+  bare argument (other than `Get-Help`/`Get-Command`) asks.
+  Bash's `iex -S mix` is unaffected.
+
+- The package guard now asks before inline interpreter code that runs a
+  package manager install (U17-12): `python3 -c 'import os;
+  os.system("pip install x")'`, `subprocess.run(["pip","install",x])`,
+  `node -e "execSync('npm i x')"`, `ruby -e 'system("gem install x")'`,
+  `perl -wle 'system("cpanm Foo")'`, `deno eval`, `bun -e`, `nodejs -e`,
+  `py -c` and `php -r` were allowed. Option clusters (`python3 -Ic`,
+  `perl -wle`) are recognised. An install verb counts only after its own
+  manager, so `execSync('npm run build')` and a variable named `cmd` stay
+  allowed. Inline code that only names a manager
+  (`print(pip.__version__)`) stays allowed, and
+  the guard still validates an install the interpreter is handed as
+  arguments (`perl -e 'exec @ARGV' npm install x`).
+
 - A package on the package guard's team allowlist
   (`PACKAGE_GUARD_TEAM_ALLOWLIST`) no longer skips the OSV.dev and
   release-age checks, so a hijacked release of an approved package published

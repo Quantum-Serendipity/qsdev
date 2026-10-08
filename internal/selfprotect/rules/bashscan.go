@@ -156,7 +156,9 @@ func expandTilde(p string) string {
 // directory as an ancestor, such as a Claude Code worktree under
 // .claude/worktrees/, is not itself treated as protected.
 func isProtectedDir(dir string) bool {
-	if canon.ContainsProtectedPath(filepath.Base(dir)) {
+	// A policy directory protects only its policy files (IsProtected checks
+	// them), not every entry: its cache stays writable.
+	if canon.ContainsProtectedDirName(filepath.Base(dir)) {
 		return true // a .claude/.qsdev/.gdev directory itself
 	}
 	protected, category := canon.IsProtected(filepath.Join(dir, "x"))
@@ -181,12 +183,15 @@ func resolvedProtected(fs *canon.Resolver, p string) bool {
 	return err == nil && canonical != p && pathProtected(canonical)
 }
 
-// pathProtected is resolvedProtected for a path taken as written.
+// pathProtected is resolvedProtected for a path taken as written. A policy
+// directory (canon.IsPolicyDir) counts too: removing, moving or rolling it
+// back as a whole takes its protected files with it, while the entries below
+// it other than those files stay unprotected.
 func pathProtected(p string) bool {
 	if protected, category := canon.IsProtected(p); protected && category != "mcp-config" {
 		return true
 	}
-	return isProtectedDir(p) || isProtectedDir(filepath.Dir(p))
+	return isProtectedDir(p) || isProtectedDir(filepath.Dir(p)) || canon.IsPolicyDir(p)
 }
 
 // lexicalProtected reports whether the literal text of p names a protected
@@ -244,12 +249,31 @@ func globProtected(p string) bool {
 			}
 		}
 	}
+	if globReachesPolicyDir(segs) {
+		return true
+	}
 	if !isRooted(cleaned) {
 		return false
 	}
 	key := strings.Split(pathmatch.Key(cleaned), "/")
 	for _, loc := range canon.ProtectedLocationKeys() {
 		if globReaches(key, loc) {
+			return true
+		}
+	}
+	return false
+}
+
+// globReachesPolicyDir reports whether the glob pattern, split into
+// slash-separated segments, can end in a policy directory or in a protected
+// file directly inside one (canon.PolicyDirFiles): `<home>/conf*.json`,
+// `<home>/.git*`, or a `*` that a cd placed in the directory. Their base names
+// are too common to be ProtectedNames, so the trailing segments are matched
+// against the file's whole relative path.
+func globReachesPolicyDir(segs []string) bool {
+	for _, f := range canon.PolicyDirFiles() {
+		want := strings.Split(f, "/")
+		if segmentsEndWith(segs, want) || segmentsEndWith(segs, want[:len(want)-1]) {
 			return true
 		}
 	}
@@ -428,10 +452,18 @@ func refersProtected(sc scannedCommand, p string) bool {
 		if lexicalProtected(v) || globProtected(v) {
 			return true
 		}
-		if v == "" || hasGlobMeta(v) {
+		if v == "" {
 			continue
 		}
 		resolved, known := resolveWord(sc, v)
+		if hasGlobMeta(v) {
+			// A relative glob can reach a protected file through the
+			// directory a cd placed it in (`cd <home> && rm conf*.json`).
+			if known && globProtected(resolved) {
+				return true
+			}
+			continue
+		}
 		if !known {
 			if sc.inProtectedDir {
 				return true // relative to a protected directory we cannot leave

@@ -63,6 +63,14 @@ func (c Config) DevenvAnswersCopy() string {
 	return ".devenv/." + c.AppName + "-answers.yaml"
 }
 
+// ComposerHomeDir returns the project-relative name of the tracked Composer
+// home, .<app>-composer, which holds the PHP module's committed config.json.
+// The PHP module writes it, and self-protection and the hook sandbox protect
+// its policy files, so all derive it here.
+func (c Config) ComposerHomeDir() string {
+	return "." + c.AppName + "-composer"
+}
+
 // active holds the current branding. It is initialized with the defaults at
 // package initialization, so Get never observes a nil configuration.
 var active = newActive()

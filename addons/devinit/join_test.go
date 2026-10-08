@@ -357,11 +357,11 @@ func TestJoin_KeepsExistingLocalConfig(t *testing.T) {
 	})
 }
 
-// TestJoin_PHPManifestOmitsGitignoredComposerConfig verifies the Composer
-// global config, written under the gitignored project dot-directory, stays in
-// local state (so drift and repair cover it) but is not committed to the
-// manifest a fresh clone is checked against (U09-02).
-func TestJoin_PHPManifestOmitsGitignoredComposerConfig(t *testing.T) {
+// TestJoin_PHPManifestListsTrackedComposerConfig verifies the Composer
+// global config and its nested .gitignore, written to the tracked Composer
+// home, are recorded in local state (so drift and repair cover them) and
+// committed to the manifest a fresh clone is checked against (U09-02).
+func TestJoin_PHPManifestListsTrackedComposerConfig(t *testing.T) {
 	t.Setenv("QSDEV_SKIP_SETUP", "1")
 	dir := t.TempDir()
 	writeJoinConfig(t, dir, "php")
@@ -371,11 +371,14 @@ func TestJoin_PHPManifestOmitsGitignoredComposerConfig(t *testing.T) {
 		t.Fatalf("runJoin: %v", err)
 	}
 
-	composerCfg := "." + branding.Get().AppName + "/composer/config.json"
-	if _, tracked := rawStateFiles(t, dir)[composerCfg]; !tracked {
-		t.Errorf("init state does not record %s", composerCfg)
-	}
-	if rawManifestPaths(t, dir)[composerCfg] {
-		t.Errorf("committed manifest lists gitignored %s", composerCfg)
+	home := branding.Get().ComposerHomeDir()
+	state, manifest := rawStateFiles(t, dir), rawManifestPaths(t, dir)
+	for _, p := range []string{home + "/config.json", home + "/.gitignore"} {
+		if _, tracked := state[p]; !tracked {
+			t.Errorf("init state does not record %s", p)
+		}
+		if !manifest[p] {
+			t.Errorf("committed manifest does not list tracked %s", p)
+		}
 	}
 }

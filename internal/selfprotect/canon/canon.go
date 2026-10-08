@@ -866,6 +866,9 @@ type pathTables struct {
 	// probeMembers are representative contents of a protected directory
 	// (see staticProbeMembers), relative to it.
 	probeMembers []string
+	// policyDirFiles are the protected file segments that live in a policy
+	// directory of their own (see PolicyDirFiles).
+	policyDirFiles []string
 	// exact and folded are the entries the matchers compare against, as
 	// written and lower-cased (see match), built once with the tables
 	// rather than folded again for every path or command checked.
@@ -879,6 +882,16 @@ type matchSet struct {
 	substrings []string
 	// words are the tokens and envVars, matched as complete path segments.
 	words []string
+	// policyDirs are the policy directories (see PolicyDirFiles), each with
+	// the base names of its protected files, matched by mentionsPolicyDir.
+	policyDirs []policyDir
+}
+
+// policyDir is a policy directory, relative and slash-separated, and the base
+// names of the protected files directly inside it.
+type policyDir struct {
+	dir   string
+	files []string
 }
 
 // newMatchSet returns the comparison strings of t, lower-cased when
@@ -897,6 +910,16 @@ func newMatchSet(t *pathTables, foldCase bool) matchSet {
 	}
 	for _, seg := range t.segments {
 		m.segments = append(m.segments, segmentEntry{foldIf(seg.segment, foldCase), seg.category})
+	}
+	for _, f := range fold(t.policyDirFiles) {
+		dir, base := path.Split(f)
+		dir = strings.TrimSuffix(dir, "/")
+		i := slices.IndexFunc(m.policyDirs, func(d policyDir) bool { return d.dir == dir })
+		if i < 0 {
+			m.policyDirs = append(m.policyDirs, policyDir{dir: dir})
+			i = len(m.policyDirs) - 1
+		}
+		m.policyDirs[i].files = append(m.policyDirs[i].files, base)
 	}
 	return m
 }
@@ -939,6 +962,7 @@ var brandedTables = sync.OnceValue(func() *pathTables {
 func newPathTables(cfg branding.Config, getenv func(string) string) *pathTables {
 	stateDir := strings.Trim(filepath.ToSlash(cfg.StateDir), "/")
 	devenvCopy := path.Base(cfg.DevenvAnswersCopy())
+	composerFiles := composerPolicyFiles(cfg)
 	t := &pathTables{
 		segments: append(slices.Clone(staticSegments),
 			segmentEntry{stateDir + "/", "answers"},
@@ -947,9 +971,17 @@ func newPathTables(cfg branding.Config, getenv func(string) string) *pathTables 
 		),
 		substrings: slices.Concat(staticSubstringPatterns, []string{stateDir + "/", ".config/" + cfg.AppName + "/"}, gitControlSubstrings),
 	}
+	for _, f := range composerFiles {
+		t.segments = append(t.segments, segmentEntry{f, "config"})
+	}
+	t.policyDirFiles = composerFiles
 	for _, p := range t.substrings {
 		t.tokens = append(t.tokens, strings.TrimSuffix(p, "/"))
 	}
+	// The Composer policy files are scanned for by their relative path, added
+	// after the tokens: their base names (config.json) are far too common to
+	// match on their own.
+	t.substrings = append(t.substrings, composerFiles...)
 	t.tokens = append(t.tokens, staticFileTokens...)
 	t.tokens = append(t.tokens, devenvCopy, ".envrc")
 	t.envVars = []string{orgConfigEnv(cfg)}
@@ -958,6 +990,47 @@ func newPathTables(cfg branding.Config, getenv func(string) string) *pathTables 
 		"."+cfg.AppName+"-init-answers.yaml", path.Join("bin", cfg.AppName))
 	t.exact, t.folded = newMatchSet(t, false), newMatchSet(t, true)
 	return t
+}
+
+// composerPolicyFiles returns the project-relative, slash-separated policy
+// files of the tracked Composer home (its config.json, which pins the
+// registry and plugin policy, and the nested .gitignore that keeps everything
+// else untracked). Only these files are protected (category "config"): the
+// rest of the directory (cache, vendored plugins, the auth.json link) is
+// composer's own working space and stays writable.
+func composerPolicyFiles(cfg branding.Config) []string {
+	dir := cfg.ComposerHomeDir()
+	return []string{dir + "/config.json", dir + "/.gitignore"}
+}
+
+// PolicyDirFiles returns the protected file segments (relative,
+// slash-separated) that live in a policy directory of their own: a directory,
+// such as the tracked Composer home, whose other contents stay writable but
+// whose removal, move or rollback as a whole takes the protected files with
+// it. Unlike the .devenv answers mirror, these files are named in commands
+// only by their common base names (config.json), so the directory itself is
+// the only handle a whole-tree operation has on them (see IsPolicyDir).
+func PolicyDirFiles() []string {
+	return slices.Clone(brandedTables().policyDirFiles)
+}
+
+// IsPolicyDir reports whether path p, cleaned, ends in a policy directory
+// (the directory of a PolicyDirFiles entry), compared at whole path
+// components and ignoring case where the filesystem does. Entries below it,
+// such as its cache, are not policy directories.
+func IsPolicyDir(p string) bool {
+	return brandedTables().isPolicyDir(p, pathmatch.Platform)
+}
+
+func (t *pathTables) isPolicyDir(p string, opts pathmatch.Options) bool {
+	key := opts.Key(filepath.Clean(p))
+	for _, f := range t.policyDirFiles {
+		dir := opts.Key(path.Dir(f))
+		if key == dir || strings.HasSuffix(key, "/"+dir) {
+			return true
+		}
+	}
+	return false
 }
 
 // commandSpellings returns the slash-separated forms a command may use to name
@@ -1206,7 +1279,34 @@ func containsProtectedPath(s string, foldCase bool) bool {
 	return brandedTables().containsProtectedPath(s, foldCase)
 }
 
+// ContainsProtectedDirName is ContainsProtectedPath for the name of a
+// directory whose every entry would be protected (.claude, the state
+// directory): it ignores policy directories (PolicyDirFiles), which protect
+// only their own policy files, so naming one does not make its other entries
+// protected.
+func ContainsProtectedDirName(name string) bool {
+	return brandedTables().containsProtectedName(name, pathmatch.Platform.FoldCase)
+}
+
 func (t *pathTables) containsProtectedPath(s string, foldCase bool) bool {
+	if t.containsProtectedName(s, foldCase) {
+		return true
+	}
+	normalized := filepath.ToSlash(s)
+	if foldCase {
+		normalized = strings.ToLower(normalized)
+	}
+	for _, d := range t.match(foldCase).policyDirs {
+		if d.mentionedIn(normalized) {
+			return true
+		}
+	}
+	return false
+}
+
+// containsProtectedName is containsProtectedPath without the policy
+// directories: the substrings and the whole-segment words.
+func (t *pathTables) containsProtectedName(s string, foldCase bool) bool {
 	normalized := filepath.ToSlash(s)
 	if foldCase {
 		normalized = strings.ToLower(normalized)
@@ -1223,6 +1323,65 @@ func (t *pathTables) containsProtectedPath(s string, foldCase bool) bool {
 		}
 	}
 	return false
+}
+
+// mentionedIn reports whether s names the policy directory d itself, or a
+// glob that can select one of its protected files, rather than another entry
+// below it. The directory must be a complete path segment (as for
+// containsSegment) that ends there: at the end of a word or the text
+// (`rm -rf <dir>`, `D=<dir>`, `'<dir>/'+name` in interpreter code), after
+// trailing separators and `.` components, or followed by a glob entry that
+// can match a protected file (`<dir>/*`, `<dir>/conf*`). `<dir>/cache` and
+// `<dir>/auth.json` name composer's working space and do not count; the
+// protected files themselves are substrings of their own.
+func (d policyDir) mentionedIn(s string) bool {
+	for from := 0; ; {
+		i := strings.Index(s[from:], d.dir)
+		if i < 0 {
+			return false
+		}
+		start := from + i
+		end := start + len(d.dir)
+		if isTokenBoundary(s, start-1) && d.endsAt(s[end:]) {
+			return true
+		}
+		from = start + 1
+	}
+}
+
+// endsAt reports whether rest, the text after an occurrence of d's directory,
+// leaves the occurrence naming the directory itself or a glob over its
+// protected files (see mentionedIn).
+func (d policyDir) endsAt(rest string) bool {
+	for {
+		if rest == "" || rest[0] != '/' {
+			return rest == "" || !isPathTokenByte(rest[0])
+		}
+		rest = strings.TrimLeft(rest, "/")
+		if r, ok := strings.CutPrefix(rest, "."); ok && (r == "" || !isPathTokenByte(r[0])) {
+			rest = r // a `.` component: still the directory
+			continue
+		}
+		n := strings.IndexFunc(rest, func(r rune) bool {
+			return r > 0x7f || (!isPathTokenByte(byte(r)) && !strings.ContainsRune("*?[]", r))
+		})
+		if n < 0 {
+			n = len(rest)
+		}
+		entry := rest[:n]
+		if entry == "" {
+			return true // `<dir>/` ends the word
+		}
+		if !strings.ContainsAny(entry, "*?[") {
+			return false // a named entry; the protected ones are substrings
+		}
+		for _, f := range d.files {
+			if ok, err := path.Match(entry, f); ok || err != nil {
+				return true // a malformed pattern fails closed
+			}
+		}
+		return false
+	}
 }
 
 // foldIf lower-cases s when foldCase is set, so a branding-derived entry with

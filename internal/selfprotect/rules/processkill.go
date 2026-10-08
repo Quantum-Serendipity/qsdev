@@ -98,7 +98,7 @@ func (k *killScan) list(cmds []cmdscan.Command) bool {
 			continue
 		}
 		if fed[c.Pipeline] {
-			if stdinCodeReader(c) {
+			if readsCodeFromStdin(c) {
 				return true
 			}
 			continue
@@ -195,7 +195,7 @@ func (k *killScan) lineKills() bool {
 // (`python3 script.py <<< '...'`).
 func opaqueText(c cmdscan.Command, program string) string {
 	name := programVerb(program)
-	if (interpreterVerbs[name] || cmdscan.IsScriptShell(name)) && !stdinCodeReader(c) {
+	if runsScript(name) && !readsCodeFromStdin(c) {
 		return strings.Join(append([]string{c.Name}, c.Args...), " ")
 	}
 	return commandText(c)
@@ -204,7 +204,7 @@ func opaqueText(c cmdscan.Command, program string) string {
 // runsCode reports whether the program name runs code it is given as a
 // file or a stream: a shell, an interpreter, or a sourcing builtin.
 func runsCode(name string) bool {
-	return interpreterVerbs[name] || cmdscan.IsScriptShell(name) || cmdscan.SourcesCode(name)
+	return runsScript(name) || cmdscan.SourcesCode(name)
 }
 
 // assignsKillVerb reports whether the line assigns a variable a value that
@@ -232,7 +232,7 @@ func programArgv(c cmdscan.Command, words []string, run cmdscan.ProgramRun) (int
 	return i, killArgv{
 		words:   words[i+1:],
 		dynamic: func(j int) bool { return c.WordHasExpansion(i + 1 + j) },
-		fed:     slices.ContainsFunc(words[:i], func(w string) bool { return programVerb(w) == "xargs" }),
+		fed:     cmdscan.ArgsFromInput(words),
 	}
 }
 
@@ -524,52 +524,35 @@ func (k *killScan) serviceStop(a killArgv, stops map[string]bool, valueOptions [
 	return false
 }
 
-// codeFlags are the interpreter options whose value is program text.
-var codeFlags = []string{"-c", "-e", "-E", "--eval", "-p", "--print"}
-
 // code reports whether the program words[i] runs is a shell or interpreter
-// given code that kills a guarded process: an interpreter's -c/-e text, or
-// the here-documents and here-strings one reading its program from stdin
-// is given. A shell's -c script and eval are parsed (anyCommandListIn).
+// given code that kills a guarded process: an interpreter's -c/-e text
+// (cmdscan.InterpreterCode), or the here-documents and here-strings one
+// reading its program from stdin is given. A shell's -c script and eval are
+// parsed (anyCommandListIn).
 func (k *killScan) code(c cmdscan.Command, words []string, i int) bool {
-	name := programVerb(words[i])
-	if interpreterVerbs[name] && !cmdscan.IsScriptShell(name) {
-		for j := i + 1; j+1 < len(words); j++ {
-			if isCodeFlag(words[j]) && k.text(words[j+1]) {
-				return true
-			}
-		}
+	if slices.ContainsFunc(cmdscan.InterpreterCode(words[i], words[i+1:]), k.text) {
+		return true
 	}
-	if !stdinCodeReader(c) {
+	if !readsCodeFromStdin(c) {
 		return false
 	}
 	return slices.ContainsFunc(c.Heredocs, k.text) || slices.ContainsFunc(c.ReadRedirects, k.text)
 }
 
-// isCodeFlag reports whether an interpreter option word takes program text
-// as the next word: one of codeFlags, or a short cluster ending in c or e
-// (`perl -ne`, `python3 -Ic`).
-func isCodeFlag(w string) bool {
-	if slices.Contains(codeFlags, w) {
+// readsCodeFromStdin reports whether what c reads on standard input may run
+// as code: a shell or interpreter takes its program from it
+// (cmdscan.ProgramFromInput: from standard input, or as the code word xargs
+// or parallel builds), or such a wrapper runs one given only options and
+// builds the rest of its argv (cmdscan.ArgsFromInput), an inline program
+// included (`sh -c 'pkill qsdev'`), from that input.
+func readsCodeFromStdin(c cmdscan.Command) bool {
+	if cmdscan.ProgramFromInput(c) {
 		return true
 	}
-	return len(w) > 2 && w[0] == '-' && w[1] != '-' && strings.ContainsRune("ceE", rune(w[len(w)-1]))
-}
-
-// stdinCodeReader reports whether c runs, behind wrappers, a shell or
-// interpreter that reads its program from stdin: one given no operand,
-// only options (`bash -s`, `python3 -`).
-func stdinCodeReader(c cmdscan.Command) bool {
 	words := append([]string{c.Name}, c.Args...)
 	i := cmdscan.Program(words).Index
-	if i < 0 {
-		return false
-	}
-	name := programVerb(words[i])
-	if !interpreterVerbs[name] && !cmdscan.IsScriptShell(name) {
-		return false
-	}
-	return !slices.ContainsFunc(words[i+1:], func(w string) bool { return !isFlag(w) })
+	return i > 0 && runsScript(words[i]) && cmdscan.ArgsFromInput(words) &&
+		!slices.ContainsFunc(words[i+1:], func(w string) bool { return !isFlag(w) })
 }
 
 // commandText is the text a command can feed a pipe: its words, its

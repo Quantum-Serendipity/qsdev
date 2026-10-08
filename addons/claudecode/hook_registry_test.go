@@ -189,8 +189,8 @@ func TestDefaultHookRegistry_PackageGuardRegistered(t *testing.T) {
 		t.Fatalf("expected 2 PreToolUse matchers (self-protection, package-guard), got %d", len(matchers))
 	}
 	guard := matchers[1]
-	if guard.Matcher != "Bash|PowerShell|Monitor" {
-		t.Errorf("matcher = %q, want Bash|PowerShell|Monitor", guard.Matcher)
+	if want := "Bash|PowerShell|Monitor|mcp__.*__qsdev_nix_run"; guard.Matcher != want {
+		t.Errorf("matcher = %q, want %s", guard.Matcher, want)
 	}
 	if guard.Hooks[0].Timeout != 30 {
 		t.Errorf("timeout = %d, want 30", guard.Hooks[0].Timeout)

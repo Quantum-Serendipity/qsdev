@@ -7,6 +7,10 @@ actually pick, validates it against the OSV.dev vulnerability database and
 registry publication age, then denies, asks, or rewrites the command with
 safety flags.
 
+A call of the qsdev MCP server's nix_run tool (mcp__<server>__qsdev_nix_run)
+is read as the Bash lines it is equivalent to; any install in them is denied
+without lookups, since it cannot be hardened there (see _guard_nix_run).
+
 Exit codes / decisions:
   0 — no JSON: not an install, or validated with nothing to change (the normal
       permission flow decides)
@@ -229,6 +233,15 @@ API_TIMEOUT: int = 10
 # matcher must list exactly these tools (hook_registry.go shellToolMatcher;
 # kept in sync by TestHookMatchersCoverScriptTools).
 SHELL_TOOLS = ("Bash", "PowerShell", "Monitor")
+
+# The qsdev MCP server's nix_run tool (cmdscan.NixRunTool), which Claude Code
+# names mcp__<server>__qsdev_nix_run after the server it reaches it through.
+# It runs a Nix installable with args and stdin, so an install can ride in it
+# as in a Bash call. NIX_RUN_MATCHER is the settings.json matcher alternative
+# for it (hook_registry.go nixRunToolMatcher); Claude Code reads the whole
+# matcher as an unanchored regular expression once it holds ".*".
+NIX_RUN_TOOL = "qsdev_nix_run"
+NIX_RUN_MATCHER = "mcp__.*__" + NIX_RUN_TOOL
 
 # Wall-clock budget for all registry/OSV work. The hook is registered with a
 # 30s timeout, and a hook Claude Code kills for running too long does NOT
@@ -4601,6 +4614,122 @@ def _archive_issues(detections: list, cwd: object, command: str) -> list:
     return issues
 
 
+def _is_nix_run(tool_name: object) -> bool:
+    """Whether tool_name is the nix_run tool as Claude Code names an MCP tool,
+    mcp__<server>__qsdev_nix_run, for any non-empty server name (as
+    cmdscan.IsNixRunTool decides)."""
+    if not isinstance(tool_name, str) or not tool_name.startswith("mcp__"):
+        return False
+    server, sep, tool = tool_name[len("mcp__"):].partition("__")
+    return bool(sep) and server != "" and tool == NIX_RUN_TOOL
+
+
+_ATTRIBUTE_SUFFIX_RE = re.compile(r"[-_A-Z]")
+
+
+def _nix_run_programs(installable: str) -> list:
+    """The programs an installable's attribute path names: its last
+    dot-separated component, without an output selector (^out) or quotes,
+    and that component cut before the first -, _ or upper-case letter after
+    its first character, which drops a version or variant suffix (pnpm_9,
+    yarn-berry, bashInteractive) when it differs; [] when it has no
+    attribute (cmdscan installablePrograms)."""
+    _, sep, attr = installable.partition("#")
+    if not sep:
+        return []
+    attr = attr.partition("^")[0].rpartition(".")[2].strip('"')
+    if not attr:
+        return []
+    m = _ATTRIBUTE_SUFFIX_RE.search(attr, 1)
+    return [attr, attr[:m.start()]] if m else [attr]
+
+
+def _shell_option_args(arg: str) -> int:
+    """How many following words a shell option word takes as arguments
+    (cmdscan shellOptionArgs)."""
+    if arg.startswith("--"):
+        return 1 if arg in ("--rcfile", "--init-file") else 0
+    return arg[1:].count("o") + arg[1:].count("O")
+
+
+def _nix_run_script(args: list) -> Optional[str]:
+    """The script a -c option among args runs, as a shell takes it: the first
+    operand after the option words (`-c -- S`, `-c -e S`), or None when no -c
+    option is given or no operand follows it (cmdscan shellScriptIndex). Any
+    program's -c is taken, since the attribute does not reliably name the
+    program nix runs (busybox runs any applet)."""
+    c = next((i for i, a in enumerate(args) if len(a) > 1 and a[0] == "-" and a[1] != "-" and "c" in a[1:]), None)
+    if c is None:
+        return None
+    skip = _shell_option_args(args[c])
+    for i in range(c + 1, len(args)):
+        a = args[i]
+        if skip > 0:
+            skip -= 1
+        elif a in ("--", "-"):
+            return args[i + 1] if i + 1 < len(args) else None
+        elif len(a) > 1 and a[0] in "-+":
+            skip = _shell_option_args(a)
+        else:
+            return a
+    return None
+
+
+def _nix_run_lines(tool_input: object) -> Optional[list]:
+    """The Bash command lines a nix_run call is equivalent to, as
+    cmdscan.NixRunCommandLines builds them, without the literal `nix run`
+    line: the program with its args (once per name _nix_run_programs gives),
+    the script of a -c option, and stdin. None when tool_input is not {command: str, args: [str], stdin: str}
+    (absent or null fields are empty; any other value of the wrong type,
+    falsy ones such as false, 0 or {} included, is malformed)."""
+    if tool_input is None:
+        tool_input = {}
+    if not isinstance(tool_input, dict):
+        return None
+
+    def field(key: str, empty: object) -> object:
+        value = tool_input.get(key)
+        return empty if value is None else value
+
+    installable = field("command", "")
+    args = field("args", [])
+    stdin = field("stdin", "")
+    if (not isinstance(installable, str) or not isinstance(stdin, str) or not isinstance(args, list)
+            or not all(isinstance(a, str) for a in args)):
+        return None
+    lines: list = []
+    for program in _nix_run_programs(installable):
+        lines.append(shlex.join([program] + args))
+    script = _nix_run_script(args)
+    if script is not None:
+        lines.append(script)
+    if stdin.strip():
+        lines.append(stdin)
+    return lines
+
+
+def _guard_nix_run(tool_input: object) -> None:
+    """Decide a nix_run call. An install the Bash route would validate cannot
+    be validated or hardened here: the safety-flag rewrite would replace the
+    installable, so any install is denied without registry lookups. Input of
+    the wrong shape fails closed; a call with no install gets no decision."""
+    lines = _nix_run_lines(tool_input)
+    if lines is None:
+        reason = ("qsdev_nix_run tool_input is malformed (want command and stdin strings and args a list "
+                  "of strings); blocking to fail closed.")
+        lib.audit_log(redact({"event": "deny_nix_run_input", "reason": reason}))
+        _decision("deny", reason)
+    segments: list = []
+    for line in lines:
+        segments.extend(d.segment for d in detect_install_commands(line))
+    if not segments:
+        sys.exit(0)
+    reason = ("package installs through qsdev_nix_run cannot be validated or hardened; run them through Bash ("
+              + "; ".join(f"`{s[:80]}`" for s in segments) + ")")
+    lib.audit_log(redact({"event": "deny_nix_run", "lines": lines, "segments": segments}))
+    _decision("deny", reason)
+
+
 def main() -> None:
     global _deadline
     lib.arm_deadline("package-guard", _HOOK_DEADLINE_S)
@@ -4616,6 +4745,8 @@ def main() -> None:
         sys.exit(2)
 
     tool_name = input_data.get("tool_name", "")
+    if _is_nix_run(tool_name):
+        _guard_nix_run(input_data.get("tool_input"))
     tool_input = input_data.get("tool_input") or {}
     command = tool_input.get("command") or ""
 

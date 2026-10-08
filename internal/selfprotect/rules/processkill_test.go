@@ -161,6 +161,14 @@ func TestSP009_StillDeniesAsOnBase(t *testing.T) {
 		`python3 -c "import os; os.system('pkill qsdev')"`,
 		`perl -e 'system("killall claude")'`,
 		`node -e "require('child_process').execSync('pkill qsdev')"`,
+		// The code of every code option, attached or not, and under an alias
+		// (cmdscan.InterpreterCode); parallel builds a kill's argv as xargs
+		// does (cmdscan.ArgsFromInput).
+		`perl -e 1 -e 'system("killall claude")'`,
+		`perl -nesystem("killall_claude") -e 'system("pkill qsdev")'`,
+		`nodejs -e "require('child_process').execSync('pkill qsdev')"`,
+		`node -pe "require('child_process').execSync('pkill qsdev')"`,
+		`pgrep qsdev | parallel kill`,
 		"if then pkill qsdev", // unparsable: the whole line is text
 	})
 }

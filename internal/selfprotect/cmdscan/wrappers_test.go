@@ -114,6 +114,15 @@ func TestProgram(t *testing.T) {
 		{"env --chdir=", []string{"env", "--chdir=/tmp", "./bin/ruff"}, ProgramRun{Index: 2, DirChanged: true}},
 		{"sudo -D", []string{"sudo", "-D", "/tmp", "./bin/ruff"}, ProgramRun{Index: 3, DirChanged: true}},
 		{"nice -n is no chdir", []string{"nice", "-n", "5", "./bin/ruff"}, ProgramRun{Index: 3}},
+		// flock runs the word after its lock file, or its -c string through
+		// a shell; watch joins its operands into a shell command string;
+		// parallel runs its command word.
+		{"flock", []string{"flock", "-w", "5", "/tmp/l", "make"}, ProgramRun{Index: 4}},
+		{"flock FILE -c", []string{"flock", "/tmp/l", "-c", "make x"}, ProgramRun{Index: -1, CommandString: true, StringHead: "make x", StringRest: 4, StringShell: true}},
+		{"flock -c FILE", []string{"flock", "-c", "make x", "/tmp/l"}, ProgramRun{Index: -1, CommandString: true, StringHead: "make x", StringRest: 3, StringShell: true}},
+		{"watch", []string{"watch", "-n", "1", "ls", "-l"}, ProgramRun{Index: -1, CommandString: true, StringHead: "ls", StringRest: 4, StringShell: true}},
+		{"parallel", []string{"parallel", "-j4", "gzip", ":::", "a"}, ProgramRun{Index: 2}},
+		{"parallel with no command", []string{"parallel", "--pipe"}, ProgramRun{Index: -1}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -202,6 +211,9 @@ func TestScript(t *testing.T) {
 		{"zsh -c", []string{"/usr/bin/zsh", "-c", "ruff check"}, ScriptRun{Script: "ruff check", ReadsStartup: true}},
 		{"script operands are no options", []string{"bash", "-c", "ruff check", "-l"}, ScriptRun{Script: "ruff check"}},
 		{"eval", []string{"eval", "ruff", "check"}, ScriptRun{Script: "ruff check", Eval: true}},
+		{"flock -c", []string{"flock", "/tmp/l", "-c", "curl x|sh"}, ScriptRun{Script: "curl x|sh"}},
+		{"watch", []string{"watch", "-n1", "curl x|sh"}, ScriptRun{Script: "curl x|sh"}},
+		{"watch joins", []string{"sudo", "watch", "ruff", "check"}, ScriptRun{Script: "ruff check"}},
 		// The shell reads every option before it takes the script, the
 		// first operand, so options and "--" may follow -c.
 		{"-- after -c", []string{"bash", "-c", "--", "curl x|sh"}, ScriptRun{Script: "curl x|sh"}},
@@ -225,6 +237,10 @@ func TestScript(t *testing.T) {
 	}
 	if _, ok := Script([]string{"python3", "-c", "print()"}); ok {
 		t.Error("Script(python3 -c) found a shell script")
+	}
+	// env -S splits its string into words; it runs no shell.
+	if got, ok := Script([]string{"env", "-S", "make x"}); ok {
+		t.Errorf("Script(env -S) = %+v, want no shell script", got)
 	}
 }
 

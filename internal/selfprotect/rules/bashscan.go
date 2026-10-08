@@ -796,29 +796,22 @@ func cpCreatesLinks(args []string) bool {
 	return false
 }
 
-// readsProgramFromStdin reports whether an interpreter takes its program from
-// standard input (no script file and no inline program, but a here-document,
-// here-string, or input redirect), which hides the program from argv.
+// readsProgramFromStdin reports whether a shell or interpreter takes its
+// program from standard input (cmdscan.ReadsProgramFromStdin: no script file
+// and no inline program) and that input is a here-document, here-string, or
+// input redirect, which hides the program from argv.
 func readsProgramFromStdin(sc scannedCommand) bool {
-	if !interpreterVerbs[sc.Name] || len(sc.ReadRedirects) == 0 {
-		return false
-	}
-	for _, a := range sc.Args {
-		if !isFlag(a) {
-			return false // a script file or an inline program (sh -c '...')
-		}
-	}
-	return true
+	return len(sc.ReadRedirects) > 0 && cmdscan.ReadsProgramFromStdin(sc.Command)
 }
 
-// interpreterVerbs run a script file given as their first operand. The script
-// is read and executed, not written, so running a protected hook script
-// (`bash .claude/hooks/test.sh`) is not a mutation of it. Any further
-// arguments, and every argument of an inline program (`sh -c`, `perl -pi -e`),
-// stay opaque.
-var interpreterVerbs = map[string]bool{
-	"sh": true, "bash": true, "zsh": true, "dash": true, "ksh": true,
-	"python": true, "python3": true, "node": true, "perl": true, "ruby": true,
+// runsScript reports whether the program named name is a shell or an
+// interpreter (cmdscan.IsScriptShell, cmdscan.IsInterpreter), which runs a
+// script file given as its first operand. The script is read and executed,
+// not written, so running a protected hook script (`bash
+// .claude/hooks/test.sh`) is not a mutation of it. Any further arguments, and
+// every argument of an inline program (`sh -c`, `perl -pi -e`), stay opaque.
+func runsScript(name string) bool {
+	return cmdscan.IsScriptShell(name) || cmdscan.IsInterpreter(name)
 }
 
 // mutationTargets returns the argument words that command sc may create,
@@ -846,7 +839,7 @@ func mutationTargets(sc scannedCommand) []string {
 		}
 		return targets
 	}
-	if interpreterVerbs[sc.Name] && len(args) > 0 && !isFlag(args[0]) {
+	if runsScript(sc.Name) && len(args) > 0 && !isFlag(args[0]) {
 		return args[1:]
 	}
 	return args

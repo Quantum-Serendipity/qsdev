@@ -132,7 +132,7 @@ func commandPrograms(c cmdscan.Command) []string {
 		return nil
 	}
 	progs := []string{c.Name}
-	if interpreterVerbs[path.Base(c.Name)] && len(c.Args) > 0 && !isFlag(c.Args[0]) {
+	if runsScript(c.Name) && len(c.Args) > 0 && !isFlag(c.Args[0]) {
 		progs = append(progs, c.Args[0])
 	}
 	return progs
@@ -371,7 +371,7 @@ func (t *hookTargets) commandWrites(sc scannedCommand) string {
 	}
 	// An inline program (`python3 -c "open('/home/u/.local/bin/qsdev','w')"`)
 	// names the target inside the word; shell scripts are parsed by writesIn.
-	if name := path.Base(sc.Name); interpreterVerbs[name] && !cmdscan.IsScriptShell(name) {
+	if cmdscan.IsInterpreter(sc.Name) {
 		for _, a := range sc.Args {
 			if p := t.formIn(a); p != "" {
 				return p

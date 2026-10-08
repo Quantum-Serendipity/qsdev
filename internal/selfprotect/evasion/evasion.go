@@ -1,7 +1,6 @@
 package evasion
 
 import (
-	"path"
 	"regexp"
 	"slices"
 	"strings"
@@ -62,6 +61,9 @@ func CheckParsed(toolName string, command string, filePath string, cmds []cmdsca
 		if blocked, reason := checkObfuscation(command, cmds, parseErr); blocked {
 			return true, "obfuscation", reason
 		}
+		if cmdscan.ToolDialect(toolName) == cmdscan.POSIX && programFromComputedStdin(cmds) {
+			return true, "obfuscation", computedStdinReason
+		}
 		if cmdscan.ToolDialect(toolName) == cmdscan.PowerShell {
 			if blocked, reason := checkPowerShellObfuscation(command); blocked {
 				return true, "obfuscation", reason
@@ -104,10 +106,57 @@ func checkObfuscation(command string, cmds []cmdscan.Command, parseErr error) (b
 	return false, ""
 }
 
-// shells are the interpreters that run a script string passed with -c.
-var shells = map[string]bool{
-	"sh": true, "bash": true, "zsh": true, "dash": true, "ksh": true, "mksh": true, "ash": true,
+// programFromComputedStdin reports whether a parsed command runs a shell or
+// interpreter that reads its program from standard input (`sh`, `bash -s`,
+// `python3 -`) when that input is computed at run time: the output of a
+// decoder, a download or any other program that is not a literal producer
+// (`curl … | bash`, `echo … | rev | sh`), or an expanded here-string,
+// here-document or input redirect (`sh <<< "$(…)"`, `sh < <(…)`). The program
+// text then never appears on the line, so no other check can judge it. A
+// literal program on stdin (`echo hi | sh`, `sh <<< 'echo hi'`, `cat x.sh |
+// bash`) stays visible to the rules and is allowed (see
+// cmdscan.Command.StdinComputed). It judges the POSIX dialect only: the
+// PowerShell dialect has its own layer (checkPowerShellObfuscation). An
+// unparseable command yields no cmds; the regex checks cover it.
+//
+// The scripts the line runs (`sh -c '…'`, eval, `watch '…'`, behind any
+// wrapper, see cmdscan.Script) are judged the same way, up to
+// maxScriptDepth deep: their statements with no standard input of their own
+// read the running command's (cmdscan.ParseScript), so `curl … | sh -c sh`
+// and `bash -c 'curl … | bash'` both count. A script that cannot be parsed
+// is left to the regex checks, which read the whole line.
+func programFromComputedStdin(cmds []cmdscan.Command) bool {
+	return computedStdinIn(cmds, 0)
 }
+
+// maxScriptDepth is how many levels of nested scripts
+// programFromComputedStdin follows.
+const maxScriptDepth = 8
+
+// computedStdinIn is programFromComputedStdin for cmds, a script nested
+// depth levels deep.
+func computedStdinIn(cmds []cmdscan.Command, depth int) bool {
+	for _, c := range cmds {
+		if c.StdinComputed && cmdscan.ProgramFromInput(c) {
+			return true
+		}
+		script, ok := cmdscan.ShellScript(append([]string{c.Name}, c.Args...))
+		if !ok || depth >= maxScriptDepth {
+			continue
+		}
+		if sub, err := cmdscan.ParseScript(script, c.StdinComputed); err == nil && computedStdinIn(sub, depth+1) {
+			return true
+		}
+	}
+	return false
+}
+
+// computedStdinReason is the reason programFromComputedStdin denies with. It
+// says how to write the command so its program is visible: a quoted
+// here-document delimiter keeps the body literal, and a script file is read
+// by name.
+const computedStdinReason = "shell or interpreter reads its program from input computed at run time; " +
+	"quote the here-document delimiter (<<'EOF') so its body stays literal, or write the program to a script file and run that"
 
 // shellRunsExpandedScript reports whether a parsed command runs a shell with
 // -c on words that use an expansion — like eval, the code that runs is
@@ -123,7 +172,7 @@ func shellRunsExpandedScript(cmds []cmdscan.Command) bool {
 		}
 		words := append([]string{c.Name}, c.Args...)
 		for i, w := range words {
-			if !shells[path.Base(w)] {
+			if !cmdscan.IsScriptShell(w) {
 				continue
 			}
 			for _, a := range words[i+1:] {

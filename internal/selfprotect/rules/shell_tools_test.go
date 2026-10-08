@@ -204,6 +204,35 @@ func testGitCodeExecutionEveryShellTool(t *testing.T) {
 	})
 }
 
+// TestSP014_MarkerStripEveryShellTool pins that every shell tool is denied,
+// in its own spelling, a line that clears an agent-session marker and runs
+// the CLI, and a guardrail-weakening command split across a variable, so no
+// shell tool is left out when one is added (IsShellTool parity).
+func TestSP014_MarkerStripEveryShellTool(t *testing.T) {
+	t.Parallel()
+	rows := map[string][]string{
+		"Bash":       {"env -u CLAUDECODE qsdev status", `x="qsdev session"; $x allow`, "qsdev \\\nsession allow foo"},
+		"Monitor":    {"unset CLAUDECODE; qsdev status", "IFS=,; X=qsdev,defaults,pin; $X", "x='qsdev.exe session allow'; $x"},
+		"PowerShell": {"Remove-Item Env:CLAUDE*; qsdev status", "Start-Process -ArgumentList 'session','allow' -FilePath qsdev"},
+	}
+	for _, tool := range cmdscan.ShellTools {
+		commands, ok := rows[tool]
+		if !ok {
+			t.Errorf("no marker-strip row for shell tool %s", tool)
+			continue
+		}
+		for _, command := range commands {
+			t.Run(tool+"/"+command, func(t *testing.T) {
+				t.Parallel()
+				ctx := EvalContext{ToolName: tool, Command: command, SensitiveCommands: sensitiveFixture}
+				if v, reason := sp014.Evaluate(&ctx); v != Deny {
+					t.Errorf("SP-014 = %v (%s), want Deny", v, reason)
+				}
+			})
+		}
+	}
+}
+
 // TestAuditLogsProtected verifies the hook audit logs and the SOC 2 trail are
 // audit trails (W047, W049): the agent may read them but not truncate,
 // delete or relocate them with Write/Edit or a shell command.

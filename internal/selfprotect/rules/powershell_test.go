@@ -4,6 +4,7 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"strings"
 	"testing"
 
 	"github.com/Quantum-Serendipity/qsdev/pkg/branding"
@@ -45,7 +46,10 @@ func TestPowerShellNative(t *testing.T) {
 		{name: "taskkill image", command: `taskkill /IM ` + app + `.exe /F`, want: Deny, rule: "SP-009"},
 		{name: "Stop-Process glob", command: `Stop-Process -Name q*`, want: Deny, rule: "SP-009"},
 		{name: "spps claude", command: `spps -Name:claude -Force`, want: Deny, rule: "SP-009"},
-		{name: "STOP-PROCESS gdev", command: `STOP-PROCESS -Name GDEV,node`, want: Deny, rule: "SP-009"},
+		{name: "STOP-PROCESS upper-case app", command: `STOP-PROCESS -Name ` + strings.ToUpper(app) + `,node`, want: Deny, rule: "SP-009"},
+		{name: "pkill pattern", command: `pkill -f 'q.dev'`, want: Deny, rule: "SP-009"},
+		{name: "systemctl stop unit", command: `systemctl --user stop ` + app + `-mcp`, want: Deny, rule: "SP-009"},
+		{name: "killall claude", command: `killall claude`, want: Deny, rule: "SP-009"},
 		{name: "kill by variable", command: `$n = 'qs' + 'dev'; kill -Name $n`, want: Deny, rule: "SP-009"},
 		{name: "Kill method", command: `(Get-Process ` + app + `).Kill()`, want: Deny, rule: "SP-009"},
 		{name: "Stop-Process concatenated name", command: `Stop-Process -Name ('` + app[:2] + `'+'` + app[2:] + `')`, want: Deny, rule: "SP-009"},

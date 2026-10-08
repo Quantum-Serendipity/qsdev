@@ -3,6 +3,7 @@ package cmdscan
 import (
 	"maps"
 	"slices"
+	"strings"
 	"testing"
 )
 
@@ -365,6 +366,41 @@ func TestWrapperOptions(t *testing.T) {
 				t.Errorf("WrapperOptions(env, %q) = %q, want %q", tt.args, got, tt.want)
 			}
 		})
+	}
+}
+
+// TestWrapperClearsEnv pins when a wrapper runs its command without a
+// variable: an empty environment in any spelling, or that variable unset,
+// while unsetting another one, an operand after the options, or a wrapper
+// that cannot clear one (sudo's -u names a user) does not.
+func TestWrapperClearsEnv(t *testing.T) {
+	t.Parallel()
+	isMarker := func(name string) bool { return strings.EqualFold(name, "CLAUDECODE") }
+	tests := []struct {
+		wrapper string
+		args    []string
+		want    bool
+	}{
+		{"env", []string{"-u", "CLAUDECODE", "qsdev"}, true},
+		{"env", []string{"-uCLAUDECODE", "qsdev"}, true},
+		{"env", []string{"--unset=claudecode", "qsdev"}, true},
+		{"env", []string{"--uns", "CLAUDECODE", "qsdev"}, true},
+		{"env", []string{"-C", "/tmp", "-u", "CLAUDECODE", "qsdev"}, true},
+		{"/usr/bin/env", []string{"-i", "qsdev"}, true},
+		{"env", []string{"-", "qsdev"}, true},
+		{"env", []string{"--ignore-env", "qsdev"}, true},
+		{"ENV.EXE", []string{"-iu", "HOME", "qsdev"}, true},
+		{"env", []string{"-u", "HOME", "qsdev"}, false},
+		{"env", []string{"A=1", "-u", "CLAUDECODE"}, false},
+		{"env", []string{"--", "-i"}, false},
+		{"env", nil, false},
+		{"sudo", []string{"-u", "CLAUDECODE", "qsdev"}, false},
+		{"nice", []string{"-n", "5", "qsdev"}, false},
+	}
+	for _, tt := range tests {
+		if got := WrapperClearsEnv(tt.wrapper, tt.args, isMarker); got != tt.want {
+			t.Errorf("WrapperClearsEnv(%q, %q) = %v, want %v", tt.wrapper, tt.args, got, tt.want)
+		}
 	}
 }
 

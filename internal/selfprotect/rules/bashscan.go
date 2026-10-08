@@ -56,19 +56,49 @@ func (ctx *EvalContext) scannedCommands() ([]scannedCommand, error) {
 	}
 	ctx.scannedDone = true
 
-	st := dirState{
-		cwd:         ctx.CWD,
-		inProtected: ctx.CWD != "" && isProtectedDir(ctx.CWD),
-		cdpath:      strings.Contains(looseText(ctx.Command), "CDPATH"),
-	}
+	st := newDirState(ctx)
 	out := make([]scannedCommand, 0, len(cmds))
 	for _, c := range cmds {
-		sc := scannedCommand{Command: c, cwd: st.cwd, inProtectedDir: st.inProtected, cwdUnknown: st.unknown, cwdHint: st.hint, fs: &ctx.fs}
+		sc := scannedCommand{Command: c, fs: &ctx.fs}
+		st.place(&sc)
 		out = append(out, sc)
 		st.apply(sc)
 	}
 	ctx.scanned = out
 	return out, nil
+}
+
+// mainShellDirs returns scs with the working directory of each command that
+// runs in the line's own shell as that shell sees it: a cd, pushd or popd in
+// a subshell (`( cd x )`, `cd x &`, a pipeline stage) does not move it. A
+// command in a subshell keeps the shared tracking of scs, which takes every
+// earlier cd as persisting (fail closed), as which subshell a cd ran in is
+// not told apart.
+func mainShellDirs(ctx *EvalContext, scs []scannedCommand) []scannedCommand {
+	st := newDirState(ctx)
+	out := slices.Clone(scs)
+	for i := range out {
+		if out[i].Subshell {
+			continue
+		}
+		st.place(&out[i])
+		st.apply(out[i])
+	}
+	return out
+}
+
+// newDirState returns the directory state at the start of ctx's line.
+func newDirState(ctx *EvalContext) dirState {
+	return dirState{
+		cwd:         ctx.CWD,
+		inProtected: ctx.CWD != "" && isProtectedDir(ctx.CWD),
+		cdpath:      strings.Contains(looseText(ctx.Command), "CDPATH"),
+	}
+}
+
+// place records the directory state as the working directory sc runs in.
+func (st *dirState) place(sc *scannedCommand) {
+	sc.cwd, sc.inProtectedDir, sc.cwdUnknown, sc.cwdHint = st.cwd, st.inProtected, st.unknown, st.hint
 }
 
 // dirState tracks the working directory across the commands of one line.
@@ -159,7 +189,7 @@ func isProtectedDir(dir string) bool {
 	// A policy directory protects only its policy files (IsProtected checks
 	// them), not every entry: its cache stays writable.
 	if canon.ContainsProtectedDirName(filepath.Base(dir)) {
-		return true // a .claude/.qsdev/.gdev directory itself
+		return true // a protected policy directory itself
 	}
 	protected, category := canon.IsProtected(filepath.Join(dir, "x"))
 	return protected && category != "mcp-config"

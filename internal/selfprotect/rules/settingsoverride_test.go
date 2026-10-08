@@ -101,6 +101,150 @@ func TestSP008_SettingsOverride(t *testing.T) {
 	}
 }
 
+// sp008Rows evaluates SP-008 on each command for the Bash and Monitor tools
+// (IsShellTool parity), with the session cwd inside the home directory.
+func sp008Rows(t *testing.T, commands []string, want Verdict) {
+	t.Helper()
+	cwd := filepath.Join(homeDir(t), "project")
+	for _, command := range commands {
+		for _, tool := range []string{"Bash", "Monitor"} {
+			t.Run(tool+"/"+command, func(t *testing.T) {
+				t.Parallel()
+				ctx := EvalContext{ToolName: tool, Command: command, CWD: cwd}
+				if v, reason := sp008.Evaluate(&ctx); v != want {
+					t.Errorf("sp008(%s, %q) = %v (%s), want %v", tool, command, v, reason, want)
+				}
+			})
+		}
+	}
+}
+
+// TestSP008_EscalatingFlags covers U18-10: a nested Claude Code session
+// started with an option that drops the permission checks or widens the
+// directories it may touch escapes the session's permission rules.
+func TestSP008_EscalatingFlags(t *testing.T) {
+	t.Parallel()
+	sp008Rows(t, []string{
+		"claude -p hi --dangerously-skip-permissions",
+		"claude --allow-dangerously-skip-permissions -p hi",
+		"claude --permission-mode bypassPermissions -p hi",
+		"claude --permission-mode=bypassPermissions -p hi",
+		"claude --permission-mode BYPASSPERMISSIONS -p hi",
+		"claude --add-dir /tmp -p hi",
+		"claude --add-dir=/tmp -p hi",
+		"c=claude; $c --dangerously-skip-permissions -p hi",
+		"sh -c 'claude --add-dir /tmp -p hi'",
+	}, Deny)
+	sp008Rows(t, []string{
+		"claude --permission-mode plan -p hi",
+		"claude --permission-mode=acceptEdits -p hi",
+		`claude -p "explain --dangerously-skip-permissions"`,
+		"claude -p hi -- --add-dir /tmp",
+	}, Allow)
+}
+
+// TestSP008_LaunchOutsideProject covers U18-10: a nested session started from
+// a directory other than the project (or one below it) loads that
+// directory's project settings instead, and with them other hooks.
+func TestSP008_LaunchOutsideProject(t *testing.T) {
+	t.Parallel()
+	sp008Rows(t, []string{
+		"cd /tmp && claude -p hi",
+		"(cd /tmp; claude -p hi)",
+		"cd .. && claude -p hi",
+		`cd "$D" && claude -p hi`,
+		"pushd /tmp && claude -p hi",
+		"cd sub; popd; claude -p hi",
+		"env -C /tmp claude -p hi",
+		"env --chdir=/tmp claude -p hi",
+		"sh -c 'cd /tmp && claude -p hi'",
+		"sh -c 'cd sub && claude -p hi'",
+		`bash -c "eval 'cd /tmp; claude -p hi'"`,
+		"cd /tmp && sh -c 'claude -p hi'",
+		"env -C /tmp sh -c 'claude -p hi'",
+	}, Deny)
+}
+
+// TestSP008_PowerShellLaunchDir checks that a PowerShell line is judged with
+// its directory tracked through Set-Location and friends.
+func TestSP008_PowerShellLaunchDir(t *testing.T) {
+	t.Parallel()
+	cwd := filepath.Join(homeDir(t), "project")
+	tests := []struct {
+		command string
+		want    Verdict
+	}{
+		{"Set-Location /tmp; claude -p hi", Deny},
+		{"Push-Location $env:TEMP; claude -p hi", Deny},
+		{"sl ..; claude.exe -p hi", Deny},
+		{"claude -p hi --dangerously-skip-permissions", Deny},
+		{"Set-Location sub; claude -p hi", Allow},
+		{"claude -p hi", Allow},
+		{"Set-Location /tmp; Get-ChildItem", Allow},
+	}
+	for _, tt := range tests {
+		t.Run(tt.command, func(t *testing.T) {
+			t.Parallel()
+			ctx := EvalContext{ToolName: "PowerShell", Command: tt.command, CWD: cwd}
+			if v, reason := sp008.Evaluate(&ctx); v != tt.want {
+				t.Errorf("sp008(PowerShell, %q) = %v (%s), want %v", tt.command, v, reason, tt.want)
+			}
+		})
+	}
+}
+
+// TestSP008_StillAllows keeps the ordinary launches open.
+func TestSP008_StillAllows(t *testing.T) {
+	t.Parallel()
+	sp008Rows(t, []string{
+		"claude --version",
+		"claude -p hi",
+		"cd sub && claude -p hi",
+		"cd /tmp && qsdev status",
+		"sh -c 'claude -p hi'",
+		"cd /tmp; ls; cd - ; echo done",
+		// A version or help query loads no settings, wherever it runs.
+		"cd /tmp && claude --version",
+		"cd /tmp && claude -v",
+		"cd /tmp && claude --help",
+		// A cd in a subshell or a background job leaves the line's own
+		// shell where it was.
+		"(cd /tmp && ls); claude --version",
+		"(cd /tmp && make); claude -p hi",
+		"( cd /tmp ); claude -p hi",
+		"cd /tmp & claude -p hi",
+		"cd /tmp | true; claude -p hi",
+	}, Allow)
+	// A launch in the same subshell as the cd, or after a cd in the line's
+	// own shell, is still judged.
+	sp008Rows(t, []string{
+		"(cd /tmp && claude -p hi)",
+		"(cd /tmp && make); cd /tmp; claude -p hi",
+		"{ cd /tmp; }; claude -p hi",
+		"cd /tmp && claude -p hi --version-file x",
+		"cd /tmp && claude -p hi -- --version",
+	}, Deny)
+}
+
+// TestSP008_InlineSettingsEscalation pins that inline --settings JSON may
+// not grant what the permission-escalating options are denied for: the
+// bypassPermissions default mode, extra directories, or skipping the
+// dangerous-mode prompt.
+func TestSP008_InlineSettingsEscalation(t *testing.T) {
+	t.Parallel()
+	sp008Rows(t, []string{
+		`claude -p hi --settings '{"permissions":{"defaultMode":"bypassPermissions"}}'`,
+		`claude -p hi --settings '{"permissions":{"defaultMode":"BYPASSPERMISSIONS"}}'`,
+		`claude -p hi --settings '{"permissions":{"additionalDirectories":["/tmp"]}}'`,
+		`claude -p hi --settings '{"skipDangerousModePermissionPrompt":true}'`,
+		`claude -p hi --settings '{"permissions":"x"}'`,
+	}, Deny)
+	sp008Rows(t, []string{
+		`claude -p hi --settings '{"permissions":{"defaultMode":"plan"}}'`,
+		`claude -p hi --settings '{"model":"sonnet"}'`,
+	}, Allow)
+}
+
 // TestSP008_OnlyShellTools checks that SP-008 judges shell commands only.
 func TestSP008_OnlyShellTools(t *testing.T) {
 	t.Parallel()
@@ -132,6 +276,11 @@ func TestClaudeArgsOverride(t *testing.T) {
 		{"setting sources case and spaces", []string{"--setting-sources", " User , PROJECT,local"}, ""},
 		{"import", []string{"import", "gemini"}, "import"},
 		{"import is only a subcommand first", []string{"-p", "import"}, ""},
+		{"skip permissions", []string{"-p", "hi", "--dangerously-skip-permissions"}, "--dangerously-skip-permissions"},
+		{"bypass mode equals form", []string{"--permission-mode=bypassPermissions"}, "bypassPermissions"},
+		{"bypass mode without value", []string{"--permission-mode"}, "--permission-mode"},
+		{"plan mode", []string{"--permission-mode", "plan"}, ""},
+		{"add dir", []string{"--add-dir", "/tmp"}, "--add-dir"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

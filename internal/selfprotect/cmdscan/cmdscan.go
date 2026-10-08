@@ -428,19 +428,19 @@ func callCommand(call *syntax.CallExpr, vars map[string]string) Command {
 // its stages first and nested BinaryCmd nodes are skipped once already assigned.
 func assignPipelines(root syntax.Node) map[*syntax.Stmt]int {
 	ids := make(map[*syntax.Stmt]int)
+	// nested holds the pipe BinaryCmds inside a chain already flattened, so
+	// a long chain is flattened once rather than once per operator.
+	nested := make(map[*syntax.BinaryCmd]bool)
 	next := 1
 	syntax.Walk(root, func(n syntax.Node) bool {
 		bin, ok := n.(*syntax.BinaryCmd)
-		if !ok || (bin.Op != syntax.Pipe && bin.Op != syntax.PipeAll) {
+		if !ok || (bin.Op != syntax.Pipe && bin.Op != syntax.PipeAll) || nested[bin] {
 			return true
 		}
 		var stmts []*syntax.Stmt
-		collectPipeStmts(bin, &stmts)
+		collectPipeStmts(bin, &stmts, nested)
 		if len(stmts) == 0 {
 			return true
-		}
-		if _, done := ids[stmts[0]]; done {
-			return true // nested chain already covered by an outer pipeline
 		}
 		for _, s := range stmts {
 			ids[s] = next
@@ -554,18 +554,23 @@ func (m simpleSuccess) of(s *syntax.Stmt) bool {
 
 // collectPipeStmts flattens a (possibly nested) pipe chain into its ordered leaf
 // statements, descending through inner pipe BinaryCmds so `a | b | c` yields
-// [a, b, c] regardless of how the parser associated the operators.
-func collectPipeStmts(bin *syntax.BinaryCmd, out *[]*syntax.Stmt) {
-	appendPipeStmt(bin.X, out)
-	appendPipeStmt(bin.Y, out)
+// [a, b, c] regardless of how the parser associated the operators. Each
+// inner pipe BinaryCmd it descends through is recorded in nested, when it
+// is not nil.
+func collectPipeStmts(bin *syntax.BinaryCmd, out *[]*syntax.Stmt, nested map[*syntax.BinaryCmd]bool) {
+	appendPipeStmt(bin.X, out, nested)
+	appendPipeStmt(bin.Y, out, nested)
 }
 
-func appendPipeStmt(s *syntax.Stmt, out *[]*syntax.Stmt) {
+func appendPipeStmt(s *syntax.Stmt, out *[]*syntax.Stmt, nested map[*syntax.BinaryCmd]bool) {
 	if s == nil {
 		return
 	}
 	if inner, ok := s.Cmd.(*syntax.BinaryCmd); ok && (inner.Op == syntax.Pipe || inner.Op == syntax.PipeAll) {
-		collectPipeStmts(inner, out)
+		if nested != nil {
+			nested[inner] = true
+		}
+		collectPipeStmts(inner, out, nested)
 		return
 	}
 	*out = append(*out, s)

@@ -83,6 +83,40 @@ func TestInvokedSpecs(t *testing.T) {
 		{"Q=qsdev; $Q", none},
 		{"Q=qsdev; $Q --help", none},
 		{"$A $B", none},
+		{"Q=qsdev; $Q status", none},
+		{"Q=/usr/bin/qsdev; $Q status", none},
+		// A value spread over several words that names the program, or
+		// expands a variable holding it, makes a computed program word on
+		// the line stand for any invocation (W0N-18): which words it splits
+		// into is not judged.
+		{`x="qsdev session"; $x defaults`, computed},
+		{`x="qsdev session"; $x pin`, computed},
+		{"IFS=,; X=qsdev,defaults,pin; $X", computed},
+		{`x=qsdev; y="$x defaults pin"; $y`, computed},
+		{`x="qsdev; defaults"; $x pin`, computed},
+		{`x="qsdev session"; $x --help`, none},
+		{`x="see the docs"; $x defaults`, none},
+		{"x='qsdev.exe defaults pin'; $x", mention},
+		{"y=qsdev.exe; echo $y defaults pin", none},
+		// An escaped blank keeps a value whole, as a quoted one does.
+		{`x=qsdev\ session; $x defaults`, computed},
+		{"x=qsdev\\\tsession; $x defaults", computed},
+		{`x=qsdev; y=$x\ session; $y defaults`, computed},
+		{`x=see\ the\ docs; $x defaults`, none},
+		// A line continuation joins its words before they are judged.
+		{"qsdev \\\ndefaults pin", literal},
+		{"qs\\\ndev defaults pin", literal},
+		{"qsdev \\\r\ndefaults pin", literal},
+		{"qsdev defaults \\\npin", literal},
+		{"echo \\\\\nqsdev defaults pin", literal},
+		// An escaped quote, or a quote in a comment, does not change the
+		// quoting a later continuation is judged in.
+		{"echo \"\\\"'\"; qs\\\ndev defaults pin", literal},
+		{"echo \\'; qs\\\ndev defaults pin", literal},
+		{"echo \\\"; qs\\\ndev defaults pin", literal},
+		{"# it's here\nqs\\\ndev defaults pin", literal},
+		{"echo a # it's \\\nqs\\\ndev defaults pin", literal},
+		{"echo \\ #; qs\\\ndev defaults pin", literal},
 		{"P=pin; qsdev defaults $P", computed},
 		{"qsdev defaults $(echo pin)", computed},
 		{"echo pin | xargs qsdev defaults", computed},
@@ -187,6 +221,30 @@ func TestInvokedSpecs(t *testing.T) {
 	}
 }
 
+// TestInvokedSpecsWhiteLabel pins that the program is the app name the
+// caller passes, never a built-in one: a white-labelled build named acme
+// matches its own invocations, spread values included, and not qsdev's.
+func TestInvokedSpecsWhiteLabel(t *testing.T) {
+	t.Parallel()
+	specs := []CommandSpec{{Path: [][]string{{"teardown"}}}}
+	tests := []struct {
+		command string
+		want    bool
+	}{
+		{"acme teardown", true},
+		{`x="acme teardown"; $x`, true},
+		{`x="acme x"; $x`, true},
+		{"acme\\\n teardown", true},
+		{"qsdev teardown", false},
+		{`x="qsdev x"; $x`, false},
+	}
+	for _, tt := range tests {
+		if got := len(InvokedSpecs(tt.command, "acme", specs)) > 0; got != tt.want {
+			t.Errorf("InvokedSpecs(%q, acme) matched = %v, want %v", tt.command, got, tt.want)
+		}
+	}
+}
+
 // TestSpecArgsErrorMatchesEveryInvocation pins that a spec whose Args fails
 // (the catalog behind it did not load) fails closed: it matches every
 // invocation of its path, as an unconditional spec would, while a read-only
@@ -262,9 +320,24 @@ func TestInvokedSpecsLinear(t *testing.T) {
 		"quoted text run":  func(n int) string { return `echo "` + strings.Repeat("qsdev defaults ", n) + `pin" | sh` },
 		"mention flag run": func(n int) string { return "echo " + strings.Repeat("qsdev -v ", n) },
 		"assignment run":   func(n int) string { return strings.Repeat("x=qsdev ", n) + "defaults pin" },
+		"continuation run": func(n int) string { return strings.Repeat("qsdev \\\n", n) + "defaults pin" },
+		"spread value run": func(n int) string { return `x="` + strings.Repeat("qsdev ", n) + `"; ` + strings.Repeat("$x ", n) },
+		"spread line run":  func(n int) string { return strings.Repeat(`x="qsdev s"; $x `, n) },
+		"escaped blanks":   func(n int) string { return "x=qsdev" + strings.Repeat(`\ s`, n) + "; $x" },
 	} {
 		testutil.AssertLinearTime(t, "InvokedSpecs on "+name, 25000, func(n int) {
 			InvokedSpecs(build(n), "qsdev", specs)
+		})
+	}
+	// Start-Process lines whose groups chain or nest are rendered in linear
+	// time too: each group is followed to the words after it once.
+	for name, build := range map[string]func(n int) string{
+		"chained groups":     func(n int) string { return "saps" + strings.Repeat(" (x) saps", n) },
+		"nested groups":      func(n int) string { return strings.Repeat("saps (", n) + strings.Repeat(") y", n) },
+		"group per argument": func(n int) string { return "saps qsdev" + strings.Repeat(" (a)", n) },
+	} {
+		testutil.AssertLinearTime(t, "PowerShellAsPOSIX on "+name, 25000, func(n int) {
+			PowerShellAsPOSIX(ParsePowerShell(build(n)))
 		})
 	}
 }

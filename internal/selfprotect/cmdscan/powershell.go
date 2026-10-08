@@ -55,6 +55,12 @@ type PSCommand struct {
 	// statement keyword's condition (`if (...)`) or of an operator (`-and
 	// (...)`) is not an argument.
 	GroupArg bool
+	// Nesting is how many `(` groups enclose the command (counted within the
+	// expandable string a subexpression's commands come from). The words
+	// after a group argument's `)` are the next command at the same Nesting
+	// as the one holding the group (`Start-Process -FilePath (gcm x).Source
+	// -ArgumentList y`).
+	Nesting int
 }
 
 // psReadVerbs are the cmdlets and aliases that only read the paths they are
@@ -502,6 +508,7 @@ func (p *psParser) assigned(rhs string) {
 func (p *psParser) endCommand() {
 	p.endWord()
 	if p.named || len(p.cur.WriteRedirects) > 0 || p.cur.Subexpression {
+		p.cur.Nesting = p.parens
 		p.cmds = append(p.cmds, p.cur)
 	}
 	p.cur, p.named, p.redirect = PSCommand{}, false, false
@@ -579,12 +586,23 @@ func PowerShellText(s string) (norm, loose string) {
 // separates words; a quoted comma is split too, which only adds words, so
 // the scan errs towards a match. An array literal or splat (`@(...)`,
 // `@args`), whose elements the line computes, is the dynamic word "$_", as a
-// variable already is. A Start-Process or [Diagnostics.Process]::Start line
-// needs nothing more: the program it names followed by its argument list is
-// a mention the scan matches once the subcommand is written out.
+// variable already is. A [Diagnostics.Process]::Start line needs nothing
+// more: the program it names followed by its argument list is a mention the
+// scan matches once the subcommand is written out. A Start-Process line is
+// also rendered as the command line it starts (see startProcessLine), as its
+// parameters may come in any order.
 func PowerShellAsPOSIX(cmds []PSCommand) string {
 	var b strings.Builder
-	for _, c := range cmds {
+	next := psNextAtNesting(cmds)
+	// continued[i] is set when cmds[i] holds the words after a group
+	// argument of an earlier command, not a command word of its own.
+	continued := make([]bool, len(cmds))
+	for i, c := range cmds {
+		if c.GroupArg && next[i] >= 0 {
+			continued[next[i]] = true
+		}
+	}
+	for i, c := range cmds {
 		b.WriteString(strings.ReplaceAll(c.Name, ",", " "))
 		for _, a := range c.Args {
 			b.WriteByte(' ')
@@ -595,6 +613,126 @@ func PowerShellAsPOSIX(cmds []PSCommand) string {
 			b.WriteString(strings.ReplaceAll(a, ",", " "))
 		}
 		b.WriteByte('\n')
+		if continued[i] || !psStartProcessVerbs[c.Name] {
+			continue
+		}
+		if line, ok := startProcessLine(psWordsThroughGroups(cmds, next, i)); ok {
+			b.WriteString(line)
+			b.WriteByte('\n')
+		}
 	}
 	return b.String()
+}
+
+// psStartProcessVerbs are Start-Process and its aliases.
+var psStartProcessVerbs = map[string]bool{"start-process": true, "saps": true, "start": true}
+
+// psStartProcessSwitches are Start-Process's switch parameters, which take
+// no value.
+var psStartProcessSwitches = []string{"wait", "nonewwindow", "passthru", "usenewenvironment", "loaduserprofile"}
+
+// psWordsThroughGroups returns the words of cmds[i] with each of its group
+// arguments in place: the tokenizer reports a `(` group's commands as
+// commands of their own, and the words after its `)` as the next command at
+// the same Nesting. A group is the dynamic word "$_" (also when a `@` or `$`
+// is written before it: `@(...)`, `$(...)`), followed by the words after it;
+// a member access on the group (`(gcm x).Source`) is part of its value.
+// next is psNextAtNesting(cmds).
+func psWordsThroughGroups(cmds []PSCommand, next []int, i int) []string {
+	words := slices.Clone(cmds[i].Args)
+	for cmds[i].GroupArg {
+		if n := len(words); n > 0 && (words[n-1] == "@" || words[n-1] == "$") {
+			words = words[:n-1]
+		}
+		words = append(words, "$_")
+		if i = next[i]; i < 0 {
+			break
+		}
+		if c := cmds[i]; !strings.HasPrefix(c.Name, ".") {
+			words = append(words, c.Name)
+		}
+		words = append(words, cmds[i].Args...)
+	}
+	return words
+}
+
+// psNextAtNesting returns, for each command of cmds, the index of the next
+// command at its Nesting with only deeper ones between (the words after its
+// group's `)`), or -1, in one pass.
+func psNextAtNesting(cmds []PSCommand) []int {
+	next := make([]int, len(cmds))
+	var open []int // commands awaiting their next, by increasing Nesting
+	for j, c := range cmds {
+		next[j] = -1
+		for len(open) > 0 && cmds[open[len(open)-1]].Nesting >= c.Nesting {
+			if top := open[len(open)-1]; cmds[top].Nesting == c.Nesting {
+				next[top] = j
+			}
+			open = open[:len(open)-1]
+		}
+		open = append(open, j)
+	}
+	return next
+}
+
+// startProcessLine returns the command line a Start-Process command with the
+// words args (see psWordsThroughGroups) starts: its FilePath followed by the elements of its
+// ArgumentList, each comma a word break, whatever order the parameters come
+// in. FilePath is -FilePath or any prefix of it (-f), -PSPath or -Path, or the
+// first positional argument; ArgumentList is -ArgumentList or any prefix of
+// it (-a), -Args, or the second positional one. A value may be attached
+// (`-FilePath:qsdev`), and an array written with blanks after its commas
+// (`'a', 'b'`) is one value. A value the line computes (a group, an array
+// literal or a splat: `@('a','b')`, `@args`, `(gcm x).Source`) is the dynamic
+// word "$_". A switch (psStartProcessSwitches, or a prefix of one) takes no
+// value; any other parameter takes the next word.
+func startProcessLine(args []string) (string, bool) {
+	var file, list string
+	var positional []string
+	// arrayRest appends to value the words that continue it as an array
+	// after a trailing comma; a computed value is "$_".
+	arrayRest := func(value string, i *int) string {
+		for strings.HasSuffix(value, ",") && *i+1 < len(args) {
+			*i++
+			value += args[*i]
+		}
+		if strings.HasPrefix(value, "@") {
+			return "$_"
+		}
+		return value
+	}
+	for i := 0; i < len(args); i++ {
+		a := args[i]
+		name, isParam := PSParamName(a)
+		if !isParam {
+			positional = append(positional, arrayRest(a, &i))
+			continue
+		}
+		if slices.ContainsFunc(psStartProcessSwitches, func(s string) bool { return strings.HasPrefix(s, name) }) {
+			continue
+		}
+		_, value, attached := strings.Cut(a, ":")
+		if !attached && i+1 < len(args) {
+			i++
+			value = args[i]
+		}
+		value = arrayRest(value, &i)
+		switch {
+		case name == "pspath" || name == "path" || strings.HasPrefix("filepath", name):
+			file = value
+		case name == "args" || strings.HasPrefix("argumentlist", name):
+			list = value
+		}
+	}
+	if file == "" && len(positional) > 0 {
+		file, positional = positional[0], positional[1:]
+	}
+	if list == "" && len(positional) > 0 {
+		list = positional[0]
+	}
+	if file == "" {
+		return "", false
+	}
+	words := append([]string{file}, strings.FieldsFunc(list, func(r rune) bool { return r == ',' || r == ' ' })...)
+	return strings.Join(words, " "), true
 }

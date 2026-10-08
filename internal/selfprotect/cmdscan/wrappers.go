@@ -203,9 +203,7 @@ func Program(words []string) ProgramRun {
 				if slices.ContainsFunc(opts, func(o WrapperOption) bool { return o.Is(wrapperLookups[name]...) }) {
 					return ProgramRun{Index: -1, LookupOnly: true}
 				}
-				run.PathChanged = run.PathChanged || slices.ContainsFunc(opts, func(o WrapperOption) bool {
-					return o.Is(wrapperEnvResets[name]...) || o.Is(wrapperEnvUnsets[name]...) && o.Arg == "PATH"
-				})
+				run.PathChanged = run.PathChanged || optionsClearEnv(name, opts, func(v string) bool { return v == "PATH" })
 				run.DirChanged = run.DirChanged || slices.ContainsFunc(opts, func(o WrapperOption) bool { return o.Is(wrapperChdirs[name]...) })
 				i += n
 			case wrapperPositionals[name]:
@@ -264,6 +262,26 @@ func WrapperOptions(wrapper string, args []string) []WrapperOption {
 		i += n
 	}
 	return out
+}
+
+// WrapperClearsEnv reports whether the wrapper program wrapper, given args,
+// the words after it, runs its command without a variable isName accepts:
+// with an empty environment (`env -i`, `env -`, `--ignore-environment`) or
+// with that variable unset (`env -u NAME`, `--unset=NAME`, `-uNAME`), in any
+// spelling WrapperOptions reads. A wrapper that cannot clear one (`sudo -u`
+// names a user) never does.
+func WrapperClearsEnv(wrapper string, args []string, isName func(string) bool) bool {
+	name := wrapperName(wrapper)
+	return optionsClearEnv(name, WrapperOptions(name, args), isName)
+}
+
+// optionsClearEnv reports whether opts, the options of the wrapper name,
+// start its command from an empty environment (wrapperEnvResets) or unset a
+// variable isName accepts (wrapperEnvUnsets).
+func optionsClearEnv(name string, opts []WrapperOption, isName func(string) bool) bool {
+	return slices.ContainsFunc(opts, func(o WrapperOption) bool {
+		return o.Is(wrapperEnvResets[name]...) || o.Is(wrapperEnvUnsets[name]...) && isName(o.Arg)
+	})
 }
 
 // isOptionWord reports whether w is an option word: it starts with "-" and

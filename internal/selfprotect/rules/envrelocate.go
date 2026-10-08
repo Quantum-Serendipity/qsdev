@@ -51,6 +51,34 @@ func relocatesProtected(command string, scs []scannedCommand) bool {
 	return anyCommandIn(cmds, 0, changesEnv, mentionsEnvName(home))
 }
 
+// clearsAgentMarker reports whether ctx's command may run the CLI app and
+// clears an agent-session marker (canon.AgentEnvMarkers), which the CLI's
+// human gate reads: a POSIX line that may run it (mayRunCLI: named, or a
+// computed program word) and, in a command of its own or of a script it runs
+// (`sh -c`, eval), runs env with an empty environment or the marker unset,
+// exec -c, or sets or clears the marker in any form cmdscan.Command.Assigns
+// lists (unset, `CLAUDECODE= ...`, export -n), or a variable whose name it
+// computes. A line that cannot be parsed fails closed when it names the CLI
+// and a marker. A PowerShell line counts when it runs the CLI and sets or
+// clears a marker (psAgentMarkerWrites, which also reads wildcards, computed
+// names and the bare Env: drive); SP-008 denies the latter on any line.
+func clearsAgentMarker(ctx *EvalContext, app string) bool {
+	markers := canon.AgentEnvMarkers()
+	if isPowerShell(ctx) {
+		runs := cmdscan.InvokesProgram(ctx.Command, app) ||
+			cmdscan.InvokesProgram(cmdscan.PowerShellAsPOSIX(ctx.powerShell().cmds), app)
+		return runs && psAgentMarkerWrites.inLine(ctx)
+	}
+	cmds, err := ctx.ParsedCommands()
+	if err != nil {
+		return cmdscan.InvokesProgram(ctx.Command, app) && mentionsEnvName(markers)(ctx.Command)
+	}
+	clears := func(c cmdscan.Command) bool {
+		return c.AssignsDynamic || assignsEnv(markers)(c) || clearsEnv(markers)(c)
+	}
+	return mayRunCLI(ctx.Command, cmds) && anyCommandIn(cmds, 0, clears, mentionsEnvName(markers))
+}
+
 // unparsedRelocatesHome is relocatesProtected for a line that cannot be
 // parsed: it fails closed when the line names the CLI and a home variable.
 func unparsedRelocatesHome(command string) bool {
@@ -110,10 +138,18 @@ func commandMayRunCLI(c cmdscan.Command, app string) bool {
 // maxSettingsScriptDepth. A script that cannot be parsed, or is nested
 // deeper, counts when unparsed holds for its text.
 func anyCommandIn(cmds []cmdscan.Command, depth int, pred func(cmdscan.Command) bool, unparsed func(string) bool) bool {
+	return anyCommandListIn(cmds, depth, func(cs []cmdscan.Command) bool { return slices.ContainsFunc(cs, pred) }, unparsed)
+}
+
+// anyCommandListIn is anyCommandIn for a check that judges a command list
+// as a whole, such as a pipeline stage by the stages feeding it: pred is
+// given the commands of the line, and of each shell script one of them runs,
+// in order.
+func anyCommandListIn(cmds []cmdscan.Command, depth int, pred func([]cmdscan.Command) bool, unparsed func(string) bool) bool {
+	if pred(cmds) {
+		return true
+	}
 	for _, c := range cmds {
-		if pred(c) {
-			return true
-		}
 		script, ok := cmdscan.ShellScript(append([]string{c.Name}, c.Args...))
 		if !ok {
 			continue
@@ -125,7 +161,7 @@ func anyCommandIn(cmds []cmdscan.Command, depth int, pred func(cmdscan.Command) 
 			}
 			continue
 		}
-		if anyCommandIn(sub, depth+1, pred, unparsed) {
+		if anyCommandListIn(sub, depth+1, pred, unparsed) {
 			return true
 		}
 	}
@@ -196,18 +232,18 @@ func execClearsEnv(args []string) bool {
 }
 
 // envChanges reports whether env's arguments args remove one of vars from
-// the environment of the program it runs: -u NAME (in any spelling cmdscan's
-// option table accepts, including `-C dir -u NAME` and an abbreviated
-// --unset), or -i/-/--ignore-environment, which start from an empty one. A
+// the environment of the program it runs (cmdscan.WrapperClearsEnv): -u NAME
+// (in any spelling cmdscan's option table accepts, including `-C dir -u NAME`
+// and an abbreviated --unset), or -i/-/--ignore-environment, which start from
+// an empty one. A
 // -S string is split and read as more arguments, which may also set a
 // variable.
 func envChanges(args []string, vars []string) bool {
+	if cmdscan.WrapperClearsEnv("env", args, func(name string) bool { return isEnvName(name, vars) }) {
+		return true
+	}
 	for _, o := range cmdscan.WrapperOptions("env", args) {
 		switch {
-		case o.Is("-", "-i", "--ignore-environment"):
-			return true
-		case o.Is("-u", "--unset") && isEnvName(o.Arg, vars):
-			return true
 		case o.Is("-S", "--split-string"):
 			split := strings.Fields(o.Arg)
 			if envChanges(split, vars) || slices.ContainsFunc(split, func(w string) bool {

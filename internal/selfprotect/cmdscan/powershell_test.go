@@ -67,7 +67,7 @@ func TestParsePowerShell(t *testing.T) {
 				{Name: "a", Args: []string{"1"}},
 				{Name: "b", Args: []string{"2"}},
 				{Name: "c", Piped: true, GroupArg: true},
-				{Name: "d", Args: []string{"3"}},
+				{Name: "d", Args: []string{"3"}, Nesting: 1},
 				{Name: "e"},
 				{Name: "f"},
 				{Name: "g"},
@@ -95,7 +95,7 @@ func TestParsePowerShell(t *testing.T) {
 		{name: "subexpression with nested quotes and parens", text: `echo "a $(Set-Content .npmrc "x" (1)) b"; gc y`,
 			want: []PSCommand{
 				{Name: "set-content", Args: []string{".npmrc", "x"}, GroupArg: true},
-				{Name: "1"},
+				{Name: "1", Nesting: 1},
 				{Name: "echo", Args: []string{`a $(Set-Content .npmrc "x" (1)) b`}, Subexpression: true},
 				{Name: "gc", Args: []string{"y"}},
 			}},
@@ -126,7 +126,7 @@ func TestParsePowerShell(t *testing.T) {
 		{name: "escaped subexpression is literal", text: "gc \"`$(ri x)\"",
 			want: []PSCommand{{Name: "gc", Args: []string{"$(ri x)"}}}},
 		{name: "bare subexpression is its own command", text: `gc $(ri x)`,
-			want: []PSCommand{{Name: "gc", Args: []string{"$"}, GroupArg: true}, {Name: "ri", Args: []string{"x"}}}},
+			want: []PSCommand{{Name: "gc", Args: []string{"$"}, GroupArg: true}, {Name: "ri", Args: []string{"x"}, Nesting: 1}}},
 		// A pipeline's or a group's value reaches a command through no word
 		// of its own (U18-WS3 review).
 		{name: "pipeline input", text: "gci .npmrc | ri",
@@ -136,11 +136,14 @@ func TestParsePowerShell(t *testing.T) {
 		{name: "or operator is not a pipeline", text: "gc a || ri b",
 			want: []PSCommand{{Name: "gc", Args: []string{"a"}}, {Name: "ri", Args: []string{"b"}}}},
 		{name: "group argument", text: "Set-Content ('.npmrc') x",
-			want: []PSCommand{{Name: "set-content", GroupArg: true}, {Name: ".npmrc"}, {Name: "x"}}},
+			want: []PSCommand{{Name: "set-content", GroupArg: true}, {Name: ".npmrc", Nesting: 1}, {Name: "x"}}},
 		{name: "method call", text: "$f.Delete()",
 			want: []PSCommand{{Name: "$f.delete", GroupArg: true}}},
 		{name: "keyword condition is not an argument", text: "if ((Test-Path a) -and (b)) { gc a }",
-			want: []PSCommand{{Name: "if"}, {Name: "test-path", Args: []string{"a"}}, {Name: "-and"}, {Name: "b"}, {Name: "gc", Args: []string{"a"}}}},
+			want: []PSCommand{
+				{Name: "if"}, {Name: "test-path", Args: []string{"a"}, Nesting: 2}, {Name: "-and", Nesting: 1},
+				{Name: "b", Nesting: 2}, {Name: "gc", Args: []string{"a"}},
+			}},
 		{name: "line comment", text: "gc x # it's ; ri y\nri z",
 			want: []PSCommand{{Name: "gc", Args: []string{"x"}}, {Name: "ri", Args: []string{"z"}}}},
 		{name: "block comment", text: "gc x <# ' ri y #> z",
@@ -268,12 +271,59 @@ func TestPowerShellAsPOSIX(t *testing.T) {
 		{`& qsdev @a`, "qsdev $_\n"},
 		{`& qsdev @('teardown','--force')`, "qsdev $_\nteardown --force\n"},
 		{`[Diagnostics.Process]::Start('qsdev','teardown --force')`, "[diagnostics.process]::start\nqsdev teardown --force\n"},
-		{`Start-Process qsdev -ArgumentList 'a','b'`, "start-process qsdev -ArgumentList a b\n"},
+		{`Start-Process qsdev -ArgumentList 'a','b'`, "start-process qsdev -ArgumentList a b\nqsdev a b\n"},
 		{`git status`, "git status\n"},
 	}
 	for _, tt := range tests {
 		if got := PowerShellAsPOSIX(ParsePowerShell(tt.line)); got != tt.want {
 			t.Errorf("PowerShellAsPOSIX(%q) = %q, want %q", tt.line, got, tt.want)
+		}
+	}
+}
+
+// TestPowerShellAsPOSIX_StartProcessAnyOrder pins that a Start-Process line
+// is also rendered as the command line it starts, FilePath then the
+// ArgumentList elements, whatever order or spelling the parameters take:
+// named in either order, positional, abbreviated, with a colon-attached
+// value, -PSPath/-Path or -Args, around switches that take no value, and an
+// array written with blanks after its commas.
+func TestPowerShellAsPOSIX_StartProcessAnyOrder(t *testing.T) {
+	t.Parallel()
+	tests := []struct{ line, want string }{
+		{`Start-Process -ArgumentList 'teardown','--force' -FilePath qsdev`, "qsdev teardown --force"},
+		{`Start-Process -Wait -ArgumentList 'teardown','--force' -FilePath qsdev`, "qsdev teardown --force"},
+		{`Start-Process -ArgumentList 'teardown','--force' -FilePath qsdev -Wait`, "qsdev teardown --force"},
+		{`Start-Process -ArgumentList teardown,--force qsdev`, "qsdev teardown --force"},
+		{`Start-Process -ArgumentList 'teardown --force' -FilePath qsdev`, "qsdev teardown --force"},
+		{`Start-Process -ArgumentList 'self-update','--no-strict' -FilePath 'qsdev'`, "qsdev self-update --no-strict"},
+		{`Start-Process qsdev teardown,--force`, "qsdev teardown --force"},
+		{`saps -a teardown -f qsdev`, "qsdev teardown"},
+		{`start -Arg teardown -File qsdev`, "qsdev teardown"},
+		{`Start-Process -FilePath:qsdev -ArgumentList:teardown`, "qsdev teardown"},
+		{`Start-Process -FilePath:C:\bin\qsdev.exe -ArgumentList teardown`, `C:\bin\qsdev.exe teardown`},
+		{`Start-Process -Path qsdev -Args teardown`, "qsdev teardown"},
+		{`Start-Process -PSPath qsdev -Args teardown`, "qsdev teardown"},
+		{`Start-Process -NoNewWindow -PassThru qsdev teardown`, "qsdev teardown"},
+		{`Start-Process -UseNewEnvironment -LoadUserProfile qsdev teardown`, "qsdev teardown"},
+		{`Start-Process -WorkingDirectory C:\x -ArgumentList teardown qsdev`, "qsdev teardown"},
+		{`Start-Process -ArgumentList 'teardown', '--force' -FilePath qsdev`, "qsdev teardown --force"},
+		{`Start-Process -ArgumentList '/c','dir' -FilePath cmd`, "cmd /c dir"},
+		// An ArgumentList or FilePath the line computes is the dynamic word
+		// "$_": an array literal, a splat, a parenthesised expression or a
+		// subexpression.
+		{`Start-Process qsdev -ArgumentList @('teardown','--force')`, "qsdev $_"},
+		{`Start-Process -FilePath qsdev -ArgumentList @args`, "qsdev $_"},
+		{`Start-Process -FilePath qsdev -ArgumentList ('teardown','--force')`, "qsdev $_"},
+		{`Start-Process -FilePath qsdev -ArgumentList ("teardown")`, "qsdev $_"},
+		{`Start-Process -FilePath (Get-Command qsdev).Source -ArgumentList teardown`, "$_ teardown"},
+		{`Start-Process -FilePath $(Get-Command qsdev) -ArgumentList teardown`, "$_ teardown"},
+		{`Start-Process -FilePath ((gcm qsdev).Source) -ArgumentList teardown`, "$_ teardown"},
+		{`Start-Process -FilePath (gcm qsdev).Source -ArgumentList (Get-Args)`, "$_ $_"},
+	}
+	for _, tt := range tests {
+		got := PowerShellAsPOSIX(ParsePowerShell(tt.line))
+		if !slices.Contains(strings.Split(got, "\n"), tt.want) {
+			t.Errorf("PowerShellAsPOSIX(%q) = %q, want a line %q", tt.line, got, tt.want)
 		}
 	}
 }

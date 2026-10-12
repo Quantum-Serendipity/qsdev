@@ -25,7 +25,10 @@ type cliRow struct {
 // read-only (cmdutil.MarkReadOnly, so a new read-only command is measured
 // without touching this test), and init creating and joining a project, in
 // a hermetic generated project, and holds each to its budget in
-// budgets.yaml. Each runs without network access and with procexec's
+// budgets.yaml. Each runs on a hermetic PATH, where every host tool qsdev
+// probes is an empty stub (see hermeticPath), so a row measures qsdev's own
+// CPU and not that of whatever tools the machine has installed. Each runs
+// without network access and with procexec's
 // forbid-exec guard on: it must not trip the guard or panic, and it must
 // exit as it does with the network reachable, so no command depends on the
 // network.
@@ -53,6 +56,13 @@ func TestCLIPerf(t *testing.T) {
 	}
 }
 
+// hostTools are the host tools the measured commands genuinely need, which
+// run as themselves: the project is a git repository and qsdev reads it
+// through git (status and repair resolve its hooks path), which a stub
+// would answer for no repository at all. Every other tool they probe is a
+// stub (see probedTools).
+var hostTools = []string{"git"}
+
 // cliPerfSuite is the fixture TestCLIPerf measures in: the budgets, the
 // qsdev binary under test, the calibration program, the network namespace
 // prefix and a committed, initialized project with clean sources for init
@@ -67,6 +77,9 @@ type cliPerfSuite struct {
 	project string   // initialized and committed; read-only commands run here
 	create  string   // a Go project with no qsdev configuration
 	join    string   // a clean clone of project
+	// copyTools are the absolute sh, mktemp and cp initInCopy runs: the
+	// measured PATH holds none of them.
+	copyTools []string
 }
 
 func newCLIPerfSuite(t *testing.T) *cliPerfSuite {
@@ -84,24 +97,19 @@ func newCLIPerfSuite(t *testing.T) *cliPerfSuite {
 	if err != nil {
 		t.Fatal(err)
 	}
-	binDir := filepath.Dir(bin)
-	calEnv, err := perfbudget.IsolatedEnv(filepath.Join(root, "calibration"), binDir)
-	if err != nil {
-		t.Fatal(err)
-	}
-	userEnv, err := perfbudget.IsolatedEnv(filepath.Join(root, "user"), binDir)
-	if err != nil {
-		t.Fatal(err)
-	}
 	s := &cliPerfSuite{
-		budgets: b, bin: bin, noop: noop, netns: perfbudget.NetNS(t), calEnv: calEnv,
-		project: filepath.Join(root, "project"),
-		create:  filepath.Join(root, "create-source"),
-		join:    filepath.Join(root, "join-source"),
+		budgets: b, bin: bin, noop: noop, netns: perfbudget.NetNS(t),
+		project:   filepath.Join(root, "project"),
+		create:    filepath.Join(root, "create-source"),
+		join:      filepath.Join(root, "join-source"),
+		copyTools: lookPaths(t, "sh", "mktemp", "cp"),
 	}
-	// Setup and the update check stay off in every run, so neither the
-	// fixture nor a run with network reaches out.
-	env := append(slices.Clone(userEnv), "QSDEV_SKIP_SETUP=1", branding.Get().EnvNoUpdate+"=1")
+	// The fixture runs on a hermetic PATH too, so the project it creates
+	// does not depend on what the host has installed. Before the project
+	// exists, its stubs are the tools doctor's registry lists.
+	setupPath := s.hermeticPath(t, filepath.Join(root, "path-setup"), "")
+	s.calEnv = s.isolatedEnv(t, filepath.Join(root, "calibration"), setupPath)
+	env := s.isolatedEnv(t, filepath.Join(root, "user"), setupPath)
 
 	s.goRepo(t, s.project, env)
 	perfbudget.RunIn(t, s.project, env, append(slices.Clone(s.netns), bin, "init", "--yes")...)
@@ -111,8 +119,55 @@ func newCLIPerfSuite(t *testing.T) *cliPerfSuite {
 	perfbudget.RunIn(t, root, env, "git", "clone", "-q", s.project, s.join)
 	s.goRepo(t, s.create, env)
 
-	s.env = append(env, procexec.ForbidExecEnv+"=1")
+	// The measured commands also find a stub for every program the
+	// project's hooks run, which doctor probes there.
+	measuredPath := s.hermeticPath(t, filepath.Join(root, "path"), s.project)
+	s.env = append(s.isolatedEnv(t, filepath.Join(root, "user"), measuredPath), procexec.ForbidExecEnv+"=1")
 	return s
+}
+
+// isolatedEnv returns the hermetic environment under root with PATH path,
+// setup and the update check off, so neither the fixture nor a run with
+// network reaches out.
+func (s *cliPerfSuite) isolatedEnv(t *testing.T, root, path string) []string {
+	t.Helper()
+	env, err := perfbudget.IsolatedEnv(root, path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return append(env, "QSDEV_SKIP_SETUP=1", branding.Get().EnvNoUpdate+"=1")
+}
+
+// hermeticPath creates, under dir, the hermetic PATH of a command run in
+// project ("" before it exists): the qsdev under test, hostTools, and a
+// stub for every other tool qsdev probes there (see probedTools).
+func (s *cliPerfSuite) hermeticPath(t *testing.T, dir, project string) string {
+	t.Helper()
+	probed, err := probedTools(project)
+	if err != nil {
+		t.Fatal(err)
+	}
+	path, err := perfbudget.HermeticPath(dir, perfbudget.HermeticTools{
+		Bin: filepath.Dir(s.bin), Host: hostTools, Probed: probed, Stub: s.noop,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return path
+}
+
+// lookPaths resolves each name on the test's PATH.
+func lookPaths(t *testing.T, names ...string) []string {
+	t.Helper()
+	paths := make([]string, 0, len(names))
+	for _, name := range names {
+		p, err := procexec.LookPath(name)
+		if err != nil {
+			t.Fatal(err)
+		}
+		paths = append(paths, p)
+	}
+	return paths
 }
 
 // goRepo writes the perfbudget Go project into dir as a fresh git
@@ -154,10 +209,12 @@ func readOnlyBudget(inv string) string {
 // initInCopy runs `qsdev init --yes` in a fresh copy of source, so every
 // timed run starts from the same tree. The shell execs qsdev, so the run's
 // CPU is qsdev's plus the mktemp and cp it waited for, a few milliseconds
-// against the init budget.
+// against the init budget. The shell, mktemp and cp are absolute (see
+// copyTools).
 func (s *cliPerfSuite) initInCopy(source string) []string {
-	const script = `d=$(mktemp -d) && cp -R "$1"/. "$d" && cd "$d" && exec "$2" init --yes`
-	return []string{"sh", "-c", script, "sh", source, s.bin}
+	const script = `d=$("$3" -d) && "$4" -R "$1"/. "$d" && cd "$d" && exec "$2" init --yes`
+	sh, mktemp, cp := s.copyTools[0], s.copyTools[1], s.copyTools[2]
+	return []string{sh, "-c", script, "sh", source, s.bin, mktemp, cp}
 }
 
 // checkCLIRun fails t when a run tripped procexec's forbid-exec guard or

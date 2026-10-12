@@ -177,7 +177,7 @@ func newHookPerfSuite(t *testing.T) *hookPerfSuite {
 	if err != nil {
 		t.Fatal(err)
 	}
-	calEnv, err := perfbudget.IsolatedEnv(filepath.Join(root, "calibration"), binDir)
+	calEnv, err := perfbudget.IsolatedEnv(filepath.Join(root, "calibration"), perfbudget.HostPath(binDir))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -203,7 +203,9 @@ func (s *hookPerfSuite) project(t *testing.T, name string, initArgs ...string) *
 	t.Helper()
 	root := filepath.Join(s.root, "project-"+name)
 	dir := filepath.Join(root, "project")
-	env, err := perfbudget.IsolatedEnv(filepath.Join(root, "user"), filepath.Dir(s.bin))
+	// A hook script is host software: its interpreter and the tools it runs
+	// are part of what it costs, so it runs on the host's PATH.
+	env, err := perfbudget.IsolatedEnv(filepath.Join(root, "user"), perfbudget.HostPath(filepath.Dir(s.bin)))
 	if err != nil {
 		t.Fatal(err)
 	}

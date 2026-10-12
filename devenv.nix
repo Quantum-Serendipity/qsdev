@@ -43,14 +43,24 @@
   # Tiers: baseline (always-on), enhanced (language-aware), specialized (custom)
   git-hooks.hooks = {
     # Baseline security hooks (always enabled)
-    ripsecrets.enable = true;
+    ripsecrets = {
+      enable = true;
+      excludes = [ "(^|/)vendor/" ];
+    };
     check-added-large-files.enable = true;
     no-commit-to-branch.enable = true;
     check-merge-conflicts.enable = true;
-    shellcheck.enable = true;
+    shellcheck = {
+      enable = true;
+      exclude_types = [ "zsh" ];
+      excludes = [ "(^|/)vendor/" ];
+    };
     statix.enable = true;
     # Enhanced hooks (language-aware, from ecosystem modules)
-    gofmt.enable = true;
+    gofmt = {
+      enable = true;
+      excludes = [ "(^|/)(testdata|vendor)/" "(^|/)[._][^/]*/" ];
+    };
     govet = {
       enable = true;
       excludes = [ "(^|/)(testdata|vendor)/" "(^|/)[._][^/]*/" ];

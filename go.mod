@@ -1,6 +1,6 @@
 module github.com/Quantum-Serendipity/qsdev
 
-go 1.26.7
+go 1.26.9
 
 require (
 	aead.dev/minisign v0.3.0
@@ -20,9 +20,9 @@ require (
 	github.com/sigstore/sigstore-go v1.3.0
 	github.com/spf13/cobra v1.10.2
 	github.com/spf13/pflag v1.0.10
-	golang.org/x/mod v0.40.0
+	golang.org/x/mod v0.41.0
 	golang.org/x/oauth2 v0.36.0
-	golang.org/x/sys v0.47.0
+	golang.org/x/sys v0.48.0
 	gopkg.in/yaml.v3 v3.0.1
 	mvdan.cc/sh/v3 v3.13.1
 )
@@ -114,9 +114,9 @@ require (
 	go.opentelemetry.io/otel/metric v1.44.0 // indirect
 	go.opentelemetry.io/otel/trace v1.44.0 // indirect
 	go.yaml.in/yaml/v3 v3.0.4 // indirect
-	golang.org/x/crypto v0.55.0 // indirect
-	golang.org/x/net v0.58.0 // indirect
-	golang.org/x/term v0.45.0 // indirect
+	golang.org/x/crypto v0.57.0 // indirect
+	golang.org/x/net v0.60.0 // indirect
+	golang.org/x/term v0.46.0 // indirect
 	google.golang.org/genproto/googleapis/api v0.0.0-20260526163538-3dc84a4a5aaa // indirect
 	google.golang.org/genproto/googleapis/rpc v0.0.0-20260526163538-3dc84a4a5aaa // indirect
 	google.golang.org/grpc v1.83.2 // indirect
@@ -152,8 +152,8 @@ require (
 	github.com/pmezard/go-difflib v1.0.1-0.20181226105442-5d4384ee4fb2
 	github.com/rivo/uniseg v0.4.7 // indirect
 	github.com/xo/terminfo v0.0.0-20220910002029-abceb7e1c41e // indirect
-	golang.org/x/sync v0.22.0 // indirect
-	golang.org/x/text v0.41.0
+	golang.org/x/sync v0.23.0 // indirect
+	golang.org/x/text v0.42.0
 )
 
 replace fastcat.org/go/gdev => github.com/Quantum-Serendipity/gdev v0.0.0-20260515232304-7ffd0edf72e3

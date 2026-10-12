@@ -15,6 +15,7 @@ import (
 	"testing"
 
 	"github.com/Quantum-Serendipity/qsdev/internal/answers"
+	"github.com/Quantum-Serendipity/qsdev/internal/selfprotect/canon"
 	"github.com/Quantum-Serendipity/qsdev/internal/toolreg"
 	"github.com/Quantum-Serendipity/qsdev/internal/toolreg/toolregtest"
 	"github.com/Quantum-Serendipity/qsdev/pkg/branding"
@@ -59,6 +60,7 @@ func guardrailEnv(t *testing.T) []string {
 		case name == "HOME", name == "TMPDIR", name == "TMP", name == "TEMP", name == "USERPROFILE",
 			strings.EqualFold(name, "APPDATA"), strings.EqualFold(name, "LOCALAPPDATA"),
 			strings.HasPrefix(name, "XDG_"), strings.HasPrefix(name, "CLAUDE"),
+			slices.Contains(canon.AgentEnvMarkers(), name), // AI_AGENT has no CLAUDE prefix
 			strings.HasPrefix(name, b.EnvPrefix):
 			continue
 		}
@@ -93,10 +95,15 @@ func raceOptions() string {
 // agentEnv returns env as an AI agent's tool call sees it: inside a Claude
 // Code session (CLAUDECODE=1) with no terminal.
 func agentEnv(env []string) []string {
-	out := slices.DeleteFunc(slices.Clone(env), func(kv string) bool {
+	return append(humanlessEnv(env), "CLAUDECODE=1")
+}
+
+// humanlessEnv returns env without the switch that presents stdin to qsdev
+// as a terminal (humanHelperEnv), so the shipped human gate decides.
+func humanlessEnv(env []string) []string {
+	return slices.DeleteFunc(slices.Clone(env), func(kv string) bool {
 		return strings.HasPrefix(kv, humanHelperEnv+"=")
 	})
-	return append(out, "CLAUDECODE=1")
 }
 
 // newGuardrailProject returns a fresh Go project with its own git repository,

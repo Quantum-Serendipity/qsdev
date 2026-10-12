@@ -77,6 +77,10 @@ func TestCheck_RunTimeComputedCode(t *testing.T) {
 		{"shell named by path", `/bin/bash -c "$(echo cm0= | base64 -d)"`, true},
 		{"shell behind env", `env bash -c "$(echo cm0= | base64 -d)"`, true},
 		{"shell behind sudo with options", `sudo -u root sh -c "$X"`, true},
+		// The shell is named as cmdscan.IsScriptShell folds it.
+		{"shell named in upper case", `BASH -c "$X"`, true},
+		{"shell named with .exe", `C:/Git/bin/bash.exe -c "$X"`, true},
+		{"mksh", `mksh -c "$X"`, true},
 		{"eval text behind a computed command word", `E=ev; $E 'eval "$X"'`, true},
 		{"literal sh -c script", `sh -c 'go test ./...'`, false},
 		{"shell script with an expanded argument", `bash ./build.sh "$TARGET"`, false},

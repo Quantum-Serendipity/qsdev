@@ -134,7 +134,7 @@ func programForm(printer *syntax.Printer, stmt *syntax.Stmt) (string, bool) {
 	stages := []*syntax.Stmt{stmt}
 	if bin, ok := stmt.Cmd.(*syntax.BinaryCmd); ok {
 		stages = stages[:0]
-		collectPipeStmts(bin, &stages)
+		collectPipeStmts(bin, &stages, nil)
 	}
 	parts := make([]string, 0, len(stages))
 	changed := false

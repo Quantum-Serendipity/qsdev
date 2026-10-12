@@ -2,7 +2,6 @@ package defaults
 
 import (
 	"bytes"
-	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -12,16 +11,9 @@ import (
 
 	"github.com/Quantum-Serendipity/qsdev/internal/catalog"
 	"github.com/Quantum-Serendipity/qsdev/internal/cmdutil"
+	"github.com/Quantum-Serendipity/qsdev/internal/testutil/humantest"
 	"github.com/Quantum-Serendipity/qsdev/pkg/branding"
 )
-
-// ttyInput is stdin a test presents as an interactive terminal, or not.
-type ttyInput struct {
-	io.Reader
-	tty bool
-}
-
-func (in ttyInput) IsTerminal() bool { return in.tty }
 
 // TestDefaultsPin pins who approves the org overlay every run reads (U18-WS1
 // round 4): 'defaults pin' is sensitive, so a run without a terminal or
@@ -55,12 +47,12 @@ func TestDefaultsPin(t *testing.T) {
 
 	run := func(tty bool, agent string, args ...string) (string, error) {
 		t.Helper()
-		t.Setenv("CLAUDECODE", agent)
+		humantest.SetAgentSession(t, agent)
 		root := &cobra.Command{Use: "qsdev", SilenceErrors: true, SilenceUsage: true}
 		root.AddCommand(Command())
 		cmdutil.InstallHumanGate(root)
 		var out bytes.Buffer
-		root.SetIn(ttyInput{Reader: strings.NewReader(""), tty: tty})
+		root.SetIn(humantest.HumanTerminal{Reader: strings.NewReader(""), TTY: tty})
 		root.SetOut(&out)
 		root.SetErr(&out)
 		root.SetArgs(append([]string{"defaults", "pin"}, args...))

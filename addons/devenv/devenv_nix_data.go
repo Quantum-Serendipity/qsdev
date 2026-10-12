@@ -134,6 +134,9 @@ type languageHookResult struct {
 	CustomHooks   []CustomHookData
 	ExtraPackages []string
 	SeenHookIDs   map[string]bool
+	// EnterShell holds the modules' enterShell snippets in language order,
+	// each distinct snippet once.
+	EnterShell []string
 }
 
 // BuildDevenvNixData assembles all template data from wizard answers and ecosystem
@@ -309,7 +312,7 @@ func (c *genContext) buildDevenvNixData() (*DevenvNixTemplateData, error) {
 	data.GitHooksEnabled = true
 
 	// 8. Shell scripts.
-	data.EnterShell = buildEnterShellScript(data.UnsetEnvVars)
+	data.EnterShell = appendEnterShell(buildEnterShellScript(data.UnsetEnvVars), hookResult.EnterShell)
 	data.EnterTest = buildEnterTestScript(data.UnsetEnvVars)
 
 	// 9. Task definitions from ecosystem modules.
@@ -396,6 +399,13 @@ func (c *genContext) collectLanguageFragmentsAndHooks(runsAtTier func(id string)
 			})
 		}
 
+		if esp, ok := mod.(ecosystem.EnterShellProvider); ok {
+			script := strings.TrimSpace(esp.EnterShellScript(cfg))
+			if script != "" && !slices.Contains(result.EnterShell, script) {
+				result.EnterShell = append(result.EnterShell, script)
+			}
+		}
+
 		for _, hook := range mod.PreCommitHooks(cfg) {
 			if result.SeenHookIDs[hook.ID] || !runsAtTier(hook.ID) {
 				continue
@@ -422,6 +432,15 @@ func (c *genContext) collectLanguageFragmentsAndHooks(runsAtTier func(id string)
 	}
 
 	return result, nil
+}
+
+// appendEnterShell appends the modules' enterShell snippets to the base
+// script, each after a blank line. With no snippets base is returned as is.
+func appendEnterShell(base string, snippets []string) string {
+	if len(snippets) == 0 {
+		return base
+	}
+	return base + "\n\n" + strings.Join(snippets, "\n\n")
 }
 
 // customHookData converts a custom (non-BuiltIn) ecosystem hook into template

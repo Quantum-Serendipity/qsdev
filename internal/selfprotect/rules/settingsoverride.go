@@ -16,7 +16,10 @@ import (
 // nothing. What a Bash call CAN do is start another Claude Code session that
 // loads different settings, and with them no hooks, or write the settings of a
 // relocated configuration directory through $CLAUDE_CONFIG_DIR, which names no
-// protected path in the command text. SP-008 guards those.
+// protected path in the command text. A nested session can also escape this
+// session's permission rules (--dangerously-skip-permissions, --add-dir), or
+// load another directory's project settings when started from outside the
+// project. SP-008 guards those.
 
 // hookDroppingFlags are the Claude Code options that start a session without
 // the hooks the settings files register: --bare skips hooks, --safe-mode
@@ -27,6 +30,23 @@ var hookDroppingFlags = map[string]bool{"--bare": true, "--safe-mode": true, "--
 // settingsFlags are the Claude Code options whose value selects the settings a
 // session loads.
 var settingsFlags = map[string]bool{"--settings": true, "--setting-sources": true}
+
+// permissionEscalatingFlags are the Claude Code options that start a session
+// with fewer permission checks than this one: the two skip-permissions
+// options turn them off, and --add-dir grants access to directories outside
+// the session's own.
+var permissionEscalatingFlags = map[string]bool{
+	"--dangerously-skip-permissions":       true,
+	"--allow-dangerously-skip-permissions": true,
+	"--add-dir":                            true,
+}
+
+// permissionModeFlag selects the permission mode of a session; with the mode
+// bypassPermissions (any case) it skips every permission check.
+const (
+	permissionModeFlag     = "--permission-mode"
+	bypassPermissionsValue = "bypassPermissions"
+)
 
 // settingsOverrideEnv are the environment variables that change which settings
 // a Claude Code session loads or whether it runs hooks: CLAUDE_CONFIG_DIR
@@ -57,10 +77,6 @@ var requiredSettingSources = []string{"user", "project", "local"}
 // --dry-run form writes nothing.
 var settingsWritingSubcommands = map[string]bool{"import": true}
 
-// claudePackage is the npm package of the Claude Code CLI, which npx, bunx and
-// `pnpm dlx` run by name.
-const claudePackage = "@anthropic-ai/claude-code"
-
 // maxSettingsScriptDepth bounds how deep settingsOverride follows shell scripts
 // nested in `sh -c` or eval.
 const maxSettingsScriptDepth = 3
@@ -72,49 +88,69 @@ var reClaudeWord = regexp.MustCompile(`(?i)(^|[^A-Za-z0-9_.-])claude(-code)?([^A
 
 // settingsOverride reports why a shell command changes the settings, and so the
 // hooks, of a Claude Code session: it writes through $CLAUDE_CONFIG_DIR, or
-// starts Claude Code with a hook-dropping option, a settings override or a
-// settings environment override, or runs a subcommand that writes settings.
-// Claude Code started through a wrapper (env, sudo, xargs, npx) or a shell
-// script is followed; a command that cannot be parsed and names Claude Code
-// with an override marker fails closed. Returns "" when it does none of these.
+// starts Claude Code with a hook-dropping option, a settings override, a
+// permission-escalating option or a settings environment override, or from a
+// working directory that is not the session's or inside it, or runs a
+// subcommand that writes settings. Claude Code started through a wrapper
+// (env, sudo, xargs, npx) or a shell script is followed; a command that
+// cannot be parsed and names Claude Code with an override marker fails
+// closed. Returns "" when it does none of these.
 func settingsOverride(ctx *EvalContext) string {
 	text := looseText(ctx.Command)
 	if reason := configDirWrite(ctx, text); reason != "" {
 		return reason
 	}
-	cmds, err := ctx.ParsedCommands()
+	if isPowerShell(ctx) {
+		if reason := psLaunchDirOverride(ctx); reason != "" {
+			return reason
+		}
+	}
+	scs, err := ctx.scannedCommands()
 	if err != nil {
 		if reClaudeWord.MatchString(text) && mentionsOverride(text) {
 			return "the command starts Claude Code with a settings override but cannot be parsed"
 		}
 		return ""
 	}
-	return claudeLaunchOverride(cmds, text, 0)
+	cmds := make([]cmdscan.Command, len(scs))
+	for i, sc := range scs {
+		cmds[i] = sc.Command
+	}
+	dirs := mainShellDirs(ctx, scs)
+	return claudeLaunchOverride(cmds, text, 0, func(i int) string { return launchDirReason(ctx.CWD, dirs[i]) })
 }
 
 // claudeLaunchOverride checks each command that runs Claude Code, following
-// shell scripts, against the settings overrides. text is the whole line, whose
+// shell scripts, against the settings overrides and the permission-escalating
+// options, and judges the directory it runs in. text is the whole line, whose
 // override markers count against a launch whose arguments are not all visible
-// (an expansion, xargs).
-func claudeLaunchOverride(cmds []cmdscan.Command, text string, depth int) string {
+// (an expansion, xargs). dirReason reports why the command at an index runs
+// outside the session's working directory, or "".
+func claudeLaunchOverride(cmds []cmdscan.Command, text string, depth int, dirReason func(int) string) string {
 	envSet := ""
 	for _, c := range cmds {
 		if v := envAssignment(c, isOverrideEnv); v != "" {
 			envSet = v
 		}
 	}
-	for _, c := range cmds {
+	for idx, c := range cmds {
 		words := append([]string{c.Name}, c.Args...)
+		launchDir := func() string {
+			if cmdscan.Program(words).DirChanged {
+				return dirChangedReason
+			}
+			return dirReason(idx)
+		}
 		if script, ok := cmdscan.ShellScript(words); ok {
-			if reason := scriptLaunchOverride(script, depth); reason != "" {
+			if reason := scriptLaunchOverride(script, depth, launchDir()); reason != "" {
 				return reason
 			}
 		}
 		if reason := unknownProgramOverride(c); reason != "" {
 			return reason
 		}
-		i := slices.IndexFunc(words, isClaudeCLI)
-		if i < 0 || !isClaudePackage(words[i]) && !isClaudeEntryScript(words[i]) && !slices.Contains(cmdscan.CommandWordIndexes(words), i) {
+		i := slices.IndexFunc(words, canon.IsClaudeCLI)
+		if i < 0 || !canon.IsClaudePackage(words[i]) && !canon.IsClaudeEntryScript(words[i]) && !slices.Contains(cmdscan.CommandWordIndexes(words), i) {
 			continue
 		}
 		if v := wrapperEnvAssignment(words[:i]); v != "" {
@@ -129,12 +165,21 @@ func claudeLaunchOverride(cmds []cmdscan.Command, text string, depth int) string
 		if (c.HasExpansion || i > 0 && path.Base(words[0]) == "xargs") && mentionsOverride(text) {
 			return "Claude Code started with arguments this check cannot see, on a line that carries a settings override"
 		}
+		if printsOnly(words[i+1:]) {
+			continue
+		}
+		if reason := launchDir(); reason != "" {
+			return reason
+		}
 	}
 	return ""
 }
 
-// scriptLaunchOverride checks a script run through `sh -c` or eval.
-func scriptLaunchOverride(script string, depth int) string {
+// scriptLaunchOverride checks a script run through `sh -c` or eval. outerDir
+// is why the command running the script runs outside the session's working
+// directory, or ""; a launch after a cd, pushd or popd inside the script
+// fails closed, since the script's directory changes are not followed.
+func scriptLaunchOverride(script string, depth int, outerDir string) string {
 	if !reClaudeWord.MatchString(script) {
 		return ""
 	}
@@ -148,7 +193,13 @@ func scriptLaunchOverride(script string, depth int) string {
 		}
 		return ""
 	}
-	return claudeLaunchOverride(sub, script, depth+1)
+	firstCD := slices.IndexFunc(sub, func(c cmdscan.Command) bool { return cmdscan.ChangesDir(c.Name) })
+	return claudeLaunchOverride(sub, script, depth+1, func(i int) string {
+		if outerDir == "" && firstCD >= 0 && i > firstCD {
+			return scriptDirReason
+		}
+		return outerDir
+	})
 }
 
 // unknownProgramOverride reports a command whose program is only known after
@@ -181,7 +232,10 @@ func claudeArgsOverride(args []string) string {
 		if hookDroppingFlags[name] {
 			return "Claude Code started with " + name + ", which runs without the configured hooks"
 		}
-		if !settingsFlags[name] {
+		if permissionEscalatingFlags[name] {
+			return "Claude Code started with " + name + ", which escapes this session's permission rules"
+		}
+		if !settingsFlags[name] && name != permissionModeFlag {
 			continue
 		}
 		if !hasValue {
@@ -191,11 +245,80 @@ func claudeArgsOverride(args []string) string {
 			i++
 			value = args[i]
 		}
-		reason := settingSourcesOverride(value)
-		if name == "--settings" {
-			reason = inlineSettingsOverride(value)
+		if reason := valuedFlagOverride(name, value); reason != "" {
+			return reason
 		}
-		if reason != "" {
+	}
+	return ""
+}
+
+// valuedFlagOverride judges the value of a settings option or of
+// --permission-mode.
+func valuedFlagOverride(name, value string) string {
+	switch name {
+	case "--settings":
+		return inlineSettingsOverride(value)
+	case permissionModeFlag:
+		if strings.EqualFold(strings.TrimSpace(value), bypassPermissionsValue) {
+			return "Claude Code started with " + permissionModeFlag + " " + bypassPermissionsValue + ", which skips every permission check"
+		}
+		return ""
+	default:
+		return settingSourcesOverride(value)
+	}
+}
+
+// claudeInfoFlags are the Claude Code options that print the version or the
+// help and exit, loading no settings and running no hooks.
+var claudeInfoFlags = map[string]bool{"--version": true, "-v": true, "--help": true, "-h": true}
+
+// printsOnly reports whether a Claude Code argument list, before any "--",
+// holds an option that only prints (claudeInfoFlags), so where the launch
+// runs does not matter.
+func printsOnly(args []string) bool {
+	for _, a := range args {
+		if a == "--" {
+			return false
+		}
+		if claudeInfoFlags[a] {
+			return true
+		}
+	}
+	return false
+}
+
+// launchDirReason reports why a Claude Code launch at sc runs in a working
+// directory other than the session's: a session started elsewhere loads that
+// directory's project settings, and with them other hooks or none. A
+// directory that cannot be resolved fails closed; with no session cwd known,
+// only that is judged.
+func launchDirReason(sessionCWD string, sc scannedCommand) string {
+	switch {
+	case sc.cwdUnknown:
+		return "Claude Code started after a directory change this check cannot resolve, so it may load another directory's project settings and hooks"
+	case sessionCWD != "" && !withinDir(sc.cwd, sessionCWD):
+		return "Claude Code started from " + sc.cwd + ", outside the session's working directory, loads that directory's project settings and hooks"
+	}
+	return ""
+}
+
+// dirChangedReason is the reason for a launch whose wrapper runs it in
+// another directory (`env -C /tmp claude`).
+const dirChangedReason = "Claude Code started by a wrapper that changes its working directory, so it loads another directory's project settings and hooks"
+
+// scriptDirReason is the reason for a launch after a cd inside a shell
+// script, whose directory changes this check does not follow.
+const scriptDirReason = "Claude Code started after a directory change inside a shell script, so it may load another directory's project settings and hooks"
+
+// psLaunchDirOverride judges the working directory of each Claude Code launch
+// on a PowerShell line, tracked through Set-Location, Push-Location and
+// Pop-Location (see psScanned).
+func psLaunchDirOverride(ctx *EvalContext) string {
+	for _, sc := range ctx.psScanned() {
+		if !canon.IsClaudeCLI(sc.Name) {
+			continue
+		}
+		if reason := launchDirReason(ctx.CWD, sc); reason != "" {
 			return reason
 		}
 	}
@@ -218,6 +341,46 @@ func inlineSettingsOverride(value string) string {
 		if _, ok := settings[k]; ok {
 			return "--settings sets " + k + ", which changes the hooks the session runs"
 		}
+	}
+	if _, ok := settings[skipDangerousPromptKey]; ok {
+		return "--settings sets " + skipDangerousPromptKey + ", which escapes this session's permission rules"
+	}
+	if raw, ok := settings[permissionsKey]; ok {
+		return permissionsEscalation(raw)
+	}
+	return ""
+}
+
+// Inline settings keys that grant what the permission-escalating options do:
+// permissions.defaultMode bypassPermissions is --permission-mode
+// bypassPermissions, permissions.additionalDirectories is --add-dir, and
+// skipDangerousModePermissionPrompt drops the prompt before a bypass.
+const (
+	permissionsKey         = "permissions"
+	defaultModeKey         = "defaultMode"
+	additionalDirsKey      = "additionalDirectories"
+	skipDangerousPromptKey = "skipDangerousModePermissionPrompt"
+)
+
+// permissionsEscalation judges the permissions block of inline --settings:
+// a bypassPermissions default mode (any case) or additional directories
+// escape this session's permission rules. A block that is not an object, or
+// a default mode that is not a string, fails closed.
+func permissionsEscalation(raw json.RawMessage) string {
+	var perms map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &perms); err != nil {
+		return "--settings sets permissions that cannot be read"
+	}
+	if _, ok := perms[additionalDirsKey]; ok {
+		return "--settings sets permissions." + additionalDirsKey + ", which escapes this session's permission rules"
+	}
+	mode, ok := perms[defaultModeKey]
+	if !ok {
+		return ""
+	}
+	var s string
+	if err := json.Unmarshal(mode, &s); err != nil || strings.EqualFold(strings.TrimSpace(s), bypassPermissionsValue) {
+		return "--settings sets permissions." + defaultModeKey + " " + bypassPermissionsValue + ", which skips every permission check"
 	}
 	return ""
 }
@@ -269,46 +432,13 @@ func wrapperEnvAssignment(words []string) string {
 	return ""
 }
 
-// isClaudeCLI reports whether a command word runs the Claude Code CLI: the
-// claude binary (any directory, a Windows extension), a release of the native
-// installer (…/claude/versions/<version>, which the claude launcher links
-// to), its npm package or the package's entry script.
-func isClaudeCLI(word string) bool {
-	if isClaudePackage(word) || isClaudeEntryScript(word) {
-		return true
-	}
-	dir, base := path.Split(strings.ToLower(strings.ReplaceAll(word, `\`, "/")))
-	if strings.HasSuffix(dir, "/claude/versions/") && base != "" {
-		return true
-	}
-	for _, ext := range []string{".exe", ".cmd", ".ps1"} {
-		base = strings.TrimSuffix(base, ext)
-	}
-	return base == "claude"
-}
-
-// isClaudePackage reports whether word names the Claude Code npm package, at
-// any version: a package runner (npx, bunx, pnpm dlx) given it runs Claude
-// Code, whatever option precedes it.
-func isClaudePackage(word string) bool {
-	return strings.HasPrefix(strings.TrimPrefix(word, "npm:"), claudePackage)
-}
-
-// isClaudeEntryScript reports whether word is a script of the Claude Code npm
-// package (…/@anthropic-ai/claude-code/cli.js), which an interpreter such as
-// node runs as the CLI.
-func isClaudeEntryScript(word string) bool {
-	dir, base := path.Split(strings.ToLower(strings.ReplaceAll(word, `\`, "/")))
-	return strings.HasSuffix("/"+dir, "/"+claudePackage+"/") && slices.Contains([]string{".js", ".mjs", ".cjs"}, path.Ext(base))
-}
-
 func isOverrideEnv(name string) bool {
 	return slices.Contains(launchOverrideEnv, name)
 }
 
 func isOverrideFlag(word string) bool {
 	name, _, _ := strings.Cut(word, "=")
-	return hookDroppingFlags[name] || settingsFlags[name]
+	return hookDroppingFlags[name] || settingsFlags[name] || permissionEscalatingFlags[name] || name == permissionModeFlag
 }
 
 // reLongOption finds long options anywhere in text, including inside an

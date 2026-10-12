@@ -21,6 +21,8 @@ func TestIsSafeReadCommand(t *testing.T) {
 		{"grep -r deny .claude/", true},
 		{"jq . .claude/settings.json", true},
 		{"printenv QSDEV_ORG_CONFIG", true},
+		{"du -sh .git", true}, // du only sums sizes, whatever its options
+		{"du --files0-from=list -c", true},
 
 		// direnv: trust and status subcommands leave the .envrc untouched.
 		{"direnv allow .envrc", true},

@@ -65,12 +65,18 @@ func findMutatesProtected(sc scannedCommand) bool {
 
 // findProbesUnder returns the probes as find would print them below start:
 // every relative probe, and every absolute probe within the directory start
-// resolves to.
+// resolves to. When start is a git directory (gitControlHolder), the probes
+// inside a .git directory are also taken as lying directly below it
+// (`find .git -path '.git/hooks/*'`).
 func findProbesUnder(sc scannedCommand, start string, relative, absolute []string) []string {
 	prefix := strings.TrimSuffix(filepath.ToSlash(expandTilde(start)), "/")
+	gitDir := gitControlHolder(sc, start)
 	probes := make([]string, 0, len(relative))
 	for _, rel := range relative {
 		probes = append(probes, prefix+"/"+rel)
+		if inner, ok := strings.CutPrefix(rel, ".git/"); ok && gitDir {
+			probes = append(probes, prefix+"/"+inner)
+		}
 	}
 	dir, known := resolveWord(sc, start)
 	if !known {
@@ -152,9 +158,10 @@ func splitFindArgs(args []string) (starts, exprs []string) {
 // protected entry: it names one, it is the working directory or an ancestor of
 // it, it is an ancestor of the home directory or /etc, or it is at or above a
 // home- or system-anchored protected location (~/.config, say), also when an
-// expansion spells the home directory (see expandedReachesAncestor).
+// expansion spells the home directory (see expandedReachesAncestor), or it is
+// a git directory, which holds the git-control locations (gitControlHolder).
 func findStartCanReachProtected(sc scannedCommand, start string) bool {
-	if refersProtected(sc, start) || expandedReachesAncestor(sc, start) {
+	if refersProtected(sc, start) || expandedReachesAncestor(sc, start) || gitControlHolder(sc, start) {
 		return true
 	}
 	p, known := resolveWord(sc, start)

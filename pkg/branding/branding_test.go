@@ -474,3 +474,19 @@ func TestDevenvAnswersCopy(t *testing.T) {
 		})
 	}
 }
+
+func TestComposerHomeDir_Branded(t *testing.T) {
+	t.Parallel()
+	tests := []struct{ app, want string }{
+		{"qsdev", ".qsdev-composer"},
+		{"acme", ".acme-composer"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.app, func(t *testing.T) {
+			t.Parallel()
+			if got := (Config{AppName: tt.app}).ComposerHomeDir(); got != tt.want {
+				t.Errorf("ComposerHomeDir() = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}

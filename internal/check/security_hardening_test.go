@@ -1,16 +1,24 @@
 package check
 
 import (
+	"encoding/json"
+	"maps"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 
+	"github.com/Quantum-Serendipity/qsdev/internal/catalog"
+	"github.com/Quantum-Serendipity/qsdev/internal/config"
+	"github.com/Quantum-Serendipity/qsdev/pkg/branding"
+	"github.com/Quantum-Serendipity/qsdev/pkg/ecosystem"
 	// Register the ecosystem modules whose generated security configs the
 	// hardening check derives its expected settings from.
 	_ "github.com/Quantum-Serendipity/qsdev/pkg/ecosystem/modules/golang"
 	_ "github.com/Quantum-Serendipity/qsdev/pkg/ecosystem/modules/helm"
 	_ "github.com/Quantum-Serendipity/qsdev/pkg/ecosystem/modules/javascript"
+	_ "github.com/Quantum-Serendipity/qsdev/pkg/ecosystem/modules/php"
 	_ "github.com/Quantum-Serendipity/qsdev/pkg/ecosystem/modules/python"
 	_ "github.com/Quantum-Serendipity/qsdev/pkg/ecosystem/modules/terraform"
 	"github.com/Quantum-Serendipity/qsdev/pkg/types"
@@ -536,5 +544,342 @@ func TestCheckSecurityHardening_AgeGateBelowComplianceLevel(t *testing.T) {
 				t.Errorf("Remediation = %q, want it to name %s", got.Remediation, tt.wantMessage)
 			}
 		})
+	}
+}
+
+func TestFlattenJSONSettings(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name    string
+		in      string
+		want    map[string]string
+		wantErr bool
+	}{
+		{
+			name: "scalar leaves as dotted keys",
+			in:   `{"a": "x", "b": {"c": true, "d": null}}`,
+			want: map[string]string{"(root)": "{2}", "a": "x", "b": "{2}", "b.c": "true", "b.d": "null"},
+		},
+		{
+			name: "array indices are segments",
+			in:   `{"repositories": [{"type": "composer"}, {"packagist.org": false}]}`,
+			want: map[string]string{
+				"(root)":                       "{1}",
+				"repositories":                 "[2]",
+				"repositories.0":               "{1}",
+				"repositories.0.type":          "composer",
+				"repositories.1":               "{1}",
+				"repositories.1.packagist.org": "false",
+			},
+		},
+		{
+			name: "empty containers record a zero count",
+			in:   `{"allow-plugins": {}, "list": []}`,
+			want: map[string]string{"(root)": "{2}", "allow-plugins": "{0}", "list": "[0]"},
+		},
+		{
+			name: "underscore keys are skipped at any depth and not counted",
+			in:   `{"_comment": "x", "_nested": {"k": 1}, "c": {"_note": "y", "k": 2}}`,
+			want: map[string]string{"(root)": "{1}", "c": "{1}", "c.k": "2"},
+		},
+		{
+			name: "numbers stay exact",
+			in:   `{"big": 12345678901234567890, "frac": 0.10, "exp": 1e3}`,
+			want: map[string]string{"(root)": "{3}", "big": "12345678901234567890", "frac": "0.10", "exp": "1e3"},
+		},
+		{
+			name: "top-level array",
+			in:   `[true]`,
+			want: map[string]string{"(root)": "[1]", "0": "true"},
+		},
+		{name: "malformed", in: `{"a": `, wantErr: true},
+		{name: "trailing data", in: `{"a": 1} {"b": 2}`, wantErr: true},
+		{name: "empty input", in: ``, wantErr: true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			got, err := flattenJSONSettings([]byte(tt.in))
+			if tt.wantErr {
+				if err == nil {
+					t.Fatalf("flattenJSONSettings(%q) = %v, want an error", tt.in, got)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("flattenJSONSettings(%q): %v", tt.in, err)
+			}
+			if !maps.Equal(got, tt.want) {
+				t.Errorf("flattenJSONSettings(%q) = %v, want %v", tt.in, got, tt.want)
+			}
+		})
+	}
+}
+
+// testProxyInfra is a registry proxy configuration for check tests.
+var testProxyInfra = types.InfraConfig{RegistryProxy: "https://nexus.example.test"}
+
+// writeGeneratedSecurityConfigs writes the security configs generation
+// produces for lang under qcfg into dir and returns them: the same
+// ecosystem.ToGenerationConfig input the generator uses, with the
+// infrastructure .qsdev.yaml carries and its compliance release-age window.
+func writeGeneratedSecurityConfigs(t *testing.T, dir string, qcfg *types.QsdevConfig, lang types.LanguageConfig) []types.GeneratedFile {
+	t.Helper()
+	mod, ok := ecosystem.DefaultRegistry().ByName(lang.Name)
+	if !ok {
+		t.Fatalf("module %q not registered", lang.Name)
+	}
+	cfg := ecosystem.ToGenerationConfig(
+		types.LanguageChoice{Name: lang.Name, PackageManager: lang.PackageManager},
+		types.WizardAnswers{Infrastructure: qcfg.Infrastructure},
+		catalog.EffectiveAgeGate(config.EffectiveSecurityLevel(qcfg)),
+	)
+	files := mod.SecurityConfigs(cfg)
+	for _, gf := range files {
+		p := filepath.Join(dir, filepath.FromSlash(gf.Path))
+		if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(p, gf.Content, 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	return files
+}
+
+// resultsNamed returns every result with the given name.
+func resultsNamed(results []CheckResult, name string) []CheckResult {
+	var out []CheckResult
+	for _, r := range results {
+		if r.Name == name {
+			out = append(out, r)
+		}
+	}
+	return out
+}
+
+// TestCheckSecurityConfig_PHP verifies qsdev check reads the tracked
+// Composer home config.json as JSON: the generated files pass, and removing
+// or weakening any hardening setting fails with the setting named.
+func TestCheckSecurityConfig_PHP(t *testing.T) {
+	t.Parallel()
+	home := branding.Get().ComposerHomeDir()
+	configPath := home + "/config.json"
+	gitignorePath := home + "/.gitignore"
+	settings := func(m map[string]any) map[string]any { return m["config"].(map[string]any) }
+
+	tests := []struct {
+		name        string
+		genInfra    types.InfraConfig // infrastructure the files were generated with
+		checkInfra  types.InfraConfig // infrastructure .qsdev.yaml holds at check time
+		mutate      func(m map[string]any)
+		raw         string // replaces config.json verbatim when set
+		gitignore   string // replaces the nested .gitignore verbatim when set
+		remove      string // generated file to delete
+		wantStatus  CheckStatus
+		wantPath    string // result to inspect; "" means every result
+		wantMessage string
+	}{
+		{name: "generated with proxy", genInfra: testProxyInfra, checkInfra: testProxyInfra, wantStatus: StatusPass},
+		{name: "generated without proxy", wantStatus: StatusPass},
+		{
+			name: "repositories deleted", genInfra: testProxyInfra, checkInfra: testProxyInfra,
+			mutate:     func(m map[string]any) { delete(m, "repositories") },
+			wantStatus: StatusFail, wantPath: configPath, wantMessage: "repositories.1.packagist.org=false",
+		},
+		{
+			name: "packagist.org re-enabled", genInfra: testProxyInfra, checkInfra: testProxyInfra,
+			mutate:     func(m map[string]any) { m["repositories"].([]any)[1].(map[string]any)["packagist.org"] = true },
+			wantStatus: StatusFail, wantPath: configPath, wantMessage: "repositories.1.packagist.org=false",
+		},
+		{
+			name: "proxy added after generation", checkInfra: testProxyInfra,
+			wantStatus: StatusFail, wantPath: configPath, wantMessage: "repositories.0.url=https://nexus.example.test/repository/composer-proxy/",
+		},
+		{
+			name:       "secure-http disabled",
+			mutate:     func(m map[string]any) { settings(m)["secure-http"] = false },
+			wantStatus: StatusFail, wantPath: configPath, wantMessage: "config.secure-http=true",
+		},
+		{
+			name:       "abandoned packages only warn",
+			mutate:     func(m map[string]any) { settings(m)["audit"] = map[string]any{"abandoned": "warn"} },
+			wantStatus: StatusFail, wantPath: configPath, wantMessage: "config.audit.abandoned=fail",
+		},
+		{
+			name:       "every plugin allowed",
+			mutate:     func(m map[string]any) { settings(m)["allow-plugins"] = true },
+			wantStatus: StatusFail, wantPath: configPath, wantMessage: "config.allow-plugins must be an empty object, not true",
+		},
+		{
+			// Composer merges allow-plugins, so a wildcard here allows every
+			// plugin as surely as true.
+			name:       "wildcard plugin allowed",
+			mutate:     func(m map[string]any) { settings(m)["allow-plugins"] = map[string]any{"*": true} },
+			wantStatus: StatusFail, wantPath: configPath, wantMessage: "config.allow-plugins has unexpected entries: *",
+		},
+		{
+			name:       "named plugins allowed",
+			mutate:     func(m map[string]any) { settings(m)["allow-plugins"] = map[string]any{"vendor/plugin": true} },
+			wantStatus: StatusFail, wantPath: configPath, wantMessage: "config.allow-plugins has unexpected entries: vendor/plugin",
+		},
+		{
+			name: "unproxied repository appended", genInfra: testProxyInfra, checkInfra: testProxyInfra,
+			mutate: func(m map[string]any) {
+				m["repositories"] = append(m["repositories"].([]any), map[string]any{"type": "composer", "url": "http://evil.example.test/"})
+			},
+			wantStatus: StatusFail, wantPath: configPath, wantMessage: "repositories must have exactly 2 entries (found 3)",
+		},
+		{
+			name: "repository added without proxy",
+			mutate: func(m map[string]any) {
+				m["repositories"] = []any{map[string]any{"type": "composer", "url": "http://evil.example.test/"}}
+			},
+			wantStatus: StatusFail, wantPath: configPath, wantMessage: "the top level has unexpected entries: repositories",
+		},
+		{
+			name:       "audit advisories ignored",
+			mutate:     func(m map[string]any) { settings(m)["audit"].(map[string]any)["ignore"] = []any{"GHSA-xxxx"} },
+			wantStatus: StatusFail, wantPath: configPath, wantMessage: "config.audit has unexpected entries: ignore",
+		},
+		{
+			name:       "comment edited",
+			mutate:     func(m map[string]any) { m["_comment"] = "edited" },
+			wantStatus: StatusPass,
+		},
+		{name: "malformed JSON", raw: `{"config": {`, wantStatus: StatusFail, wantPath: configPath, wantMessage: "not valid JSON"},
+		{name: "config.json missing", remove: configPath, wantStatus: StatusFail, wantPath: configPath, wantMessage: "could not be read"},
+		{name: ".gitignore missing", remove: gitignorePath, wantStatus: StatusFail, wantPath: gitignorePath, wantMessage: "could not be read"},
+		{
+			name: ".gitignore emptied", gitignore: "\n",
+			wantStatus: StatusFail, wantPath: gitignorePath, wantMessage: "patterns differ: want `*`, `!.gitignore`, `!config.json`; found no patterns",
+		},
+		{
+			name: ".gitignore re-includes auth.json", gitignore: "*\n!.gitignore\n!config.json\n!auth.json\n",
+			wantStatus: StatusFail, wantPath: gitignorePath, wantMessage: "found `*`, `!.gitignore`, `!config.json`, `!auth.json`",
+		},
+		{
+			// A later pattern overrides an earlier one: * after !config.json
+			// ignores the policy file again.
+			name: ".gitignore reordered", gitignore: "!config.json\n*\n!.gitignore\n",
+			wantStatus: StatusFail, wantPath: gitignorePath, wantMessage: "found `!config.json`, `*`, `!.gitignore`",
+		},
+		{
+			name: ".gitignore with comments and blank lines", gitignore: "# composer home\n*\n\n!.gitignore\r\n!config.json  \n",
+			wantStatus: StatusPass, wantPath: gitignorePath,
+		},
+		{
+			name: ".gitignore negation indented", gitignore: "*\n!.gitignore\n  !config.json\n",
+			wantStatus: StatusFail, wantPath: gitignorePath, wantMessage: "found `*`, `!.gitignore`, `  !config.json`",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			dir := t.TempDir()
+			lang := types.LanguageConfig{Name: ecosystem.NamePHP}
+			writeGeneratedSecurityConfigs(t, dir, &types.QsdevConfig{Infrastructure: tt.genInfra}, lang)
+			cfgFile := filepath.Join(dir, filepath.FromSlash(configPath))
+			if tt.mutate != nil {
+				data, err := os.ReadFile(cfgFile)
+				if err != nil {
+					t.Fatal(err)
+				}
+				var m map[string]any
+				if err := json.Unmarshal(data, &m); err != nil {
+					t.Fatal(err)
+				}
+				tt.mutate(m)
+				if data, err = json.Marshal(m); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.WriteFile(cfgFile, data, 0o644); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if tt.raw != "" {
+				if err := os.WriteFile(cfgFile, []byte(tt.raw), 0o644); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if tt.gitignore != "" {
+				if err := os.WriteFile(filepath.Join(dir, filepath.FromSlash(gitignorePath)), []byte(tt.gitignore), 0o644); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if tt.remove != "" {
+				if err := os.Remove(filepath.Join(dir, filepath.FromSlash(tt.remove))); err != nil {
+					t.Fatal(err)
+				}
+			}
+
+			results := resultsNamed(CheckSecurityHardening(CheckContext{
+				ProjectRoot: dir,
+				QsdevConfig: &types.QsdevConfig{Languages: []types.LanguageConfig{lang}, Infrastructure: tt.checkInfra},
+			}), "security_config_php")
+			if len(results) != 2 {
+				t.Fatalf("got %d security_config_php results, want 2 (config.json and .gitignore): %+v", len(results), results)
+			}
+			for _, r := range results {
+				if tt.wantPath != "" && r.FilePath != tt.wantPath {
+					continue
+				}
+				if r.Status != tt.wantStatus {
+					t.Errorf("%s: Status = %s, want %s (%s)", r.FilePath, r.Status, tt.wantStatus, r.Message)
+				}
+				if !strings.Contains(r.Message, tt.wantMessage) {
+					t.Errorf("%s: Message = %q, want it to name %q", r.FilePath, r.Message, tt.wantMessage)
+				}
+				// Container markers are internal: users must never see them.
+				for _, text := range []string{r.Message, r.Remediation} {
+					if markerText.MatchString(text) || strings.Contains(text, rootKey) || strings.Contains(text, "pattern.") {
+						t.Errorf("%s: %q shows an internal marker", r.FilePath, text)
+					}
+				}
+			}
+		})
+	}
+}
+
+// markerText matches a container marker (jsonObjectMarker, jsonArrayMarker)
+// rendered as a setting value.
+var markerText = regexp.MustCompile(`=[{\[][0-9]+[}\]]`)
+
+// TestCheckSecurityConfig_ProxyStillPasses pins that resolving the registry
+// proxy at check time does not break ecosystems that already write it: the
+// configs generation produces for each JavaScript package manager and for pip,
+// with and without a proxy, still pass.
+func TestCheckSecurityConfig_ProxyStillPasses(t *testing.T) {
+	t.Parallel()
+	langs := []types.LanguageConfig{
+		{Name: ecosystem.NameJavaScript, PackageManager: "npm"},
+		{Name: ecosystem.NameJavaScript, PackageManager: "pnpm"},
+		{Name: ecosystem.NameJavaScript, PackageManager: "yarn"},
+		{Name: ecosystem.NameJavaScript, PackageManager: "bun"},
+		{Name: ecosystem.NamePython, PackageManager: "pip"},
+		{Name: ecosystem.NamePython},
+		{Name: ecosystem.NamePHP},
+	}
+	for _, lang := range langs {
+		for _, infra := range []types.InfraConfig{{}, testProxyInfra} {
+			t.Run(lang.Name+"/"+lang.PackageManager+"/proxy="+infra.RegistryProxy, func(t *testing.T) {
+				t.Parallel()
+				dir := t.TempDir()
+				qcfg := &types.QsdevConfig{Languages: []types.LanguageConfig{lang}, Infrastructure: infra}
+				files := writeGeneratedSecurityConfigs(t, dir, qcfg, lang)
+				if len(files) == 0 {
+					t.Fatal("generation produced no security configs")
+				}
+				results := resultsNamed(CheckSecurityHardening(CheckContext{ProjectRoot: dir, QsdevConfig: qcfg}), "security_config_"+lang.Name)
+				if len(results) != len(files) {
+					t.Fatalf("got %d results for %d generated files: %+v", len(results), len(files), results)
+				}
+				for _, r := range results {
+					if r.Status != StatusPass {
+						t.Errorf("%s: Status = %s, want PASS (%s)", r.FilePath, r.Status, r.Message)
+					}
+				}
+			})
+		}
 	}
 }

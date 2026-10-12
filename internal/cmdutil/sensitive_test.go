@@ -3,7 +3,6 @@ package cmdutil
 import (
 	"bytes"
 	"errors"
-	"io"
 	"slices"
 	"strings"
 	"testing"
@@ -11,15 +10,8 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/Quantum-Serendipity/qsdev/internal/selfprotect/cmdscan"
+	"github.com/Quantum-Serendipity/qsdev/internal/testutil/humantest"
 )
-
-// ttyReader is stdin a test presents as an interactive terminal, or not.
-type ttyReader struct {
-	io.Reader
-	tty bool
-}
-
-func (r ttyReader) IsTerminal() bool { return r.tty }
 
 // sensitiveTree builds a root with the gate installed and one command per
 // kind of Sensitivity; ran records the commands whose RunE ran.
@@ -77,10 +69,10 @@ func TestHumanGate(t *testing.T) {
 			if tt.agent {
 				marker = "1"
 			}
-			t.Setenv("CLAUDECODE", marker)
+			humantest.SetAgentSession(t, marker)
 			var ran []string
 			root := sensitiveTree(&ran)
-			root.SetIn(ttyReader{Reader: strings.NewReader(""), tty: tt.tty})
+			root.SetIn(humantest.HumanTerminal{Reader: strings.NewReader(""), TTY: tt.tty})
 			root.SetOut(&bytes.Buffer{})
 			root.SetErr(&bytes.Buffer{})
 			root.SetArgs(tt.args)
@@ -123,7 +115,7 @@ func TestSensitivityArgsErrorFailsClosed(t *testing.T) {
 	}
 	for _, args := range [][]string{{"disable", "anything"}, {"disable", "changelog"}, {"disable"}} {
 		t.Run(strings.Join(args, " "), func(t *testing.T) {
-			t.Setenv("CLAUDECODE", "")
+			humantest.SetAgentSession(t, "")
 			var ran []string
 			root := tree(&ran)
 			cmd, rest, err := root.Find(args)
@@ -134,7 +126,7 @@ func TestSensitivityArgsErrorFailsClosed(t *testing.T) {
 				t.Errorf("IsSensitiveInvocation(%q) = false, want true when Args fails", args)
 			}
 
-			root.SetIn(ttyReader{Reader: strings.NewReader(""), tty: false})
+			root.SetIn(humantest.HumanTerminal{Reader: strings.NewReader("")})
 			root.SetOut(&bytes.Buffer{})
 			root.SetErr(&bytes.Buffer{})
 			root.SetArgs(args)
@@ -213,7 +205,7 @@ func TestSensitiveCommandsReadOnlyAgreesWithCobra(t *testing.T) {
 	}
 	for _, args := range tests {
 		t.Run(strings.Join(args, " "), func(t *testing.T) {
-			t.Setenv("CLAUDECODE", "")
+			humantest.SetAgentSession(t, "")
 			var ran []string
 			root := sensitiveTree(&ran)
 			root.Version = "1.0.0"
@@ -226,7 +218,7 @@ func TestSensitiveCommandsReadOnlyAgreesWithCobra(t *testing.T) {
 			root.AddCommand(MarkSensitive(pin, Sensitivity{}))
 			specs := SensitiveCommands(root)
 
-			root.SetIn(ttyReader{Reader: strings.NewReader(""), tty: true})
+			root.SetIn(humantest.HumanTerminal{Reader: strings.NewReader(""), TTY: true})
 			root.SetOut(&bytes.Buffer{})
 			root.SetErr(&bytes.Buffer{})
 			root.SetArgs(args)

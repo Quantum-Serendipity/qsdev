@@ -56,19 +56,49 @@ func (ctx *EvalContext) scannedCommands() ([]scannedCommand, error) {
 	}
 	ctx.scannedDone = true
 
-	st := dirState{
-		cwd:         ctx.CWD,
-		inProtected: ctx.CWD != "" && isProtectedDir(ctx.CWD),
-		cdpath:      strings.Contains(looseText(ctx.Command), "CDPATH"),
-	}
+	st := newDirState(ctx)
 	out := make([]scannedCommand, 0, len(cmds))
 	for _, c := range cmds {
-		sc := scannedCommand{Command: c, cwd: st.cwd, inProtectedDir: st.inProtected, cwdUnknown: st.unknown, cwdHint: st.hint, fs: &ctx.fs}
+		sc := scannedCommand{Command: c, fs: &ctx.fs}
+		st.place(&sc)
 		out = append(out, sc)
 		st.apply(sc)
 	}
 	ctx.scanned = out
 	return out, nil
+}
+
+// mainShellDirs returns scs with the working directory of each command that
+// runs in the line's own shell as that shell sees it: a cd, pushd or popd in
+// a subshell (`( cd x )`, `cd x &`, a pipeline stage) does not move it. A
+// command in a subshell keeps the shared tracking of scs, which takes every
+// earlier cd as persisting (fail closed), as which subshell a cd ran in is
+// not told apart.
+func mainShellDirs(ctx *EvalContext, scs []scannedCommand) []scannedCommand {
+	st := newDirState(ctx)
+	out := slices.Clone(scs)
+	for i := range out {
+		if out[i].Subshell {
+			continue
+		}
+		st.place(&out[i])
+		st.apply(out[i])
+	}
+	return out
+}
+
+// newDirState returns the directory state at the start of ctx's line.
+func newDirState(ctx *EvalContext) dirState {
+	return dirState{
+		cwd:         ctx.CWD,
+		inProtected: ctx.CWD != "" && isProtectedDir(ctx.CWD),
+		cdpath:      strings.Contains(looseText(ctx.Command), "CDPATH"),
+	}
+}
+
+// place records the directory state as the working directory sc runs in.
+func (st *dirState) place(sc *scannedCommand) {
+	sc.cwd, sc.inProtectedDir, sc.cwdUnknown, sc.cwdHint = st.cwd, st.inProtected, st.unknown, st.hint
 }
 
 // dirState tracks the working directory across the commands of one line.
@@ -156,8 +186,10 @@ func expandTilde(p string) string {
 // directory as an ancestor, such as a Claude Code worktree under
 // .claude/worktrees/, is not itself treated as protected.
 func isProtectedDir(dir string) bool {
-	if canon.ContainsProtectedPath(filepath.Base(dir)) {
-		return true // a .claude/.qsdev/.gdev directory itself
+	// A policy directory protects only its policy files (IsProtected checks
+	// them), not every entry: its cache stays writable.
+	if canon.ContainsProtectedDirName(filepath.Base(dir)) {
+		return true // a protected policy directory itself
 	}
 	protected, category := canon.IsProtected(filepath.Join(dir, "x"))
 	return protected && category != "mcp-config"
@@ -181,12 +213,15 @@ func resolvedProtected(fs *canon.Resolver, p string) bool {
 	return err == nil && canonical != p && pathProtected(canonical)
 }
 
-// pathProtected is resolvedProtected for a path taken as written.
+// pathProtected is resolvedProtected for a path taken as written. A policy
+// directory (canon.IsPolicyDir) counts too: removing, moving or rolling it
+// back as a whole takes its protected files with it, while the entries below
+// it other than those files stay unprotected.
 func pathProtected(p string) bool {
 	if protected, category := canon.IsProtected(p); protected && category != "mcp-config" {
 		return true
 	}
-	return isProtectedDir(p) || isProtectedDir(filepath.Dir(p))
+	return isProtectedDir(p) || isProtectedDir(filepath.Dir(p)) || canon.IsPolicyDir(p)
 }
 
 // lexicalProtected reports whether the literal text of p names a protected
@@ -219,7 +254,8 @@ func shellSegMatch(pattern, name string) bool {
 
 // globProtected reports whether a glob word can expand to a protected path: a
 // glob segment that matches a name protected in any location (`.c*e`,
-// `.env?c`), or an absolute pattern whose leading segments match a home- or
+// `.env?c`), segments that match a git-control location (`.gi?/hooks/x`), or
+// an absolute pattern whose leading segments match a home- or
 // system-anchored protected location (`/etc/g?ev/...`, `~/.config/q*/x`).
 // Both tables come from canon, so a newly protected location is covered here
 // without a second list.
@@ -228,6 +264,9 @@ func globProtected(p string) bool {
 		return false
 	}
 	cleaned := filepath.Clean(expandTilde(p))
+	if control, _ := canon.GitControlReach(pathmatch.Key(cleaned), shellSegMatch); control {
+		return true // `.gi?/hooks/x`, `.git/*/pre-commit`
+	}
 	segs := strings.Split(filepath.ToSlash(cleaned), "/")
 	names := canon.ProtectedNames()
 	for _, seg := range segs {
@@ -240,12 +279,31 @@ func globProtected(p string) bool {
 			}
 		}
 	}
+	if globReachesPolicyDir(segs) {
+		return true
+	}
 	if !isRooted(cleaned) {
 		return false
 	}
 	key := strings.Split(pathmatch.Key(cleaned), "/")
 	for _, loc := range canon.ProtectedLocationKeys() {
 		if globReaches(key, loc) {
+			return true
+		}
+	}
+	return false
+}
+
+// globReachesPolicyDir reports whether the glob pattern, split into
+// slash-separated segments, can end in a policy directory or in a protected
+// file directly inside one (canon.PolicyDirFiles): `<home>/conf*.json`,
+// `<home>/.git*`, or a `*` that a cd placed in the directory. Their base names
+// are too common to be ProtectedNames, so the trailing segments are matched
+// against the file's whole relative path.
+func globReachesPolicyDir(segs []string) bool {
+	for _, f := range canon.PolicyDirFiles() {
+		want := strings.Split(f, "/")
+		if segmentsEndWith(segs, want) || segmentsEndWith(segs, want[:len(want)-1]) {
 			return true
 		}
 	}
@@ -424,10 +482,18 @@ func refersProtected(sc scannedCommand, p string) bool {
 		if lexicalProtected(v) || globProtected(v) {
 			return true
 		}
-		if v == "" || hasGlobMeta(v) {
+		if v == "" {
 			continue
 		}
 		resolved, known := resolveWord(sc, v)
+		if hasGlobMeta(v) {
+			// A relative glob can reach a protected file through the
+			// directory a cd placed it in (`cd <home> && rm conf*.json`).
+			if known && globProtected(resolved) {
+				return true
+			}
+			continue
+		}
 		if !known {
 			if sc.inProtectedDir {
 				return true // relative to a protected directory we cannot leave
@@ -514,6 +580,15 @@ func posixMentionsProtected(ctx *EvalContext) bool {
 	if containsProtectedPathStr(ctx.Command) || containsProtectedPathStr(looseText(ctx.Command)) {
 		return true
 	}
+	// A command may build a git-control path from a git directory the line
+	// names through a variable (`d=.git; rm $d/hooks/pre-commit`). PowerShell
+	// judges any write on a mentioning line, so there the name only counts on
+	// a line that expands a variable; otherwise its commands' operands decide
+	// (`Remove-Item .git\index.lock` stays allowed).
+	if (!isPowerShell(ctx) || strings.Contains(ctx.Command, "$")) &&
+		(canon.MentionsGitDir(ctx.Command) || canon.MentionsGitDir(looseText(ctx.Command))) {
+		return true
+	}
 	scs, err := ctx.scannedCommands()
 	if err != nil {
 		return false
@@ -521,6 +596,7 @@ func posixMentionsProtected(ctx *EvalContext) bool {
 	for _, sc := range scs {
 		if sc.inProtectedDir ||
 			anyArgRefersProtected(sc, sc.Args) ||
+			anyGitControlHolder(sc, sc.Args) ||
 			anyRefersProtected(sc, sc.WriteRedirects) ||
 			anyRefersProtected(sc, sc.ReadRedirects) {
 			return true
@@ -720,29 +796,22 @@ func cpCreatesLinks(args []string) bool {
 	return false
 }
 
-// readsProgramFromStdin reports whether an interpreter takes its program from
-// standard input (no script file and no inline program, but a here-document,
-// here-string, or input redirect), which hides the program from argv.
+// readsProgramFromStdin reports whether a shell or interpreter takes its
+// program from standard input (cmdscan.ReadsProgramFromStdin: no script file
+// and no inline program) and that input is a here-document, here-string, or
+// input redirect, which hides the program from argv.
 func readsProgramFromStdin(sc scannedCommand) bool {
-	if !interpreterVerbs[sc.Name] || len(sc.ReadRedirects) == 0 {
-		return false
-	}
-	for _, a := range sc.Args {
-		if !isFlag(a) {
-			return false // a script file or an inline program (sh -c '...')
-		}
-	}
-	return true
+	return len(sc.ReadRedirects) > 0 && cmdscan.ReadsProgramFromStdin(sc.Command)
 }
 
-// interpreterVerbs run a script file given as their first operand. The script
-// is read and executed, not written, so running a protected hook script
-// (`bash .claude/hooks/test.sh`) is not a mutation of it. Any further
-// arguments, and every argument of an inline program (`sh -c`, `perl -pi -e`),
-// stay opaque.
-var interpreterVerbs = map[string]bool{
-	"sh": true, "bash": true, "zsh": true, "dash": true, "ksh": true,
-	"python": true, "python3": true, "node": true, "perl": true, "ruby": true,
+// runsScript reports whether the program named name is a shell or an
+// interpreter (cmdscan.IsScriptShell, cmdscan.IsInterpreter), which runs a
+// script file given as its first operand. The script is read and executed,
+// not written, so running a protected hook script (`bash
+// .claude/hooks/test.sh`) is not a mutation of it. Any further arguments, and
+// every argument of an inline program (`sh -c`, `perl -pi -e`), stay opaque.
+func runsScript(name string) bool {
+	return cmdscan.IsScriptShell(name) || cmdscan.IsInterpreter(name)
 }
 
 // mutationTargets returns the argument words that command sc may create,
@@ -770,7 +839,7 @@ func mutationTargets(sc scannedCommand) []string {
 		}
 		return targets
 	}
-	if interpreterVerbs[sc.Name] && len(args) > 0 && !isFlag(args[0]) {
+	if runsScript(sc.Name) && len(args) > 0 && !isFlag(args[0]) {
 		return args[1:]
 	}
 	return args
@@ -799,7 +868,8 @@ func relativeWriteTarget(sc scannedCommand) bool {
 // line references a protected path (lineMentionsProtected). A command then
 // counts as a mutation when:
 //
-//   - any of its mutation targets or write redirects names a protected path;
+//   - any of its mutation targets or write redirects names a protected path,
+//     or an operand target is a git directory (gitControlHolder);
 //   - it is not read-only and uses an expansion (a variable can carry the
 //     protected path named elsewhere on the line: `V=.claude/x; foo "$V"`);
 //   - it is not read-only and consumes a protected path on its input: from an
@@ -823,6 +893,11 @@ func protectedMutation(scs []scannedCommand) bool {
 			return true
 		}
 		if anyArgRefersProtected(sc, mutationTargets(sc)) || anyRefersProtected(sc, sc.WriteRedirects) {
+			return true
+		}
+		// `chmod -R a-x .git` disables the hooks inside; a find's start
+		// points are judged by what its expression selects (below).
+		if sc.Name != "find" && anyGitControlHolder(sc, mutationTargets(sc)) {
 			return true
 		}
 		if len(sc.WriteRedirects) > 0 && sc.HasExpansion {

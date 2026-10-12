@@ -99,6 +99,33 @@ func ResolveProjectInfrastructure(infra types.InfraConfig) (types.InfraConfig, e
 	return infra, nil
 }
 
+// EffectiveInfrastructure returns the infrastructure the generators write
+// for a project whose infra profile is name (.qsdev.yaml infra_profile or
+// --infra-profile) and whose own settings are infra. An explicitly selected
+// profile is resolved in full (Resolve, then Infrastructure), so its registry
+// layout paths and Nix cache apply; with no profile selected, or no registry,
+// the project keeps its own validated endpoints (ResolveProjectInfrastructure)
+// and the returned profile is nil. Generation and `qsdev check` both call it,
+// so the check expects exactly the endpoints generation wrote. in names the
+// project's ecosystems for the endpoint validation.
+func (r *ProfileRegistry) EffectiveInfrastructure(name string, infra types.InfraConfig, in ProjectInputs) (types.InfraConfig, *InfraProfile, error) {
+	if name == "" || r == nil {
+		resolved, err := ResolveProjectInfrastructure(infra)
+		return resolved, nil, err
+	}
+	p, ok := r.Get(name)
+	if !ok {
+		// An explicit --infra-profile that does not resolve is a user error,
+		// not a silent no-op that drops CI/renovate/dependabot configs.
+		return infra, nil, fmt.Errorf("unknown infra profile %q; use --list-profiles to see available profiles", name)
+	}
+	resolved, err := p.Resolve(infra, in)
+	if err != nil {
+		return infra, nil, err
+	}
+	return resolved.Infrastructure(), resolved, nil
+}
+
 // ConfigOnly returns a copy of the profile with its registry proxy, Nix
 // cache and build cache switched off: the implicit default profile, which
 // contributes only its CI, dependency-update and documentation files and

@@ -625,8 +625,8 @@ func TestGenerateSettings_HooksSection(t *testing.T) {
 		t.Fatalf("PreToolUse should have 2 matchers, got %d", len(preToolUse))
 	}
 	guard := preToolUse[1]
-	if guard.Matcher != "Bash|PowerShell|Monitor" {
-		t.Errorf("PreToolUse matcher should cover every shell tool, got %q", guard.Matcher)
+	if guard.Matcher != "Bash|PowerShell|Monitor|mcp__.*__qsdev_nix_run" {
+		t.Errorf("PreToolUse matcher should cover every shell tool and nix_run, got %q", guard.Matcher)
 	}
 	if len(guard.Hooks) != 1 {
 		t.Fatalf("PreToolUse Bash matcher should have 1 hook, got %d", len(guard.Hooks))
@@ -1061,6 +1061,44 @@ func TestGenerateSettings_ReadDenyBecomesPermissionDeny(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+// TestBuildSettings_PHPComposerAuthReadDeny verifies the real PHP module's
+// in-project auth.json link reaches both the Read permission deny list and
+// the sandbox denyRead exactly once, and that Rust's home credential
+// read-denies are unchanged next to it.
+func TestBuildSettings_PHPComposerAuthReadDeny(t *testing.T) {
+	t.Parallel()
+	answers := types.WizardAnswers{
+		PermissionLevel: "standard",
+		Languages:       []types.LanguageChoice{{Name: "php"}, {Name: "rust"}},
+	}
+	s := mustUnmarshalSettings(t, mustGenerateSettings(t, answers, ecosystem.DefaultRegistry(), claudecode.WithSandbox(true)))
+
+	const authPath = "./.qsdev-composer/auth.json"
+	countOf := func(rules []string, want string) int {
+		n := 0
+		for _, r := range rules {
+			if r == want {
+				n++
+			}
+		}
+		return n
+	}
+	if n := countOf(s.Permissions.Deny, "Read("+authPath+")"); n != 1 {
+		t.Errorf("permissions.deny has Read(%s) %d times, want 1: %v", authPath, n, s.Permissions.Deny)
+	}
+	if s.Sandbox == nil || s.Sandbox.Filesystem == nil {
+		t.Fatal("sandbox.filesystem should be present when enabled")
+	}
+	if n := countOf(s.Sandbox.Filesystem.DenyRead, authPath); n != 1 {
+		t.Errorf("sandbox denyRead has %s %d times, want 1: %v", authPath, n, s.Sandbox.Filesystem.DenyRead)
+	}
+	for _, want := range []string{"~/.cargo/credentials.toml", "~/.cargo/credentials"} {
+		if countOf(s.Permissions.Deny, "Read("+want+")") != 1 || countOf(s.Sandbox.Filesystem.DenyRead, want) != 1 {
+			t.Errorf("rust read-deny %s should appear once in deny and denyRead", want)
+		}
 	}
 }
 

@@ -2,9 +2,9 @@
 // qsdev. It detects PHP projects by scanning for
 // composer.json and composer.lock, generates devenv.nix fragments with the
 // appropriate PHP version, produces a security-hardened Composer global
-// configuration that devenv loads through COMPOSER_HOME, and provides
-// pre-commit hooks, CI commands, deny rules, and wizard fields for the PHP
-// toolchain.
+// configuration in a tracked Composer home (.qsdev-composer/) that devenv
+// loads through COMPOSER_HOME, and provides pre-commit hooks, plugin-free CI
+// commands, read-deny rules, and wizard fields for the PHP toolchain.
 package php
 
 import (
@@ -28,6 +28,8 @@ var _ ecosystem.EcosystemModule = (*Module)(nil)
 var _ ecosystem.ProxyKeyProvider = (*Module)(nil)
 var _ ecosystem.WizardFieldProvider = (*Module)(nil)
 var _ ecosystem.ManifestFileProvider = (*Module)(nil)
+var _ ecosystem.ReadDenyRuleProvider = (*Module)(nil)
+var _ ecosystem.EnterShellProvider = (*Module)(nil)
 
 func init() {
 	ecosystem.MustRegisterModule(&Module{})
@@ -139,18 +141,20 @@ func findPHPCSConfig(projectRoot string) (string, bool) {
 // DevenvNixFragment returns the Nix code fragment to include in devenv.nix
 // for PHP language support with the appropriate PHP version package. It
 // exports COMPOSER_HOME so Composer loads the global config.json that
-// SecurityConfigs generates.
+// SecurityConfigs generates, and keeps Composer's cache inside it.
 func (m *Module) DevenvNixFragment(config ecosystem.ModuleConfig) (string, error) {
 	pkg, err := phpPackage(config.Version)
 	if err != nil {
 		return "", err
 	}
 
+	home := ecosystem.NixEscapeString(composerHomeDir())
 	var b strings.Builder
 	b.WriteString("  languages.php.enable = true;\n")
 	fmt.Fprintf(&b, "  languages.php.package = pkgs.%s;\n", pkg)
 	b.WriteString("\n  # Load the qsdev-managed Composer global config (" + composerHomeDir() + "/config.json)\n")
-	fmt.Fprintf(&b, "  env.COMPOSER_HOME = \"${config.devenv.root}/%s\";\n", ecosystem.NixEscapeString(composerHomeDir()))
+	fmt.Fprintf(&b, "  env.COMPOSER_HOME = \"${config.devenv.root}/%s\";\n", home)
+	fmt.Fprintf(&b, "  env.COMPOSER_CACHE_DIR = \"${config.devenv.root}/%s/cache\";\n", home)
 	return b.String(), nil
 }
 
@@ -158,17 +162,23 @@ func (m *Module) DevenvNixFragment(config ecosystem.ModuleConfig) (string, error
 // exports. Composer reads global configuration only from
 // $COMPOSER_HOME/config.json (there is no include or per-file environment
 // variable), so the hardening must live there to take effect. The directory
-// is under the gitignored qsdev state directory; Composer also keeps its
-// cache and global packages there.
+// is tracked so the hardening survives a clone and applies in CI; its nested
+// .gitignore commits only config.json and itself, ignoring Composer's cache,
+// global packages and the auth.json link.
 func composerHomeDir() string {
-	return "." + branding.Get().AppName + "/composer"
+	return branding.Get().ComposerHomeDir()
 }
 
+// composerHomeGitignore is the nested .gitignore that keeps everything in
+// the Composer home untracked except the hardened config and itself.
+const composerHomeGitignore = "*\n!.gitignore\n!config.json\n"
+
 // SecurityConfigs returns a security-hardened Composer global configuration,
-// written to config.json in the COMPOSER_HOME that DevenvNixFragment exports.
-// Composer merges it under the project's composer.json, so it sets the
-// defaults for every key the project leaves unset; explicit composer.json
-// settings still take precedence.
+// written to config.json in the COMPOSER_HOME that DevenvNixFragment exports,
+// and the nested .gitignore that commits it. Composer merges config.json
+// under the project's composer.json, so it sets the defaults for every key
+// the project leaves unset; explicit composer.json settings still take
+// precedence.
 func (m *Module) SecurityConfigs(config ecosystem.ModuleConfig) []types.GeneratedFile {
 	type securityConfigType struct {
 		Comment      string `json:"_comment"`
@@ -216,7 +226,45 @@ func (m *Module) SecurityConfigs(config ecosystem.ModuleConfig) []types.Generate
 			Mode:     fileutil.ModeReadWrite,
 			Strategy: types.Overwrite,
 		},
+		{
+			Path:     composerHomeDir() + "/.gitignore",
+			Content:  []byte(composerHomeGitignore),
+			Mode:     fileutil.ModeReadWrite,
+			Strategy: types.Overwrite,
+		},
 	}
+}
+
+// ReadDenyRules returns the in-project auth.json link to the user's Composer
+// credentials (registry tokens and HTTP basic auth). The path is
+// project-relative so it covers the link the devenv shell creates.
+func (m *Module) ReadDenyRules(_ ecosystem.ModuleConfig) []string {
+	return []string{"./" + composerHomeDir() + "/auth.json"}
+}
+
+// composerAuthLinkScript links the user's global Composer credentials into
+// the project Composer home, so private repositories authenticate in the
+// devenv shell. It takes the first regular file among the XDG location
+// (~/.config/composer/auth.json when XDG_CONFIG_HOME is unset, as clean mode
+// leaves it) and the legacy ~/.composer/auth.json, and never replaces an
+// existing file or link, dangling or not. The nested .gitignore keeps the
+// link untracked and ReadDenyRules keeps the agent from reading it.
+const composerAuthLinkScript = `# Link the global Composer credentials (auth.json) into COMPOSER_HOME
+if [ -n "${COMPOSER_HOME:-}" ] && [ ! -e "$COMPOSER_HOME/auth.json" ] && [ ! -L "$COMPOSER_HOME/auth.json" ]; then
+  for composer_auth in "${XDG_CONFIG_HOME:-$HOME/.config}/composer/auth.json" "$HOME/.composer/auth.json"; do
+    if [ -f "$composer_auth" ]; then
+      mkdir -p "$COMPOSER_HOME" && ln -s "$composer_auth" "$COMPOSER_HOME/auth.json"
+      break
+    fi
+  done
+  unset composer_auth
+fi
+`
+
+// EnterShellScript returns the devenv enterShell snippet that links the
+// user's global Composer auth.json into the project Composer home.
+func (m *Module) EnterShellScript(_ ecosystem.ModuleConfig) string {
+	return composerAuthLinkScript
 }
 
 // PreCommitHooks returns pre-commit hook definitions for the PHP ecosystem.
@@ -273,19 +321,23 @@ func (m *Module) CICommands(_ ecosystem.ModuleConfig) []ecosystem.CICommand {
 	return []ecosystem.CICommand{
 		{
 			Name:        "composer-install",
-			Command:     "composer install --no-dev --no-scripts --no-interaction",
-			Description: "Install PHP dependencies without dev packages or scripts",
+			Command:     "composer install --no-dev --no-scripts --no-plugins --no-interaction",
+			Description: "Install PHP dependencies without dev packages, scripts or plugins",
 			Phase:       ecosystem.CIPhaseInstall,
 		},
 		{
+			// Lock freshness stays checked; warnings about publish-only
+			// metadata and loose version constraints do not fail CI.
 			Name:        "composer-validate",
-			Command:     "composer validate --strict",
-			Description: "Validate composer.json schema and consistency",
+			Command:     "composer validate --no-check-publish --no-check-all --no-plugins",
+			Description: "Validate composer.json schema and lock consistency",
 			Phase:       ecosystem.CIPhaseTest,
 		},
 		{
+			// Plugins installed into vendor/ would otherwise activate on
+			// every later Composer command.
 			Name:        "composer-audit",
-			Command:     "composer audit",
+			Command:     "composer audit --no-plugins",
 			Description: "Audit PHP dependencies for known vulnerabilities",
 			Phase:       ecosystem.CIPhaseScan,
 		},

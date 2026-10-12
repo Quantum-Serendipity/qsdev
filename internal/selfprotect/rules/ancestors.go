@@ -63,7 +63,9 @@ func replacesOperands(sc scannedCommand) bool {
 // org overlay in one call. A copy or move into an existing directory writes
 // an entry below it, so only that entry is checked and `cp notes.txt ~` stays
 // allowed. Location-independent entries (.claude, the state directory) have
-// no fixed ancestor and are not considered.
+// no fixed ancestor and are not considered, except the git-control
+// locations, whose holder is any git directory (gitControlHolder):
+// `mv .git .g` or `rm -rf .git` removes the hooks in one call.
 func replacesProtectedAncestor(scs []scannedCommand) bool {
 	for _, sc := range scs {
 		if !replacesOperands(sc) {
@@ -139,13 +141,17 @@ func isDir(fs *canon.Resolver, p string) bool {
 }
 
 // wordReachesProtectedAncestor reports whether word p, used by sc, can name a
-// directory that is, or holds, a home- or system-anchored protected location,
-// after brace and glob expansion and cwd resolution. A word built from an
+// directory that is, or holds, a home- or system-anchored protected location
+// or a git-control location (gitControlHolder), after brace and glob
+// expansion and cwd resolution. A word built from an
 // expansion the scan cannot render, a word starting with a tilde form it
 // cannot resolve (see unresolvedTilde), and a relative word after a cd whose
 // target it could not resolve, may start at a home directory, so their
 // literal tail is checked too (see tailReachesAncestor).
 func wordReachesProtectedAncestor(sc scannedCommand, p string) bool {
+	if gitControlHolder(sc, p) {
+		return true
+	}
 	variants, ok := expandBraces(p)
 	if !ok {
 		return true
@@ -171,6 +177,53 @@ func wordReachesProtectedAncestor(sc scannedCommand, p string) bool {
 	}
 	return false
 }
+
+// gitControlHolder reports whether word p, used by sc, can name a directory
+// that holds git-control locations (canon.GitControlReach): a .git
+// directory, its modules or worktrees directory or a nested git dir, after
+// brace and glob expansion (`.gi?`, `.[g]it`), as written or resolved
+// against the directory sc runs in (`cd .git && rm -rf .`). Deleting, moving
+// or replacing one, or changing the mode of everything below it, removes or
+// disables the hooks without naming them; a file directly in it
+// (.git/index.lock) is not a holder.
+func gitControlHolder(sc scannedCommand, p string) bool {
+	variants, ok := expandBraces(p)
+	if !ok {
+		return true
+	}
+	for _, v := range variants {
+		if v == "" {
+			continue
+		}
+		key := pathmatch.Key(filepath.Clean(expandTilde(v)))
+		if hasGlobMeta(v) {
+			if _, holder := canon.GitControlReach(key, shellSegMatch); holder {
+				return true
+			}
+			continue
+		}
+		if _, holder := canon.GitControlReach(key, sameName); holder {
+			return true
+		}
+		if resolved, known := resolveWord(sc, v); known {
+			if _, holder := canon.GitControlReach(pathmatch.Key(resolved), sameName); holder {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// anyGitControlHolder reports whether one of the operand words (not options)
+// is a gitControlHolder.
+func anyGitControlHolder(sc scannedCommand, words []string) bool {
+	return slices.ContainsFunc(words, func(w string) bool {
+		return !isFlag(w) && gitControlHolder(sc, w)
+	})
+}
+
+// sameName is the canon.GitControlReach matcher of a literal path.
+func sameName(component, name string) bool { return component == name }
 
 // rootedReachesAncestor reports whether p, once a leading ~ is expanded, is
 // an absolute path or glob that can name a directory at or above a home- or

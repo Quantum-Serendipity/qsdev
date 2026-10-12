@@ -89,3 +89,124 @@ func TestGitCodeExecution(t *testing.T) {
 		})
 	}
 }
+
+// TestGIT001_SkipEnvAndUninstall covers the commit gate's own integrity
+// (U18-09): a commit-gate variable (canon.CommitGateEnvVars) set for a git
+// command that runs hooks, a hook manager's uninstall or an install that
+// points it at another config or lets it run without one, and a template
+// directory that plants hooks in a new repository. A manual hook run with
+// SKIP, a plain install and ordinary commits stay allowed.
+func TestGIT001_SkipEnvAndUninstall(t *testing.T) {
+	t.Parallel()
+	shells := []struct {
+		command string
+		deny    bool
+	}{
+		// Hook managers.
+		{`pre-commit uninstall`, true},
+		{`prek uninstall`, true},
+		{`pre-commit uninstall -t pre-push`, true},
+		{`/usr/bin/pre-commit uninstall`, true},
+		{`pre-commit install -c /tmp/empty.yaml`, true},
+		{`pre-commit install --config /tmp/empty.yaml`, true},
+		{`pre-commit install --conf=/tmp/empty.yaml`, true},
+		{`pre-commit install -f -c/tmp/empty.yaml`, true},
+		{`pre-commit install --allow-missing-config`, true},
+		{`pre-commit install --allow-missing`, true},
+		{`prek install --config=/tmp/e.yaml`, true},
+		{`prek -c /tmp/e.yaml install`, true},
+		{`sh -c 'pre-commit uninstall'`, true},
+		// Commit-gate variables for a git command that runs hooks.
+		{`SKIP=ripsecrets,gitleaks git commit -m x`, true},
+		{`env SKIP=gitleaks git commit -m x`, true},
+		{`export SKIP=gitleaks; git commit -m x`, true},
+		{`sh -c 'SKIP=gitleaks git push'`, true},
+		{`SKIP=gitleaks sh -c 'git push'`, true},
+		{`PREK_SKIP=gitleaks git commit -m x`, true},
+		{`PRE_COMMIT_ALLOW_NO_CONFIG=1 git commit -m x`, true},
+		{`PREK_ALLOW_NO_CONFIG=1 git commit -m x`, true},
+		{`SKIP=gitleaks git -C . merge feature`, true},
+		{`SKIP=gitleaks git rebase main`, true},
+		// Template directories plant hooks.
+		{`git init --template=/tmp/t`, true},
+		{`git init --template /tmp/t`, true},
+		{`git clone --templ=/tmp/t url`, true},
+		{`git clone --te=/tmp/t url`, true},
+		{`GIT_TEMPLATE_DIR=/tmp/t git init`, true},
+		// clone's configuration options set core.hooksPath in the clone.
+		{`git clone -c core.hooksPath=/tmp url`, true},
+		{`git clone --config core.hooksPath=/tmp url`, true},
+		{`git clone --config=core.hooksPath=/tmp url`, true},
+		{`git clone --conf=core.hooksPath=/tmp url`, true},
+		{`git clone -qc core.hooksPath=/tmp url`, true},
+		{`git clone -ccore.hooksPath=/tmp url`, true},
+		{`git clone -b main url dir`, false},
+		{`git clone -bc url dir`, false}, // -b takes "c" as the branch name
+		{`git clone --depth 1 url`, false},
+
+		{`SKIP=golangci-lint pre-commit run --all-files`, false},
+		{`SKIP=x pre-commit run --all-files`, false},
+		{`pre-commit run --all-files`, false},
+		{`pre-commit install`, false},
+		{`pre-commit install --install-hooks -t pre-push`, false},
+		{`prek install`, false},
+		{`prek run --all-files`, false},
+		{`git commit -m x`, false},
+		{`git commit -m "handle sh -c and --no-verify"`, false},
+		{`git commit -m "SKIP=gitleaks pre-commit uninstall"`, false},
+		{`SKIP=gitleaks git status`, false},
+		{`SKIP=gitleaks git log -1`, false},
+		{`git init`, false},
+		{`git clone url dir`, false},
+		{`git clone --tags url`, false},
+		{`echo SKIP=x`, false},
+		// pre-commit reads SKIP case-sensitively except where environment
+		// names ignore case (Windows).
+		{`skip=gitleaks git commit -m x`, envNamesFoldCase},
+		{`export Prek_Skip=x; git commit -m x`, envNamesFoldCase},
+	}
+	for _, tool := range []string{"Bash", "Monitor"} {
+		for _, tt := range shells {
+			t.Run(tool+"/"+tt.command, func(t *testing.T) {
+				t.Parallel()
+				reason, deny := GitCodeExecution(&EvalContext{ToolName: tool, Command: tt.command})
+				if deny != tt.deny {
+					t.Errorf("GitCodeExecution(%q) = (%q, %v), want deny=%v", tt.command, reason, deny, tt.deny)
+				}
+			})
+		}
+	}
+	// A PowerShell session keeps what it sets, so a write of a commit-gate
+	// variable is denied with or without git on the line.
+	powershell := []struct {
+		command string
+		deny    bool
+	}{
+		{`$env:SKIP='gitleaks'`, true},
+		{`$env:SKIP = 'gitleaks'; git commit -m x`, true},
+		{`$Env:PREK_SKIP='x'`, true},
+		{`$env:PRE_COMMIT_ALLOW_NO_CONFIG=1`, true},
+		{`Set-Item Env:PREK_ALLOW_NO_CONFIG 1`, true},
+		{`Remove-Item Env:\SKIP`, true},
+		{`[Environment]::SetEnvironmentVariable('SKIP', 'gitleaks', 'User')`, true},
+		{`pre-commit uninstall`, true},
+		{`prek.exe uninstall`, true},
+		{`pre-commit install --allow-missing-config`, true},
+		{`git init --template=C:\t`, true},
+		{`$env:SKIPPED='x'`, false},
+		{`Write-Host $env:SKIP`, false},
+		{`if ($env:SKIP -eq 'x') { git status }`, false},
+		{`pre-commit install`, false},
+		{`pre-commit run --all-files`, false},
+		{`git commit -m x`, false},
+	}
+	for _, tt := range powershell {
+		t.Run("PowerShell/"+tt.command, func(t *testing.T) {
+			t.Parallel()
+			reason, deny := GitCodeExecution(&EvalContext{ToolName: "PowerShell", Command: tt.command})
+			if deny != tt.deny {
+				t.Errorf("GitCodeExecution(%q) = (%q, %v), want deny=%v", tt.command, reason, deny, tt.deny)
+			}
+		})
+	}
+}

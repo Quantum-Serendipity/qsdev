@@ -13,13 +13,9 @@ import (
 )
 
 var (
-	reDeleteCmd     = regexp.MustCompile(`\b(rm|rmdir|unlink|shred|find|truncate)\b`)
-	reLinkCmd       = regexp.MustCompile(`\b(ln|link)\b`)
-	reKillCmd       = regexp.MustCompile(`\b(kill|pkill|killall)\b`)
-	reProcessTarget = regexp.MustCompile(`\b(qsdev|claude|gdev)\b`)
-	reMcpInjection  = regexp.MustCompile(`(?i)(system\s*prompt|ignore\s*previous|you\s+are\s+now|<\s*system\s*>|<\s*/?\s*instructions?\s*>)`)
-	reBypassCmd     = regexp.MustCompile(`\bqsdev\s+hook\s+bypass`)
-	reSystemctl     = regexp.MustCompile(`\bsystemctl\s+(stop|disable)\b.*\b(qsdev|gdev)\b`)
+	reDeleteCmd    = regexp.MustCompile(`\b(rm|rmdir|unlink|shred|find|truncate)\b`)
+	reLinkCmd      = regexp.MustCompile(`\b(ln|link)\b`)
+	reMcpInjection = regexp.MustCompile(`(?i)(system\s*prompt|ignore\s*previous|you\s+are\s+now|<\s*system\s*>|<\s*/?\s*instructions?\s*>)`)
 	// reProcInfo matches the per-process /proc entries that expose a process's
 	// environment, command line, open files, or root: under any pid spelling
 	// (self, thread-self, digits, $$, $PPID, ${PID}, or the empty slot a
@@ -335,6 +331,10 @@ var sp007 = Rule{
 		if copyIsDangerous(ctx) {
 			return Deny, "command modifies or exfiltrates a protected config path"
 		}
+		// git rewriting tracked files names none of them (U18-02c).
+		if reason := worktreeRewriteReason(ctx); reason != "" {
+			return Deny, reason
+		}
 		return Allow, ""
 	},
 }
@@ -372,9 +372,7 @@ var sp009 = Rule{
 		if !cmdscan.IsShellTool(ctx.ToolName) {
 			return Allow, ""
 		}
-		if (reKillCmd.MatchString(ctx.Command) && reProcessTarget.MatchString(ctx.Command)) ||
-			reSystemctl.MatchString(ctx.Command) ||
-			(isPowerShell(ctx) && psKillsProtected(ctx)) {
+		if killsGuardedProcess(ctx) {
 			return Deny, "process management targeting security processes"
 		}
 		return Allow, ""
@@ -493,6 +491,19 @@ var sp011 = Rule{
 	},
 }
 
+// hookBypassSpecs reserves the CLI's hook bypass commands (`hook bypass`,
+// `hook bypass-next`), which SP-012 denies to the agent. No such command
+// ships today; when one does, it is marked sensitive (cmdutil.MarkSensitive),
+// and SP-014 and the binary's human gate cover it too. Only these two names
+// are reserved: `hook bypass-all` names no command (base's text check
+// denied any `hook bypass*`), and a new command carries the sensitive mark.
+var hookBypassSpecs = []cmdscan.CommandSpec{{Path: [][]string{{"hook"}, {"bypass", "bypass-next"}}}}
+
+// sp012 denies a hook bypass command (hookBypassSpecs), judged as the CLI
+// would run it, the way SP-014 judges a sensitive command: quoting, escapes,
+// wrappers, command lines another program runs and computed words do not
+// hide it, and text that mentions it counts. The CLI's name comes from
+// branding.
 var sp012 = Rule{
 	ID:       "SP-012",
 	Name:     "Bypass command block",
@@ -501,11 +512,23 @@ var sp012 = Rule{
 		if !cmdscan.IsShellTool(ctx.ToolName) {
 			return Allow, ""
 		}
-		if reBypassCmd.MatchString(ctx.Command) {
+		if len(invokedSpecs(ctx, branding.Get().AppName, hookBypassSpecs)) > 0 {
 			return Deny, "invocation of hook bypass command"
 		}
 		return Allow, ""
 	},
+}
+
+// invokedSpecs returns the specs ctx's command invokes the CLI app with (see
+// cmdscan.InvokedSpecs), for a PowerShell line also in the words PowerShell
+// passes a native program: array elements (`qsdev 'teardown','--force'`),
+// splats and Start-Process argument lists are not POSIX words.
+func invokedSpecs(ctx *EvalContext, app string, specs []cmdscan.CommandSpec) []cmdscan.Invoked {
+	hits := cmdscan.InvokedSpecs(ctx.Command, app, specs)
+	if isPowerShell(ctx) {
+		hits = append(hits, cmdscan.InvokedSpecs(cmdscan.PowerShellAsPOSIX(ctx.powerShell().cmds), app, specs)...)
+	}
+	return hits
 }
 
 var sp013 = Rule{
@@ -528,7 +551,9 @@ var sp013 = Rule{
 
 // sp014 blocks the CLI's own commands that weaken or remove a guardrail: the
 // commands marked sensitive in the command tree (ctx.SensitiveCommands), so
-// the set follows the tree rather than a list kept here.
+// the set follows the tree rather than a list kept here. It also blocks a
+// line that may run the CLI and clears an agent-session marker, which the
+// CLI's human gate reads (see clearsAgentMarker).
 var sp014 = Rule{
 	ID:       "SP-014",
 	Name:     "CLI security control block",
@@ -538,17 +563,16 @@ var sp014 = Rule{
 			return Allow, ""
 		}
 		app := branding.Get().AppName
-		hits := cmdscan.InvokedSpecs(ctx.Command, app, ctx.SensitiveCommands)
-		if isPowerShell(ctx) {
-			// The words PowerShell passes a native program: array elements
-			// (`qsdev 'teardown','--force'`) and splats are not POSIX words.
-			posix := cmdscan.PowerShellAsPOSIX(ctx.powerShell().cmds)
-			hits = append(hits, cmdscan.InvokedSpecs(posix, app, ctx.SensitiveCommands)...)
+		if hits := invokedSpecs(ctx, app, ctx.SensitiveCommands); len(hits) > 0 {
+			return Deny, sensitiveInvocationReason(app, mostCertain(hits))
 		}
-		if len(hits) == 0 {
-			return Allow, ""
+		if clearsAgentMarker(ctx, app) {
+			return Deny, fmt.Sprintf("the command line clears an agent-session marker (%s) and may run %s, "+
+				"whose binary human gate reads those markers to refuse guardrail-weakening commands to an agent; "+
+				"run %s without clearing them, or have a human run it at their own terminal",
+				strings.Join(canon.AgentEnvMarkers(), ", "), app, app)
 		}
-		return Deny, sensitiveInvocationReason(app, mostCertain(hits))
+		return Allow, ""
 	},
 }
 

@@ -54,6 +54,20 @@ var adversarialPayloads = []struct {
 	// about 6.
 	{name: "long cd chain then protected write", build: repeatAfter("", "cd a && ", "rm .claude/settings.json"), n: 1999, maxRatio: quadraticRatio, want: Deny, cd: true},
 	{name: "long cd chain", build: repeatAfter("", "cd a && ", "true"), n: 1999, maxRatio: quadraticRatio, want: Allow, cd: true},
+	// SP-009 compiles each pattern operand of a kill verb once, judges the
+	// line's text for a guard once however many kills take a computed
+	// operand, and reads each pipeline stage's text once however many
+	// shells it feeds.
+	{name: "many kill patterns", build: repeatAfter("pkill -f ", "'n.d[e]' ", ""), n: 4000, want: Allow},
+	{name: "many computed kills", build: repeatAfter("", "kill $p; ", "true"), n: 1999, want: Allow},
+	{name: "long pipeline into shells", build: repeatAfter("echo x", " | sh", ""), n: 1999, want: Allow},
+	{name: "long kill text into a shell", build: repeatAfter("echo '", "kill x; ", "' | sh"), n: 6000, want: Allow},
+	// A program SP-009 does not model gets the text check over its own
+	// words; the line's assignments and whole text are read once however
+	// many computed programs and code runners it holds.
+	{name: "many opaque runners", build: repeatAfter("", "watch kill x; ", "true"), n: 1999, want: Allow},
+	{name: "many computed programs", build: repeatAfter("K=pkill; ", "$K x; ", "true"), n: 1999, want: Allow},
+	{name: "many process substitutions", build: repeatAfter("", "sh < <(kill x); ", "true"), n: 1999, want: Allow},
 	// PowerShell lines go through the PowerShell tokenizer (and the POSIX
 	// parse the rules that only add denies still use): many quoted words,
 	// many commands, and runs of here-string openers and of here-string

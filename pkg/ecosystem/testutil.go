@@ -39,6 +39,7 @@ var _ ManifestFileProvider = (*MockModule)(nil)
 var _ PackageProvider = (*MockModule)(nil)
 var _ ReadDenyRuleProvider = (*MockModule)(nil)
 var _ EnvKeeper = (*MockModule)(nil)
+var _ EnterShellProvider = (*MockModule)(nil)
 
 // MockModule is a configurable implementation of EcosystemModule for testing.
 // Each field corresponds to the return value of the matching interface method.
@@ -65,6 +66,7 @@ type MockModule struct {
 	ManifestFilesVal        []ManifestFileInfo
 	DevenvPackagesVal       []string
 	KeepEnvVarsVal          []string
+	EnterShellScriptVal     string
 }
 
 func (m *MockModule) Name() string        { return m.NameVal }
@@ -128,4 +130,8 @@ func (m *MockModule) DevenvPackages(_ ModuleConfig) []string {
 
 func (m *MockModule) KeepEnvVars() []string {
 	return m.KeepEnvVarsVal
+}
+
+func (m *MockModule) EnterShellScript(_ ModuleConfig) string {
+	return m.EnterShellScriptVal
 }

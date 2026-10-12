@@ -174,6 +174,20 @@ func (r *HookRegistry) Definitions() []HookDefinition {
 // same command sent through PowerShell or Monitor.
 var shellToolMatcher = strings.Join(cmdscan.ShellTools, "|")
 
+// nixRunToolMatcher matches the MCP server's nix_run tool under any server
+// name: Claude Code names an MCP tool mcp__<server>__<tool>, after the key
+// the client's MCP configuration gives the server.
+const nixRunToolMatcher = "mcp__.*__" + cmdscan.NixRunTool
+
+// packageGuardMatcher matches the shell tools and the nix_run tool, which
+// runs a program with args and stdin and so can carry an install as a Bash
+// call can. Claude Code compares a matcher of only letters, digits, "_",
+// "-", spaces, "," and "|" as a list of exact names, and reads any other as
+// an unanchored JavaScript regular expression. With ".*" this one is a
+// regular expression, so it also fires for tools whose names merely contain
+// a shell tool's (BashOutput); package-guard.py makes no decision for those.
+var packageGuardMatcher = shellToolMatcher + "|" + nixRunToolMatcher
+
 // packageGuardEnabled reports whether the package-guard hook is registered
 // and its script generated: always, unless the answers record a safety-block
 // opt-out (`disable attach-guard --force`, honoured only when committed).
@@ -211,7 +225,7 @@ func defaultHookRegistry() *HookRegistry {
 	r.Register(HookDefinition{
 		Owner:           "package-guard",
 		Event:           "PreToolUse",
-		Matcher:         shellToolMatcher,
+		Matcher:         packageGuardMatcher,
 		Command:         guardCmd,
 		Timeout:         claudesettings.GuardHookTimeout,
 		StatusMessage:   "Checking package install safety...",

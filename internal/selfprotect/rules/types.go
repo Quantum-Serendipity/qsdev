@@ -1,8 +1,10 @@
 package rules
 
 import (
+	"context"
 	"encoding/json"
 
+	"github.com/Quantum-Serendipity/qsdev/internal/gitrepo"
 	"github.com/Quantum-Serendipity/qsdev/internal/selfprotect/canon"
 	"github.com/Quantum-Serendipity/qsdev/internal/selfprotect/cmdscan"
 )
@@ -50,6 +52,11 @@ type EvalContext struct {
 	// (cmdutil.SensitiveCommands of the running command tree); SP-014 blocks
 	// a shell command invoking one.
 	SensitiveCommands []cmdscan.CommandSpec
+	// Ctx bounds the read-only git queries a rule runs for this one call
+	// (the worktree-rewrite check of SP-007): the hook's evaluation
+	// deadline. Without it such a query cannot run, and the git command
+	// that needs it is denied (fail closed).
+	Ctx context.Context
 
 	// Parsed Bash command, memoized by ParsedCommands. Do not read directly.
 	commands       []cmdscan.Command
@@ -80,6 +87,10 @@ type EvalContext struct {
 	// hookTargets memoizes the result. Read through hookTargetsFor.
 	hookEnv     *hookEnv
 	hookTargets *hookTargets
+
+	// gitRunner runs the read-only git queries of the worktree-rewrite
+	// check (tests only; nil runs real git, gitrepo.ExecRunner).
+	gitRunner gitrepo.Runner
 }
 
 // ParsedCommands returns Command shell-parsed into its simple commands, parsing
@@ -160,7 +171,9 @@ func (ctx *EvalContext) withCommand(command string) *EvalContext {
 		Edits:             ctx.Edits,
 		ToolInput:         ctx.ToolInput,
 		SensitiveCommands: ctx.SensitiveCommands,
+		Ctx:               ctx.Ctx,
 		hookEnv:           ctx.hookEnv,
+		gitRunner:         ctx.gitRunner,
 	}
 }
 

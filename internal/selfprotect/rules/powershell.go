@@ -1,13 +1,13 @@
 package rules
 
 import (
+	"path"
 	"regexp"
 	"slices"
 	"strings"
 
 	"github.com/Quantum-Serendipity/qsdev/internal/selfprotect/canon"
 	"github.com/Quantum-Serendipity/qsdev/internal/selfprotect/cmdscan"
-	"github.com/Quantum-Serendipity/qsdev/pkg/branding"
 )
 
 // This file holds the PowerShell dialect of the shared shell predicates. The
@@ -161,7 +161,7 @@ var psKillVerbs = map[string]bool{"stop-process": true, "spps": true, "kill": tr
 
 // psKillsProtected reports whether a PowerShell line ends a security process:
 // it runs a kill verb (or a process object's .Kill() method) and either names
-// the CLI, claude or gdev as a whole word anywhere in the line (so
+// a guarded process (killGuards) as a whole word anywhere in the line (so
 // `Get-Process qsdev | Stop-Process` and `taskkill /IM qsdev.exe` count), or
 // has a word that is computed or a glob, which may stand for one (fail
 // closed). `Stop-Process -Id 1234` stays allowed.
@@ -174,44 +174,45 @@ func psKillsProtected(ctx *EvalContext) bool {
 	}
 	// The loose form joins a name built by concatenation
 	// (`('qs'+'dev')`) back into one word.
-	return slices.ContainsFunc(line.cmds, psNamesKillTarget) ||
-		slices.ContainsFunc(cmdscan.ParsePowerShell(line.loose), psNamesKillTarget)
+	names := psNamesKillTarget(killGuards())
+	return slices.ContainsFunc(line.cmds, names) ||
+		slices.ContainsFunc(cmdscan.ParsePowerShell(line.loose), names)
 }
 
-// psNamesKillTarget reports whether a command of a line that kills names a
-// security process: a word that is the CLI, claude or gdev, or that is
+// psNamesKillTarget returns a check that a command of a line that kills
+// names a guarded process: a word that is one of guards, or that is
 // computed or a glob and so may be one. The value of an -Id or -PID
 // parameter is a process ID, which cannot name one, so `Stop-Process -Id
 // $p.Id` stays allowed.
-func psNamesKillTarget(c cmdscan.PSCommand) bool {
-	if psKillTargetWord(c.Name) {
-		return true
-	}
-	for i := 0; i < len(c.Args); i++ {
-		a := c.Args[i]
-		if name, ok := cmdscan.PSParamName(a); ok && (name == "id" || name == "pid") {
-			if !strings.Contains(a, ":") {
-				i++ // the value is the next word
-			}
-			continue
-		}
-		if psKillTargetWord(a) {
+func psNamesKillTarget(guards []string) func(cmdscan.PSCommand) bool {
+	return func(c cmdscan.PSCommand) bool {
+		if psKillTargetWord(c.Name, guards) {
 			return true
 		}
+		for i := 0; i < len(c.Args); i++ {
+			a := c.Args[i]
+			if name, ok := cmdscan.PSParamName(a); ok && (name == "id" || name == "pid") {
+				if !strings.Contains(a, ":") {
+					i++ // the value is the next word
+				}
+				continue
+			}
+			if psKillTargetWord(a, guards) {
+				return true
+			}
+		}
+		return false
 	}
-	return false
 }
 
-// psKillTargetWord reports whether word is computed or a glob, or names the
-// CLI, claude or gdev; `-Name:qsdev` and `qsdev,claude` name each value.
-func psKillTargetWord(word string) bool {
+// psKillTargetWord reports whether word is computed or a glob, or names one
+// of guards; `-Name:qsdev` and `qsdev,claude` name each value.
+func psKillTargetWord(word string, guards []string) bool {
 	if strings.ContainsAny(word, "$*?[") {
 		return true
 	}
-	app := strings.ToLower(branding.Get().AppName)
 	for _, v := range strings.FieldsFunc(word, func(r rune) bool { return r == ',' || r == ':' || r == '=' }) {
-		switch cmdscan.PSCommandName(v) {
-		case app, "claude", "gdev":
+		if slices.Contains(guards, cmdscan.PSCommandName(v)) {
 			return true
 		}
 	}
@@ -251,34 +252,136 @@ func psMutatesMcpConfig(ctx *EvalContext) bool {
 // the variables that change the settings and hooks a Claude Code session
 // loads (settingsOverrideEnv). Unlike a Bash call, a PowerShell session may
 // keep what it sets for the commands and the programs it starts later.
-var psSessionEnv = append(slices.Clone(canon.AgentEnvMarkers), settingsOverrideEnv...)
+var psSessionEnv = append(canon.AgentEnvMarkers(), settingsOverrideEnv...)
 
-// rePSEnvWrite finds, in a PowerShell line's loose text (lower-cased, quotes
-// removed), a write to one of psSessionEnv: an assignment to $env:NAME (any
-// operator but a comparison), a reference to the Env: drive (env:NAME,
-// env:\NAME), which only a non-read command (Remove-Item, Set-Item, ...)
-// changes, or a [Environment]::SetEnvironmentVariable call.
-var rePSEnvWrite, rePSEnvDrive, rePSSetEnvVar = func() (*regexp.Regexp, *regexp.Regexp, *regexp.Regexp) {
-	names := make([]string, len(psSessionEnv))
-	for i, n := range psSessionEnv {
-		names[i] = regexp.QuoteMeta(strings.ToLower(n))
+// psEnvWrites finds, in lower-cased PowerShell text, a write to one of a list
+// of environment variables: an assignment to $env:NAME (any operator but a
+// comparison), a reference to the Env: drive (env:NAME, env:\NAME), which only
+// a non-read command (Remove-Item, Set-Item, ...) changes, or a
+// [Environment]::SetEnvironmentVariable call. On a whole line it also finds
+// an Env: reference that may stand for one of them (see driveClears) and a
+// SetEnvironmentVariable call whose name is computed.
+type psEnvWrites struct {
+	assign, drive, setVar *regexp.Regexp
+	// vars are the variables' names, lower-cased.
+	vars []string
+}
+
+// newPSEnvWrites returns the psEnvWrites for the variables vars.
+func newPSEnvWrites(vars []string) psEnvWrites {
+	names := make([]string, len(vars))
+	lower := make([]string, len(vars))
+	for i, n := range vars {
+		lower[i] = strings.ToLower(n)
+		names[i] = regexp.QuoteMeta(lower[i])
 	}
 	alt := `(` + strings.Join(names, "|") + `)\b`
-	return regexp.MustCompile(`\$\{?env:` + alt + `\}?\s*[-+*/%?]*=([^=]|$)`),
-		regexp.MustCompile(`(^|[^a-z0-9_$:{])env:[/\\]*` + alt),
-		regexp.MustCompile(`setenvironmentvariable\W*` + alt)
+	return psEnvWrites{
+		assign: regexp.MustCompile(`\$\{?env:` + alt + `\}?\s*[-+*/%?]*=([^=]|$)`),
+		drive:  regexp.MustCompile(`(^|[^a-z0-9_$:{])env:[/\\]*` + alt),
+		setVar: regexp.MustCompile(`setenvironmentvariable\W*` + alt),
+		vars:   lower,
+	}
+}
+
+var (
+	// psDriveRef matches, in lower-cased text, a reference to the Env: drive
+	// and the item name after it, up to a blank, quote, separator or
+	// bracket of the statement (empty for the bare drive).
+	psDriveRef = regexp.MustCompile("(?:^|[^a-z0-9_$:{])env:[/\\\\]*([^\\s'\"‘’‚‛“”„;|&(){},]*)")
+	// psSetVarName matches a SetEnvironmentVariable call and its first
+	// argument, the variable's name.
+	psSetVarName = regexp.MustCompile(`setenvironmentvariable\s*\(([^,)]*)`)
+)
+
+// psEnvChangeVerbs are the cmdlets and aliases that change an item of the
+// Env: drive they are given or piped: the delete verbs, and the item and
+// content cmdlets that set, clear, create, rename or move one.
+var psEnvChangeVerbs = func() map[string]bool {
+	verbs := map[string]bool{
+		"set-item": true, "si": true, "clear-item": true, "cli": true,
+		"new-item": true, "ni": true, "rename-item": true, "rni": true, "ren": true,
+		"move-item": true, "mi": true, "move": true,
+		"set-content": true, "sc": true, "add-content": true, "ac": true, "clear-content": true, "clc": true,
+	}
+	for v := range psDeleteVerbs {
+		verbs[v] = true
+	}
+	return verbs
 }()
+
+// driveClears reports whether lower-cased text references the Env: drive in
+// a way that may name one of the variables: the bare drive (`Get-ChildItem
+// Env: | ... | Remove-Item`), a computed name (`"Env:$n"`, a backtick), or a
+// wildcard that matches one (`Env:CLAUDE*`, `Env:[C]LAUDECODE`); a pattern
+// path.Match rejects fails closed. Only a line with a cmdlet that changes the
+// drive is asked (see inLine), so a listing stays open.
+func (w psEnvWrites) driveClears(text string) bool {
+	for _, m := range psDriveRef.FindAllStringSubmatch(text, -1) {
+		name := m[1]
+		switch {
+		case name == "", strings.ContainsAny(name, "$`"):
+			return true
+		case strings.ContainsAny(name, "*?[]"):
+			for _, v := range w.vars {
+				if ok, err := path.Match(name, v); err != nil || ok {
+					return true
+				}
+			}
+		}
+	}
+	return false
+}
+
+// computedSetVar reports whether lower-cased text calls
+// SetEnvironmentVariable with a name it computes (`$n`, a backtick), which
+// may be one of the variables.
+func computedSetVar(text string) bool {
+	for _, m := range psSetVarName.FindAllStringSubmatch(text, -1) {
+		if strings.ContainsAny(m[1], "$`") {
+			return true
+		}
+	}
+	return false
+}
+
+// inText reports whether lower-cased text assigns or sets one of the
+// variables, or names it on the Env: drive when driveWrites holds.
+func (w psEnvWrites) inText(text string, driveWrites func() bool) bool {
+	return w.assign.MatchString(text) || w.setVar.MatchString(text) ||
+		w.drive.MatchString(text) && driveWrites()
+}
+
+// inLine reports whether the PowerShell line of ctx sets or clears one of the
+// variables: in its normalized or loose text (lower-cased, quotes removed),
+// through the Env: drive only when the line may write; through a
+// SetEnvironmentVariable call with a computed name; or through an Env:
+// reference that may stand for one (driveClears) when a command of the line
+// changes the drive (psEnvChangeVerbs).
+func (w psEnvWrites) inLine(ctx *EvalContext) bool {
+	line := ctx.powerShell()
+	mutates := func() bool { return psMutates(ctx) }
+	if w.inText(line.norm, mutates) || w.inText(line.loose, mutates) ||
+		computedSetVar(line.norm) || computedSetVar(line.loose) {
+		return true
+	}
+	changesDrive := slices.ContainsFunc(line.cmds, func(c cmdscan.PSCommand) bool { return psEnvChangeVerbs[c.Name] })
+	return changesDrive && (w.driveClears(line.norm) || w.driveClears(line.loose))
+}
+
+// psSessionEnvWrites finds a write to one of psSessionEnv.
+var psSessionEnvWrites = newPSEnvWrites(psSessionEnv)
+
+// psAgentMarkerWrites finds a write to an agent-session marker
+// (canon.AgentEnvMarkers), for SP-014 (see clearsAgentMarker).
+var psAgentMarkerWrites = newPSEnvWrites(canon.AgentEnvMarkers())
 
 // psEnvOverride reports why a PowerShell line sets or clears one of
 // psSessionEnv, or "".
 func psEnvOverride(ctx *EvalContext) string {
-	line := ctx.powerShell()
-	for _, text := range []string{line.norm, line.loose} {
-		if rePSEnvWrite.MatchString(text) || rePSSetEnvVar.MatchString(text) ||
-			rePSEnvDrive.MatchString(text) && psMutates(ctx) {
-			return "the PowerShell session would set or clear an agent marker or Claude Code settings variable, " +
-				"which the commands and programs it runs later inherit"
-		}
+	if psSessionEnvWrites.inLine(ctx) {
+		return "the PowerShell session would set or clear an agent marker or Claude Code settings variable, " +
+			"which the commands and programs it runs later inherit"
 	}
 	return ""
 }

@@ -20,9 +20,9 @@ import (
 // work (XS-WS4 / U18-WS6). Shrink this list as cmdscan gains them; never
 // add a name here to hide a wrapper cmdscan dropped.
 var pythonOnlyWrappers = []string{
-	"busybox", "catchsegv", "chroot", "firejail", "flock", "ltrace", "mono",
-	"nsenter", "parallel", "proot", "screen", "script", "setpriv", "strace",
-	"systemd-run", "tmux", "unshare", "watch",
+	"busybox", "catchsegv", "chroot", "firejail", "ltrace", "mono",
+	"nsenter", "proot", "screen", "script", "setpriv", "strace",
+	"systemd-run", "tmux", "unshare",
 }
 
 // hookLibEval loads the shared hook library by path, as the hooks do, runs
@@ -198,6 +198,37 @@ func TestHookLibUnwrap(t *testing.T) {
 		{"sudo -h host", []string{"sudo", "-h", "host", "rm", "x"}, result{[]string{"rm", "x"}, nil}},
 		{"ssh is remote, not a wrapper", []string{"ssh", "h", "rm", "-rf", "~"}, result{[]string{"ssh", "h", "rm", "-rf", "~"}, nil}},
 		{"nested wrappers", []string{"sudo", "nice", "-n", "5", "nohup", "rm", "x"}, result{[]string{"rm", "x"}, nil}},
+		// parallel with a command word appends the ::: arguments to it; with
+		// none, each argument up to the next :::-family separator is a
+		// command line (W1N-08).
+		// Each command line takes one argument of every ::: source (the
+		// cartesian product); a template's replacement strings take them,
+		// else they are appended, spliced as words and quoted as one; each
+		// combination is also judged alone.
+		{"parallel command word", []string{"parallel", "rm", "-rf", ":::", "x"}, result{[]string{"rm", "-rf", ":::", "x"}, []string{"x", "rm -rf x"}}},
+		{"parallel ::: lines", []string{"parallel", "-j1", ":::", "ls", "rm -rf x"}, result{[]string{}, []string{"ls", "rm -rf x"}}},
+		{"parallel ::: sources combine", []string{"parallel", ":::", "rm x", ":::", "a", "b"}, result{[]string{}, []string{"rm x a", "rm x b"}}},
+		{"parallel ::: one word per source", []string{"parallel", ":::", "npm", ":::", "install", ":::", "evil"}, result{[]string{}, []string{"npm install evil"}}},
+		{"parallel :::: files are not read", []string{"parallel", ":::", "rm x", "::::", "f"}, result{[]string{}, []string{"rm x"}}},
+		{"parallel :::+ links", []string{"parallel", "--will-cite", ":::", "rm x", ":::+", "a"}, result{[]string{}, []string{"rm x a"}}},
+		{"parallel :::+ lines", []string{"parallel", ":::+", "rm x"}, result{[]string{}, []string{"rm x"}}},
+		{"parallel {} runs the argument", []string{"parallel", "{}", ":::", "npm install evil"},
+			result{[]string{"{}", ":::", "npm install evil"}, []string{"npm install evil", "'npm install evil'"}}},
+		{"parallel sh -c appends the argument", []string{"parallel", "sh", "-c", ":::", "npm install evil"},
+			result{[]string{"sh", "-c", ":::", "npm install evil"}, []string{"npm install evil", "sh -c npm install evil", "sh -c 'npm install evil'"}}},
+		{"parallel positional replacement", []string{"parallel", "echo", "{1}", "{2}", ":::", "a", ":::", "b"},
+			result{[]string{"echo", "{1}", "{2}", ":::", "a", ":::", "b"}, []string{"a b", "echo a b"}}},
+		{"parallel --env takes a value", []string{"parallel", "--env", "X", ":::", "npm install evil"}, result{[]string{}, []string{"npm install evil"}}},
+		{"parallel past the combination cap", []string{"parallel", ":::", "a", "b", "c", "d", "e", "f", "g", "h", ":::", "1", "2", "3", "4", "5", "6", "7", "8", "9"},
+			result{[]string{}, []string{"a", "b", "c", "d", "e", "f", "g", "h", "1", "2", "3", "4", "5", "6", "7", "8", "9", "a b c d e f g h 1 2 3 4 5 6 7 8 9"}}},
+		{"parallel :::: files keeps its words", []string{"parallel", "::::", "cmds.txt"}, result{[]string{"::::", "cmds.txt"}, nil}},
+		{"parallel ::: empty", []string{"parallel", ":::"}, result{[]string{}, nil}},
+		// No command word and no ::: source: the jobs come from stdin or a
+		// file, which cannot be read, so no line is known.
+		{"parallel alone", []string{"parallel"}, result{[]string{}, nil}},
+		{"parallel options only", []string{"parallel", "-j4"}, result{[]string{}, nil}},
+		{"parallel --version", []string{"parallel", "--version"}, result{[]string{}, nil}},
+		{"sudo parallel", []string{"sudo", "parallel"}, result{[]string{}, nil}},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

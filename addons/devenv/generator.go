@@ -181,15 +181,16 @@ const defaultInfraProfile = "consulting-default"
 // infrastructure keep exactly the endpoints they configured, after the same
 // endpoint checks (profile.ResolveProjectInfrastructure). Those checks run
 // for every generator, so no configuration writes an unvalidated endpoint.
-// The returned profile is nil when the generator has no profile registry.
+// The effective infrastructure comes from profile.EffectiveInfrastructure,
+// which `qsdev check` shares. The returned profile is nil when the generator
+// has no profile registry.
 func (g *DevenvGenerator) applyInfraProfile(answers types.WizardAnswers) (types.WizardAnswers, *profile.InfraProfile, error) {
-	name := answers.ProfileName
-	if name == "" || g.profileRegistry == nil {
-		infra, err := profile.ResolveProjectInfrastructure(answers.Infrastructure)
-		if err != nil {
-			return answers, nil, err
-		}
-		answers.Infrastructure = infra
+	infra, resolved, err := g.profileRegistry.EffectiveInfrastructure(answers.ProfileName, answers.Infrastructure, profile.ProjectInputsFromAnswers(answers))
+	if err != nil {
+		return answers, nil, err
+	}
+	answers.Infrastructure = infra
+	if resolved == nil {
 		if g.profileRegistry == nil {
 			return answers, nil, nil
 		}
@@ -199,18 +200,6 @@ func (g *DevenvGenerator) applyInfraProfile(answers types.WizardAnswers) (types.
 		}
 		return answers, p.ConfigOnly(), nil
 	}
-	p, ok := g.profileRegistry.Get(name)
-	if !ok {
-		// An explicit --infra-profile that does not resolve is a user error, not
-		// a silent no-op that drops CI/renovate/dependabot configs. Mirror the
-		// project --profile hard-error (addons/devinit/commands.go).
-		return answers, nil, fmt.Errorf("unknown infra profile %q; use --list-profiles to see available profiles", name)
-	}
-	resolved, err := p.Resolve(answers.Infrastructure, profile.ProjectInputsFromAnswers(answers))
-	if err != nil {
-		return answers, nil, err
-	}
-	answers.Infrastructure = resolved.Infrastructure()
 	if env := resolved.EnvironmentVars(); len(env) > 0 {
 		merged := make(map[string]string, max(len(env), len(answers.EnvVars)))
 		maps.Copy(merged, env)

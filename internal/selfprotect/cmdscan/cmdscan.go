@@ -103,6 +103,17 @@ type Command struct {
 	// picks what runs next (`prog --version || exit 0`, `prog || true`)
 	// rather than becoming the status the line exits with.
 	FailureHandled bool
+	// StdinComputed is set when the statement's standard input carries
+	// text computed at run time rather than written out on the line: a
+	// here-string, a `<` word or an unquoted-delimiter here-document with an
+	// expansion (process substitution included), a duplicated descriptor,
+	// or, for a later pipeline stage, the output of a previous stage that is
+	// not a literal producer (echo or printf of literal words without
+	// escapes or directives, cat of literal files). The statement's own last
+	// stdin redirect decides when it has one. A statement with no stdin of
+	// its own inherits that of its enclosing one, so `... | { sh; }`
+	// counts. ReadsProgramFromStdin says whether the command runs that text.
+	StdinComputed bool
 	// Defines names the shell function the statement defines
 	// (`f() { ...; }`), emitted as a nameless Command before its body. A
 	// later call of that name runs the function, not a program.
@@ -142,6 +153,7 @@ var safeReadVerbs = map[string]bool{
 	"printf": true, "test": true, "[": true, "true": true, "false": true,
 	"pwd": true, "stat": true, "file": true, "diff": true, "cmp": true,
 	"cut": true, "jq": true, "tac": true, "nl": true, "printenv": true,
+	"du": true,
 }
 
 // argReadOnly holds, for commands whose effect depends on their arguments, a
@@ -308,12 +320,28 @@ func Parse(command string) ([]Command, error) {
 // yields the path it names. The word still counts as an expansion
 // (Command.HasExpansion), since the line may reassign the variable.
 func ParseWithVars(command string, vars map[string]string) ([]Command, error) {
+	return parse(command, vars, false)
+}
+
+// ParseScript is Parse for a script that a command of an enclosing line
+// runs (`sh -c 'S'`, `eval 'S'`, see Script), given whether that command's
+// standard input is computed at run time (Command.StdinComputed). The
+// script's statements that have no standard input of their own inherit it,
+// so the `sh` of `curl … | sh -c sh` reads computed input.
+func ParseScript(script string, stdinComputed bool) ([]Command, error) {
+	return parse(script, nil, stdinComputed)
+}
+
+// parse is ParseWithVars given whether the line's own standard input is
+// computed at run time (see ParseScript).
+func parse(command string, vars map[string]string, stdinComputed bool) ([]Command, error) {
 	file, err := syntax.NewParser().Parse(strings.NewReader(command), "")
 	if err != nil {
 		return nil, err
 	}
 
-	pipelineIDs := assignPipelines(file)
+	pipelineIDs, prevStages := assignPipelines(file)
+	stdin := assignStdin(file, prevStages, stdinComputed)
 	guards := assignGuards(file, vars)
 	subshells := assignSubshells(file, pipelineIDs)
 	handled := assignFailureHandled(file)
@@ -354,6 +382,7 @@ func ParseWithVars(command string, vars map[string]string) ([]Command, error) {
 		c.Tested = guards[stmt].tested
 		c.Subshell = subshells[stmt]
 		c.FailureHandled = handled[stmt]
+		c.StdinComputed = stdin.computed(stmt)
 
 		other := stmtAssigns(stmt, vars)
 		c.Assigns = append(c.Assigns, other.names...)
@@ -421,33 +450,39 @@ func callCommand(call *syntax.CallExpr, vars map[string]string) Command {
 }
 
 // assignPipelines maps each simple-command statement that is a stage of a pipe
-// chain to a shared, non-zero pipeline id (in left-to-right order). Statements
-// not in any pipeline are absent from the map, so a lookup yields 0. Walk visits
-// a pipe's outer BinaryCmd before its nested ones, so the outermost chain claims
-// its stages first and nested BinaryCmd nodes are skipped once already assigned.
-func assignPipelines(root syntax.Node) map[*syntax.Stmt]int {
+// chain to a shared, non-zero pipeline id (in left-to-right order), and each
+// stage after the first to the stage before it, whose output it reads.
+// Statements not in any pipeline are absent from the maps, so an id lookup
+// yields 0. Walk visits a pipe's outer BinaryCmd before its nested ones, so
+// the outermost chain claims its stages first and nested BinaryCmd nodes are
+// skipped once already assigned.
+func assignPipelines(root syntax.Node) (map[*syntax.Stmt]int, map[*syntax.Stmt]*syntax.Stmt) {
 	ids := make(map[*syntax.Stmt]int)
+	prev := make(map[*syntax.Stmt]*syntax.Stmt)
+	// nested holds the pipe BinaryCmds inside a chain already flattened, so
+	// a long chain is flattened once rather than once per operator.
+	nested := make(map[*syntax.BinaryCmd]bool)
 	next := 1
 	syntax.Walk(root, func(n syntax.Node) bool {
 		bin, ok := n.(*syntax.BinaryCmd)
-		if !ok || (bin.Op != syntax.Pipe && bin.Op != syntax.PipeAll) {
+		if !ok || (bin.Op != syntax.Pipe && bin.Op != syntax.PipeAll) || nested[bin] {
 			return true
 		}
 		var stmts []*syntax.Stmt
-		collectPipeStmts(bin, &stmts)
+		collectPipeStmts(bin, &stmts, nested)
 		if len(stmts) == 0 {
 			return true
 		}
-		if _, done := ids[stmts[0]]; done {
-			return true // nested chain already covered by an outer pipeline
-		}
-		for _, s := range stmts {
+		for i, s := range stmts {
 			ids[s] = next
+			if i > 0 {
+				prev[s] = stmts[i-1]
+			}
 		}
 		next++
 		return true
 	})
-	return ids
+	return ids, prev
 }
 
 // stmtGuard is how a statement's running depends on other commands: its
@@ -553,18 +588,23 @@ func (m simpleSuccess) of(s *syntax.Stmt) bool {
 
 // collectPipeStmts flattens a (possibly nested) pipe chain into its ordered leaf
 // statements, descending through inner pipe BinaryCmds so `a | b | c` yields
-// [a, b, c] regardless of how the parser associated the operators.
-func collectPipeStmts(bin *syntax.BinaryCmd, out *[]*syntax.Stmt) {
-	appendPipeStmt(bin.X, out)
-	appendPipeStmt(bin.Y, out)
+// [a, b, c] regardless of how the parser associated the operators. Each
+// inner pipe BinaryCmd it descends through is recorded in nested, when it
+// is not nil.
+func collectPipeStmts(bin *syntax.BinaryCmd, out *[]*syntax.Stmt, nested map[*syntax.BinaryCmd]bool) {
+	appendPipeStmt(bin.X, out, nested)
+	appendPipeStmt(bin.Y, out, nested)
 }
 
-func appendPipeStmt(s *syntax.Stmt, out *[]*syntax.Stmt) {
+func appendPipeStmt(s *syntax.Stmt, out *[]*syntax.Stmt, nested map[*syntax.BinaryCmd]bool) {
 	if s == nil {
 		return
 	}
 	if inner, ok := s.Cmd.(*syntax.BinaryCmd); ok && (inner.Op == syntax.Pipe || inner.Op == syntax.PipeAll) {
-		collectPipeStmts(inner, out)
+		if nested != nil {
+			nested[inner] = true
+		}
+		collectPipeStmts(inner, out, nested)
 		return
 	}
 	*out = append(*out, s)

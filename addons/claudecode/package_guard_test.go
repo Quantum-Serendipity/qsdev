@@ -221,6 +221,16 @@ func TestPackageGuard_ExtractsOnlyRealInstalls(t *testing.T) {
 		{"pwsh unquoted -Command npm install", `pwsh -NoProfile -Command npm install evil`, true, []string{"evil"}},
 		{"perl exec of trailing argv", `perl -e 'exec @ARGV' npm install evil`, true, []string{"evil"}},
 		{"control: pwsh -c echo install text", `pwsh -c "Write-Host 'npm install docs'"`, false, nil},
+		// U17-03: a `--` before the verb ends the global options; the next
+		// token is the verb, for every manager.
+		{"npm -- install", `npm -- install evil`, true, []string{"evil"}},
+		{"npm -- i", `npm -- i evil`, true, []string{"evil"}},
+		{"pnpm -- add", `pnpm -- add evil`, true, []string{"evil"}},
+		{"yarn -- add", `yarn -- add evil`, true, []string{"evil"}},
+		{"bun -- add", `bun -- add evil`, true, []string{"evil"}},
+		{"npm --global -- install", `npm --global -- install evil`, true, []string{"evil"}},
+		{"uv -- pip install", `uv -- pip install evil`, true, []string{"evil"}},
+		{"npm install -- evil", `npm install -- evil`, true, []string{"evil"}},
 	}
 
 	for _, tc := range cases {
@@ -369,6 +379,84 @@ func TestPackageGuard_DeniesUnvalidatedInstallers(t *testing.T) {
 				"CLAUDE_PROJECT_DIR="+dir, "CLAUDE_AUDIT_DIR="+dir)
 			if got != tc.want {
 				t.Errorf("decision = %q, want %q (command: %s)", got, tc.want, tc.command)
+			}
+		})
+	}
+}
+
+// pgDialectDriver prints, for PG_CMD read in PowerShell's dialect when PG_PS
+// is 1 (else POSIX), each detection's manager and package specifiers.
+const pgDialectDriver = `
+import importlib.util, json, os
+spec = importlib.util.spec_from_file_location('pg', os.environ['PG_PATH'])
+m = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(m)
+dets = m.detect_install_commands(os.environ['PG_CMD'], powershell=os.environ['PG_PS'] == '1')
+print(json.dumps([d.manager + ':' + ','.join(d.packages) for d in dets]))
+`
+
+// TestPackageGuard_PowerShellDialect checks detection in each dialect: a
+// PowerShell literal array is an argument, not a command, and the POSIX
+// dialect (Bash, Monitor) reads PowerShell-looking text exactly as before
+// the PowerShell dialect existed, so nothing leaks between them.
+func TestPackageGuard_PowerShellDialect(t *testing.T) {
+	t.Parallel()
+	python, err := exec.LookPath("python3")
+	if err != nil {
+		t.Skip("python3 not available; skipping package-guard hook test")
+	}
+	template, err := filepath.Abs(filepath.Join("templates", "hooks", "package-guard.py"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	cases := []struct {
+		command    string
+		powershell bool
+		want       []string
+	}{
+		{`('install','evil')`, true, []string{}},
+		{`@('install', 'evil')`, true, []string{}},
+		{`npm install lodash; Install-Module Evil`, true, []string{"npm:lodash", "unvalidated:install-module:"}},
+		{`Get-Help Install-Module -Full`, true, []string{}},
+		{`Write-Host "('install','evil')"`, true, []string{}},
+		{`Invoke-Command { Install-Module Evil }`, true, []string{"unvalidated:install-module:"}},
+		{`<# x #> npm install lodash`, true, []string{"npm:lodash"}},
+		{"npm in`stall lodash", true, []string{"npm:lodash"}},
+		{`$null = npm install lodash`, true, []string{"__unverified__:", "npm:lodash"}},
+		{`Get-ChildItem | Where-Object { $_.Name -like '*.ps1' }`, true, []string{}},
+		{`$env:FOO = 'bar'; Get-ChildItem ${env:FOO}`, true, []string{}},
+
+		// POSIX dialect: the same text detects what it did before.
+		{`npm install lodash; Install-Module Evil`, false, []string{"npm:lodash"}},
+		{`Install-Module Evil`, false, []string{}},
+		{`isres Evil`, false, []string{}},
+		{`iex "npm install evil"`, false, []string{}},
+		{`iex $cmd`, false, []string{}},
+		{`Invoke-Expression -Command:'npm install evil'`, false, []string{}},
+		{`Start-Process npm -ArgumentList "install","evil"`, false, []string{}},
+		{`Start-Process npm @('install','evil')`, false, []string{}},
+		{`start -FilePath npm -ArgumentList 'install evil'`, false, []string{}},
+		{`Start-Process npm install left-pad`, false, []string{"npm:left-pad"}},
+	}
+	for _, tc := range cases {
+		ps, dialect := "0", "posix/"
+		if tc.powershell {
+			ps, dialect = "1", "powershell/"
+		}
+		t.Run(dialect+tc.command, func(t *testing.T) {
+			t.Parallel()
+			cmd := exec.Command(python, "-c", pgDialectDriver)
+			cmd.Env = hookEnv(t, "PG_PATH="+template, "PG_CMD="+tc.command, "PG_PS="+ps)
+			out, err := cmd.CombinedOutput()
+			if err != nil {
+				t.Fatalf("driver failed: %v\n%s", err, out)
+			}
+			var got []string
+			if err := json.Unmarshal(out, &got); err != nil {
+				t.Fatalf("bad driver output %q: %v", out, err)
+			}
+			if !slices.Equal(got, tc.want) {
+				t.Errorf("detections = %q, want %q", got, tc.want)
 			}
 		})
 	}

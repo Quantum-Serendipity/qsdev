@@ -7,6 +7,10 @@ actually pick, validates it against the OSV.dev vulnerability database and
 registry publication age, then denies, asks, or rewrites the command with
 safety flags.
 
+A call of the qsdev MCP server's nix_run tool (mcp__<server>__qsdev_nix_run)
+is read as the Bash lines it is equivalent to; any install in them is denied
+without lookups, since it cannot be hardened there (see _guard_nix_run).
+
 Exit codes / decisions:
   0 — no JSON: not an install, or validated with nothing to change (the normal
       permission flow decides)
@@ -67,12 +71,14 @@ if __name__ == "__main__" and not (getattr(sys.flags, "safe_path", False) or sys
 import base64
 import binascii
 import gzip
+import hashlib
 import importlib.util
 import json
 import os
 import queue
 import re
 import shlex
+import stat
 import threading
 import time
 import urllib.error
@@ -227,6 +233,15 @@ API_TIMEOUT: int = 10
 # matcher must list exactly these tools (hook_registry.go shellToolMatcher;
 # kept in sync by TestHookMatchersCoverScriptTools).
 SHELL_TOOLS = ("Bash", "PowerShell", "Monitor")
+
+# The qsdev MCP server's nix_run tool (cmdscan.NixRunTool), which Claude Code
+# names mcp__<server>__qsdev_nix_run after the server it reaches it through.
+# It runs a Nix installable with args and stdin, so an install can ride in it
+# as in a Bash call. NIX_RUN_MATCHER is the settings.json matcher alternative
+# for it (hook_registry.go nixRunToolMatcher); Claude Code reads the whole
+# matcher as an unanchored regular expression once it holds ".*".
+NIX_RUN_TOOL = "qsdev_nix_run"
+NIX_RUN_MATCHER = "mcp__.*__" + NIX_RUN_TOOL
 
 # Wall-clock budget for all registry/OSV work. The hook is registered with a
 # 30s timeout, and a hook Claude Code kills for running too long does NOT
@@ -1934,6 +1949,13 @@ class Verb(NamedTuple):
     # create:       `npm init <x>` / `yarn create <x>`: runs the create-<x> package
     # inject:       `pipx inject <venv> <pkgs>`: packages after the first operand
     # unverifiable: packages from a registry the guard cannot check -> ask
+    # scripts:      installs nothing but runs the installed packages' lifecycle
+    #               scripts (npm rebuild) -> ask unless scripts are disabled
+
+
+# Verb.manager label of the `scripts` verbs. It is deliberately not in
+# SAFETY_FLAGS: adding --ignore-scripts would turn the command into a no-op.
+_LIFECYCLE_SCRIPTS = "__lifecycle_scripts__"
 
 
 class Manager(NamedTuple):
@@ -1957,17 +1979,20 @@ MANAGERS: dict = {
     "npm": Manager(_NPM_OPTS, {}, tuple(
         _verbs(_NPM_INSTALL_ALIASES, "npm", "npm", _NPM_OPTS)
         + _verbs("exec x", "npm", "npx", _NPX_OPTS, "runner")
-        + _verbs("init create innit", "npm", "npx", _CREATE_OPTS, "create"))),
+        + _verbs("init create innit", "npm", "npx", _CREATE_OPTS, "create")
+        + _verbs("rebuild rb", "npm", _LIFECYCLE_SCRIPTS, _NO_OPTS, "scripts"))),
     "npx": Manager(_NO_OPTS, {}, (Verb((), "npm", "npx", _NPX_OPTS, "runner"),)),
     "pnpm": Manager(_PNPM_GLOBAL, {}, tuple(
         _verbs("add install i update up upgrade", "npm", "pnpm", _PNPM_ADD)
         + _verbs("dlx", "npm", "npx", _PNPM_DLX, "runner")
-        + _verbs("create", "npm", "npx", _CREATE_OPTS, "create"))),
+        + _verbs("create", "npm", "npx", _CREATE_OPTS, "create")
+        + _verbs("rebuild rb", "npm", _LIFECYCLE_SCRIPTS, _NO_OPTS, "scripts"))),
     "pnpx": Manager(_NO_OPTS, {}, (Verb((), "npm", "npx", _PNPM_DLX, "runner"),)),
     "yarn": Manager(_YARN_GLOBAL, {"workspace": 1, "global": 0, "workspaces": 0, "foreach": 0}, tuple(
         _verbs("add install up upgrade", "npm", "yarn", _YARN_ADD)
         + _verbs("dlx", "npm", "npx", _YARN_DLX, "runner")
-        + _verbs("create", "npm", "npx", _CREATE_OPTS, "create"))),
+        + _verbs("create", "npm", "npx", _CREATE_OPTS, "create")
+        + _verbs("rebuild", "npm", _LIFECYCLE_SCRIPTS, _NO_OPTS, "scripts"))),
     "bun": Manager(_opts(value="--cwd -c --config", boolean="--silent --verbose --bun"), {}, tuple(
         _verbs("add a install i update", "npm", "bun", _BUN_ADD)
         + _verbs("x", "npm", "npx", _BUNX_OPTS, "runner")
@@ -2076,9 +2101,10 @@ CATALOG_MANAGER_EXECUTABLES: dict = {
 }
 
 # `npm`/`pnpm`/... followed by one of these is an install; used to recognise an
-# install whose command name or verb the shell computes.
+# install whose command name or verb the shell computes. `scripts` verbs
+# install nothing, so they are not install words.
 _INSTALL_VERB_WORDS: frozenset = frozenset(
-    v.tokens[0] for m in MANAGERS.values() for v in m.verbs if v.tokens)
+    v.tokens[0] for m in MANAGERS.values() for v in m.verbs if v.tokens and v.kind != "scripts")
 
 
 # ---------------------------------------------------------------------------
@@ -2180,6 +2206,7 @@ class Install(NamedTuple):
     issues: list       # reasons the install needs the user's confirmation
     verb_end: int      # argv index just past the install verb (safety flags go here)
     scripts: list      # nested shell scripts to scan (npx -c, nix develop -c ...)
+    archives: tuple = ()  # local package archive files it installs (checked in main)
 
 
 class Detection(NamedTuple):
@@ -2191,6 +2218,7 @@ class Detection(NamedTuple):
     flag: str = ""        # safety flag that still has to be added
     insert_at: int = -1   # offset in the original command for `flag` (-1: cannot rewrite)
     denials: tuple = ()   # reasons the install must be blocked outright
+    archives: tuple = ()  # local package archive files (main checks they are committed)
 
 
 def _exe_name(token: str) -> str:
@@ -2212,6 +2240,46 @@ def _is_local(value: str, manifests: bool = False) -> bool:
     suffixes = _ARCHIVE_SUFFIXES + (_MANIFEST_SUFFIXES if manifests else ())
     return value in (".", "..") or value.startswith(("./", "../", "/", "~")) or (
         not _is_urlish(value) and value.lower().endswith(suffixes))
+
+
+def _local_archive(operand: str) -> str:
+    """The archive file a local package operand installs (`./x.tgz`,
+    `file:../x.tgz`, `name@file:x.tgz`, `./x.whl[extra]`), or "" when the
+    operand is a directory or project rather than an archive."""
+    path = re.sub(r"\[[^\]]*\]$", "", operand)
+    head, sep, tail = path.partition("file:")
+    if sep and (not head or head.endswith("@")):
+        path = tail
+    return path if path.lower().endswith(_ARCHIVE_SUFFIXES) else ""
+
+
+def _glob_issue(operand: str) -> str:
+    return (f"installs local files matched by the glob {operand}; the guard cannot check that they are "
+            f"unmodified committed files of this project")
+
+
+_GLOB_UNIT_RE = re.compile(r"\[([!^]?)([^\]]+)\]|.", re.DOTALL)
+
+
+def _class_glob_may_be_archive(operand: str) -> bool:
+    """Whether a local operand with a `[...]` character class, which the
+    shell expands as a glob, may match an archive (`./dist/x.tg[z]`): its last
+    characters can spell an _ARCHIVE_SUFFIXES suffix. A pip extras group
+    (`.[dev]`) cannot."""
+    if "[" not in operand:
+        return False
+    units: list = []  # per character: (ranges, negated); a plain character is a range of one
+    for m in _GLOB_UNIT_RE.finditer(operand.lower()):
+        if m.group(2) is None:
+            units.append(([(m.group(0), m.group(0))], False))
+        else:
+            ranges = [(r[0], r[-1]) for r in re.findall(r".-.|.", m.group(2), re.DOTALL)]
+            units.append((ranges, bool(m.group(1))))
+
+    def matches(unit: tuple, ch: str) -> bool:
+        return any(lo <= ch <= hi for lo, hi in unit[0]) != unit[1]
+
+    return any(len(units) >= len(s) and all(map(matches, units[-len(s):], s)) for s in _ARCHIVE_SUFFIXES)
 
 
 def _unwrap(words: list) -> Unwrapped:
@@ -2406,8 +2474,10 @@ def _create_package(spec: str) -> str:
 
 def _scan_operands(args: list, dyn: list, verb: Verb, runtime: bool) -> Optional[tuple]:
     """Parse the operands after an install verb. Returns (packages, issues,
-    scripts), or None when the invocation turns out not to install anything
-    (`uv run` without --with, `go run ./cmd`)."""
+    scripts, archives), or None when the invocation turns out not to install
+    anything (`uv run` without --with, `go run ./cmd`). archives are the local
+    archive files among the operands; detection stays pure, so main() checks
+    them."""
     spec = verb.opts
     value_opts = _value_opts(spec)
     issues: list = []
@@ -2499,12 +2569,17 @@ def _scan_operands(args: list, dyn: list, verb: Verb, runtime: bool) -> Optional
         if remote or issues:
             issues.append(f"'{verb.manager}' installs from a registry the package guard cannot "
                           f"verify ({', '.join(remote) or 'custom source'})")
-        return [], issues, scripts
+        return [], issues, scripts, ()
 
     packages: list = []
+    archives: list = []
     for tok, dynamic in candidates:
         if dynamic and _is_local(tok) and "$" not in tok and _SUBST not in tok:
-            continue  # a glob over local files (./dist/*.whl)
+            # A glob over local files (./dist/*.whl): it may match archives,
+            # and which files it matches is only known when the shell runs.
+            if not tok.endswith("/"):
+                issues.append(_glob_issue(tok))
+            continue
         if dynamic:
             issues.append(f"package operand '{_show(tok)}' is computed by the shell "
                           f"or supplied at run time")
@@ -2512,6 +2587,12 @@ def _scan_operands(args: list, dyn: list, verb: Verb, runtime: bool) -> Optional
         kind, detail = _classify_spec(verb.ecosystem, tok)
         if kind == "source":
             issues.append(detail)
+        elif kind == "local":
+            archive = _local_archive(tok)
+            if archive:
+                archives.append(archive)
+            elif _class_glob_may_be_archive(tok):
+                issues.append(_glob_issue(tok))
         elif kind == "registry":
             tok = detail
             if versions:
@@ -2523,7 +2604,7 @@ def _scan_operands(args: list, dyn: list, verb: Verb, runtime: bool) -> Optional
     if runtime:
         issues.append("package arguments are appended at run time (xargs/parallel), so the guard "
                       "cannot see them")
-    return packages, issues, scripts
+    return packages, issues, scripts, tuple(archives)
 
 
 class Globals(NamedTuple):
@@ -2552,7 +2633,12 @@ def _skip_globals(rest: list, spec: OptSpec, exe: str) -> Globals:
         if exe == "cargo" and tok.startswith("+"):
             i += 1  # cargo +nightly install ...
             continue
-        if not tok.startswith("-") or tok in ("-", "--"):
+        if tok == "--":
+            # `npm -- install x`: end of the global options, the verb follows.
+            # A manager that rejects a `--` here fails the command anyway.
+            i += 1
+            break
+        if not tok.startswith("-") or tok == "-":
             break
         base, eq, value = tok.partition("=")
         i += 1
@@ -2642,14 +2728,17 @@ def _parse_manager(exe: str, rest: list, dyn: list, runtime: bool) -> Optional[I
         k = len(verb.tokens)
         if tuple(rest[i:i + k]) != verb.tokens:
             continue
+        if verb.kind == "scripts":
+            # Its operands name installed packages to rebuild; nothing is fetched.
+            return Install(verb.ecosystem, verb.manager, [], [], i + k, [])
         scanned = _scan_operands(carried + rest[i + k:], [False] * len(carried) + dyn[i + k:], verb, runtime)
         if scanned is None:
             return None
-        packages, issues, scripts = scanned
+        packages, issues, scripts, archives = scanned
         issues = global_issues + issues
         if verb.kind == "unverifiable" and not issues:
             return None
-        return Install(verb.ecosystem, verb.manager, packages, issues, i + k, scripts)
+        return Install(verb.ecosystem, verb.manager, packages, issues, i + k, scripts, archives)
     audit_fix = _audit_resolve(exe, rest[i:])
     if audit_fix is not None:
         return audit_fix
@@ -2895,22 +2984,88 @@ UNVALIDATED_MANAGER_PREFIX = "unvalidated:"
 _EXE_VERSION_SUFFIX_RE = re.compile(r"-?[0-9][0-9.]*$")
 
 # PowerShell hosts (names as _exe_name normalises them) and the cmdlets (and
-# PSResourceGet's aliases isres/udres) that install or update from PSGallery /
-# NuGet. Cmdlet names are case-insensitive.
+# their exported aliases: PowerShellGet's inmo/upmo, PSResourceGet's
+# isres/udres) that install or update from PSGallery / NuGet. Cmdlet names
+# are case-insensitive. The PowerShell ecosystem module's deny rules use the
+# same list (TestInstallersMatchPackageGuard keeps them in step).
 _POWERSHELLS: frozenset = frozenset({"pwsh", "powershell"})
+_PS_INSTALLER_CMDLETS: tuple = (
+    "install-module", "install-psresource", "save-module", "save-psresource",
+    "install-script", "install-package", "save-package", "update-module", "update-script",
+    "update-psresource", "inmo", "upmo", "isres", "udres",
+)
+# PowerShell's tokenizer reads the typographic single and double quotes as
+# quotes, and an en dash, em dash or horizontal bar as a parameter's dash
+# (`Start-Process npm –ArgumentList ‘install x’`).
+_PS_QUOTE_MAP: dict = str.maketrans({
+    "‘": "'", "’": "'", "‚": "'", "‛": "'",
+    "“": '"', "”": '"', "„": '"',
+})
+_PS_DASHES: frozenset = frozenset("–—―")
+# A method invocation's `(`: right after a member name of an expression
+# (`$x.Replace(`, `[IO.Path]::Combine(`, `(Get-Date).ToString(`). A bare
+# command name followed by `(` (`npm(...)`, `npm.cmd(...)`) is not one.
+_PS_METHOD_BEFORE_RE = re.compile(r"(?:\$[\w:]+|\$\{[^}]*\}|[\])}])(?:\.\w+|::\w+)+\Z")
 _PS_INSTALL_RE = re.compile(
-    r"(?<![\w-])(install-module|install-psresource|save-module|save-psresource|"
-    r"install-script|install-package|update-module|update-script|"
-    r"update-psresource|isres|udres)(?![\w-])",
+    r"(?<![\w-])(" + "|".join(map(re.escape, _PS_INSTALLER_CMDLETS)) + r")(?![\w-])",
     re.IGNORECASE,
 )
 # PowerShell parameter names are case-insensitive, accept a `/` prefix on
 # Windows PowerShell and may be abbreviated: -c/-com.../-Command take the rest
 # of the line as a script, -e/-ec/-enc.../-EncodedCommand a base64 UTF-16LE
-# script.
+# script, -f/-File a script file.
 _PS_COMMAND_FLAG_RE = re.compile(
     r"^(?:--?|/)(c|com|comm|comma|comman|command|cwa|commandwithargs)$", re.IGNORECASE)
 _PS_ENCODED_FLAG_RE = re.compile(r"^(?:--?|/)(e|ec|en|enc|enco|encod|encode|encoded[a-z]*)$", re.IGNORECASE)
+_PS_FILE_FLAG_RE = re.compile(r"^(?:--?|/)(f|fi|fil|file)$", re.IGNORECASE)
+# PowerShell parameters as (full name, shortest accepted prefix): a host or
+# cmdlet accepts any abbreviation down to that prefix, in any case.
+# The pwsh/powershell host parameters that take a value (`-ExecutionPolicy
+# Bypass`, `-ep:Bypass`), so the value is not read as the first positional.
+_PS_HOST_VALUE_PARAMS: tuple = (
+    ("executionpolicy", "ex"), ("ep", "ep"), ("workingdirectory", "wo"), ("wd", "wd"),
+    ("windowstyle", "w"), ("outputformat", "o"), ("of", "of"), ("inputformat", "inp"), ("if", "if"),
+    ("configurationname", "config"), ("configurationfile", "configurationf"),
+    ("settingsfile", "settings"), ("version", "v"), ("psconsolefile", "psconsolefile"),
+    ("custompipename", "custompipename"),
+)
+# Invoke-Expression's only parameter, and Start-Process's program, argument
+# list and switches (every other Start-Process parameter takes a value).
+_PS_IEX_PARAMS: tuple = (("command", "c"),)
+_PS_START_FILE_PARAMS: tuple = (("filepath", "f"), ("path", "path"), ("pspath", "pspath"))
+_PS_START_ARG_PARAMS: tuple = (("argumentlist", "a"), ("args", "args"))
+_PS_START_SWITCHES: tuple = tuple((s, s) for s in (
+    "wait", "nonewwindow", "passthru", "usenewenvironment", "loaduserprofile", "whatif", "confirm"))
+_PS_PARAM_RE = re.compile(r"(?:--?|(/))([A-Za-z]+)(?:(:)(.*))?", re.DOTALL)
+# The PowerShell commands that run a string as code, and that start a program.
+_PS_INVOKE_EXPRESSION: frozenset = frozenset({"iex", "invoke-expression"})
+_PS_START_PROCESS: frozenset = frozenset({"start-process", "saps", "start"})
+# A PowerShell array literal of literal items (`@('install','evil')`,
+# `('install', 'evil')`, `('x')`): one argument whose elements PowerShell
+# joins with commas, where the POSIX grammar sees a subshell. A bare item
+# needs a comma to make the group a list (`(Get-Args)` is a command); a
+# double-quoted item with `$` or a backtick is expanded, so not literal.
+_PS_ARRAY_ITEM = r"""(?:'[^']*'|"[^"`$]*"|[^\s'"`$@(){};,|&]+)"""
+_PS_ARRAY_ITEM_RE = re.compile(_PS_ARRAY_ITEM)
+_PS_ARRAY_RE = re.compile(
+    rf"""(?<![\w$\]])@?\(\s*({_PS_ARRAY_ITEM}(?:\s*,\s*{_PS_ARRAY_ITEM})+|'[^']*'|"[^"`$]*")\s*\)""")
+# The characters after which a `(` starts a statement or an expression
+# (`(npm i x)`, `$x = (...)`, `a; (b)`), which the POSIX reader already splits
+# out as a command; after anything else a group is an argument whose value
+# is its output, like a `$(...)` substitution.
+_PS_STATEMENT_START: frozenset = frozenset(";|&({}=,!\n")
+# A keyword whose `(...)` is a condition or loop header, which the POSIX
+# reader also splits out as a command (`if (Test-Path x) { ... }`).
+_PS_KEYWORD_BEFORE_RE = re.compile(r"(?<![\w-])(?:if|elseif|while|for|foreach|switch|until)\s*\Z", re.IGNORECASE)
+# Cmdlets that only describe another command: `Get-Help Install-Module`
+# names an installer cmdlet without running it.
+_PS_DISCOVERY_CMDLETS: frozenset = frozenset({"get-help", "help", "man", "get-command", "gcm", "show-command"})
+# A PowerShell assignment statement (`$null = ...`, `[string]$r += ...`,
+# `$x=...`): the target, an optional type constraint before it, and the
+# assignment operator.
+_PS_TYPE_RE = re.compile(r"(?:\[[^\]\s]*\])+")
+_PS_ASSIGN_TARGET_RE = re.compile(r"(?:\[[^\]\s]*\])*\$(?:\{[^}]*\}|[\w:.?]+)(?:\[[^\]]*\])*")
+_PS_ASSIGN_OP_RE = re.compile(r"(?:[-+*/%]|\?\?)?=(?!=)")
 
 # R interpreters (as _exe_name normalises them) whose `-e <expr>` runs R code;
 # any expression that installs (install.packages, remotes::install_github,
@@ -2945,12 +3100,30 @@ def _unvalidated_base(exe: str) -> str:
     return exe
 
 
-def _pwsh_script(args: list) -> Optional[str]:
+def _ps_parameter(tok: str, params: tuple, slash: bool = False) -> Optional[tuple]:
+    """(full name, value) when tok (`-Name`, `-Na:value`, or with slash also
+    `/Name`) names one of params, matched as PowerShell does (see
+    _PS_HOST_VALUE_PARAMS); value is what a colon binds, or None. Else None."""
+    m = _PS_PARAM_RE.fullmatch(tok)
+    if m is None or (m.group(1) and not slash):
+        return None
+    name = m.group(2).lower()
+    for full, shortest in params:
+        if full.startswith(name) and name.startswith(shortest):
+            return full, (m.group(4) if m.group(3) else None)
+    return None
+
+
+def _pwsh_script(args: list, exe: str = "pwsh") -> Optional[str]:
     """The script a pwsh/powershell invocation runs: the rest of the line after
-    -Command (or its abbreviations), or the decoded -EncodedCommand. Returns
-    None when it runs no inline script (-File, interactive). Raises ValueError
-    for an -EncodedCommand that cannot be decoded, so the caller fails closed."""
-    for i, a in enumerate(args):
+    -Command (or its abbreviations), or the decoded -EncodedCommand. Windows
+    PowerShell (`powershell`) also runs its first positional and the rest of
+    the line as a command; pwsh runs it as a script file. Returns None when it
+    runs no inline script (-File, interactive). Raises ValueError for an
+    -EncodedCommand that cannot be decoded, so the caller fails closed."""
+    i = 0
+    while i < len(args):
+        a = args[i]
         if _PS_COMMAND_FLAG_RE.match(a):
             return " ".join(args[i + 1:])
         if _PS_ENCODED_FLAG_RE.match(a):
@@ -2960,8 +3133,12 @@ def _pwsh_script(args: list) -> Optional[str]:
                 return base64.b64decode(args[i + 1], validate=True).decode("utf-16-le")
             except (binascii.Error, UnicodeDecodeError) as exc:
                 raise ValueError(f"undecodable -EncodedCommand: {exc}") from exc
-        if not a.startswith(("-", "/")):
-            return None  # first positional: a script file (pwsh) or command
+        if _PS_FILE_FLAG_RE.match(a):
+            return None
+        param = _ps_parameter(a, _PS_HOST_VALUE_PARAMS, slash=True)
+        if param is None and not a.startswith(("-", "/")):
+            return " ".join(args[i:]) if exe == "powershell" else None
+        i += 2 if param is not None and param[1] is None else 1  # skip a parameter's value
     return None
 
 
@@ -2985,7 +3162,7 @@ def _unvalidated_install(exe: str, args: list) -> bool:
                 return True
         return False
     if exe in _POWERSHELLS:
-        script = _pwsh_script(args)
+        script = _pwsh_script(args, exe)
         return any(_PS_INSTALL_RE.search(a) for a in args + ([script] if script else []))
     if exe in _R_EXES:
         for i, a in enumerate(args):
@@ -3007,12 +3184,13 @@ def _is_unvalidated_manager(exe: str) -> bool:
             or exe in _R_EXES or exe == "perl")
 
 
-def _parse_pwsh(rest: list, dyn: list) -> Optional[Install]:
+def _parse_pwsh(rest: list, dyn: list, exe: str = "pwsh") -> Optional[Install]:
     """pwsh -Command / -EncodedCommand: the script runs native commands
-    (`npm install x`) too, so it is scanned like a shell -c. Installer cmdlets
-    are denied by _unvalidated_install before this runs."""
+    (`npm install x`) too, so it is scanned like a shell -c (in PowerShell's
+    dialect). Installer cmdlets are denied by _unvalidated_install before this
+    runs."""
     try:
-        script = _pwsh_script(rest)
+        script = _pwsh_script(rest, exe)
     except ValueError as exc:
         return _unverified(f"PowerShell {exc}; the guard cannot inspect it")
     if script is None:
@@ -3291,7 +3469,8 @@ def _parse_pip_audit(rest: list, dyn: list) -> Optional[Install]:
 _SPECIAL_PARSERS: dict = {
     "nix": _parse_nix, "nix-env": _parse_nix_env, "nix-shell": _parse_nix_shell,
     "helm": _parse_helm, "mvn": _parse_mvn, "deno": _parse_deno,
-    "pwsh": _parse_pwsh, "powershell": _parse_pwsh, "clojure": _parse_clojure, "clj": _parse_clojure,
+    "pwsh": _parse_pwsh, "powershell": lambda rest, dyn: _parse_pwsh(rest, dyn, "powershell"),
+    "clojure": _parse_clojure, "clj": _parse_clojure,
     "cmd": _parse_cmd, "mvnw": _parse_mvn, "cs": _parse_coursier, "coursier": _parse_coursier,
     "scala-cli": _parse_scala_cli, "scala": _parse_scala_cli, "jbang": _parse_jbang,
     "pip-audit": _parse_pip_audit, "pip_audit": _parse_pip_audit,
@@ -3376,9 +3555,84 @@ def _mentions_install(texts: list) -> bool:
     substitutions it runs) name a package manager or an install verb? Words are
     split on every non-name character, so `npm${IFS}install` and `{npm,i}`
     still read as `npm` / `install`."""
-    pieces = [p for t in texts for p in re.split(r"[^A-Za-z0-9._+-]+", t)]
+    pieces = [p for t in texts for p in _words(t)]
     return any(_exe_name(p) in MANAGERS or _exe_name(p) in _SPECIAL_PARSERS or p in _INSTALL_VERB_WORDS
                for p in pieces if p)
+
+
+def _words(text: str) -> list:
+    """`text` split on every non-name character (empty pieces included)."""
+    return re.split(r"[^A-Za-z0-9._+-]+", text)
+
+
+# Interpreters (as _exe_name normalises them) and the arguments that make the
+# rest of their command line program text: `python -c`, `node -e`,
+# `deno eval`, `ruby -e`, `perl -e`, `php -r`. A short option cluster ending
+# in the flag (`python -Ic`, `perl -wle`) counts too.
+_INLINE_CODE_FLAGS: dict = {
+    "python": ("-c",),
+    "py": ("-c",),
+    "node": ("-e", "-p", "--eval", "--print"),
+    "nodejs": ("-e", "-p", "--eval", "--print"),
+    "deno": ("eval",),
+    "bun": ("-e", "--eval"),
+    "ruby": ("-e",),
+    "perl": ("-e", "-E"),
+    "php": ("-r",),
+}
+
+# Installers named in program text, from the manager tables: each manager's
+# own install verbs (first token; `scripts` verbs install nothing, and `uv run`
+# / `go run` only with options or a version the text would have to spell
+# out), and the installers that need no verb (`cpanm Foo`, `npx x`).
+_CODE_INSTALL_VERBS: dict = {
+    name: frozenset(v.tokens[0] for v in (MANAGERS[name].verbs if name in MANAGERS else ())
+                    if v.tokens and v.kind not in ("scripts", "with", "gorun"))
+    | frozenset(s[0] for s in UNVALIDATED_INSTALLS.get(name, ()) if s)
+    for name in set(MANAGERS) | set(UNVALIDATED_INSTALLS)}
+_VERBLESS_INSTALLERS: frozenset = frozenset(
+    name for name, m in MANAGERS.items() if any(not v.tokens for v in m.verbs)) | frozenset(
+    name for name, seqs in UNVALIDATED_INSTALLS.items() if [] in seqs)
+# Whitespace escapes in a string literal (`'npm\tinstall x'`), read as blanks.
+_CODE_BLANK_ESCAPE_RE = re.compile(r"\\[tnrfv]|\\x(?:09|20)|\\u00(?:09|20)")
+
+
+def _is_inline_flag(arg: str, flags: tuple) -> bool:
+    for flag in flags:
+        if arg == flag or (flag.startswith("--") and arg.startswith(flag + "=")):
+            return True
+        if (len(flag) == 2 and flag[0] == "-" and len(arg) > 2 and arg[0] == "-" and arg[1] != "-"
+                and arg.endswith(flag[1])):
+            return True  # a short option cluster ending in the flag
+    return False
+
+
+def _inline_code_runs_install(exe: str, args: list) -> bool:
+    """Does inline program text (`python -c '...'`) run an install (see
+    _code_runs_install)?"""
+    flags = _INLINE_CODE_FLAGS.get(exe)
+    if not flags or not any(_is_inline_flag(a, flags) for a in args):
+        return False
+    return _code_runs_install(" ".join(args))
+
+
+def _code_runs_install(text: str) -> bool:
+    """Does program text name a package manager followed within two words by
+    one of its install verbs (`os.system("pip install x")`, `["pip",
+    "install", x]`, `pip.main(["install", ...])`), a manager that installs
+    with no verb (`system("cpanm Foo")`), or a PowerShell installer cmdlet?"""
+    words = [w for w in _words(_CODE_BLANK_ESCAPE_RE.sub(" ", text)) if w]
+    for i, word in enumerate(words):
+        if word.lower() in _PS_INSTALLER_CMDLETS:
+            return True
+        for name in (word, word.partition(".")[0]):
+            mgr = _exe_name(name)
+            if mgr in _VERBLESS_INSTALLERS and not any(c.isupper() for c in name):
+                return True  # lower-case only: Perl's CPAN::Meta module is not `cpan`
+            verbs = _CODE_INSTALL_VERBS.get(mgr)
+            if verbs and any(w in verbs for w in words[i + 1:i + 3]):
+                return True
+    return False
 
 
 # ---------------------------------------------------------------------------
@@ -3480,19 +3734,300 @@ def _unverified_detection(segment: str, reason: str) -> Detection:
 
 
 def _recurse_script(script: str, depth: int, results: list, script_reader: bool = False,
-                    env: tuple = ()) -> None:
+                    env: tuple = (), powershell: bool = False) -> None:
     """Recursively scan a nested shell script (a shell/su/eval -c body, a
-    command/process substitution, a heredoc read by a shell). FAILS CLOSED past
-    the recursion cap: a suspicious marker is emitted instead of silently
-    dropping the script, so a pathologically nested install still forces
-    validation."""
+    command/process substitution, a heredoc read by a shell), in PowerShell's
+    dialect when `powershell`. FAILS CLOSED past the recursion cap: a
+    suspicious marker is emitted instead of silently dropping the script, so a
+    pathologically nested install still forces validation."""
     script = script.strip()
     if not script:
         return
     if depth >= _MAX_SHELL_RECURSION:
         results.append(_suspicious_detection(script))
         return
-    results.extend(detect_install_commands(script, depth + 1, script_reader, list(env)))
+    results.extend(detect_install_commands(script, depth + 1, script_reader, list(env), powershell=powershell))
+
+
+def _ps_group_end(text: str, i: int) -> int:
+    """The index past the `)` that closes the group whose `(` is text[i]
+    (quote-aware, nested groups included), or len(text) when it is unclosed."""
+    depth = 0
+    quote: Optional[str] = None
+    n = len(text)
+    while i < n:
+        c = text[i]
+        if quote == "'":
+            quote = None if c == "'" else quote
+        elif c == "`":
+            i += 2
+            continue
+        elif quote == '"':
+            quote = None if c == '"' else quote
+        elif c in "'\"":
+            quote = c
+        elif c == "(":
+            depth += 1
+        elif c == ")":
+            depth -= 1
+            if depth == 0:
+                return i + 1
+        i += 1
+    return n
+
+
+def _ps_prepass(text: str) -> tuple:
+    """PowerShell text rewritten so the POSIX reader reads it as PowerShell
+    does, at the same length so offsets into it stay valid. Outside quotes:
+    a `<# ... #>` block comment becomes blanks; a script block's braces become
+    parentheses, so its statements are commands of their own (`Invoke-Command
+    { Install-Module X }`, `% { ... }`); a literal array group
+    (`@('install', 'evil')`, `('x')`) becomes its bare comma list, the form
+    PowerShell passes as the same argument; and any other group in argument
+    position (`Start-Process (Get-Command npm).Source`) is masked like a
+    `$(...)` substitution and its text returned to be scanned. A method
+    invocation's arguments (`$x.Replace('a', 'b')`) are blanked instead, so
+    the expression is not read as a computed command name, and returned both
+    to be scanned and as call text. Typographic quotes are quotes and a
+    typographic dash that starts a parameter is `-`, as PowerShell reads
+    them. Outside single quotes a backtick escape becomes a backslash escape
+    (`In`stall-Module` is Install-Module), and a backslash, a plain character
+    in PowerShell, becomes `/`. Returns (text, group scripts, method call
+    arguments, ok); ok is False for an unterminated block comment, which the
+    caller fails closed on."""
+    text = text.translate(_PS_QUOTE_MAP)
+    out: list = []
+    scripts: list = []
+    calls: list = []
+    braces: list = []   # per open `{`: whether it became `(`
+    quote: Optional[str] = None
+    last = "\n"         # the previous non-blank character outside quotes
+    i, n = 0, len(text)
+    while i < n:
+        c = text[i]
+        if c == "\\":
+            c = "/"
+        elif quote == "'":
+            quote = None if c == "'" else quote
+        elif c == "`":  # PowerShell's escape character, outside single quotes
+            out.append("\\" + text[i + 1:i + 2].replace("\\", "/"))
+            i += 2
+            last = "`"
+            continue
+        elif quote == '"':
+            quote = None if c == '"' else quote
+        elif c in "'\"":
+            quote = c
+        elif c in _PS_DASHES and text[i + 1:i + 2].isalpha() and (not out or out[-1][-1:] in " \t\r\n;|&(){},="):
+            c = "-"  # `–ArgumentList`; `–-x` is no parameter, so it stays
+        elif text.startswith("<#", i):
+            j = text.find("#>", i + 2)
+            if j < 0:
+                return "".join(out) + " " * (n - i), scripts, calls, False
+            out.append(" " * (j + 2 - i))
+            i = j + 2
+            continue
+        elif c == "#" and (not out or out[-1][-1:] in " \t\r\n;|&(){}"):
+            j = text.find("\n", i)
+            j = n if j < 0 else j
+            out.append(text[i:j])   # a line comment: the POSIX reader drops it too
+            i = j
+            continue
+        elif c == "{":
+            braces.append(text[i - 1:i] not in ("$", "@"))  # ${var} and @{hashtable} stay
+            c = "(" if braces[-1] else c
+        elif c == "}":
+            c = ")" if braces and braces.pop() else c
+        elif c in "@(" and text[i - 1:i] != "$":
+            m = _PS_ARRAY_RE.match(text, i)
+            if m is not None:
+                out.append(",".join(_PS_ARRAY_ITEM_RE.findall(m.group(1))).ljust(m.end() - i))
+                i = m.end()
+                last = ")"
+                continue
+            group = i + 1 if c == "@" else i
+            if text[group:group + 1] == "(" and last not in _PS_STATEMENT_START \
+                    and not _PS_KEYWORD_BEFORE_RE.search(text, max(0, i - 16), i):
+                end = _ps_group_end(text, group)
+                inner = text[group + 1:end - 1] if text[end - 1:end] == ")" else text[group + 1:]
+                scripts.append(inner)
+                method = c == "(" and _PS_METHOD_BEFORE_RE.search(text, max(0, i - 256), i) is not None
+                if method:
+                    calls.append(inner)
+                out.append((" " if method else _SUBST) * (end - i))
+                i = end
+                last = ")"
+                continue
+        out.append(c)
+        if c == "\n":
+            last = "\n"
+        elif not c.isspace():
+            last = text[i]
+        i += 1
+    return "".join(out), scripts, calls, True
+
+
+def _ps_list_value(args: list, dyn: list, i: int) -> tuple:
+    """The PowerShell argument starting at args[i], joined across the words of
+    a spaced comma list (`'install', 'evil'`): (text, dynamic, next index)."""
+    value, vdyn = args[i], dyn[i]
+    i += 1
+    while i < len(args) and (value.endswith(",") or args[i].startswith(",")):
+        value, vdyn = value + args[i], vdyn or dyn[i]
+        i += 1
+    return value, vdyn, i
+
+
+def _ps_start_process(args: list, dyn: list) -> tuple:
+    """Start-Process / saps / start [-FilePath] <program> [[-ArgumentList]
+    <args>]: (program, words). program is (text, dynamic) or None, and words
+    is the argument words, or None when the program or arguments cannot be
+    read (computed, an array the line does not show, a missing value).
+    PowerShell binds positionals to the parameters not named: the first to
+    -FilePath, the next to -ArgumentList, wherever the named ones appear
+    (`Start-Process -ArgumentList 'install x' npm` starts npm). It joins the
+    -ArgumentList elements into one command line, so they are split like a
+    shell word list; extra positionals are kept as arguments too, failing
+    closed."""
+    prog: Optional[tuple] = None
+    values: list = []       # (text, dynamic): the -ArgumentList values
+    positionals: list = []  # (text, dynamic), in order
+    readable = True
+    i, n = 0, len(args)
+    while i < n:
+        tok = args[i]
+        # A cmdlet parameter is `-Name` or `-Name:value` (never `/Name`); any
+        # other word, a quoted `'-c npm i x'` included, is a positional.
+        m = _PS_PARAM_RE.fullmatch(tok) if tok.startswith("-") and not tok.startswith("--") else None
+        if m is None:
+            value, vdyn, i = _ps_list_value(args, dyn, i)
+            positionals.append((value, vdyn))
+            continue
+        i += 1
+        if _ps_parameter(tok, _PS_START_SWITCHES) is not None:
+            continue
+        value, vdyn = m.group(4), dyn[i - 1]
+        if not m.group(3):
+            if i >= n:
+                readable = False  # a value the line does not show
+                continue
+            value, vdyn, i = _ps_list_value(args, dyn, i)
+        param = _ps_parameter(tok, _PS_START_FILE_PARAMS + _PS_START_ARG_PARAMS)
+        if param is None:
+            continue  # another parameter's value (-Verb, -WorkingDirectory, ...)
+        if param[0] in dict(_PS_START_FILE_PARAMS):
+            prog = (value, vdyn)
+        else:
+            values.append((value, vdyn))
+    if prog is None and positionals:
+        prog = positionals.pop(0)
+    values += positionals
+    if not readable or prog is None or prog[1] or any(d or t.startswith("@") for t, d in values):
+        return prog, None
+    try:
+        words = shlex.split(" ".join(e for t, _ in values for e in t.split(",")))
+    except ValueError:
+        return prog, None
+    return prog, words
+
+
+def _ps_statement_words(text: str, words: list) -> list:
+    """The words of the command a PowerShell statement runs, past a leading
+    dot-source operator (`. Install-Module X` runs it like `&`) and
+    assignments (`$null = ...`, `[string]$r=...`): a new list, or `words`
+    itself when there is nothing to strip. Offsets stay those of text."""
+    out = words
+    while out:
+        raw = text[out[0].start:out[0].end]
+        if raw == "." and len(out) > 1:
+            out = out[1:]
+            continue
+        k = 1 if len(out) > 1 and _PS_TYPE_RE.fullmatch(raw) else 0  # `[int] $x = ...`
+        raw = text[out[k].start:out[k].end]
+        target = _PS_ASSIGN_TARGET_RE.match(raw)
+        if target is None:
+            break
+        at = out[k].start + target.end()
+        if at == out[k].end:  # `$x = ...`: the operator starts the next word
+            k += 1
+            if k >= len(out):
+                break
+            at = out[k].start
+        op = _PS_ASSIGN_OP_RE.match(text, at, out[k].end)
+        if op is None:
+            break
+        try:
+            rest = _tokenize(text[op.end():out[k].end])[0]
+        except ValueError:
+            break
+        out = [w._replace(start=w.start + op.end(), end=w.end + op.end()) for w in rest] + out[k + 1:]
+    return out
+
+
+def _ps_stray_cmdlet(text: str, words: list) -> Optional[str]:
+    """An installer cmdlet named as a bare (unquoted) argument of a command
+    that is neither that cmdlet nor a help or discovery cmdlet: the guard
+    cannot tell how the command uses it, so the caller fails closed."""
+    head = _exe_name(words[0].text) if words else ""
+    if not head or head in _PS_DISCOVERY_CMDLETS or head in _PS_INSTALLER_CMDLETS:
+        return None
+    for w in words[1:]:
+        raw = text[w.start:w.end]
+        if "'" not in raw and '"' not in raw and _exe_name(w.text) in _PS_INSTALLER_CMDLETS:
+            return w.text
+    return None
+
+
+def _scan_ps_statement(seg: Segment, words: list, heres: list, depth: int, results: list,
+                       env: list, fed: bool, subs: list) -> None:
+    """PowerShell statements the POSIX reading of a segment misses, added to
+    its detections: the command a dot-source or assignment runs is
+    classified like any other, and a stray installer cmdlet asks."""
+    inner = _ps_statement_words(seg.text, words)
+    if inner is not words:
+        try:
+            u = _unwrap(inner)
+        except ValueError:
+            results.append(_suspicious_detection(seg.text))
+            return
+        _scan_segment(seg, inner, heres, u, depth, results, env, fed, subs, True)
+    stray = _ps_stray_cmdlet(seg.text, inner)
+    if stray is not None:
+        results.append(_unverified_detection(seg.text, f"the command names the installer cmdlet {stray} "
+                                                       f"as an argument; the guard cannot tell whether "
+                                                       f"it runs it"))
+
+
+def _scan_powershell_command(seg: Segment, argv: list, dyn: list, exe: str, depth: int,
+                             results: list, env: list) -> None:
+    """PowerShell commands that run other code: Invoke-Expression's string is
+    scanned as PowerShell, and the command line Start-Process starts as a
+    native one. What the guard cannot read asks (for Start-Process only when
+    the line mentions a package manager). The caller still classifies the
+    segment as usual afterwards, so these only add detections."""
+    if exe in _PS_INVOKE_EXPRESSION:
+        texts, unreadable = [], seg.piped
+        for a, d in zip(argv[1:], dyn[1:]):
+            param = _ps_parameter(a, _PS_IEX_PARAMS, slash=True)
+            if param is not None:
+                if param[1] is None:
+                    continue
+                a = param[1]
+            unreadable = unreadable or d
+            texts.append(a)
+        if unreadable or not texts:
+            results.append(_unverified_detection(seg.text, "Invoke-Expression runs text the guard cannot "
+                                                           "see (computed, or piped from another command); "
+                                                           "it may install packages"))
+        _recurse_script(" ".join(texts).replace(_SUBST, " "), depth, results, env=env, powershell=True)
+    elif exe in _PS_START_PROCESS:
+        prog, words = _ps_start_process(argv[1:], dyn[1:])
+        if words is not None:
+            _recurse_script(shlex.join([prog[0], *words]), depth, results, env=env)
+        elif _mentions_install(([prog[0]] if prog else []) + [t for t, d in zip(argv[1:], dyn[1:]) if not d]):
+            results.append(_unverified_detection(seg.text, "Start-Process starts a program or arguments the "
+                                                           "guard cannot read (computed by the shell); it "
+                                                           "may install packages"))
 
 
 def _scan_stdin_reader(seg: Segment, heres: list, prev_fed_heredoc: bool, depth: int,
@@ -3522,10 +4057,12 @@ def _embedded_shell_script(argv: list, depth: int, results: list, env: list) -> 
 
 
 def _scan_segment(seg: Segment, words: list, heres: list, u: Unwrapped, depth: int,
-                  results: list, env: list, prev_fed_heredoc: bool, subs: list) -> None:
+                  results: list, env: list, prev_fed_heredoc: bool, subs: list,
+                  powershell: bool = False) -> None:
     """Classify one tokenized segment, appending its detections. `env` holds
     the assignments made earlier in the command (and by enclosing scripts),
-    `subs` the command substitutions of this command line."""
+    `subs` the command substitutions of this command line; `powershell`
+    reads it in PowerShell's dialect."""
     scope_env = env + u.env
     for script in u.scripts:
         _recurse_script(script, depth, results, env=scope_env)
@@ -3583,7 +4120,18 @@ def _scan_segment(seg: Segment, words: list, heres: list, u: Unwrapped, depth: i
             return
         exe = _exe_name(argv[0])
 
-    inst = parse_install_argv(argv, dyn, u.runtime)
+    # Additive: the base classification below still runs on the same argv
+    # (`perl -e 'exec @ARGV' npm install x` is validated there).
+    if _inline_code_runs_install(exe, argv[1:]):
+        results.append(_unverified_detection(
+            seg.text, f"inline {exe} code runs a package manager; the guard cannot validate what it installs"))
+    if powershell:
+        _scan_powershell_command(seg, argv, dyn, exe, depth, results, scope_env)
+    if powershell and exe in _PS_INSTALLER_CMDLETS:
+        # Only as the command itself: `Get-Help Install-Module` installs nothing.
+        inst = Install("unvalidated", UNVALIDATED_MANAGER_PREFIX + exe, [], [], 0, [])
+    else:
+        inst = parse_install_argv(argv, dyn, u.runtime)
     if inst is None and not _classified_exe(exe):
         # Catalog-driven fallback: an exec wrapper the guard does not model
         # (or a wrapper option it does not know) hides the install behind an
@@ -3596,8 +4144,10 @@ def _scan_segment(seg: Segment, words: list, heres: list, u: Unwrapped, depth: i
             _embedded_shell_script(argv, depth, results, scope_env)
     if inst is None:
         return
+    # A pwsh/powershell script is PowerShell; every other runner's is POSIX.
+    ps_scripts = _exe_name(argv[0]) in _POWERSHELLS
     for script in inst.scripts:
-        _recurse_script(script, depth, results, env=scope_env)
+        _recurse_script(script, depth, results, env=scope_env, powershell=ps_scripts)
 
     issues = list(inst.issues)
     all_env = scope_env
@@ -3628,12 +4178,26 @@ def _scan_segment(seg: Segment, words: list, heres: list, u: Unwrapped, depth: i
         return
     if inst.manager == _SCRIPTS_ONLY:
         return  # nix develop -c, nix-shell --run, pwsh -Command: only the scripts matter
+    if inst.manager == _LIFECYCLE_SCRIPTS:
+        # Silent when lifecycle scripts are already disabled (--ignore-scripts,
+        # npm_config_ignore_scripts=true): the command then runs nothing.
+        needed, conflict = _safety("npm", argv, all_env)
+        if needed and _env_value(all_env, "npm_config_ignore_scripts") is not None:
+            needed = ""  # set and not false-like (_safety reports those as a conflict)
+        if needed or conflict:
+            issues.append(conflict or f"`{_exe_name(argv[0])} {argv[inst.verb_end - 1]}` runs package "
+                                      f"lifecycle (install) scripts; approve only if you trust every "
+                                      f"installed package")
+        if issues or denials:
+            results.append(Detection(inst.ecosystem, inst.manager, seg.text, [], tuple(issues), "", -1,
+                                     tuple(denials)))
+        return
     results.append(Detection(inst.ecosystem, inst.manager, seg.text, inst.packages, tuple(issues),
-                             f" {flag}" if flag else "", insert_at, tuple(denials)))
+                             f" {flag}" if flag else "", insert_at, tuple(denials), inst.archives))
 
 
 def detect_install_commands(command: str, _depth: int = 0, _script_reader: bool = False,
-                            _env: Optional[list] = None) -> list:
+                            _env: Optional[list] = None, powershell: bool = False) -> list:
     """
     Find ALL genuine package install invocations in a (possibly compound or
     multi-line) command. Returns a list of Detection tuples -- one per segment
@@ -3659,12 +4223,29 @@ def detect_install_commands(command: str, _depth: int = 0, _script_reader: bool 
     unparseable segment, FAILS CLOSED via a suspicious marker. An install the
     guard recognises but cannot verify (computed names, unknown options,
     non-registry sources) yields an unverified marker that main() asks about.
+
+    With `powershell` the command is read in PowerShell's dialect as well
+    (the PowerShell tool, a pwsh -Command / -EncodedCommand script): literal
+    array groups are arguments, an installer cmdlet run as a command is
+    denied, and Invoke-Expression strings and Start-Process command lines are
+    scanned. Substitutions and script blocks keep the dialect; scripts handed
+    to a POSIX shell, eval or another runner are read as POSIX.
     """
     results: list = []
+    groups: list = []
+    if powershell:
+        command, groups, calls, ok = _ps_prepass(command)
+        if not ok:
+            results.append(_suspicious_detection(command))  # an unterminated <# comment
+        for call in calls:
+            if _code_runs_install(call):  # `[Diagnostics.Process]::Start('npm', 'install x')`
+                results.append(_unverified_detection(call, "a method call is handed text that runs a package "
+                                                           "install; the guard cannot validate what it installs"))
 
     # Command/process substitutions anywhere in the command are independent
     # scripts; the cleaned command keeps its offsets with the spans masked.
     sub_scripts, command = _extract_substitutions(command)
+    sub_scripts += groups
 
     # A heredoc body is data, except when something in this command (or in the
     # command a substitution's output feeds) may run it as a script:
@@ -3692,7 +4273,7 @@ def detect_install_commands(command: str, _depth: int = 0, _script_reader: bool 
         parsed.append((seg, words, heres, u))
 
     for script in sub_scripts:
-        _recurse_script(script, _depth, results, script_reader, env)
+        _recurse_script(script, _depth, results, script_reader, env, powershell)
 
     prev_fed_heredoc = False
     for seg, words, heres, u in parsed:
@@ -3702,8 +4283,10 @@ def detect_install_commands(command: str, _depth: int = 0, _script_reader: bool 
         if words is None:
             results.append(_suspicious_detection(seg.text))
         else:
-            _scan_segment(seg, words, heres, u, _depth, results, env,
-                          prev_fed_heredoc and seg.piped, sub_scripts)
+            fed = prev_fed_heredoc and seg.piped
+            _scan_segment(seg, words, heres, u, _depth, results, env, fed, sub_scripts, powershell)
+            if powershell:
+                _scan_ps_statement(seg, words, heres, _depth, results, env, fed, sub_scripts)
         prev_fed_heredoc = bool(seg.heredocs) and script_reader
 
     return results
@@ -3913,6 +4496,240 @@ def _fixed_denials(d: Detection) -> list:
     return list(d.denials)
 
 
+# Local package archives (U17-10a): the manager installs the file as it is on
+# disk now, so only an archive whose bytes are exactly a blob committed at HEAD
+# is as trustworthy as the project's other reviewed files.
+_ARCHIVE_MAX_BYTES = 64 << 20
+_GIT_FILE_MODES = ("100644", "100755")   # not 120000 (symlink) or 160000 (submodule)
+_GIT_OBJECT_HASHES = {40: "sha1", 64: "sha256"}  # hex id length -> object format
+
+
+def _read_regular_file(path: str) -> Optional[bytes]:
+    """The bytes of path if it is a regular file of at most _ARCHIVE_MAX_BYTES,
+    else None. O_NONBLOCK keeps a FIFO from blocking the open."""
+    flags = os.O_RDONLY | getattr(os, "O_NONBLOCK", 0) | getattr(os, "O_BINARY", 0)
+    try:
+        fd = os.open(path, flags)
+        with os.fdopen(fd, "rb") as f:
+            st = os.fstat(f.fileno())
+            if not stat.S_ISREG(st.st_mode) or st.st_size > _ARCHIVE_MAX_BYTES:
+                return None
+            data = f.read(_ARCHIVE_MAX_BYTES + 1)
+    except OSError:
+        return None
+    return data if len(data) <= _ARCHIVE_MAX_BYTES else None
+
+
+def _committed_archive(path: str, cwd: str) -> bool:
+    """Whether path (relative to cwd) is an unmodified file committed at HEAD:
+    HEAD's tree records a regular blob there whose id is the git hash of the
+    file's current bytes. One `git ls-tree` reads the id; it reads no index,
+    applies no clean/smudge filters and takes no lock, and core.fsmonitor is
+    off, so the repository's config cannot make the hook start a program.
+    Anything unexpected (git missing, no HEAD, outside the repository, a
+    timeout) means it is not."""
+    left = 1.0 if _deadline is None else min(1.0, _deadline - time.monotonic())
+    if left <= 0:
+        return False
+    import subprocess  # lazily: only installs of a local archive pay for it
+    argv = ["git", "-c", "core.fsmonitor=false", "--no-optional-locks", "--literal-pathspecs",
+            "ls-tree", "-z", "HEAD", "--", path]
+    try:
+        proc = subprocess.run(argv, cwd=cwd, stdin=subprocess.DEVNULL, capture_output=True,
+                              timeout=left, check=False)
+    except (OSError, ValueError, subprocess.SubprocessError):
+        return False
+    entries = [e for e in proc.stdout.split(b"\0") if e]
+    if proc.returncode != 0 or len(entries) != 1:
+        return False
+    fields = entries[0].partition(b"\t")[0].decode("ascii", "replace").split()
+    if len(fields) != 3 or fields[0] not in _GIT_FILE_MODES or fields[1] != "blob" \
+            or len(fields[2]) not in _GIT_OBJECT_HASHES:
+        return False
+    data = _read_regular_file(os.path.join(cwd, path))
+    if data is None:
+        return False
+    digest = hashlib.new(_GIT_OBJECT_HASHES[len(fields[2])])
+    digest.update(b"blob %d\0" % len(data))
+    digest.update(data)
+    return digest.hexdigest() == fields[2].lower()
+
+
+# A directory change anywhere in a command line (`cd sub && npm i ./x.tgz`,
+# `pushd`, PowerShell's Set-Location/sl/Push-Location, `env -C sub`, at any
+# nesting level): a relative archive path may then name a file other than the
+# one checked.
+_DIR_CHANGE_RE = re.compile(
+    r"""(?:^|(?<=[\s;|&(){}'"`]))"""
+    r"""(?:(?i:cd|pushd|chdir|set-location|sl|push-location)|env\s(?:[^;|&\n]*\s)?(?:-[A-Za-z]*C|--chdir))"""
+    r"""(?=$|[\s;|&(){}'"`=])""")
+# The words of a command line, quotes and escapes dropped: `"vendor/y.t"gz`
+# is the shell's vendor/y.tgz.
+_QUOTE_CHARS_RE = re.compile(r"""["'`\\]""")
+_WORD_SEP_RE = re.compile(r"[\s;|&()<>]+")
+
+
+def _names_archive_elsewhere(command: str, path: str) -> bool:
+    """Does the command line name the archive's file other than as this
+    operand: its file name a second time (quoting ignored), or a glob or
+    brace pattern (`vendor/y.tg*`, `y.{tgz,bak}`) that may expand to it?"""
+    import fnmatch  # lazily: only installs of a local archive pay for it
+    name = os.path.basename(path)
+    plain = _QUOTE_CHARS_RE.sub("", command)
+    if plain.count(name) > 1:
+        return True
+    for word in _WORD_SEP_RE.split(plain):
+        if any(c in word for c in "*?[{"):
+            pattern = re.sub(r"\{[^}]*\}?", "*", word.rpartition("/")[2])
+            if pattern and fnmatch.fnmatchcase(name, pattern):
+                return True
+    return False
+
+
+def _archive_issues(detections: list, cwd: object, command: str) -> list:
+    """Ask reasons for the local archives that are not unmodified committed
+    files. The check runs before the command does, so an archive the command
+    also names elsewhere (`cp evil.tgz x.tgz && npm i ./x.tgz`, a glob that
+    may match it) may be changed first, and a relative one after a directory
+    change may be another file: neither is trusted, and git is not run. The
+    reason names the path only, never the file's content."""
+    paths = list(dict.fromkeys(p for d in detections for p in d.archives))
+    if not paths:
+        return []  # no process is started for an install without archives
+    if not isinstance(cwd, str) or not cwd:
+        cwd = os.getcwd()
+    issues = []
+    chdir = _DIR_CHANGE_RE.search(command)
+    for path in paths:
+        local = os.path.expanduser(path)
+        if _names_archive_elsewhere(command, path):
+            issues.append(f"installs local archive {path}, which the same command also names elsewhere "
+                          f"and may change before the install runs")
+        elif chdir is not None and not os.path.isabs(local):
+            issues.append(f"installs local archive {path} after the command changes directory "
+                          f"({chdir.group(0).split()[0]}); the guard cannot tell which file it names")
+        elif not _committed_archive(local, cwd):
+            issues.append(f"installs local archive {path}, which is not an unmodified committed file of "
+                          f"this project; the guard cannot verify its contents")
+    return issues
+
+
+def _is_nix_run(tool_name: object) -> bool:
+    """Whether tool_name is the nix_run tool as Claude Code names an MCP tool,
+    mcp__<server>__qsdev_nix_run, for any non-empty server name (as
+    cmdscan.IsNixRunTool decides)."""
+    if not isinstance(tool_name, str) or not tool_name.startswith("mcp__"):
+        return False
+    server, sep, tool = tool_name[len("mcp__"):].partition("__")
+    return bool(sep) and server != "" and tool == NIX_RUN_TOOL
+
+
+_ATTRIBUTE_SUFFIX_RE = re.compile(r"[-_A-Z]")
+
+
+def _nix_run_programs(installable: str) -> list:
+    """The programs an installable's attribute path names: its last
+    dot-separated component, without an output selector (^out) or quotes,
+    and that component cut before the first -, _ or upper-case letter after
+    its first character, which drops a version or variant suffix (pnpm_9,
+    yarn-berry, bashInteractive) when it differs; [] when it has no
+    attribute (cmdscan installablePrograms)."""
+    _, sep, attr = installable.partition("#")
+    if not sep:
+        return []
+    attr = attr.partition("^")[0].rpartition(".")[2].strip('"')
+    if not attr:
+        return []
+    m = _ATTRIBUTE_SUFFIX_RE.search(attr, 1)
+    return [attr, attr[:m.start()]] if m else [attr]
+
+
+def _shell_option_args(arg: str) -> int:
+    """How many following words a shell option word takes as arguments
+    (cmdscan shellOptionArgs)."""
+    if arg.startswith("--"):
+        return 1 if arg in ("--rcfile", "--init-file") else 0
+    return arg[1:].count("o") + arg[1:].count("O")
+
+
+def _nix_run_script(args: list) -> Optional[str]:
+    """The script a -c option among args runs, as a shell takes it: the first
+    operand after the option words (`-c -- S`, `-c -e S`), or None when no -c
+    option is given or no operand follows it (cmdscan shellScriptIndex). Any
+    program's -c is taken, since the attribute does not reliably name the
+    program nix runs (busybox runs any applet)."""
+    c = next((i for i, a in enumerate(args) if len(a) > 1 and a[0] == "-" and a[1] != "-" and "c" in a[1:]), None)
+    if c is None:
+        return None
+    skip = _shell_option_args(args[c])
+    for i in range(c + 1, len(args)):
+        a = args[i]
+        if skip > 0:
+            skip -= 1
+        elif a in ("--", "-"):
+            return args[i + 1] if i + 1 < len(args) else None
+        elif len(a) > 1 and a[0] in "-+":
+            skip = _shell_option_args(a)
+        else:
+            return a
+    return None
+
+
+def _nix_run_lines(tool_input: object) -> Optional[list]:
+    """The Bash command lines a nix_run call is equivalent to, as
+    cmdscan.NixRunCommandLines builds them, without the literal `nix run`
+    line: the program with its args (once per name _nix_run_programs gives),
+    the script of a -c option, and stdin. None when tool_input is not {command: str, args: [str], stdin: str}
+    (absent or null fields are empty; any other value of the wrong type,
+    falsy ones such as false, 0 or {} included, is malformed)."""
+    if tool_input is None:
+        tool_input = {}
+    if not isinstance(tool_input, dict):
+        return None
+
+    def field(key: str, empty: object) -> object:
+        value = tool_input.get(key)
+        return empty if value is None else value
+
+    installable = field("command", "")
+    args = field("args", [])
+    stdin = field("stdin", "")
+    if (not isinstance(installable, str) or not isinstance(stdin, str) or not isinstance(args, list)
+            or not all(isinstance(a, str) for a in args)):
+        return None
+    lines: list = []
+    for program in _nix_run_programs(installable):
+        lines.append(shlex.join([program] + args))
+    script = _nix_run_script(args)
+    if script is not None:
+        lines.append(script)
+    if stdin.strip():
+        lines.append(stdin)
+    return lines
+
+
+def _guard_nix_run(tool_input: object) -> None:
+    """Decide a nix_run call. An install the Bash route would validate cannot
+    be validated or hardened here: the safety-flag rewrite would replace the
+    installable, so any install is denied without registry lookups. Input of
+    the wrong shape fails closed; a call with no install gets no decision."""
+    lines = _nix_run_lines(tool_input)
+    if lines is None:
+        reason = ("qsdev_nix_run tool_input is malformed (want command and stdin strings and args a list "
+                  "of strings); blocking to fail closed.")
+        lib.audit_log(redact({"event": "deny_nix_run_input", "reason": reason}))
+        _decision("deny", reason)
+    segments: list = []
+    for line in lines:
+        segments.extend(d.segment for d in detect_install_commands(line))
+    if not segments:
+        sys.exit(0)
+    reason = ("package installs through qsdev_nix_run cannot be validated or hardened; run them through Bash ("
+              + "; ".join(f"`{s[:80]}`" for s in segments) + ")")
+    lib.audit_log(redact({"event": "deny_nix_run", "lines": lines, "segments": segments}))
+    _decision("deny", reason)
+
+
 def main() -> None:
     global _deadline
     lib.arm_deadline("package-guard", _HOOK_DEADLINE_S)
@@ -3928,6 +4745,8 @@ def main() -> None:
         sys.exit(2)
 
     tool_name = input_data.get("tool_name", "")
+    if _is_nix_run(tool_name):
+        _guard_nix_run(input_data.get("tool_input"))
     tool_input = input_data.get("tool_input") or {}
     command = tool_input.get("command") or ""
 
@@ -3940,7 +4759,7 @@ def main() -> None:
         command = command.replace("\\", "/")
 
     # 3. Detect ALL package install commands (handles compound commands).
-    detections = detect_install_commands(command)
+    detections = detect_install_commands(command, powershell=tool_name == "PowerShell")
     if not detections:
         # Not a package install command — allow silently.
         sys.exit(0)
@@ -3987,6 +4806,8 @@ def main() -> None:
             if key not in seen:  # a repeated or differently-spelled package is checked once
                 seen.add(key)
                 jobs.append(Job(pkg_name, ecosystem, kind, value))
+    if not deny_reasons:
+        ask_reasons.extend(_archive_issues(detections, input_data.get("cwd"), command))
 
     # 5. Validate (skipped once the command is refused anyway).
     results = {} if deny_reasons else validate_all(jobs)

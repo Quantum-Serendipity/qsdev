@@ -61,3 +61,29 @@ func TestSelfprotect_NixRunTool(t *testing.T) {
 		})
 	}
 }
+
+// TestSelfprotect_NixRunComputedStdinProgram pins that the structural
+// evasion rule (XS-WS4 D4) reaches the nix_run tool through judgeNixRun: a
+// -c script that pipes a decoded program into a shell is denied as
+// EVASION-obfuscation, whatever the server is named.
+func TestSelfprotect_NixRunComputedStdinProgram(t *testing.T) {
+	t.Parallel()
+	for _, tool := range []string{"mcp__qsdev__qsdev_nix_run", "mcp__other__qsdev_nix_run"} {
+		t.Run(tool, func(t *testing.T) {
+			t.Parallel()
+			payload, err := json.Marshal(map[string]any{
+				"tool_name":  tool,
+				"tool_input": map[string]any{"command": "nixpkgs#bash", "args": []string{"-c", "echo 726d | xxd -r -p | sh"}},
+				"cwd":        t.TempDir(),
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			var stderr bytes.Buffer
+			err = evaluateSelfprotect(context.Background(), bytes.NewReader(payload), &stderr, nil)
+			if !errors.Is(err, errSelfprotectDeny) || !strings.Contains(stderr.String(), "EVASION-obfuscation") {
+				t.Errorf("err = %v, stderr %q, want a deny as EVASION-obfuscation", err, stderr.String())
+			}
+		})
+	}
+}

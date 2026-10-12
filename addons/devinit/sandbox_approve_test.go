@@ -12,6 +12,7 @@ import (
 
 	"github.com/Quantum-Serendipity/qsdev/internal/sandbox/policy"
 	"github.com/Quantum-Serendipity/qsdev/internal/testutil"
+	"github.com/Quantum-Serendipity/qsdev/internal/testutil/humantest"
 )
 
 // isolateApprovals points the sandbox policy approval store and the policy
@@ -58,7 +59,7 @@ func writeProjectPolicy(t *testing.T, project, content string) string {
 // as the confirmation answer, simulating a human at a terminal.
 func runApproveCmd(t *testing.T, stdin string) (string, error) {
 	t.Helper()
-	t.Setenv("CLAUDECODE", "")
+	humantest.SetAgentSession(t, "")
 	return runApprove(newSandboxApproveCmd(policy.DefaultApprovalStore), true, stdin)
 }
 
@@ -137,7 +138,7 @@ func TestSandboxApprove_Refusals(t *testing.T) {
 			if tt.agent {
 				agent = "1"
 			}
-			t.Setenv("CLAUDECODE", agent)
+			humantest.SetAgentSession(t, agent)
 
 			_, err := runApprove(newSandboxApproveCmd(policy.DefaultApprovalStore), tt.interactive, tt.stdin)
 
@@ -203,7 +204,7 @@ func TestSandboxApprove_EndToEnd(t *testing.T) {
 func runApprove(approve *cobra.Command, interactive bool, stdin string) (string, error) {
 	root := gatedRoot(approve)
 	var out bytes.Buffer
-	root.SetIn(ttyInput{Reader: strings.NewReader(stdin), tty: interactive})
+	root.SetIn(humantest.HumanTerminal{Reader: strings.NewReader(stdin), TTY: interactive})
 	root.SetOut(&out)
 	root.SetErr(&out)
 	root.SilenceErrors = true

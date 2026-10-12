@@ -345,6 +345,47 @@ func TestBlockDestructive_WrapperIndirection(t *testing.T) {
 	}
 }
 
+// TestBlockDestructive_ParallelArgumentCommands guards W1N-08: GNU parallel
+// with no command word runs each ::: argument as a command line.
+func TestBlockDestructive_ParallelArgumentCommands(t *testing.T) {
+	t.Parallel()
+	env := []string{"CLAUDE_PROJECT_DIR=/qsdev-hook-test/project"} // HOME: a fresh temp dir
+	cases := []struct {
+		command string
+		want    string
+	}{
+		{`parallel ::: 'rm -rf ~'`, "deny"},
+		{`parallel -j2 ::: ls 'rm -rf ~'`, "deny"},
+		{`parallel --will-cite ::: 'rm -rf ~'`, "deny"},
+		{`parallel rm -rf ::: ~`, "deny"},
+		{`parallel ::: rm ::: -rf ::: ~`, "deny"},
+		{`parallel ::: 'rm -rf' ::: ~`, "deny"},
+		{`parallel {} ::: 'rm -rf ~'`, "deny"},
+		{`parallel sh -c ::: 'rm -rf ~'`, "deny"},
+		{`parallel --env X ::: 'rm -rf ~'`, "deny"},
+		{`parallel echo {1} ::: a ::: b`, "allow"},
+		// Each combination is judged alone too, which over-reports.
+		{`parallel echo ::: 'rm -rf ~'`, "deny"},
+		{`parallel echo ::: a`, "allow"},
+		{`parallel ::: ls 'echo hi'`, "allow"},
+		// Jobs read from stdin or a file are not known; as on base, no
+		// error (the most common use of parallel).
+		{`cat jobs.txt | parallel`, "allow"},
+		{`parallel < jobs.txt`, "allow"},
+		{`parallel -j4 < jobs.txt`, "allow"},
+		{`parallel --version`, "allow"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.command, func(t *testing.T) {
+			t.Parallel()
+			payload := map[string]any{"tool_name": "Bash", "tool_input": map[string]any{"command": tc.command}}
+			if got := runHookScript(t, "block-destructive.py", payload, env...); got != tc.want {
+				t.Errorf("decision = %q, want %q", got, tc.want)
+			}
+		})
+	}
+}
+
 // TestBlockDestructive_TimeoutDuration guards R1: timeout's DURATION is any
 // one word, not only one that starts with a digit. GNU timeout takes a
 // fraction, a sign, inf/infinity and leading blanks, and options may come
@@ -852,7 +893,7 @@ func TestHookMatchersCoverScriptTools(t *testing.T) {
 	}{
 		{"file-boundary", "file-boundary.py", "sorted(m.PATH_KEYS)"},
 		{"credential-scan", "scan-secrets.py", "sorted(m.SCANNED_TOOLS)"},
-		{"package-guard", "package-guard.py", "sorted(m.SHELL_TOOLS)"},
+		{"package-guard", "package-guard.py", "sorted(list(m.SHELL_TOOLS) + [m.NIX_RUN_MATCHER])"},
 		{"destructive-prevention", "block-destructive.py", "sorted(m.SHELL_TOOLS)"},
 	}
 	defs := claudecode.ExportDefaultHookRegistry().Definitions()

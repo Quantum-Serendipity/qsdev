@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"io"
 	"os"
 
 	gdevaddons "fastcat.org/go/gdev/addons"
@@ -13,6 +12,7 @@ import (
 	gdevconfig "fastcat.org/go/gdev/lib/config"
 
 	"github.com/Quantum-Serendipity/qsdev/instance"
+	"github.com/Quantum-Serendipity/qsdev/internal/testutil/humantest"
 )
 
 // humanHelperEnv makes the helper process (cliHelperEnv) run qsdev with its
@@ -21,11 +21,6 @@ import (
 // requires. Only this test binary reads it; the shipped binary has no such
 // switch.
 const humanHelperEnv = "QSDEV_GUARDRAIL_CLI_HUMAN"
-
-// humanStdin is stdin presented as an interactive terminal.
-type humanStdin struct{ io.Reader }
-
-func (humanStdin) IsTerminal() bool { return true }
 
 // helperRunner adapts a function to gdev's instance.TestMain Run() int.
 type helperRunner func() int
@@ -44,7 +39,7 @@ func mainAsHuman() {
 			fmt.Fprintf(os.Stderr, "Error initializing config: %v\n", err)
 		}
 		root := instance.NewRootCommand()
-		root.SetIn(humanStdin{os.Stdin})
+		root.SetIn(humantest.HumanTerminal{Reader: os.Stdin, TTY: true})
 		err := root.ExecuteContext(context.Background())
 		if err == nil {
 			return 0

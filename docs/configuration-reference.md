@@ -1892,9 +1892,10 @@ Bundler hardening (`BUNDLE_FROZEN`, `BUNDLE_DISABLE_EXEC_LOAD`) is exported as e
 
 | File | Merge Strategy | Purpose |
 |------|---------------|---------|
-| `.qsdev/composer/config.json` | `overwrite` | Composer global config: `secure-http`, plugin allowlist, `audit.abandoned: fail`, repository pinning to the registry proxy |
+| `.qsdev-composer/config.json` | `overwrite` | Composer global config: `secure-http`, plugin allowlist, `audit.abandoned: fail`, repository pinning to the registry proxy |
+| `.qsdev-composer/.gitignore` | `overwrite` | Commits only `config.json` and itself; ignores everything else in the Composer home |
 
-devenv.nix exports `COMPOSER_HOME=$DEVENV_ROOT/.qsdev/composer`, so every `composer` run in the devenv shell loads the generated `config.json` as its global configuration. Composer reads global settings only from `$COMPOSER_HOME/config.json`. It has no include directive and no environment variable that points at another config file, so the file has to live there. Composer applies the project's `composer.json` on top of this file, which means the generated values fill in every key the project leaves unset and explicit `composer.json` settings still take precedence.
+devenv.nix exports `COMPOSER_HOME=$DEVENV_ROOT/.qsdev-composer`, so every `composer` run in the devenv shell loads the generated `config.json` as its global configuration. Composer reads global settings only from `$COMPOSER_HOME/config.json`. It has no include directive and no environment variable that points at another config file, so the file has to live there. Composer applies the project's `composer.json` on top of this file, which means the generated values fill in every key the project leaves unset and explicit `composer.json` settings still take precedence.
 
 The file sets:
 
@@ -1906,13 +1907,15 @@ With a registry proxy configured (see [Infrastructure settings](#infrastructure-
 
 The file replaces your user-level Composer home (`~/.config/composer` or `~/.composer`) inside the devenv shell, which has three effects:
 
-- **Credentials.** Composer does not read your global `auth.json` in the shell. Put credentials for private repositories in the `COMPOSER_AUTH` environment variable or in an `auth.json` next to `composer.json`. Keep that `auth.json` out of version control.
-- **Cache.** Composer keeps its download cache in `.qsdev/composer/cache` unless you set `COMPOSER_CACHE_DIR`.
-- **Global packages.** `composer global require` installs into `.qsdev/composer/vendor`.
+- **Credentials.** Composer reads `auth.json` only from `COMPOSER_HOME`. So that private repositories keep authenticating, the shell's `enterShell` links your global credentials into the project: when `.qsdev-composer/auth.json` does not exist (not even as a dangling link), it symlinks the first regular file among `${XDG_CONFIG_HOME:-$HOME/.config}/composer/auth.json` and `~/.composer/auth.json`. It never replaces an existing file or link, makes no network calls, and creates nothing when neither global file exists. devenv's clean mode strips `XDG_CONFIG_HOME` unless `devenv.yaml` keeps it, so inside the shell the XDG location is `~/.config/composer/auth.json`; a credentials file under a custom `XDG_CONFIG_HOME` is not found. You can also set the `COMPOSER_AUTH` environment variable or put a regular `.qsdev-composer/auth.json` in place, which the link step then leaves alone. The nested `.gitignore` keeps `auth.json` out of version control, and the generated Claude Code settings deny the agent read access to it (`Read(./.qsdev-composer/auth.json)` in `permissions.deny` and in the sandbox `denyRead`).
+- **Cache.** devenv.nix exports `COMPOSER_CACHE_DIR=$DEVENV_ROOT/.qsdev-composer/cache`, so the download cache stays in the project, is gitignored, and stays writable inside the agent's hook sandbox.
+- **Global packages.** `composer global require` installs into `.qsdev-composer/vendor`, which is also gitignored.
 
-`.qsdev/` is gitignored, so these files never reach the repository. `qsdev init --mode join` writes `config.json` for each teammate. Earlier qsdev versions wrote `.qsdev/composer-security.json`, which Composer never loaded. `qsdev init --update` removes that file when it is unmodified.
+`.qsdev-composer/` is tracked, so the hardening is committed with the project, survives a clone, and applies in CI, where the security-scan workflow runs Composer inside the devenv shell. Its nested `.gitignore` contains `*`, `!.gitignore` and `!config.json`, so only those two files reach the repository, independent of the root `.gitignore`. Both files are self-protected: the agent cannot edit or delete them, by name, through a glob such as `conf*.json`, or by removing, moving or checking out the `.qsdev-composer` directory as a whole, and the hook sandbox mounts them read-only, while the rest of the directory (cache, global packages, the `auth.json` link) stays writable for Composer. `qsdev check` (`security_config_php`) fails when `config.json` differs from what qsdev generates in either direction: a setting removed or weakened, or an entry added, such as a plugin in `allow-plugins`, an extra repository or an `audit.ignore` list. Keys starting with `_` are comments and are not compared. It also fails when the nested `.gitignore` is missing or its patterns differ in content or order.
 
-The generated config cannot block install scripts. Composer has no setting for that, so the CI install step runs `composer install --no-scripts`.
+Earlier qsdev versions wrote the config to `.qsdev/composer/config.json`, which was gitignored and so never reached a clone or CI. `qsdev init --update` writes the new files, points `COMPOSER_HOME` at `.qsdev-composer`, and removes the old `config.json` when it is unmodified. The old `.qsdev/composer/` cache and global packages are not migrated; delete that directory once you have updated. Versions before that wrote `.qsdev/composer-security.json`, which Composer never loaded; `qsdev init --update` removes it too when it is unmodified.
+
+The generated config cannot block install scripts. Composer has no setting for that, so the CI install step runs `composer install --no-dev --no-scripts --no-plugins --no-interaction`. CI also runs `composer validate --no-check-publish --no-check-all --no-plugins` (lock freshness stays checked) and `composer audit --no-plugins`, so no Composer plugin runs in CI.
 
 ### Docker
 

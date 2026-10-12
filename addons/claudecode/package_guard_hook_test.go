@@ -387,8 +387,10 @@ func TestPackageGuard_HookDecisions(t *testing.T) {
 			command: "setpriv --reuid 1000 /usr/bin/npm install evil-new", decision: "deny"},
 		{name: "command -v does not run", command: "command -v npm install", decision: "silent"},
 		{name: "flock FILE -c script", command: "flock /tmp/l -c 'npm install evil-new'", decision: "deny"},
+		// The glob is not a package name, but the archives it matches are
+		// unchecked local files (U17-10a), so it asks rather than staying silent.
 		{name: "local wheel glob is not a package", command: "pip install --only-binary :all: ./dist/*.whl",
-			decision: "silent"},
+			decision: "ask", reason: "local files matched by the glob ./dist/*.whl", updated: noRewrite},
 		{name: "unknown exec wrapper is rewritten in place", command: "docker run --rm node:20 npm install",
 			decision: "ask", updated: "docker run --rm node:20 npm install --ignore-scripts"},
 
@@ -816,6 +818,27 @@ func TestPackageGuard_HookDecisions(t *testing.T) {
 		{name: "pip-audit option values are not paths", command: "pip-audit -f json -o out.json --desc on --path venv",
 			decision: "silent", noLookups: true},
 		{name: "cargo audit --json", command: "cargo audit --json", decision: "silent", noLookups: true},
+
+		// U17-10b: rebuild runs every installed package's lifecycle scripts, so
+		// it asks (no rewrite) unless scripts are already disabled.
+		{name: "npm rebuild", command: "npm rebuild", decision: "ask", reason: "lifecycle", updated: noRewrite,
+			noLookups: true},
+		{name: "npm rb", command: "npm rb", decision: "ask", reason: "lifecycle", updated: noRewrite, noLookups: true},
+		{name: "pnpm rebuild", command: "pnpm rebuild", decision: "ask", reason: "lifecycle", updated: noRewrite,
+			noLookups: true},
+		{name: "pnpm rb", command: "pnpm rb", decision: "ask", reason: "lifecycle", updated: noRewrite, noLookups: true},
+		{name: "yarn rebuild", command: "yarn rebuild", decision: "ask", reason: "lifecycle", updated: noRewrite,
+			noLookups: true},
+		{name: "npm rebuild --ignore-scripts", command: "npm rebuild --ignore-scripts", decision: "silent",
+			noLookups: true},
+		{name: "npm --ignore-scripts rebuild", command: "npm --ignore-scripts rebuild", decision: "silent",
+			noLookups: true},
+		{name: "npm_config_ignore_scripts=true npm rebuild", command: "npm_config_ignore_scripts=true npm rebuild",
+			decision: "silent", noLookups: true},
+		{name: "npm rebuild with scripts re-enabled", command: "npm rebuild --ignore-scripts=false", decision: "ask",
+			reason: "lifecycle", updated: noRewrite, noLookups: true},
+		{name: "nested npm rebuild asks", command: "bash -c 'npm rebuild'", decision: "ask", reason: "lifecycle",
+			updated: noRewrite, noLookups: true},
 
 		// Controls.
 		{name: "go build", command: "go build ./...", decision: "silent"},

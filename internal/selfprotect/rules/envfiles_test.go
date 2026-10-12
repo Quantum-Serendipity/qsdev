@@ -128,6 +128,97 @@ func TestEnvFileRelocationVerdicts(t *testing.T) {
 	}
 }
 
+// TestEnvFileCommitGateVars covers U18-09's persistent half: a file that sets
+// the environment later shells and git commits run in (devenv.nix,
+// devenv.local.nix, a shell startup file) must not gain or lose an assignment
+// of a commit-gate variable (canon.CommitGateEnvVars), which would skip or
+// disable the pre-commit checks for every later commit. Only an assignment
+// counts: the generated devenv.nix prints "SKIP: not a git repository", and a
+// comment about skipping tests is not an assignment.
+func TestEnvFileCommitGateVars(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	home := homeDir(t)
+
+	// The generated enterTest text (addons/devenv security_defaults.go).
+	const generated = "{\n  enterTest = ''\n    case \"$hooks_state\" in\n" +
+		"      active) echo \"PASS: pre-commit hooks installed\" ;;\n" +
+		"      *) echo \"SKIP: not a git repository; pre-commit hook check skipped\" ;;\n" +
+		"    esac\n  '';\n  env.API = \"x\";\n}\n"
+	devenvNix := filepath.Join(dir, "devenv.nix")
+	if err := os.WriteFile(devenvNix, []byte(generated), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	withSkip := filepath.Join(dir, "with-skip", "devenv.local.nix")
+	if err := os.MkdirAll(filepath.Dir(withSkip), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	const skipLine = "  env.SKIP = \"gitleaks\";\n"
+	if err := os.WriteFile(withSkip, []byte("{\n"+skipLine+"}\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	rc := filepath.Join(dir, "rc", ".bashrc")
+	if err := os.MkdirAll(filepath.Dir(rc), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(rc, []byte("alias ll='ls -l'\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	write := func(p, content string) EvalContext {
+		return EvalContext{ToolName: "Write", FilePath: p, CanonicalPath: p, CWD: dir, Content: content}
+	}
+	edit := func(p, old, repl string) EvalContext {
+		return EvalContext{
+			ToolName: "Edit", FilePath: p, CanonicalPath: p, CWD: dir,
+			Edits: []TextEdit{{OldString: old, NewString: repl}},
+		}
+	}
+	tests := []struct {
+		name string
+		ctx  EvalContext
+		want Verdict
+	}{
+		{"Write devenv.local.nix env.SKIP", write(filepath.Join(dir, "devenv.local.nix"), "{\n  env.SKIP = \"gitleaks\";\n}\n"), Deny},
+		{"Write devenv.local.nix env.PREK_SKIP", write(filepath.Join(dir, "devenv.local.nix"), "{ env.PREK_SKIP = \"gitleaks\"; }\n"), Deny},
+		{"Write devenv.nix env.PRE_COMMIT_ALLOW_NO_CONFIG", write(filepath.Join(dir, "devenv.nix"), "{ env.PRE_COMMIT_ALLOW_NO_CONFIG = \"1\"; }\n"), Deny},
+		{"Write devenv.nix env.PREK_ALLOW_NO_CONFIG", write(filepath.Join(dir, "devenv.nix"), "{ env.PREK_ALLOW_NO_CONFIG = \"1\"; }\n"), Deny},
+		{"Write devenv.nix env attrset SKIP", write(filepath.Join(dir, "devenv.nix"), "{ env = {\n    SKIP = \"gitleaks\";\n  };\n}\n"), Deny},
+		{"Write devenv.nix quoted env.SKIP", write(filepath.Join(dir, "devenv.nix"), "{ env.\"SK\" + \"IP\" = \"gitleaks\"; }\n"), Deny},
+		{"Edit adds env.SKIP to generated devenv.nix", edit(devenvNix, "  env.API = \"x\";\n", "  env.API = \"x\";\n  env.SKIP = \"gitleaks\";\n"), Deny},
+		{"Edit removes env.SKIP", edit(withSkip, skipLine, ""), Deny},
+		{"Edit adds export SKIP to bashrc", edit(rc, "alias ll='ls -l'\n", "alias ll='ls -l'\nexport SKIP=gitleaks\n"), Deny},
+		{"Write bashrc export SKIP", write(filepath.Join(home, ".bashrc"), "export SKIP=gitleaks\n"), Deny},
+		{"Write fish config set SKIP", write(filepath.Join(home, ".config", "fish", "config.fish"), "set -gx SKIP gitleaks\n"), Deny},
+		{"Write PowerShell profile env SKIP", write(filepath.Join(home, "Documents", "PowerShell", "Microsoft.PowerShell_profile.ps1"), "$env:SKIP = 'gitleaks'\n"), Deny},
+
+		{"Edit of generated devenv.nix enterTest", edit(devenvNix, "env.API = \"x\"", "env.API = \"y\""), Allow},
+		{"Write generated devenv.nix", write(filepath.Join(dir, "devenv.nix"), generated), Allow},
+		{"Edit adds a skip comment to bashrc", edit(rc, "alias ll='ls -l'\n", "alias ll='ls -l'\n# skip slow tests\n"), Allow},
+		{"Edit adds a SKIP test to bashrc", edit(rc, "alias ll='ls -l'\n", "alias ll='ls -l'\n[ \"$SKIP\" == 1 ] && echo skipping\n"), Allow},
+		// A POSIX test compares with a single `=`: removing the quotes and
+		// the `$` must not turn the reference into an assignment.
+		{"Edit adds a POSIX SKIP test to bashrc", edit(rc, "alias ll='ls -l'\n", "alias ll='ls -l'\nif [ \"$SKIP\" = 1 ]; then :; fi\n"), Allow},
+		{"Edit adds a braced PREK_SKIP test to bashrc", edit(rc, "alias ll='ls -l'\n", "alias ll='ls -l'\ntest \"${PREK_SKIP}\" = x && echo prek\n"), Allow},
+		{"Edit adds a SKIP default to bashrc", edit(rc, "alias ll='ls -l'\n", "alias ll='ls -l'\n: \"${SKIP:=gitleaks}\"\n"), Deny},
+		{"Edit adds an unrelated SKIP-suffixed variable", edit(rc, "alias ll='ls -l'\n", "alias ll='ls -l'\nexport QSDEV_SKIP_SETUP=1\n"), Allow},
+		{"Write other file setting SKIP", write(filepath.Join(dir, "Makefile"), "SKIP=gitleaks\n"), Allow},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			ctx := tt.ctx
+			got, matches := Tier1Rules.EvaluateAll(&ctx)
+			if got != tt.want {
+				t.Errorf("verdict = %v (first: %s), want %v", got, firstRuleID(matches), tt.want)
+			}
+			if tt.want == Deny && firstRuleID(matches) != "SP-015" {
+				t.Errorf("first rule = %s, want SP-015", firstRuleID(matches))
+			}
+		})
+	}
+}
+
 // TestTildeUserAncestorVerdicts covers the ~name tilde form: bash expands it
 // to the home directory the user database records for name, so deleting or
 // moving a directory above the overlay through it is denied like through ~.

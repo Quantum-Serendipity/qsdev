@@ -155,6 +155,17 @@ func testGitCodeExecutionEveryShellTool(t *testing.T) {
 		{"git -c core.hooksPath=/tmp commit -m x", true},
 		{"git config core.hooksPath /tmp", true},
 		{"git commit -m x", false},
+		// The commit gate's integrity (U18-09).
+		{"pre-commit uninstall", true},
+		{"prek uninstall", true},
+		{"pre-commit install -c /tmp/empty.yaml", true},
+		{"pre-commit install --allow-missing-config", true},
+		{"prek install --config=/tmp/e.yaml", true},
+		{"git init --template=/tmp/t", true},
+		{"git clone --templ=/tmp/t url", true},
+		{"pre-commit install", false},
+		{"prek install", false},
+		{"pre-commit run --all-files", false},
 	}
 	for _, tool := range cmdscan.ShellTools {
 		for _, tt := range cases {
@@ -166,12 +177,60 @@ func testGitCodeExecutionEveryShellTool(t *testing.T) {
 			})
 		}
 	}
+	// A commit-gate variable set for a commit, in each tool's own spelling.
+	skipCommit := map[string]string{
+		"Bash":       "SKIP=gitleaks git commit -m x",
+		"Monitor":    "SKIP=gitleaks git commit -m x",
+		"PowerShell": "$env:SKIP='gitleaks'; git commit -m x",
+	}
+	for _, tool := range cmdscan.ShellTools {
+		command, ok := skipCommit[tool]
+		if !ok {
+			t.Errorf("no commit-gate variable row for shell tool %s", tool)
+			continue
+		}
+		t.Run("GitCodeExecution/"+tool+"/"+command, func(t *testing.T) {
+			t.Parallel()
+			if reason, deny := GitCodeExecution(&EvalContext{ToolName: tool, Command: command}); !deny {
+				t.Errorf("GitCodeExecution = (%q, false), want deny", reason)
+			}
+		})
+	}
 	t.Run("GitCodeExecution/non-shell tool", func(t *testing.T) {
 		t.Parallel()
 		if reason, deny := GitCodeExecution(&EvalContext{ToolName: "WebFetch", Command: "git commit --no-verify -m x"}); deny {
 			t.Errorf("GitCodeExecution denied (%q), want a non-shell tool not evaluated", reason)
 		}
 	})
+}
+
+// TestSP014_MarkerStripEveryShellTool pins that every shell tool is denied,
+// in its own spelling, a line that clears an agent-session marker and runs
+// the CLI, and a guardrail-weakening command split across a variable, so no
+// shell tool is left out when one is added (IsShellTool parity).
+func TestSP014_MarkerStripEveryShellTool(t *testing.T) {
+	t.Parallel()
+	rows := map[string][]string{
+		"Bash":       {"env -u CLAUDECODE qsdev status", `x="qsdev session"; $x allow`, "qsdev \\\nsession allow foo"},
+		"Monitor":    {"unset CLAUDECODE; qsdev status", "IFS=,; X=qsdev,defaults,pin; $X", "x='qsdev.exe session allow'; $x"},
+		"PowerShell": {"Remove-Item Env:CLAUDE*; qsdev status", "Start-Process -ArgumentList 'session','allow' -FilePath qsdev"},
+	}
+	for _, tool := range cmdscan.ShellTools {
+		commands, ok := rows[tool]
+		if !ok {
+			t.Errorf("no marker-strip row for shell tool %s", tool)
+			continue
+		}
+		for _, command := range commands {
+			t.Run(tool+"/"+command, func(t *testing.T) {
+				t.Parallel()
+				ctx := EvalContext{ToolName: tool, Command: command, SensitiveCommands: sensitiveFixture}
+				if v, reason := sp014.Evaluate(&ctx); v != Deny {
+					t.Errorf("SP-014 = %v (%s), want Deny", v, reason)
+				}
+			})
+		}
+	}
 }
 
 // TestAuditLogsProtected verifies the hook audit logs and the SOC 2 trail are

@@ -46,12 +46,23 @@ func detectCurrentShell() (name, path string) {
 		return "unknown", ""
 	}
 
-	resolved, err := exec.LookPath(name)
-	if err == nil {
-		path = resolved
-	}
+	return name, shellPath(name, os.Getenv, exec.LookPath)
+}
 
-	return name, path
+// shellPath returns the executable of the shell name: $SHELL when it is an
+// absolute path to an executable of that shell (a login shell need not be on
+// PATH, e.g. inside a clean devenv shell), else name looked up on PATH, else
+// "".
+func shellPath(name string, getenv func(string) string, lookPath func(string) (string, error)) string {
+	if env := getenv("SHELL"); filepath.IsAbs(env) && cleanShellName(env) == name {
+		if fi, err := os.Stat(env); err == nil && fi.Mode().IsRegular() && fi.Mode().Perm()&0o111 != 0 {
+			return env
+		}
+	}
+	if resolved, err := lookPath(name); err == nil {
+		return resolved
+	}
+	return ""
 }
 
 // cleanShellName strips the leading dash from login shells (e.g. "-bash" → "bash")

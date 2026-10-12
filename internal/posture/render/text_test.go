@@ -788,3 +788,58 @@ func TestRenderText_UnknownConformance(t *testing.T) {
 		})
 	}
 }
+
+// mcpGrades is a report section with a package launcher whose catalog pins a
+// binary (hinted) and an entry already running the installed binary.
+var mcpGrades = []posture.McpServerGrade{
+	{Name: "context7", Grade: "standard", InstallHint: "qsdev mcp install context7"},
+	{Name: "local-docs", Grade: "secure"},
+}
+
+const mcpGradeLines = "mcp: context7 grade=standard (run 'qsdev mcp install context7' to run the pinned binary)\n" +
+	"mcp: local-docs grade=secure\n"
+
+func TestRenderText_McpGradeLine(t *testing.T) {
+	t.Parallel()
+
+	for _, opts := range []Options{{}, {Verbose: true}, {Section: "mcp"}} {
+		report := baseReport()
+		report.McpServers = mcpGrades
+		var buf bytes.Buffer
+		if err := RenderText(report, &buf, opts); err != nil {
+			t.Fatal(err)
+		}
+		out := buf.String()
+		if !strings.Contains(out, mcpGradeLines+"\n") {
+			t.Errorf("opts %+v: output lacks the mcp grade lines:\n%s", opts, out)
+		}
+		if strings.Contains(out, "local-docs grade=secure (run") {
+			t.Errorf("opts %+v: installed binary carries an install hint:\n%s", opts, out)
+		}
+	}
+}
+
+// TestRenderText_NoMcpServers_Unchanged pins that the mcp lines are the only
+// difference the section makes: without servers the output is exactly the
+// output with servers minus those lines.
+func TestRenderText_NoMcpServers_Unchanged(t *testing.T) {
+	t.Parallel()
+
+	for _, opts := range []Options{{}, {Verbose: true}} {
+		var without, with bytes.Buffer
+		if err := RenderText(baseReport(), &without, opts); err != nil {
+			t.Fatal(err)
+		}
+		report := baseReport()
+		report.McpServers = mcpGrades
+		if err := RenderText(report, &with, opts); err != nil {
+			t.Fatal(err)
+		}
+		if strings.Contains(without.String(), "mcp:") {
+			t.Errorf("opts %+v: output without servers has mcp lines:\n%s", opts, without.String())
+		}
+		if got := strings.Replace(with.String(), mcpGradeLines+"\n", "", 1); got != without.String() {
+			t.Errorf("opts %+v: output without servers differs beyond the mcp lines:\nwith:\n%s\nwithout:\n%s", opts, with.String(), without.String())
+		}
+	}
+}

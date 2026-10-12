@@ -14,6 +14,7 @@ import (
 	"github.com/Quantum-Serendipity/qsdev/addons/claudecode"
 	"github.com/Quantum-Serendipity/qsdev/internal/check"
 	"github.com/Quantum-Serendipity/qsdev/internal/toolreg"
+	"github.com/Quantum-Serendipity/qsdev/internal/toolreg/toolregtest"
 	"github.com/Quantum-Serendipity/qsdev/pkg/types"
 	"github.com/spf13/cobra"
 )
@@ -36,7 +37,7 @@ func enableToolFilesForTest(t *testing.T, tool *toolreg.Tool, name, root string,
 // must write its exclusive SKILL.md (RED before the fix — silently omitted).
 func TestEnableTool_AlwaysOnAgentPostmortem_StandardTier(t *testing.T) {
 	root := t.TempDir()
-	tool, ok := toolreg.DefaultRegistry().ByName("agent-postmortem")
+	tool, ok := toolregtest.Default(t).ByName("agent-postmortem")
 	if !ok {
 		t.Fatal("agent-postmortem not registered")
 	}
@@ -78,7 +79,7 @@ func TestEnableTool_AlwaysOnAgentPostmortem_StandardTier(t *testing.T) {
 // while silently omitting the SKILL.md and leaving CLAUDE.md advertising it.
 func TestEnableTool_OptInBelowFull_RefusesInsteadOfFalseSuccess(t *testing.T) {
 	root := t.TempDir()
-	tool, ok := toolreg.DefaultRegistry().ByName("lookup-docs")
+	tool, ok := toolregtest.Default(t).ByName("lookup-docs")
 	if !ok {
 		t.Fatal("lookup-docs not registered")
 	}

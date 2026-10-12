@@ -63,9 +63,19 @@ const (
 // every hook command: set, it decides whether the hook's own command runs.
 const EnvShellPrefix = "CLAUDE_CODE_SHELL_PREFIX"
 
-// EnvPackageGuardMinAgeDays is the env variable through which the package
-// guard hook receives its release-age window, in whole days.
-const EnvPackageGuardMinAgeDays = "PACKAGE_GUARD_MIN_AGE_DAYS"
+// The env variables through which the package guard hook receives its
+// policy: EnvPackageGuardMinAgeDays the release-age window, in whole days;
+// EnvPackageGuardTeamAllowlist and EnvPackageGuardTeamDenylist the committed
+// hooks.package_guard lists, comma-separated; EnvPackageGuardNewDepGate what
+// it does with a package missing from the lockfiles; and
+// EnvPackageGuardSOC2Audit, "true", its dependency-decision trail.
+const (
+	EnvPackageGuardMinAgeDays    = "PACKAGE_GUARD_MIN_AGE_DAYS"
+	EnvPackageGuardTeamAllowlist = "PACKAGE_GUARD_TEAM_ALLOWLIST"
+	EnvPackageGuardTeamDenylist  = "PACKAGE_GUARD_TEAM_DENYLIST"
+	EnvPackageGuardNewDepGate    = "PACKAGE_GUARD_NEW_DEP_GATE"
+	EnvPackageGuardSOC2Audit     = "PACKAGE_GUARD_SOC2_AUDIT"
+)
 
 // launchEnvNames and launchEnvPrefixes name the env variables that decide
 // which program a hook command runs or what code it loads before the hook's
@@ -431,6 +441,31 @@ func (s Settings) RunsScript(event, tool, script, app string, minTimeout float64
 		}
 	}
 	return false
+}
+
+// HooksFor returns the hooks Claude Code runs for a call of tool at event, in
+// registration order: those of every matcher entry that covers tool (see
+// matcherCovers), each identical hook once, as Claude Code deduplicates
+// them. Hooks it never runs are left out: an entry whose matcher is not a
+// string, a hook entry it cannot load, and every hook of a file it does not
+// load (Unloadable) or whose hooks are all disabled. A hook's If condition,
+// which narrows when it runs, is left to the caller.
+func (s Settings) HooksFor(event, tool string) []Hook {
+	if s.Unloadable != "" || s.DisableAllHooks {
+		return nil
+	}
+	var out []Hook
+	for _, m := range s.Hooks[event] {
+		if m.Invalid || !matcherCovers(m.Matcher, tool) {
+			continue
+		}
+		for _, h := range m.Hooks {
+			if !h.Invalid && !slices.Contains(out, h) {
+				out = append(out, h)
+			}
+		}
+	}
+	return out
 }
 
 // canBlock reports whether h runs its command through the default shell in

@@ -649,6 +649,65 @@ func TestQsdevConfig_HooksToolGates(t *testing.T) {
 	}
 }
 
+// TestParseQsdevConfig_PackageGuardBlock checks that the committed
+// hooks.package_guard block parses (U17-05: it used to fail with "field
+// package_guard not found") and is valid.
+func TestParseQsdevConfig_PackageGuardBlock(t *testing.T) {
+	t.Parallel()
+	data := "version: 2\nhooks:\n  package_guard:\n    denylist: [npm:evil]\n    allowlist: [\"@scope/pkg\", \"pypi:Flask_Cors\"]\n    min_age_days: 7\n    new_dep_gate: deny\n"
+	cfg, err := ParseQsdevConfigBytes([]byte(data))
+	if err != nil {
+		t.Fatalf("ParseQsdevConfigBytes: %v", err)
+	}
+	pg := cfg.Hooks.PackageGuard
+	if strings.Join(pg.Denylist, ",") != "npm:evil" || strings.Join(pg.Allowlist, ",") != "@scope/pkg,pypi:Flask_Cors" {
+		t.Errorf("lists = %v / %v", pg.Denylist, pg.Allowlist)
+	}
+	if pg.MinAgeDays == nil || *pg.MinAgeDays != 7 {
+		t.Errorf("min_age_days = %v, want 7", pg.MinAgeDays)
+	}
+	if pg.NewDepGate != types.NewDepGateDeny {
+		t.Errorf("new_dep_gate = %q, want deny", pg.NewDepGate)
+	}
+	if errs := ValidateQsdevConfig(cfg, ValidateOptions{}); len(errs) != 0 {
+		t.Errorf("ValidateQsdevConfig = %v, want none", errs)
+	}
+}
+
+// TestValidateQsdevConfig_PackageGuardInvalid checks that invalid
+// hooks.package_guard values are rejected under their key path, scalar
+// fields without an [i] index.
+func TestValidateQsdevConfig_PackageGuardInvalid(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name      string
+		yaml      string
+		wantField string
+	}{
+		{"min_age_days 0", "{min_age_days: 0}", "hooks.package_guard.min_age_days"},
+		{"new_dep_gate maybe", "{new_dep_gate: maybe}", "hooks.package_guard.new_dep_gate"},
+		{"comma in denylist", `{denylist: ["a,b"]}`, "hooks.package_guard.denylist[0]"},
+		{"unknown qualifier", `{allowlist: [ok, "npmm:x"]}`, "hooks.package_guard.allowlist[1]"},
+		{"whitespace", `{allowlist: ["left pad"]}`, "hooks.package_guard.allowlist[0]"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			cfg, err := ParseQsdevConfigBytes([]byte("version: 2\nhooks:\n  package_guard: " + tt.yaml + "\n"))
+			if err != nil {
+				t.Fatalf("ParseQsdevConfigBytes: %v", err)
+			}
+			var fields []string
+			for _, e := range ValidateQsdevConfig(cfg, ValidateOptions{}) {
+				fields = append(fields, e.Field)
+			}
+			if strings.Join(fields, " ") != tt.wantField {
+				t.Errorf("validation error fields = %v, want [%s]", fields, tt.wantField)
+			}
+		})
+	}
+}
+
 func TestValidateQsdevConfig_Infrastructure(t *testing.T) {
 	t.Parallel()
 	tests := []struct {

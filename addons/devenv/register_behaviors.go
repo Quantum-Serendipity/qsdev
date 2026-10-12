@@ -12,7 +12,7 @@ func init() {
 	toolreg.RegisterBehaviors(registerToolBehaviors)
 }
 
-func registerToolBehaviors(r *toolreg.Registry) {
+func registerToolBehaviors(r *toolreg.Registry) error {
 	r.AttachBehavior("changelog", toolreg.ToolBehavior{
 		GenerateFunc: func(a types.WizardAnswers) ([]types.GeneratedFile, error) {
 			f, err := GenerateCliffToml(a)
@@ -45,4 +45,5 @@ func registerToolBehaviors(r *toolreg.Registry) {
 			return []types.GeneratedFile{*f}, nil
 		},
 	})
+	return nil
 }

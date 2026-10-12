@@ -155,3 +155,124 @@ func TestPowerShellResolvedPaths(t *testing.T) {
 		})
 	}
 }
+
+// TestShellRewritesFile_PowerShell verifies a PowerShell line is judged in
+// its own dialect for the guarded-file rewrite check (U18-07): backslash
+// paths, case-insensitive names and the delete, write and append cmdlets
+// count as rewrites, a subexpression that may carry the name fails closed,
+// and the read cmdlets, safe-read programs and git staging stay allowed.
+func TestShellRewritesFile_PowerShell(t *testing.T) {
+	t.Parallel()
+	project := filepath.Join(homeDir(t), "project")
+	guarded := []string{".npmrc"}
+	cases := []struct {
+		command string
+		want    string
+	}{
+		{`Remove-Item C:\p\.npmrc`, ".npmrc"},
+		{`ri .\.NPMRC`, ".npmrc"},
+		{`Set-Content .npmrc x`, ".npmrc"},
+		{`Add-Content -Path .npmrc -Value ignore-scripts=false`, ".npmrc"},
+		{`echo x >> .npmrc`, ".npmrc"},
+		{`Move-Item x .npmrc`, ".npmrc"},
+		{`$n = '.npmrc'; cp x "$($n)"`, ".npmrc"},
+		// A subexpression runs code whatever the command holding it is
+		// (U18-WS3 review).
+		{`echo "$(Remove-Item .npmrc)"`, ".npmrc"},
+		{`cat "$(ri .npmrc)"`, ".npmrc"},
+		{`Write-Host "$(rm .npmrc)"`, ".npmrc"},
+		{`gh pr create --body "$(Remove-Item .npmrc)"`, ".npmrc"},
+		{`gh pr create --title x --body "$(Set-Content .npmrc 'ignore-scripts=false')"`, ".npmrc"},
+		{`gh pr create --body "$(sed -i s/true/false/ .npmrc)"`, ".npmrc"},
+		{`Get-Content "$(Set-Content .npmrc x)"`, ".npmrc"},
+		{"Write-Host @\"\n$(Remove-Item .npmrc)\n\"@", ".npmrc"},
+		{`$x = Remove-Item .npmrc`, ".npmrc"},
+		{`$x=ri .npmrc`, ".npmrc"},
+		// .NET calls and the ${...} notation, whose arguments are not
+		// modelled, fail closed once the line names the file.
+		{`[IO.File]::WriteAllText('.npmrc','x')`, ".npmrc"},
+		{`${C:\p\.npmrc} = 'ignore-scripts=false'`, ".npmrc"},
+		// An alias or function may give a read or gh another meaning.
+		{`Set-Alias gh Remove-Item; gh pr create .npmrc`, ".npmrc"},
+		{`Set-Alias Get-Content Remove-Item; Get-Content .npmrc`, ".npmrc"},
+		{`function gc { Remove-Item $args }; gc .npmrc`, ".npmrc"},
+		{`$function:gh = { ri .npmrc }; gh pr create`, ".npmrc"},
+		// A writer whose path comes from pipeline input or a parenthesised
+		// group has no target word of its own (U18-WS3 review).
+		{`gci .npmrc | ri`, ".npmrc"},
+		{`Get-ChildItem .npmrc | Remove-Item`, ".npmrc"},
+		{`Get-Item .npmrc | Set-Content -Value ignore-scripts=false`, ".npmrc"},
+		{`'.npmrc' | Remove-Item`, ".npmrc"},
+		{`ls .npmrc | rm`, ".npmrc"},
+		{"gci .npmrc |\n  Clear-Content", ".npmrc"},
+		{`Set-Content ('.npmrc') x`, ".npmrc"},
+		{`Set-Content (".npmrc") ignore-scripts=false`, ".npmrc"},
+		{`ri ('.npmrc')`, ".npmrc"},
+		{`Remove-Item -Path (Resolve-Path .npmrc)`, ".npmrc"},
+		{`Clear-Content -Path (gi .npmrc)`, ".npmrc"},
+		{`sc ('.np'+'mrc') x`, ".npmrc"},
+		{`(gi .npmrc).Delete()`, ".npmrc"},
+		{`Get-Content .npmrc | Select-String x`, ""},
+		{`if (Test-Path .npmrc) { gc .npmrc }`, ""},
+		{`gc .npmrc || gc x`, ""},
+		{`echo "$(Get-Content .npmrc)"`, ""},
+		{`$x = Get-Content .npmrc`, ""},
+		{`gh pr create --body "$(Get-Content notes.txt)"`, ""},
+		{`Get-Content .npmrc`, ""},
+		{`gc .npmrc`, ""},
+		{`type .npmrc`, ""},
+		{`Select-String x .npmrc`, ""},
+		{`git diff .npmrc`, ""},
+		{`git add .npmrc`, ""},
+		{`sed -n 1p .npmrc`, ""},
+		{`Set-Content notes.txt x`, ""},
+	}
+	for _, tc := range cases {
+		t.Run(tc.command, func(t *testing.T) {
+			t.Parallel()
+			ctx := EvalContext{ToolName: "PowerShell", Command: tc.command, CWD: project}
+			if name, ok := ShellRewritesFile(&ctx, guarded); name != tc.want || ok != (tc.want != "") {
+				t.Errorf("ShellRewritesFile = (%q, %v), want (%q, %v)", name, ok, tc.want, tc.want != "")
+			}
+		})
+	}
+}
+
+// TestGitCodeExecution_PowerShell verifies git is judged over the commands
+// of a PowerShell line (U18-V02): the call operator and a git.exe spelling
+// still run git.
+func TestGitCodeExecution_PowerShell(t *testing.T) {
+	t.Parallel()
+	cases := []struct {
+		command string
+		deny    bool
+	}{
+		{`git.exe commit --no-verify -m x`, true},
+		{`& git -c alias.x='!sh' x`, true},
+		{`C:\Tools\Git.EXE config core.hooksPath C:\tmp`, true},
+		// git inside a subexpression or as an assignment's value (U18-WS3
+		// review).
+		{`Write-Host "$(git commit --no-verify -m x)"`, true},
+		{`Write-Host "$(git config core.hooksPath /tmp)"`, true},
+		{`gh pr create --body "$(git commit --no-verify -m x)"`, true},
+		{"Write-Host @\"\n$(git commit -n -m x)\n\"@", true},
+		{`$x = git commit --no-verify -m x`, true},
+		{`$x = git -c core.hooksPath=/tmp commit -m x`, true},
+		{`$x = git config core.hooksPath /tmp`, true},
+		{`$x=git config core.hooksPath /tmp`, true},
+		{`$out = & git commit --no-verify -m x`, true},
+		{`Write-Host (git commit --no-verify -m x)`, true},
+		{`git log --oneline`, false},
+		{`$log = git log --oneline`, false},
+		{`Write-Host "$(git log -1)"`, false},
+		{`Get-Content x | git commit -F -`, false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.command, func(t *testing.T) {
+			t.Parallel()
+			if reason, deny := GitCodeExecution(&EvalContext{ToolName: "PowerShell", Command: tc.command}); deny != tc.deny {
+				t.Errorf("GitCodeExecution = (%q, %v), want deny %v", reason, deny, tc.deny)
+			}
+		})
+	}
+}

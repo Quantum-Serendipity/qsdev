@@ -6,7 +6,7 @@ import (
 	"testing"
 
 	"github.com/Quantum-Serendipity/qsdev/addons/claudecode"
-	"github.com/Quantum-Serendipity/qsdev/internal/toolreg"
+	"github.com/Quantum-Serendipity/qsdev/internal/toolreg/toolregtest"
 	"github.com/Quantum-Serendipity/qsdev/pkg/ecosystem"
 	"github.com/Quantum-Serendipity/qsdev/pkg/types"
 )
@@ -196,7 +196,7 @@ func TestDeployWorkflowSkills_OwnerSet(t *testing.T) {
 // deployed) without the agent file it delegates to.
 func TestWorkflowSkills_AgentPrerequisites(t *testing.T) {
 	t.Parallel()
-	reg := toolreg.DefaultRegistry()
+	reg := toolregtest.Default(t)
 	agents := make(map[string]bool)
 	for _, a := range claudecode.AvailableAgentNames() {
 		agents[a] = true
@@ -248,7 +248,7 @@ func frontMatterValue(content, key string) string {
 // LibraryManaged file deployAgents/deployWorkflowSkills emit.
 func TestConsultingGenerateFuncs_MatchInitPath(t *testing.T) {
 	t.Parallel()
-	reg := toolreg.DefaultRegistry()
+	reg := toolregtest.Default(t)
 	cases := []struct {
 		tool   string
 		deploy func(types.WizardAnswers) ([]types.GeneratedFile, error)
@@ -304,7 +304,7 @@ func TestConsultingGenerateFuncs_MatchInitPath(t *testing.T) {
 // every registered consulting tool must come from a manifest.
 func TestConsultingToolBehaviours_MatchManifests(t *testing.T) {
 	t.Parallel()
-	reg := toolreg.DefaultRegistry()
+	reg := toolregtest.Default(t)
 	groups := []struct {
 		prefix string
 		names  []string

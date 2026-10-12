@@ -90,8 +90,8 @@ func (a promptAction) Execute(rule *PolicyRule, ctx *EvalContext) PolicyDecision
 
 // promptDefaultAllows reports whether a prompt's default_on_timeout explicitly
 // opts into allowing the call when no interactive decision is available.
-// Anything else — including the empty/unset value and the "deny"/"block"
-// values used by the shipped semantic rules — is fail-closed.
+// Anything else, including the empty/unset value and "deny"/"block", is
+// fail-closed.
 func promptDefaultAllows(defaultOnTimeout string) bool {
 	switch strings.ToLower(strings.TrimSpace(defaultOnTimeout)) {
 	case "allow", "proceed", "continue", "warn":

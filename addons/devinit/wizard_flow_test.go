@@ -17,6 +17,7 @@ import (
 	"github.com/Quantum-Serendipity/qsdev/addons/claudecode"
 	"github.com/Quantum-Serendipity/qsdev/internal/catalog"
 	"github.com/Quantum-Serendipity/qsdev/internal/toolreg"
+	"github.com/Quantum-Serendipity/qsdev/internal/toolreg/toolregtest"
 	"github.com/Quantum-Serendipity/qsdev/pkg/ecosystem"
 	"github.com/Quantum-Serendipity/qsdev/pkg/types"
 )
@@ -196,7 +197,7 @@ func TestWizard_CustomizeChoicesDriveEnabledTools(t *testing.T) {
 	fs.confirmed = true
 
 	got := mapFormToAnswers(fs, "/tmp/project", "project", detected)
-	toolreg.MergeInferredTools(&got, toolreg.DefaultRegistry())
+	toolreg.MergeInferredTools(&got, toolregtest.Default(t))
 
 	// agent-postmortem is always-on: the wizard offers no toggle for it, and
 	// only `disable --force` drops it (U28-WS1).
@@ -474,13 +475,18 @@ func TestRegisterProfiles(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
-			reg := DefaultProjectProfileRegistry()
+			reg := mustCatalogProjectProfiles(t)
 			err := registerProfiles(reg, map[string]Profile{tt.profile: {Description: "custom"}})
 			if (err != nil) != tt.wantErr {
 				t.Fatalf("registerProfiles err = %v, wantErr %v", err, tt.wantErr)
 			}
 			if err != nil && !strings.Contains(err.Error(), tt.profile) {
 				t.Errorf("error %q does not name the profile", err)
+			}
+			if p, ok := reg.Get(tt.profile); !ok {
+				t.Errorf("profile %q not registered", tt.profile)
+			} else if tt.wantErr && p.Description == "custom" {
+				t.Errorf("colliding embedder profile replaced the built-in %q", tt.profile)
 			}
 		})
 	}
@@ -543,7 +549,7 @@ func TestSelectableHookPresets_SingleSource(t *testing.T) {
 	t.Parallel()
 	selectable := claudecode.SelectableHookPresets()
 	enforced := types.WizardAnswers{ClaudeCode: true}
-	toolreg.EnforceAlwaysOn(&enforced, toolreg.DefaultRegistry())
+	toolreg.EnforceAlwaysOn(&enforced, toolregtest.Default(t))
 
 	for _, name := range catalog.MustDefault().HookPresets() {
 		t.Run(name, func(t *testing.T) {
@@ -560,12 +566,12 @@ func TestSelectableHookPresets_SingleSource(t *testing.T) {
 
 			probe := enforced.Hooks
 			forced := probe.EnableHook(name) == nil && probe == enforced.Hooks
-			if want, got := isSelectable && !forced, slices.Contains(wizardHookPresets(toolreg.DefaultRegistry()), name); want != got {
+			if want, got := isSelectable && !forced, slices.Contains(wizardHookPresets(toolregtest.Default(t)), name); want != got {
 				t.Errorf("wizard offers %q = %v, want %v (selectable %v, forced on %v)", name, got, want, isSelectable, forced)
 			}
 		})
 	}
-	if slices.Contains(wizardHookPresets(toolreg.DefaultRegistry()), "safety-block") {
+	if slices.Contains(wizardHookPresets(toolregtest.Default(t)), "safety-block") {
 		t.Error("wizard offers safety-block, which the always-on attach-guard already turns on")
 	}
 }

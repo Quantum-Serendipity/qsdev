@@ -1,12 +1,17 @@
 package generate_test
 
 import (
+	"errors"
+	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"runtime"
 	"strings"
 	"testing"
 
+	"github.com/Quantum-Serendipity/qsdev/internal/testutil"
+	"github.com/Quantum-Serendipity/qsdev/pkg/fileutil"
 	"github.com/Quantum-Serendipity/qsdev/pkg/generate"
 	"github.com/Quantum-Serendipity/qsdev/pkg/types"
 )
@@ -639,6 +644,93 @@ func TestWriteFiles_ThreeWayMergeEmptyExistingOverwrites(t *testing.T) {
 	got, _ := os.ReadFile(existingPath)
 	if string(got) != string(newContent) {
 		t.Errorf("empty existing file should be overwritten with generated content, got %q", got)
+	}
+}
+
+// TestWriteFilesRefusesGitRedirect verifies the per-file pre-check refuses a
+// destination whose parent is a committed symlink into .git (.claude/hooks ->
+// ../.git/hooks), in a dry run as well as a real one, so the preview never
+// reports such a write as a plain create.
+func TestWriteFilesRefusesGitRedirect(t *testing.T) {
+	t.Parallel()
+	for _, dryRun := range []bool{false, true} {
+		t.Run(fmt.Sprintf("dryRun=%v", dryRun), func(t *testing.T) {
+			t.Parallel()
+			root := t.TempDir()
+			if err := os.MkdirAll(filepath.Join(root, ".git", "hooks"), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			testutil.SymlinkOrSkip(t, filepath.Join("..", ".git", "hooks"), filepath.Join(root, ".claude", "hooks"))
+
+			result, err := generate.WriteFiles([]types.GeneratedFile{
+				{Path: ".claude/hooks/x", Content: []byte("#!/bin/sh\n"), Mode: 0o755},
+			}, generate.PipelineOptions{ProjectRoot: root, SkipValidate: true, DryRun: dryRun})
+			if err != nil {
+				t.Fatalf("WriteFiles: %v", err)
+			}
+			if len(result.Files) != 1 || result.Files[0].Action != generate.ActionFailed {
+				t.Fatalf("result = %+v, want one failed file", result.Files)
+			}
+			if fe := result.Files[0].Error; !errors.Is(fe, fileutil.ErrRedirectsIntoGit) {
+				t.Errorf("error = %v, want ErrRedirectsIntoGit", fe)
+			}
+			if _, err := os.Lstat(filepath.Join(root, ".git", "hooks", "x")); !errors.Is(err, fs.ErrNotExist) {
+				t.Errorf(".git/hooks/x was written (lstat err=%v)", err)
+			}
+		})
+	}
+}
+
+// TestWriteFilesThroughInRootAlias verifies a destination reached through an
+// absolute symlink to a directory inside the project is still written, as
+// before the containment rule was shared.
+func TestWriteFilesThroughInRootAlias(t *testing.T) {
+	t.Parallel()
+	root := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(root, "inside"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	testutil.SymlinkOrSkip(t, filepath.Join(root, "inside"), filepath.Join(root, "alias"))
+
+	result, err := generate.WriteFiles([]types.GeneratedFile{
+		{Path: "alias/x.txt", Content: []byte("hello\n"), Mode: 0o644},
+	}, generate.PipelineOptions{ProjectRoot: root, SkipValidate: true})
+	if err != nil {
+		t.Fatalf("WriteFiles: %v", err)
+	}
+	if result.Failed != 0 {
+		t.Fatalf("result = %+v, want no failures", result.Files)
+	}
+	got, err := os.ReadFile(filepath.Join(root, "inside", "x.txt"))
+	if err != nil || string(got) != "hello\n" {
+		t.Errorf("inside/x.txt = %q, %v; want the generated content", got, err)
+	}
+}
+
+// TestWriteFilesDanglingInRootLeafCreatesTarget pins the intentional
+// alignment with fileutil.WriteFileAtomicInRoot: a leaf symlink to a missing
+// file inside the project (CLAUDE.md -> AGENTS.md) is written through,
+// creating its target, rather than refused as unresolvable.
+func TestWriteFilesDanglingInRootLeafCreatesTarget(t *testing.T) {
+	t.Parallel()
+	root := t.TempDir()
+	testutil.SymlinkOrSkip(t, "AGENTS.md", filepath.Join(root, "CLAUDE.md"))
+
+	result, err := generate.WriteFiles([]types.GeneratedFile{
+		{Path: "CLAUDE.md", Content: []byte("# Project\n"), Mode: 0o644},
+	}, generate.PipelineOptions{ProjectRoot: root, SkipValidate: true})
+	if err != nil {
+		t.Fatalf("WriteFiles: %v", err)
+	}
+	if result.Failed != 0 {
+		t.Fatalf("result = %+v, want no failures", result.Files)
+	}
+	got, err := os.ReadFile(filepath.Join(root, "AGENTS.md"))
+	if err != nil || string(got) != "# Project\n" {
+		t.Errorf("AGENTS.md = %q, %v; want the generated content", got, err)
+	}
+	if fi, err := os.Lstat(filepath.Join(root, "CLAUDE.md")); err != nil || fi.Mode()&os.ModeSymlink == 0 {
+		t.Errorf("CLAUDE.md must stay a symlink (lstat %v, err %v)", fi, err)
 	}
 }
 

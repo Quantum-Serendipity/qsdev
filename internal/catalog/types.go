@@ -219,6 +219,11 @@ type MCPServerDef struct {
 	// launcher or installed binary (e.g. a feature flag the wizard toggles);
 	// each group is a separate trusted variant.
 	OptionalArgs [][]string `yaml:"optional_args,omitempty"`
+	// AllowInstallScripts lets an npx launcher run the package's npm
+	// lifecycle scripts. Off by default (npm_config_ignore_scripts=true in
+	// the generated entry); set it only for a server that verifiably cannot
+	// work without them, and record why next to the definition.
+	AllowInstallScripts bool `yaml:"allow_install_scripts,omitempty"`
 }
 
 // BootstrapToolDef pins a tool that the qsdev bootstrap installs onto the

@@ -90,16 +90,12 @@ var (
 		{key: "install.ignoreScripts", kind: keepTrue},
 		{key: "install.registry", kind: keepValue},
 	}}
-
-	pnpmWorkspaceResult = &ResultRule{ID: "GD-004", check: pnpmWorkspaceConfig.check}
-	yarnBerryResult     = &ResultRule{ID: "GD-004", check: yarnBerryConfig.check}
-	yarnClassicResult   = &ResultRule{ID: "GD-004", check: yarnClassicConfig.check}
-	bunResult           = &ResultRule{ID: "GD-004", check: bunConfig.check}
 )
 
-// check blocks a change that weakens any hardening setting. A result that
-// cannot be parsed is blocked when the current file holds a setting to weaken.
-func (c hardenedConfig) check(before, after string) (bool, string) {
+// check is a GD-004 Change check (see guardedFiles). It blocks a change that
+// weakens any hardening setting. A result that cannot be parsed is blocked
+// when the current file holds a setting to weaken.
+func (c hardenedConfig) check(before, after string) (string, error) {
 	prev, err := c.parse(before)
 	if err != nil {
 		prev = nil // an unreadable current file has nothing established
@@ -108,17 +104,17 @@ func (c hardenedConfig) check(before, after string) (bool, string) {
 	if err != nil {
 		for _, s := range c.settings {
 			if _, ok := prev[s.key]; ok {
-				return true, "leaves an unreadable config (" + err.Error() + ")"
+				return "leaves an unreadable config (" + err.Error() + ")", nil
 			}
 		}
-		return false, ""
+		return "", nil
 	}
 	for _, s := range c.settings {
 		if reason := s.weakened(prev, next); reason != "" {
-			return true, reason
+			return reason, nil
 		}
 	}
-	return false, ""
+	return "", nil
 }
 
 // weakened describes how next weakens s relative to prev ("" when it does not).

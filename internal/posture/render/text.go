@@ -348,6 +348,24 @@ func renderToolStatus(w io.Writer, report *posture.PostureReport, ind [4]string)
 	fmt.Fprintln(w)
 }
 
+// renderMcpServers writes one `mcp: <name> grade=<level>` line per configured
+// MCP server, with the command that installs the pinned binary when the
+// server has one it does not run. Output is identical regardless of
+// verbosity, and nothing is written when the report has no servers.
+func renderMcpServers(w io.Writer, report *posture.PostureReport) {
+	if len(report.McpServers) == 0 {
+		return
+	}
+	for _, s := range report.McpServers {
+		line := fmt.Sprintf("mcp: %s grade=%s", s.Name, s.Grade)
+		if s.InstallHint != "" {
+			line += fmt.Sprintf(" (run '%s' to run the pinned binary)", s.InstallHint)
+		}
+		fmt.Fprintln(w, line)
+	}
+	fmt.Fprintln(w)
+}
+
 // renderDefault outputs the standard multi-section text report.
 func renderDefault(report *posture.PostureReport, w io.Writer, opts Options) error {
 	ind := packIndicators(opts.UseColor)
@@ -366,6 +384,9 @@ func renderDefault(report *posture.PostureReport, w io.Writer, opts Options) err
 	}
 	if sectionMatch(sec, "deps") || sectionMatch(sec, "dependencies") {
 		renderDepHealth(w, report, ind, verbDefault)
+	}
+	if sectionMatch(sec, "mcp") {
+		renderMcpServers(w, report)
 	}
 	if sec == "" {
 		renderDriftFindings(w, report, ind, verbDefault)
@@ -394,6 +415,7 @@ func renderVerbose(report *posture.PostureReport, w io.Writer, opts Options) err
 	renderDefenseLayers(w, report, ind, verbVerbose)
 	renderConfigHealth(w, report, ind, verbVerbose)
 	renderDepHealth(w, report, ind, verbVerbose)
+	renderMcpServers(w, report)
 	renderToolStatus(w, report, ind)
 	renderDriftFindings(w, report, ind, verbVerbose)
 

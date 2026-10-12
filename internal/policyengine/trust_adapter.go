@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/Quantum-Serendipity/qsdev/internal/contentsign"
+	"github.com/Quantum-Serendipity/qsdev/internal/policyengine/injection"
 	"github.com/Quantum-Serendipity/qsdev/internal/policyengine/policy"
 	"github.com/Quantum-Serendipity/qsdev/internal/policyengine/risk"
 	"github.com/Quantum-Serendipity/qsdev/internal/policyengine/trust"
@@ -49,13 +50,14 @@ func (a *TrustAdapter) ScoreServer(info *trust.McpServerInfo) trust.TrustScore {
 	return a.engine.ScoreServer(info)
 }
 
-// ApplyHardening composes the output hardening primitives (hardening.Sanitize,
+// ApplyHardening composes the output hardening primitives (injection.Scan,
 // contentsign datamarking, hardening.Frame) into a tier-scaled transformation
 // of MCP tool output before it enters the agent context. Lower trust tiers
 // receive stronger hardening: Tier 1 (local, trusted) is only structurally
 // framed, Tier 2 is datamarked and framed, and the fallback/untrusted tier
-// additionally runs a strict injection scan whose detections are surfaced as an
-// inline warning.
+// additionally runs the high-signal injection scan. Each indicator class it
+// finds (instruction override, forged qsdev tag, chat role marker, Unicode TAG
+// smuggling) is named once in an inline warning.
 func (a *TrustAdapter) ApplyHardening(serverName string, tier trust.TrustTier, output string) string {
 	source := "mcp://" + serverName
 	hardened := output
@@ -70,8 +72,8 @@ func (a *TrustAdapter) ApplyHardening(serverName string, tier trust.TrustTier, o
 		// The warning is qsdev's own annotation, so it goes outside the
 		// datamarked (untrusted) region where the model can read it as is.
 		var warning string
-		if res := hardening.Sanitize(hardened, hardening.StrictMode); res.Detections > 0 {
-			warning = injectionWarning(res.Patterns)
+		if res := injection.Scan(output); res.Detected() {
+			warning = injectionWarning(res.Hits)
 		}
 		hardened = warning + datamark(source, hardened)
 		hardened = hardening.Frame(hardened, serverName, int(tier), source)
@@ -97,6 +99,8 @@ func datamark(source, output string) string {
 	return marked
 }
 
-func injectionWarning(patterns []string) string {
-	return fmt.Sprintf("[qsdev:warning] potential prompt injection detected (%s)\n", strings.Join(patterns, ", "))
+// injectionWarning formats the inline warning naming the indicator classes
+// found in tier-3 output.
+func injectionWarning(classes []string) string {
+	return fmt.Sprintf("[qsdev:warning] potential prompt injection detected (%s)\n", strings.Join(classes, ", "))
 }

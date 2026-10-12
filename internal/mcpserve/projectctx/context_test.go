@@ -344,7 +344,7 @@ func TestMCPList(t *testing.T) {
 		if !found {
 			t.Fatalf("mcp_list server %v not in registry", s["name"])
 		}
-		if want := mcpregistry.GradeServer(def).Level.String(); s["grade"] != want {
+		if want := mcpregistry.GradeServer(t.Context(), def).Level.String(); s["grade"] != want {
 			t.Errorf("server %v grade = %v, want computed %q", s["name"], s["grade"], want)
 		}
 	}

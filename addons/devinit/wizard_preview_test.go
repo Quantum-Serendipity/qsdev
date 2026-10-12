@@ -5,7 +5,7 @@ import (
 	"testing"
 
 	"github.com/Quantum-Serendipity/qsdev/addons/devinit"
-	"github.com/Quantum-Serendipity/qsdev/internal/toolreg"
+	"github.com/Quantum-Serendipity/qsdev/internal/toolreg/toolregtest"
 	"github.com/Quantum-Serendipity/qsdev/pkg/types"
 )
 
@@ -36,7 +36,7 @@ func TestBuildPlanPreview_WithClaude(t *testing.T) {
 		devinit.WithSelectedLanguages([]string{"go"}),
 		devinit.WithClaudeCode(true),
 		devinit.WithPermissionLevel("standard"),
-		devinit.WithTools(toolreg.DefaultRegistry()),
+		devinit.WithTools(toolregtest.Default(t)),
 	)
 
 	preview := devinit.ExportBuildPlanPreview(fs)

@@ -1,4 +1,4 @@
-.PHONY: build build-all test lint vet archtest clean completions
+.PHONY: build build-all test lint vet archtest bench clean completions
 
 MODULE  := github.com/Quantum-Serendipity/qsdev
 VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
@@ -31,6 +31,13 @@ vet:
 # Set ARCHTEST_BASE to an older baseline.txt to also check that it only shrank.
 archtest:
 	go test -count=1 -run '^(TestArchitecture|TestBaselineMonotone)$$' ./internal/archtest/
+
+# In-process micro-benchmarks, run on demand: save the output of two runs
+# and compare them with benchstat. Not a CI gate; the CPU budgets in
+# internal/perfbudget/budgets.yaml are (go test -tags perf -run Perf).
+bench:
+	go test -run '^$$' -bench '^(BenchmarkSelfprotectEvaluate|BenchmarkCatalogLoad|BenchmarkLoadState)$$' \
+	  -benchtime=200x -benchmem ./internal/selfprotect/judge ./internal/catalog ./internal/state
 
 lint: vet archtest
 	golangci-lint run

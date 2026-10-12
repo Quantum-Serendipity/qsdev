@@ -377,7 +377,7 @@ func TestGenerateClaudeMd_DefaultDescription(t *testing.T) {
 		},
 	}
 
-	data := claudecode.BuildClaudeMdData(answers, reg)
+	data := buildClaudeMdData(t, answers, reg)
 
 	requireContains(t, data.ProjectDescription, "myapp")
 	requireContains(t, data.ProjectDescription, "Go")
@@ -391,7 +391,7 @@ func TestBuildClaudeMdData_GdevCommands(t *testing.T) {
 		Languages:   []types.LanguageChoice{{Name: "go"}},
 	}
 
-	data := claudecode.BuildClaudeMdData(answers, reg)
+	data := buildClaudeMdData(t, answers, reg)
 
 	if len(data.GdevCommands) == 0 {
 		t.Fatal("expected GdevCommands to be populated")
@@ -743,10 +743,20 @@ func TestBuildClaudeMdData_ConfiguredPackageManager(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
-			data := claudecode.BuildClaudeMdData(types.WizardAnswers{Languages: []types.LanguageChoice{tt.lang}}, reg)
+			data := buildClaudeMdData(t, types.WizardAnswers{Languages: []types.LanguageChoice{tt.lang}}, reg)
 			if !slices.Equal(data.PackageManagers, tt.want) {
 				t.Errorf("PackageManagers = %v, want %v", data.PackageManagers, tt.want)
 			}
 		})
 	}
+}
+
+// buildClaudeMdData calls BuildClaudeMdData, failing the test on error.
+func buildClaudeMdData(t *testing.T, answers types.WizardAnswers, reg *ecosystem.Registry) *claudecode.ClaudeMdTemplateData {
+	t.Helper()
+	data, err := claudecode.BuildClaudeMdData(answers, reg)
+	if err != nil {
+		t.Fatalf("BuildClaudeMdData: %v", err)
+	}
+	return data
 }

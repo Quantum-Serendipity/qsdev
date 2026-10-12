@@ -16,6 +16,7 @@ import (
 
 	"github.com/Quantum-Serendipity/qsdev/internal/answers"
 	"github.com/Quantum-Serendipity/qsdev/internal/toolreg"
+	"github.com/Quantum-Serendipity/qsdev/internal/toolreg/toolregtest"
 	"github.com/Quantum-Serendipity/qsdev/pkg/branding"
 	"github.com/Quantum-Serendipity/qsdev/pkg/types"
 )
@@ -147,7 +148,7 @@ func mustQsdev(t *testing.T, env []string, dir string, args ...string) {
 func safetyBlockTool(t *testing.T) *toolreg.Tool {
 	t.Helper()
 	var found []*toolreg.Tool
-	for _, tool := range toolreg.DefaultRegistry().All() {
+	for _, tool := range toolregtest.Default(t).All() {
 		if slices.ContainsFunc(tool.ExclusiveFiles(), isHookScript) {
 			found = append(found, tool)
 		}
@@ -175,7 +176,7 @@ func packageGuardScript(t *testing.T) string {
 // tool enable and disable can switch freely in any project.
 func toggleTool(t *testing.T) string {
 	t.Helper()
-	tools := toolreg.DefaultRegistry().All()
+	tools := toolregtest.Default(t).All()
 	slices.SortFunc(tools, func(a, b *toolreg.Tool) int { return strings.Compare(a.Name, b.Name) })
 	for _, tool := range tools {
 		if tool.Category != toolreg.CategorySecurity && tool.Default == toolreg.OptIn &&

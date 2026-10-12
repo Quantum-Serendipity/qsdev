@@ -2,6 +2,7 @@ package cmdutil
 
 import (
 	"bytes"
+	"errors"
 	"io"
 	"slices"
 	"strings"
@@ -40,7 +41,7 @@ func sensitiveTree(ran *[]string) *cobra.Command {
 	root.AddCommand(
 		MarkSensitive(MarkReadOnly(leaf("teardown"), "dry-run"), Sensitivity{}),
 		MarkSensitive(leaf("self-update"), Sensitivity{Flags: map[string]bool{"strict": false}}),
-		MarkSensitive(leaf("disable"), Sensitivity{Args: func() []string { return []string{"attach-guard"} }}),
+		MarkSensitive(leaf("disable"), Sensitivity{Args: func() ([]string, error) { return []string{"attach-guard"}, nil }}),
 		leaf("status"),
 		group,
 	)
@@ -95,6 +96,58 @@ func TestHumanGate(t *testing.T) {
 			}
 			if len(ran) != 0 {
 				t.Errorf("refused command ran: %v", ran)
+			}
+		})
+	}
+}
+
+// TestSensitivityArgsErrorFailsClosed pins that a Sensitivity whose Args
+// cannot say which arguments are sensitive (the catalog behind them failed to
+// load) fails closed: every invocation needs a human, at the gate and in the
+// self-protection hook's spec, as if the command were always sensitive. Each
+// subtest builds its own tree and none runs in parallel: cobra's Find and
+// flag merging are not safe on a shared tree.
+func TestSensitivityArgsErrorFailsClosed(t *testing.T) {
+	argsErr := errors.New("loading the tool registry: catalog rejected")
+	tree := func(ran *[]string) *cobra.Command {
+		root := &cobra.Command{Use: "qsdev", SilenceUsage: true, SilenceErrors: true}
+		root.AddCommand(MarkSensitive(&cobra.Command{
+			Use: "disable",
+			RunE: func(cmd *cobra.Command, _ []string) error {
+				*ran = append(*ran, cmd.Name())
+				return nil
+			},
+		}, Sensitivity{Args: func() ([]string, error) { return nil, argsErr }}))
+		InstallHumanGate(root)
+		return root
+	}
+	for _, args := range [][]string{{"disable", "anything"}, {"disable", "changelog"}, {"disable"}} {
+		t.Run(strings.Join(args, " "), func(t *testing.T) {
+			t.Setenv("CLAUDECODE", "")
+			var ran []string
+			root := tree(&ran)
+			cmd, rest, err := root.Find(args)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !IsSensitiveInvocation(cmd, rest) {
+				t.Errorf("IsSensitiveInvocation(%q) = false, want true when Args fails", args)
+			}
+
+			root.SetIn(ttyReader{Reader: strings.NewReader(""), tty: false})
+			root.SetOut(&bytes.Buffer{})
+			root.SetErr(&bytes.Buffer{})
+			root.SetArgs(args)
+			if err := root.Execute(); err == nil || !strings.Contains(err.Error(), "requires a human") {
+				t.Errorf("Execute(%q) error = %v, want the human gate's refusal", args, err)
+			}
+			if len(ran) != 0 {
+				t.Errorf("refused command ran: %v", ran)
+			}
+
+			specs := SensitiveCommands(root)
+			if !slices.ContainsFunc(specs, func(s cmdscan.CommandSpec) bool { return s.Matches(args) }) {
+				t.Errorf("no sensitive spec matches %q when Args fails", args)
 			}
 		})
 	}

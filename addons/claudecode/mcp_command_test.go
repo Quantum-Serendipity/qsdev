@@ -1,6 +1,8 @@
 package claudecode
 
 import (
+	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/Quantum-Serendipity/qsdev/internal/mcpserve/tools/agentpostmortem"
@@ -61,4 +63,66 @@ func TestMcpCmd_HasDiagnosticSubcommands(t *testing.T) {
 			t.Errorf("subcommand Use = %q, want %q", sub.Use, name)
 		}
 	}
+}
+
+// localFileArgFixture creates <root>/server.js and <root>/sub, changes into
+// sub and returns root and sub.
+func localFileArgFixture(t *testing.T) (root, sub string) {
+	t.Helper()
+	root = t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "server.js"), []byte("//"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	sub = filepath.Join(root, "sub")
+	if err := os.Mkdir(sub, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Chdir(sub)
+	return root, sub
+}
+
+type localFileArgCase struct {
+	arg, dir string
+	want     string
+	wantOK   bool
+}
+
+func checkLocalFileArg(t *testing.T, tests []localFileArgCase) {
+	t.Helper()
+	for _, tt := range tests {
+		got, ok := localFileArg(tt.arg, tt.dir)
+		if ok != tt.wantOK || got != tt.want {
+			t.Errorf("localFileArg(%q, %q) = %q, %v; want %q, %v", tt.arg, tt.dir, got, ok, tt.want, tt.wantOK)
+		}
+	}
+}
+
+// TestLocalFileArg_RelativeToProjectRoot is the U16-10 regression: a relative
+// script argument is the file the server loads from the project root it is
+// launched in, whatever directory qsdev runs from.
+func TestLocalFileArg_RelativeToProjectRoot(t *testing.T) {
+	root, sub := localFileArgFixture(t)
+	want := filepath.Join(root, "server.js")
+	checkLocalFileArg(t, []localFileArgCase{
+		{arg: "server.js", dir: root, want: want, wantOK: true},
+		{arg: "./server.js", dir: root, want: want, wantOK: true},
+		{arg: "--require=./server.js", dir: root, want: want, wantOK: true},
+		{arg: want, dir: sub, want: want, wantOK: true},
+		{arg: "server.js", dir: sub, wantOK: false},
+		{arg: "--flag", dir: root, wantOK: false},
+	})
+}
+
+// TestLocalFileArg_EmptyDirUsesCwd pins the base behaviour: with no dir, a
+// relative argument resolves against the current directory.
+func TestLocalFileArg_EmptyDirUsesCwd(t *testing.T) {
+	root, sub := localFileArgFixture(t)
+	if err := os.WriteFile(filepath.Join(sub, "local.js"), []byte("//"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	checkLocalFileArg(t, []localFileArgCase{
+		{arg: "local.js", dir: "", want: filepath.Join(sub, "local.js"), wantOK: true},
+		{arg: "../server.js", dir: "", want: filepath.Join(root, "server.js"), wantOK: true},
+		{arg: "server.js", dir: "", wantOK: false},
+	})
 }

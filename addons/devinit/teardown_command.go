@@ -85,7 +85,10 @@ func runTeardown(cmd *cobra.Command, quick, compliance, force, archive, dryRun b
 		Posture:     postureOptions(posture.AssessOptions{}),
 	}
 
-	registry := toolreg.DefaultRegistry()
+	registry, err := toolreg.Default()
+	if err != nil {
+		return fmt.Errorf("loading the tool registry for teardown: %w", err)
+	}
 
 	var confirm func(*teardown.TeardownPlan, io.Writer) bool
 	if !force && !dryRun {

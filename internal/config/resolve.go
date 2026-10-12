@@ -154,6 +154,9 @@ func deepMerge(base, overlay *types.QsdevConfig) *types.QsdevConfig {
 	result.Hooks.ToolGates.Allowed = mergeUnionStrings(base.Hooks.ToolGates.Allowed, overlay.Hooks.ToolGates.Allowed)
 	result.Hooks.ToolGates.Denied = mergeUnionStrings(base.Hooks.ToolGates.Denied, overlay.Hooks.ToolGates.Denied)
 
+	// Hooks.PackageGuard: no layer loosens a gate.
+	result.Hooks.PackageGuard = mergePackageGuard(base.Hooks.PackageGuard, overlay.Hooks.PackageGuard)
+
 	// Infrastructure: last-wins scalars, map merge for overrides.
 	if overlay.Infrastructure.RegistryProxy != "" {
 		result.Infrastructure.RegistryProxy = overlay.Infrastructure.RegistryProxy

@@ -11,11 +11,76 @@ import (
 	"testing"
 	"time"
 
+	"github.com/spf13/cobra"
+
+	"github.com/Quantum-Serendipity/qsdev/internal/catalog"
+	"github.com/Quantum-Serendipity/qsdev/internal/cmdutil"
 	"github.com/Quantum-Serendipity/qsdev/internal/selfprotect/canon"
+	"github.com/Quantum-Serendipity/qsdev/internal/selfprotect/cmdscan"
 	"github.com/Quantum-Serendipity/qsdev/internal/selfprotect/hookio"
 	"github.com/Quantum-Serendipity/qsdev/internal/selfprotect/rules"
+	"github.com/Quantum-Serendipity/qsdev/internal/toolreg"
 	"github.com/Quantum-Serendipity/qsdev/pkg/branding"
 )
+
+// TestSelfprotectDisableFailsClosedOnBrokenCatalog pins that the hook still
+// blocks `qsdev disable` when the project's defaults file breaks the catalog,
+// as it did before the provider errors were propagated, but now because the
+// security-tool list fails closed rather than because its lookup panicked:
+// every disable is denied, with no panic, and other commands are allowed.
+// With a valid catalog only a security tool's disable is denied. Not
+// parallel: it swaps the global catalog and tool registry.
+func TestSelfprotectDisableFailsClosedOnBrokenCatalog(t *testing.T) {
+	app := branding.Get().AppName
+	judge := func(t *testing.T, command string) (denied bool, stderr string) {
+		t.Helper()
+		root := &cobra.Command{Use: app}
+		root.AddCommand(disableCmd())
+		payload := toolCallJSON(t, "Bash", map[string]any{"command": command})
+		hook := &cobra.Command{}
+		hook.SetIn(strings.NewReader(payload))
+		var errOut bytes.Buffer
+		hook.SetErr(&errOut)
+		err := runSelfprotectWith(hook, hookio.EvalDeadline, selfprotectEvaluatorFor(cmdutil.SensitiveCommands(root)))
+		if err != nil && !errors.Is(err, errSelfprotectDeny) {
+			t.Fatalf("%s: unexpected error %v", command, err)
+		}
+		return err != nil, errOut.String()
+	}
+	tests := []struct {
+		name    string
+		broken  bool
+		command string
+		deny    bool
+	}{
+		{"broken catalog, security tool", true, app + " disable semgrep", true},
+		{"broken catalog, other tool", true, app + " disable changelog", true},
+		{"broken catalog, unrelated command", true, "ls", false},
+		{"valid catalog, security tool", false, app + " disable semgrep", true},
+		{"valid catalog, other tool", false, app + " disable changelog", false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if tt.broken {
+				invalidDefaultsProject(t)
+			} else {
+				catalog.ResetDefault()
+				toolreg.ResetDefaultRegistry()
+				t.Cleanup(func() {
+					catalog.ResetDefault()
+					toolreg.ResetDefaultRegistry()
+				})
+			}
+			denied, stderr := judge(t, tt.command)
+			if denied != tt.deny {
+				t.Errorf("%q denied = %v, want %v (stderr %q)", tt.command, denied, tt.deny, stderr)
+			}
+			if strings.Contains(stderr, "panicked") {
+				t.Errorf("%q: the hook panicked: %q", tt.command, stderr)
+			}
+		})
+	}
+}
 
 // TestBuildContext_EditContentReachesRules is the end-to-end guard for the
 // Edit/MultiEdit content fix: an Edit's new_string (not `content`) must flow
@@ -237,6 +302,235 @@ func TestSelfprotectHook_Decisions(t *testing.T) {
 			}
 			if tt.wantStderr != "" && !strings.Contains(stderr, tt.wantStderr) {
 				t.Errorf("stderr %q does not contain %q", stderr, tt.wantStderr)
+			}
+		})
+	}
+}
+
+// hookCase is a shell command the real hook judges, the exit status it must
+// give, and text its stderr must contain when set.
+type hookCase struct {
+	command    string
+	wantExit   int
+	wantStderr string
+}
+
+// runShellHookCases drives the real hook with each case sent by tool.
+func runShellHookCases(t *testing.T, tool string, cases []hookCase) {
+	t.Helper()
+	for _, tt := range cases {
+		t.Run(tool+"/"+tt.command, func(t *testing.T) {
+			t.Parallel()
+			payload := toolCallJSON(t, tool, map[string]any{"command": tt.command})
+			code, stderr := runSelfprotectHook(t, t.TempDir(), payload)
+			if code != tt.wantExit {
+				t.Errorf("exit = %d, want %d (stderr: %q)", code, tt.wantExit, stderr)
+			}
+			if tt.wantStderr != "" && !strings.Contains(stderr, tt.wantStderr) {
+				t.Errorf("stderr %q does not contain %q", stderr, tt.wantStderr)
+			}
+		})
+	}
+}
+
+// TestSelfprotectHook_ShellToolParity drives the real hook with every tool
+// that runs tool_input.command in a shell (U18-07, U18-V02, SP-015): the
+// shell rewrite of a content-guarded or environment source file, and the git
+// options that skip hooks or run programs, are denied for each of them alike,
+// not only for Bash; the modifier expansions that strip a suffix or prefix
+// off a name stay denied; and reading or staging a guarded file stays
+// allowed. PowerShell is also judged in its own dialect.
+func TestSelfprotectHook_ShellToolParity(t *testing.T) {
+	t.Parallel()
+	shared := []hookCase{
+		{"echo ignore-scripts=false >> .npmrc", 2, "GD-004"},
+		{"rm .npmrc", 2, "GD-004"},
+		{"echo 'repos: []' > .pre-commit-config.yaml", 2, "GD-003"},
+		{"git commit --no-verify -m x", 2, rules.GitCodeExecutionRuleID},
+		{"git -c core.hooksPath=/tmp commit -m x", 2, rules.GitCodeExecutionRuleID},
+		{"git config core.hooksPath /tmp", 2, rules.GitCodeExecutionRuleID},
+		{"printf x >> ~/.bashrc", 2, "SP-015"},
+		{"sed -i 's/enable = true/enable = false/' devenv.nix", 2, "SP-015"},
+		{"sed -i 's/level: strict/level: minimal/' .qsdev.yaml", 2, "GD-001"},
+		{"echo 'security: {level: minimal}' > .qsdev.yaml", 2, "GD-001"},
+		{"f=.qsdev.yaml_; echo x > ${f%_}", 2, "GD-001"},
+		{"f=x.qsdev.yaml; echo x > ${f#x}", 2, "GD-001"},
+		{`echo x > "$(echo .qsdev.yaml)"`, 2, "GD-001"},
+		// Still denied as on base: the expansion fallback.
+		{"f=.npmrc-; echo ignore-scripts=false >> ${f%-}", 2, "GD-004"},
+		{"f=.npmrc.orig; cp /dev/null ${f%.orig}", 2, "GD-004"},
+		{"f=pnpm-workspace.yaml0; echo x >> ${f%0}", 2, "GD-004"},
+		{"f=.pre-commit-config.yaml_; rm ${f%_}", 2, "GD-003"},
+		{"f=devenv.nix_; sed -i s/true/false/ ${f%_}", 2, "SP-015"},
+		{"f=.bashrc.bak; printf x >> ~/${f%.bak}", 2, "SP-015"},
+		// Reads and staging stay allowed.
+		{"cat .qsdev.yaml", 0, ""},
+		{"git diff devenv.nix", 0, ""},
+		{"sed -n 1p .npmrc", 0, ""},
+		{"git add .npmrc", 0, ""},
+		{"grep level .qsdev.yaml", 0, ""},
+		{"git diff .qsdev.yaml", 0, ""},
+		{"git add .qsdev.yaml", 0, ""},
+		{"head .npmrc", 0, ""},
+		{"git commit -m x", 0, ""},
+		// Known limitations, deferred to U18-WS8: readers and index-only git
+		// forms the write analysis does not model fail closed when the line
+		// names a guarded file. For .npmrc under Bash this is as on base;
+		// for Monitor, PowerShell and .qsdev.yaml it is new.
+		{"qsdev check --config .qsdev.yaml", 2, "GD-001"},   // U18-WS8
+		{"md5sum .npmrc", 2, "GD-004"},                      // U18-WS8
+		{"sha256sum .npmrc", 2, "GD-004"},                   // U18-WS8
+		{"less .npmrc", 2, "GD-004"},                        // U18-WS8
+		{"bat .npmrc", 2, "GD-004"},                         // U18-WS8
+		{"find . -name .npmrc", 2, "GD-004"},                // U18-WS8
+		{"awk '{print}' .npmrc", 2, "GD-004"},               // U18-WS8
+		{"python3 scripts/check.py --config .npmrc", 2, ""}, // U18-WS8
+		{"git restore --staged .qsdev.yaml", 2, "GD-001"},   // U18-WS8
+		{"git rm --cached .qsdev.yaml", 2, "GD-001"},        // U18-WS8
+		// Known limitation, deferred to U18-WS8: a script handed to cmd /c
+		// is not judged by either check under any shell tool, as on base.
+		{`cmd /c "echo x > .npmrc"`, 0, ""},           // U18-WS8
+		{"cmd /c git commit --no-verify -m x", 0, ""}, // U18-WS8
+	}
+	for _, tool := range cmdscan.ShellTools {
+		runShellHookCases(t, tool, shared)
+	}
+	// A line that redefines a command by alias or function does not get
+	// that command's read-only or no-file modelling (U18-WS3 review).
+	for _, tool := range []string{"Bash", "Monitor"} {
+		runShellHookCases(t, tool, []hookCase{
+			{"alias gh='rm -f'; gh pr create .npmrc", 2, "GD-004"},
+			{"shopt -s expand_aliases\nalias gh='tee -a'\necho ignore-scripts=false | gh pr create .npmrc", 2, "GD-004"},
+			{"alias gh='tee -a'\necho ignore-scripts=false | gh pr create .npmrc", 2, "GD-004"},
+			{"shopt -s expand_aliases\nalias gh='tee'\necho 'security: {}' | gh pr create .qsdev.yaml", 2, "GD-001"},
+			{"alias cat='tee -a'; echo ignore-scripts=false | cat .npmrc", 2, "GD-004"},
+			{`gh() { command rm -f "$@"; }; gh pr create .npmrc`, 2, "GD-004"},
+			// A sourced script may define gh as anything.
+			{". ./defs.sh; gh pr create .npmrc", 2, "GD-004"},
+			{`python3 -c "import yaml; print(yaml.safe_load(open('.qsdev.yaml')))"`, 2, "GD-001"}, // U18-WS8
+		})
+	}
+	runShellHookCases(t, "PowerShell", []hookCase{
+		{`Remove-Item C:\p\.npmrc`, 2, "GD-004"},
+		{`ri .\.NPMRC`, 2, "GD-004"},
+		{`Set-Content .npmrc ignore-scripts=false`, 2, "GD-004"},
+		{`Add-Content -Path .npmrc -Value ignore-scripts=false`, 2, "GD-004"},
+		{`Add-Content -Path .qsdev.yaml -Value x`, 2, "GD-001"},
+		{`git.exe commit --no-verify -m x`, 2, rules.GitCodeExecutionRuleID},
+		// A subexpression or an assignment's value runs a command of its
+		// own, whatever the command around it is (U18-WS3 review).
+		{`echo "$(Remove-Item .npmrc)"`, 2, "GD-004"},
+		{`cat "$(ri .npmrc)"`, 2, "GD-004"},
+		{`gh pr create --body "$(Remove-Item .npmrc)"`, 2, "GD-004"},
+		{`gh pr create --title x --body "$(Set-Content .qsdev.yaml 'security: {level: minimal}')"`, 2, "GD-001"},
+		{`echo "$(Set-Content .qsdev.yaml x)"`, 2, "GD-001"},
+		{`gh pr create --body "$(sed -i s/strict/minimal/ .qsdev.yaml)"`, 2, "GD-001"},
+		{`echo "$(Add-Content ~/.bashrc x)"`, 2, "SP-015"},
+		{`Write-Host "$(git commit --no-verify -m x)"`, 2, rules.GitCodeExecutionRuleID},
+		{`Write-Host "$(git config core.hooksPath /tmp)"`, 2, rules.GitCodeExecutionRuleID},
+		{`gh pr create --body "$(git commit --no-verify -m x)"`, 2, rules.GitCodeExecutionRuleID},
+		{`$x = git commit --no-verify -m x`, 2, rules.GitCodeExecutionRuleID},
+		{`$x = git -c core.hooksPath=/tmp commit -m x`, 2, rules.GitCodeExecutionRuleID},
+		{`$x = git config core.hooksPath /tmp`, 2, rules.GitCodeExecutionRuleID},
+		{`[IO.File]::WriteAllText('.npmrc','x')`, 2, "GD-004"},
+		{`Set-Alias gh Remove-Item; gh pr create .npmrc`, 2, "GD-004"},
+		// A writer that takes its path from pipeline input or a
+		// parenthesised group (U18-WS3 review).
+		{`gci .npmrc | ri`, 2, "GD-004"},
+		{`Get-Item .qsdev.yaml | Clear-Content`, 2, "GD-001"},
+		{`'.npmrc' | Remove-Item`, 2, "GD-004"},
+		{`Set-Content ('.npmrc') x`, 2, "GD-004"},
+		{`Remove-Item -Path (Resolve-Path .qsdev.yaml)`, 2, "GD-001"},
+		{`Get-Content .npmrc | Select-String x`, 0, ""},
+		{`Get-Content .npmrc`, 0, ""},
+		{`$x = Get-Content .npmrc`, 0, ""},
+		{`Write-Host "$(git log -1)"`, 0, ""},
+		{`gc .qsdev.yaml`, 0, ""},
+		{`type .npmrc`, 0, ""},
+		{`Select-String level .qsdev.yaml`, 0, ""},
+	})
+	runShellHookCases(t, "Bash", []hookCase{
+		{"cat() { read f; echo x >> \"$f\"; }; gh pr create --body \"$(cat <<'EOF'\n.npmrc\nEOF\n)\"", 2, "GD-004"},
+		{"while read f; do echo ignore-scripts=false >> \"$f\"; done <<'EOF'\n.npmrc\nEOF", 2, "GD-004"},
+		{"rm \"$(cat <<'EOF'\n.npmrc\nEOF\n)\"", 2, "GD-004"},
+		{"git commit -m \"$(cat <<'EOF'\nupdate .qsdev.yaml\nEOF\n)\"", 0, ""},
+		// gh writes no file for a pull request or issue, so a body that
+		// names a guarded file is text, not a write target.
+		{"gh pr create --title x --body \"$(cat <<'EOF'\nSee .qsdev.yaml\nEOF\n)\"", 0, ""},
+		{"gh pr create --title x --body \"$(cat <<EOF\nSee .qsdev.yaml\nEOF\n)\"", 0, ""},
+		{"gh pr create --title x --body \"$(cat <<'EOF'\nSee .npmrc\nEOF\n)\"", 0, ""},
+		// Known limitations, deferred to U18-WS8: a reader the write analysis
+		// does not model, or a command that writes an expansion operand,
+		// fails closed when the line names a guarded file, as .npmrc
+		// already did on base.
+		{"yq '.security.level' .qsdev.yaml", 2, "GD-001"},        // U18-WS8
+		{"md5sum .qsdev.yaml", 2, "GD-001"},                      // U18-WS8
+		{"rm -rf \"$TMPDIR/b\" && cat .qsdev.yaml", 2, "GD-001"}, // U18-WS8
+		{"cp .qsdev.yaml \"$TMPDIR/b\"", 2, "GD-001"},            // U18-WS8
+	})
+}
+
+// TestSelfprotectHook_GuardedFileWrites drives the real hook with Writes
+// checked through the guarded-files registry: the resolved target of a
+// symlink is checked, even when the link's own name is guarded (claude.md
+// linked to .qsdev.yaml is GD-001, not shadowed by GD-005), a guarded name
+// linked elsewhere stays guarded, and the name matches in any case. Only the
+// symlink rows create a symlink, and only they skip when one cannot be made.
+func TestSelfprotectHook_GuardedFileWrites(t *testing.T) {
+	t.Parallel()
+
+	const strict = "security:\n  level: strict\n"
+	const lowered = "security:\n  level: baseline\n"
+	tests := []struct {
+		name     string
+		files    map[string]string // project files
+		link     [2]string         // link name and its target, when set
+		path     string
+		content  string
+		wantExit int
+		wantRule string
+	}{
+		{name: "cfg.yaml -> .qsdev.yaml lowering the level", files: map[string]string{".qsdev.yaml": strict},
+			link: [2]string{"cfg.yaml", ".qsdev.yaml"}, path: "cfg.yaml", content: lowered, wantExit: 2, wantRule: "GD-001"},
+		{name: "claude.md -> .qsdev.yaml lowering the level", files: map[string]string{".qsdev.yaml": strict},
+			link: [2]string{"claude.md", ".qsdev.yaml"}, path: "claude.md", content: lowered, wantExit: 2, wantRule: "GD-001"},
+		{name: ".npmrc -> notes.txt re-enabling scripts", files: map[string]string{"notes.txt": "hello\n"},
+			link: [2]string{".npmrc", "notes.txt"}, path: ".npmrc", content: "ignore-scripts=false\n", wantExit: 2, wantRule: "GD-004"},
+		{name: ".QSDEV.YAML lowering the level", files: map[string]string{".qsdev.yaml": strict},
+			path: ".QSDEV.YAML", content: lowered, wantExit: 2, wantRule: "GD-001"},
+		{name: ".qsdev.yaml lowering the level", files: map[string]string{".qsdev.yaml": strict},
+			path: ".qsdev.yaml", content: lowered, wantExit: 2, wantRule: "GD-001"},
+		// Windows opens .qsdev.yaml through these names (U18-WS3 review).
+		{name: ".qsdev.yaml. lowering the level", files: map[string]string{".qsdev.yaml": strict},
+			path: ".qsdev.yaml.", content: lowered, wantExit: 2, wantRule: "GD-001"},
+		{name: ".qsdev.yaml::$DATA lowering the level", files: map[string]string{".qsdev.yaml": strict},
+			path: ".qsdev.yaml::$DATA", content: lowered, wantExit: 2, wantRule: "GD-001"},
+		{name: "raising the level", files: map[string]string{".qsdev.yaml": lowered},
+			path: ".qsdev.yaml", content: strict, wantExit: 0},
+		{name: "unrelated write", files: map[string]string{".qsdev.yaml": strict},
+			path: "notes.txt", content: "security:\n  level: baseline\n", wantExit: 0},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			dir := t.TempDir()
+			for name, content := range tt.files {
+				if err := os.WriteFile(filepath.Join(dir, name), []byte(content), 0o644); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if tt.link[0] != "" {
+				if err := os.Symlink(tt.link[1], filepath.Join(dir, tt.link[0])); err != nil {
+					t.Skipf("symlinks unavailable: %v", err)
+				}
+			}
+			payload := toolCallJSON(t, "Write", map[string]any{"file_path": tt.path, "content": tt.content})
+			code, stderr := runSelfprotectHook(t, dir, payload)
+			if code != tt.wantExit {
+				t.Errorf("exit = %d, want %d (stderr: %q)", code, tt.wantExit, stderr)
+			}
+			if tt.wantRule != "" && !strings.Contains(stderr, tt.wantRule) {
+				t.Errorf("stderr %q does not contain %q", stderr, tt.wantRule)
 			}
 		})
 	}

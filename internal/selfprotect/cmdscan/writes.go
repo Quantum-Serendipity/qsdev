@@ -2,6 +2,7 @@ package cmdscan
 
 import (
 	"path"
+	"slices"
 	"strings"
 )
 
@@ -19,13 +20,17 @@ import (
 //     runs one (w, W, e; any of those letters counts) and is not read from a
 //     file (-f);
 //   - ln and link, which write only the link they create, not its source:
-//     link's second operand, and for ln the links lnLinks lists.
+//     link's second operand, and for ln the links lnLinks lists;
+//   - gh pr and gh issue create, comment, edit, view and list, which write
+//     no file, when those words are literal (see ghWritesNoFile).
 //
 // isDir reports whether a word names an existing directory; it should
 // answer true when that is unknown.
 //
 // A command that sets variables, or whose command word is built from an
-// expansion, is not modelled: either can change what runs.
+// expansion, is not modelled: either can change what runs. Neither is a
+// command whose name the line redefines (see Redefinitions): the caller must
+// check that, as c alone does not show it.
 func WrittenOperands(c Command, isDir func(word string) bool) ([]string, bool) {
 	if len(c.Assigns) > 0 || c.AssignsDynamic || c.NameHasExpansion {
 		return nil, false
@@ -42,8 +47,78 @@ func WrittenOperands(c Command, isDir func(word string) bool) ([]string, bool) {
 			return nil, false
 		}
 		return c.Args[1:], true
+	case "gh":
+		return nil, ghWritesNoFile(c)
 	}
 	return nil, false
+}
+
+// Redefinitions returns whether cmds, the commands of one line, may make a
+// command name run something other than the program it names: a shell
+// function the line defines (Command.Defines), or an alias it defines
+// (`alias gh='rm -f'`, also through a wrapper such as builtin). An alias
+// command with a word built from an expansion may define any name, and so
+// may a script the line sources (`. ./defs.sh`, `source x`), whose
+// definitions are not seen; the one source command of a line still names
+// itself, so `source .npmrc` alone keeps its modelling. Where on the line
+// the definition stands is not judged: a loop may run it before the
+// command.
+func Redefinitions(cmds []Command) func(name string) bool {
+	names := map[string]bool{}
+	anyName := false
+	sources := 0
+	for _, c := range cmds {
+		if c.Defines != "" {
+			names[c.Defines] = true
+		}
+		words := append([]string{c.Name}, c.Args...)
+		if runsScript(words) {
+			sources++
+			continue
+		}
+		if !slices.Contains(words, "alias") {
+			continue
+		}
+		anyName = anyName || c.HasExpansion || c.NameHasExpansion
+		for _, d := range aliasDefinitions(words) {
+			names[d.name] = true
+		}
+	}
+	return func(name string) bool {
+		if anyName || names[name] || sources > 1 {
+			return true
+		}
+		return sources == 1 && !runsScript([]string{name})
+	}
+}
+
+// runsScript reports whether words, a command word and its arguments, source
+// a script into the shell (`source x`, `. x`), also through the builtin or
+// command wrapper, so that the script may define functions and aliases.
+func runsScript(words []string) bool {
+	if len(words) > 1 && (words[0] == "builtin" || words[0] == "command") {
+		words = words[1:]
+	}
+	return words[0] == "source" || words[0] == "."
+}
+
+// ghTextSubcommands are the gh pull request and issue subcommands that write
+// no file: their operands are numbers, URLs and text (--title, --body), and
+// they print to standard output.
+var ghTextSubcommands = map[string]bool{
+	"create": true, "comment": true, "edit": true, "view": true, "list": true,
+}
+
+// ghWritesNoFile reports whether c, a gh command, creates, comments on,
+// edits, views or lists a pull request or issue, named by literal words
+// (`gh pr create`), so that it writes no file. Its words that come from an
+// expansion (a --body of `$(cat <<'EOF' ...)`) are text, not paths; the
+// commands of the substitution are judged on their own.
+func ghWritesNoFile(c Command) bool {
+	if len(c.Args) < 2 || slices.Contains(c.ExpandedArgs, c.Args[0]) || slices.Contains(c.ExpandedArgs, c.Args[1]) {
+		return false
+	}
+	return (c.Args[0] == "pr" || c.Args[0] == "issue") && ghTextSubcommands[c.Args[1]]
 }
 
 // sourcesLiteralFile reports whether c, a source or . command, runs a script

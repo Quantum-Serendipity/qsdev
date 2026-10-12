@@ -102,7 +102,7 @@ func LoadAllStates(projectRoot string) *MergedState {
 	}
 
 	if len(merged.EnabledTools) == 0 && len(merged.Sources) > 0 {
-		loadAnswersFallback(projectRoot, merged)
+		loadAnswersFallback(projectRoot, merged, toolreg.Default)
 	}
 
 	return merged
@@ -118,8 +118,9 @@ func LoadAllStates(projectRoot string) *MergedState {
 // to infer from, and crediting the always-on tools would report protection the
 // project was never configured with. A missing or unreadable answers file
 // leaves EnabledTools empty and marks tool state unknown; an unreadable one is
-// also recorded as a load error.
-func loadAnswersFallback(projectRoot string, merged *MergedState) {
+// also recorded as a load error, as is a tool registry (from loadRegistry,
+// toolreg.Default outside tests) that cannot be built for the inference.
+func loadAnswersFallback(projectRoot string, merged *MergedState, loadRegistry func() (*toolreg.Registry, error)) {
 	b := branding.Get()
 	relPath := filepath.Join(b.StateDir, "."+b.AppName+"-init-answers.yaml")
 	if _, err := os.Stat(filepath.Join(projectRoot, relPath)); errors.Is(err, fs.ErrNotExist) {
@@ -132,7 +133,16 @@ func loadAnswersFallback(projectRoot string, merged *MergedState) {
 		merged.ToolStateUnknown = true
 		return
 	}
-	toolreg.InferTools(&a, toolreg.DefaultRegistry())
+	reg, err := loadRegistry()
+	if err != nil {
+		merged.Errors = append(merged.Errors, StateLoadError{
+			Path: relPath,
+			Err:  fmt.Errorf("loading the tool registry for enabled-tool inference: %w", err),
+		})
+		merged.ToolStateUnknown = true
+		return
+	}
+	toolreg.InferTools(&a, reg)
 	for k, v := range a.EnabledTools {
 		merged.EnabledTools[k] = v
 	}

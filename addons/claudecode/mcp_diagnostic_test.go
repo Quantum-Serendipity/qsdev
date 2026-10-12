@@ -58,7 +58,7 @@ func TestPlanProbes_GeneratedConfigIsTrusted(t *testing.T) {
 			}
 			cfg := addon.Config
 			if def, ok := cat.MCPServer(sembleServerName); ok {
-				entry := catalogServerEntry(sembleServerName, def, installedMCPServers(root))
+				entry := catalogServerEntry(sembleServerName, def, installedMCPServers(root), 0)
 				override, err := sembleTextFilesServer(entry, def)
 				if err != nil {
 					t.Fatal(err)
@@ -271,7 +271,7 @@ func context7LauncherFixture(t *testing.T) (dir, marker string) {
 	if !ok {
 		t.Fatal("catalog has no context7 server")
 	}
-	entry := catalogServerEntry("context7", def, nil)
+	entry := catalogServerEntry("context7", def, nil, 0)
 	if entry.Command != "npx" {
 		t.Fatalf("catalog context7 command = %q, want npx", entry.Command)
 	}

@@ -145,6 +145,24 @@ type McpServerDefinition struct {
 	Version string
 	// Bin is the executable InstallMethod provides.
 	Bin string
+	// Dir is the absolute directory the server is launched from: the project
+	// root for a server read from .mcp.json (see mcphealth.ServerConfig.Dir).
+	Dir string
+}
+
+// ServerConfig returns the probe configuration for def: what it launches or
+// dials and the environment it needs.
+func (def McpServerDefinition) ServerConfig() mcphealth.ServerConfig {
+	return mcphealth.ServerConfig{
+		Name:        def.Name,
+		Command:     def.Command,
+		Args:        def.Args,
+		URL:         def.URL,
+		Env:         def.Env,
+		Headers:     def.Headers,
+		RequiredEnv: def.RequiredEnv,
+		Dir:         def.Dir,
+	}
 }
 
 // HealthResult wraps a health check outcome with caching metadata.

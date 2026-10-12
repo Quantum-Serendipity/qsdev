@@ -15,4 +15,10 @@ const SchemaChangeLog = `Schema Version History:
                      only; conformance levels and checks carry a status
                      ("pass", "fail", "unknown"), with pass true only for
                      "pass". Readers of older reports derive the statuses from
-                     the pass and scanned/scanFailed flags.`
+                     the pass and scanned/scanFailed flags.
+  1.3.0           - Optional mcpServers section: [{name, grade,
+                     installHint}] for each server .mcp.json configures,
+                     graded as 'qsdev mcp grade' grades it; installHint is
+                     set when the catalog pins a binary the entry does not
+                     run. Omitted when there is no .mcp.json or it cannot
+                     be read.`

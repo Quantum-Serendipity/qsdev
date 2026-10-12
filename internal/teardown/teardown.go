@@ -2,8 +2,10 @@ package teardown
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -190,11 +192,18 @@ func keepStateFiles(plan *TeardownPlan, keep []string) {
 }
 
 // collectAllFilePaths returns the tracked file paths from the merged state
-// that are safe to read from inside projectRoot.
+// that are safe to read from inside projectRoot. Archiving only reads, so
+// only a parent that escapes the project excludes a path: one redirected into
+// .git inside the project is still readable (and teardown leaves it in
+// place), and a missing one is skipped by the archive.
 func collectAllFilePaths(genState types.GeneratedState, projectRoot string) []string {
 	files := make([]string, 0, len(genState.Files))
 	for path := range genState.Files {
-		if _, err := resolveTrackedPath(projectRoot, path); err != nil {
+		if err := checkTrackedPath(path); err != nil {
+			continue
+		}
+		err := fileutil.CheckRemoveInRoot(projectRoot, filepath.FromSlash(path))
+		if err != nil && !errors.Is(err, fs.ErrNotExist) && !errors.Is(err, fileutil.ErrRedirectsIntoGit) {
 			continue
 		}
 		files = append(files, path)

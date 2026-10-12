@@ -148,7 +148,10 @@ func buildJoinAnswers(cmd *cobra.Command, opts InitOptions, projectRoot string) 
 	// applyJoinDefaults replays the committed tool decisions, which switches
 	// an always-on tool's backing back on before reconciliation can see the
 	// overlay's off, so name those offs now.
-	registry := toolreg.DefaultRegistry()
+	registry, err := toolreg.Default()
+	if err != nil {
+		return types.WizardAnswers{}, fmt.Errorf("loading the tool registry for join: %w", err)
+	}
 	switchedOff := toolreg.SwitchedOff(committedAnswers, answers, registry)
 	if opts.ProfileName != "" {
 		fmt.Fprintln(cmd.ErrOrStderr(), "Note: --profile applies only when creating a project; ignoring it in join mode (re-run with --mode create to apply it).")

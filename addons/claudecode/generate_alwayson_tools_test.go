@@ -6,6 +6,7 @@ import (
 
 	"github.com/Quantum-Serendipity/qsdev/addons/claudecode"
 	"github.com/Quantum-Serendipity/qsdev/internal/toolreg"
+	"github.com/Quantum-Serendipity/qsdev/internal/toolreg/toolregtest"
 	"github.com/Quantum-Serendipity/qsdev/pkg/types"
 )
 
@@ -60,7 +61,7 @@ func TestStandardTier_MCPGeneratedNoFullOnlyArtifacts(t *testing.T) {
 // BL-P1-9: previously these GenerateFuncs self-gated on Full and returned
 // (nil, nil) at Standard, so the enable path wrote only the CLAUDE.md section.
 func TestAlwaysOnGenerateFuncs_NonNilBelowFull(t *testing.T) {
-	reg := toolreg.DefaultRegistry()
+	reg := toolregtest.Default(t)
 	cases := []struct {
 		tool    string
 		answers types.WizardAnswers
@@ -139,7 +140,7 @@ func TestSuppressedConfigWarnings(t *testing.T) {
 // registry rather than listed here.
 func TestGenerate_EmitsNoNonAgentToolFiles(t *testing.T) {
 	t.Parallel()
-	tools := toolreg.DefaultRegistry()
+	tools := toolregtest.Default(t)
 	enabled := make(map[string]bool)
 	nonAgent := make(map[string]string)
 	for _, tool := range tools.All() {

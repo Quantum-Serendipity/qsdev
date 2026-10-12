@@ -2,9 +2,13 @@ package mcpregistry
 
 import (
 	"errors"
+	"reflect"
 	"slices"
 	"strings"
 	"testing"
+	"time"
+
+	"github.com/Quantum-Serendipity/qsdev/internal/catalog"
 )
 
 func TestHasPlaintextSecrets(t *testing.T) {
@@ -353,11 +357,62 @@ func TestProvenanceResolverVerified(t *testing.T) {
 	}
 }
 
-func TestHasExternalAttestation(t *testing.T) {
+func TestAttestationCheckerDefault(t *testing.T) {
 	t.Parallel()
 
 	def := &McpServerDefinition{Command: "anything"}
-	if hasExternalAttestation(def) {
-		t.Error("hasExternalAttestation() = true, want false (default no-op checker)")
+	if AttestationChecker(t.Context(), def) {
+		t.Error("AttestationChecker() = true, want false (default no-op checker)")
+	}
+}
+
+// TestLaunchesUnpinnedPackage_HardenedCatalogLaunchers: hardening a catalog
+// launcher never hides its pinned package from the pinning check (the
+// one-token --exclude-newer= cannot be mistaken for the package spec), its
+// GradeServer result (whose no-runtime-auto-install criterion checks the pin)
+// is the unhardened launcher's, and a hardened unpinned launcher is still
+// reported.
+func TestLaunchesUnpinnedPackage_HardenedCatalogLaunchers(t *testing.T) {
+	t.Parallel()
+
+	cat, err := catalog.LoadEmbeddedOnly()
+	if err != nil {
+		t.Fatal(err)
+	}
+	now := time.Date(2026, 9, 23, 12, 0, 0, 0, time.UTC)
+	hardened := 0
+	for name, def := range cat.MCPServers() {
+		for _, gate := range []time.Duration{0, 14 * 24 * time.Hour} {
+			spec := HardenedLauncherSpec(def, gate, now)
+			if spec.Command == "" {
+				continue
+			}
+			if n := commandName(spec.Command); n == "npx" || n == "uvx" {
+				hardened++
+			}
+			if LaunchesUnpinnedPackage(spec.Command, spec.Args) {
+				t.Errorf("%s (gate %s): hardened %s %q reported unpinned", name, gate, spec.Command, spec.Args)
+			}
+			plain := LauncherSpec(def)
+			got := GradeServer(t.Context(), &McpServerDefinition{Command: spec.Command, Args: spec.Args, Env: spec.Env, Transport: TransportStdio})
+			want := GradeServer(t.Context(), &McpServerDefinition{Command: plain.Command, Args: plain.Args, Env: plain.Env, Transport: TransportStdio})
+			if !reflect.DeepEqual(got, want) {
+				t.Errorf("%s (gate %s): hardening changed the grade:\n%#v\nwant\n%#v", name, gate, got, want)
+			}
+		}
+	}
+	if hardened == 0 {
+		t.Fatal("catalog has no npx/uvx launcher to check")
+	}
+
+	for _, def := range []catalog.MCPServerDef{
+		{Command: "uvx", Args: []string{"srv"}},
+		{Command: "uvx", Args: []string{"srv==1.*"}},
+		{Command: "npx", Args: []string{"pkg@latest"}},
+	} {
+		spec := HardenedLauncherSpec(def, 0, now)
+		if !LaunchesUnpinnedPackage(spec.Command, spec.Args) {
+			t.Errorf("hardened unpinned %s %q reported pinned", spec.Command, spec.Args)
+		}
 	}
 }

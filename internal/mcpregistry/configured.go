@@ -21,15 +21,7 @@ func ConfiguredServers(projectRoot string, reg *McpServerRegistry) ([]mcphealth.
 	}
 	out := make([]mcphealth.ServerConfig, 0, len(defs))
 	for _, name := range slices.Sorted(maps.Keys(defs)) {
-		def := defs[name]
-		cfg := mcphealth.ServerConfig{
-			Name:    name,
-			Command: def.Command,
-			Args:    def.Args,
-			URL:     def.URL,
-			Env:     def.Env,
-			Headers: def.Headers,
-		}
+		cfg := defs[name].ServerConfig()
 		if reg != nil {
 			if known, ok := reg.ByName(name); ok {
 				cfg.RequiredEnv = known.RequiredEnv

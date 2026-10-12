@@ -2,6 +2,8 @@ package archtest
 
 import (
 	"go/ast"
+	"go/token"
+	"slices"
 )
 
 // symbolBan forbids references to Pkg.Name outside the Owners directories.
@@ -57,15 +59,47 @@ var panicOwners = []string{"internal/procexec"}
 // the extlog providers. Everywhere else registration is explicit.
 var initOwners = []string{"pkg/ecosystem/modules", "internal/extlog/providers"}
 
+// bashLiteralRuleID bans comparing a tool name with the literal "Bash".
+const bashLiteralRuleID = "tool-name-bash-literal"
+
+// bashToolName is the literal bashLiteralRule looks for.
+const bashToolName = "Bash"
+
+// bashLiteralOwners may compare with "Bash": cmdscan defines ShellTools, the
+// tools that run a shell command, and denyutil compares the tool prefix of a
+// permission-rule pattern (`Bash(npm *)`), not a hook call's tool name.
+var bashLiteralOwners = []string{"internal/selfprotect/cmdscan", "pkg/denyutil"}
+
 func symbolRules() []Rule {
-	rules := make([]Rule, 0, len(symbolTable)+2)
+	rules := make([]Rule, 0, len(symbolTable)+3)
 	for _, b := range symbolTable {
 		rules = append(rules, Rule{ID: b.ID, Check: b.check})
 	}
 	return append(rules,
 		Rule{ID: "panic", Check: checkPanic},
 		Rule{ID: "init-non-module", Check: checkInit},
+		Rule{ID: bashLiteralRuleID, Check: checkBashLiteral},
 	)
+}
+
+// checkBashLiteral counts == and != comparisons with the literal "Bash", and
+// case clauses listing it, in non-test code outside bashLiteralOwners. A
+// check that names Bash alone lets PowerShell and Monitor, which run the same
+// tool_input.command, bypass it; cmdscan.IsShellTool covers every shell tool.
+func checkBashLiteral(repo *Repo) []Violation {
+	isBash := func(e ast.Expr) bool {
+		s, ok := stringLit(e)
+		return ok && s == bashToolName
+	}
+	return countPerPkg(repo, bashLiteralRuleID, bashLiteralOwners, false, func(_ *File, n ast.Node) bool {
+		switch n := n.(type) {
+		case *ast.BinaryExpr:
+			return (n.Op == token.EQL || n.Op == token.NEQ) && (isBash(n.X) || isBash(n.Y))
+		case *ast.CaseClause:
+			return slices.ContainsFunc(n.List, isBash)
+		}
+		return false
+	})
 }
 
 func (b symbolBan) check(repo *Repo) []Violation {

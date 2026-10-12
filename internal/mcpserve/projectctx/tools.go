@@ -243,7 +243,7 @@ func (pc *ProjectContext) handleMCPList(ctx context.Context, _ *spi.ToolCallCont
 		entry := map[string]any{
 			"name": d.Name, "display_name": d.DisplayName,
 			"category": string(d.Category), "transport": string(d.Transport),
-			"grade": mcpregistry.GradeServer(d).Level.String(), "source": string(d.Source),
+			"grade": mcpregistry.GradeServer(ctx, d).Level.String(), "source": string(d.Source),
 		}
 		if withHealth {
 			h, ok := health[d.Name]

@@ -2,7 +2,6 @@ package gatedodge
 
 import (
 	"fmt"
-	"path/filepath"
 	"slices"
 	"strings"
 	"time"
@@ -10,46 +9,11 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-// ResultRule checks the whole content a Write/Edit/MultiEdit leaves in a file
-// against the file's current content. Detect only scans the text a call
-// introduces, so it cannot see a protective setting that is deleted (an Edit
-// whose new_string is empty, a Write that omits the line) or changed to a value
-// its patterns do not list; a ResultRule compares before and after instead.
-type ResultRule struct {
-	// ID is the gate-dodge rule ID reported on a block.
-	ID    string
-	check func(before, after string) (blocked bool, reason string)
-}
-
-// Check reports whether changing the file from before to after weakens it, and
-// why.
-func (r *ResultRule) Check(before, after string) (bool, string) {
-	return r.check(before, after)
-}
-
-var (
-	npmrcResultRule = &ResultRule{ID: "GD-004", check: checkNpmrcResult}
-	precommitResult = &ResultRule{ID: "GD-003", check: checkPrecommitResult}
-)
-
-// resultRules maps each guarded file's lower-cased base name
-// (canon.GuardedConfigFiles, which owns the list) to its rule.
-var resultRules = map[string]*ResultRule{
-	".npmrc":                  npmrcResultRule,
-	".pre-commit-config.yaml": precommitResult,
-	"pnpm-workspace.yaml":     pnpmWorkspaceResult,
-	".yarnrc.yml":             yarnBerryResult,
-	".yarnrc":                 yarnClassicResult,
-	"bunfig.toml":             bunResult,
-}
-
-// ResultRuleFor returns the ResultRule guarding filePath's resulting content,
-// or nil when the file has none. The name matches regardless of case: on a
-// case-insensitive filesystem (macOS, Windows) .NPMRC opens .npmrc, and
-// guarding an unrelated differently-cased file elsewhere is harmless.
-func ResultRuleFor(filePath string) *ResultRule {
-	return resultRules[strings.ToLower(filepath.Base(filePath))]
-}
+// The Change checks below compare the whole content a Write/Edit/MultiEdit
+// leaves in a file against the file's current content. An Introduced check
+// only scans the text a call introduces, so it cannot see a protective
+// setting that is deleted (an Edit whose new_string is empty, a Write that
+// omits the line) or changed to a value its patterns do not list.
 
 // npmrcSettings are the .npmrc hardening settings besides ignore-scripts:
 // npm's release-age gate (in days) and the registry packages come from.
@@ -58,25 +22,25 @@ var npmrcSettings = []setting{
 	{key: "registry", kind: keepValue},
 }
 
-// checkNpmrcResult blocks an .npmrc change that turns npm install scripts back
-// on (setting ignore-scripts to anything but true, or dropping an effective
-// ignore-scripts=true), removes or lowers the min-release-age gate, or
-// removes or changes the registry.
-func checkNpmrcResult(before, after string) (bool, string) {
+// checkNpmrcResult is the GD-004 Change check of .npmrc. It blocks a change
+// that turns npm install scripts back on (setting ignore-scripts to anything
+// but true, or dropping an effective ignore-scripts=true), removes or lowers
+// the min-release-age gate, or removes or changes the registry.
+func checkNpmrcResult(before, after string) (string, error) {
 	afterSet, afterOn := npmrcIgnoreScripts(after)
 	if afterSet && !afterOn {
-		return true, "ignore-scripts set to a value other than true re-enables install scripts"
+		return "ignore-scripts set to a value other than true re-enables install scripts", nil
 	}
 	if _, beforeOn := npmrcIgnoreScripts(before); beforeOn && !afterOn {
-		return true, "removing ignore-scripts=true re-enables install scripts"
+		return "removing ignore-scripts=true re-enables install scripts", nil
 	}
 	prev, next := npmrcValues(before), npmrcValues(after)
 	for _, s := range npmrcSettings {
 		if reason := s.weakened(prev, next); reason != "" {
-			return true, reason
+			return reason, nil
 		}
 	}
-	return false, ""
+	return "", nil
 }
 
 // npmrcValues parses an .npmrc as ini (the last assignment wins; ';' and '#'
@@ -129,17 +93,17 @@ type precommitConfig struct {
 	} `yaml:"repos"`
 }
 
-// checkPrecommitResult blocks a .pre-commit-config.yaml change that removes a
-// configured hook, or leaves a file that pre-commit cannot read in place of
-// one that had hooks.
-func checkPrecommitResult(before, after string) (bool, string) {
+// checkPrecommitResult is the GD-003 Change check. It blocks a
+// .pre-commit-config.yaml change that removes a configured hook, or leaves a
+// file that pre-commit cannot read in place of one that had hooks.
+func checkPrecommitResult(before, after string) (string, error) {
 	beforeHooks, err := precommitHooks(before)
 	if err != nil || len(beforeHooks) == 0 {
-		return false, "" // nothing established to remove
+		return "", nil // nothing established to remove
 	}
 	afterHooks, err := precommitHooks(after)
 	if err != nil {
-		return true, "leaves an unreadable pre-commit config (" + err.Error() + ")"
+		return "leaves an unreadable pre-commit config (" + err.Error() + ")", nil
 	}
 	var removed []string
 	for _, h := range beforeHooks {
@@ -148,9 +112,9 @@ func checkPrecommitResult(before, after string) (bool, string) {
 		}
 	}
 	if len(removed) > 0 {
-		return true, "removes pre-commit hooks: " + strings.Join(removed, ", ")
+		return "removes pre-commit hooks: " + strings.Join(removed, ", "), nil
 	}
-	return false, ""
+	return "", nil
 }
 
 // precommitHooks lists the configured hooks as "repo#id".

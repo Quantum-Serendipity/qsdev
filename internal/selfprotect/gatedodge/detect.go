@@ -35,80 +35,15 @@ var reClaudeMDOverride = regexp.MustCompile(`(?i)(ignore\s+(?:all\s+)?security|d
 // (scanners, secret detection, guards) whose disabling is a downgrade.
 const securityToolCategory = "security"
 
-// Detect checks whether a Write/Edit operation to the given file introduces
-// content that would weaken security configuration.
-// filePath is the target file path (not necessarily canonical).
-// content is the text the operation introduces.
-// Returns (blocked, ruleID, reason).
-//
-// Files whose protection depends on what the change removes as well as what
-// it adds (.qsdev.yaml, devenv.nix) are checked by DetectChange instead.
-func Detect(filePath string, content string) (bool, string, string) {
-	if content == "" {
-		return false, "", ""
-	}
-
-	if strings.HasSuffix(filePath, ".pre-commit-config.yaml") {
-		return detectPrecommitConfig(content)
-	}
-
-	if strings.HasSuffix(filePath, ".npmrc") {
-		return detectNpmrc(content)
-	}
-
-	if strings.HasSuffix(filePath, "CLAUDE.md") {
-		return detectClaudeMD(content)
-	}
-
-	return false, "", ""
-}
-
-// FileChange returns a file's content before and after a Write/Edit/MultiEdit.
-type FileChange func() (before, after string, err error)
-
-// DetectChange checks whether a Write/Edit/MultiEdit weakens a security
-// configuration file by comparing the file before and after the change:
-// .qsdev.yaml (GD-001: a lower security level, a disabled security control,
-// a widened credential_vend opt-in, a disabled security tool, or Claude Code
-// switched off) and
-// devenv.nix (GD-002: a module or git hook switched off, or a hardening switch
-// turned back on). change is called only for these files; when it fails the
-// change cannot be verified and is blocked (fail closed). Returns (blocked,
-// ruleID, reason).
-func DetectChange(filePath string, change FileChange) (bool, string, string) {
-	var ruleID string
-	var detect func(before, after string) (string, error)
-	switch {
-	case strings.HasSuffix(filePath, ".qsdev.yaml"):
-		ruleID, detect = "GD-001", qsdevConfigDowngrade
-	case strings.HasSuffix(filePath, "devenv.nix"):
-		ruleID, detect = "GD-002", devenvNixDowngrade
-	default:
-		return false, "", ""
-	}
-	before, after, err := change()
-	if err != nil {
-		return true, ruleID, "cannot verify change to security configuration: " + err.Error()
-	}
-	reason, err := detect(before, after)
-	switch {
-	case err != nil:
-		return true, ruleID, "cannot verify change to security configuration: " + err.Error()
-	case reason != "":
-		return true, ruleID, reason
-	default:
-		return false, "", ""
-	}
-}
-
-// qsdevConfigDowngrade describes how an updated .qsdev.yaml weakens the
-// project's security posture ("" when it does not): security.level drops,
-// a security.* control that is on (explicitly, or by default when unset)
-// turns off, security.credential_vend is widened, a security-category tool is
-// newly disabled, or claude_code.enabled turns off (the next regeneration
-// would drop the Claude Code settings and the self-protection hook they
-// register). A missing or unparseable current file is compared as the
-// organization defaults.
+// qsdevConfigDowngrade is the GD-001 Change check of .qsdev.yaml. It
+// describes how an updated .qsdev.yaml weakens the project's security
+// posture ("" when it does not): security.level drops, a security.* control
+// that is on (explicitly, or by default when unset) turns off,
+// security.credential_vend is widened, a security-category tool is newly
+// disabled, or claude_code.enabled turns off (the next regeneration would
+// drop the Claude Code settings and the self-protection hook they register).
+// A missing or unparseable current file is compared as the organization
+// defaults.
 func qsdevConfigDowngrade(before, after string) (string, error) {
 	var next types.QsdevConfig
 	if err := yaml.Unmarshal([]byte(after), &next); err != nil {
@@ -225,11 +160,12 @@ func boolOr(v, fallback *bool) bool {
 	return fallback != nil && *fallback
 }
 
-// devenvNixDowngrade describes how an updated devenv.nix weakens the
-// environment ("" when it does not): a module or git hook that is enabled now
-// is removed or switched off (directly or through a mkForce override), or a
-// switch that is explicitly off (such as dotenv.enable, which keeps .env
-// secrets out of the shell) is turned on. A new file has nothing to weaken.
+// devenvNixDowngrade is the GD-002 Change check of devenv.nix. It describes
+// how an updated devenv.nix weakens the environment ("" when it does not): a
+// module or git hook that is enabled now is removed or switched off
+// (directly or through a mkForce override), or a switch that is explicitly
+// off (such as dotenv.enable, which keeps .env secrets out of the shell) is
+// turned on. A new file has nothing to weaken.
 func devenvNixDowngrade(before, after string) (string, error) {
 	enabledBefore, enabledAfter := nixEnabled(before), nixEnabled(after)
 	disabledBefore, disabledAfter := nixDisabled(before), nixDisabled(after)
@@ -292,26 +228,29 @@ func sortedKeys(m map[string]bool) []string {
 	return keys
 }
 
-// detectPrecommitConfig checks for patterns that neutralize pre-commit hooks.
-func detectPrecommitConfig(content string) (bool, string, string) {
+// detectPrecommitConfig is the GD-003 Introduced check: introduced text that
+// neutralizes pre-commit hooks.
+func detectPrecommitConfig(content string) string {
 	if rePrecommitEmpty.MatchString(content) {
-		return true, "GD-003", "empty stages array disables all hooks"
+		return "empty stages array disables all hooks"
 	}
-	return false, "", ""
+	return ""
 }
 
-// detectNpmrc checks for patterns that re-enable npm install scripts.
-func detectNpmrc(content string) (bool, string, string) {
+// detectNpmrc is the GD-004 Introduced check of .npmrc: introduced text that
+// re-enables npm install scripts.
+func detectNpmrc(content string) string {
 	if reNpmrcScripts.MatchString(content) {
-		return true, "GD-004", "ignore-scripts set to false re-enables install scripts"
+		return "ignore-scripts set to false re-enables install scripts"
 	}
-	return false, "", ""
+	return ""
 }
 
-// detectClaudeMD checks for patterns that override security directives.
-func detectClaudeMD(content string) (bool, string, string) {
+// detectClaudeMD is the GD-005 Introduced check: introduced text that
+// overrides security directives.
+func detectClaudeMD(content string) string {
 	if reClaudeMDOverride.MatchString(content) {
-		return true, "GD-005", "content attempts to override security directives"
+		return "content attempts to override security directives"
 	}
-	return false, "", ""
+	return ""
 }

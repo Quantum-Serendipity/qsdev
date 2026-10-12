@@ -75,7 +75,11 @@ func runAccumulator(answers types.WizardAnswers, scope generationScope) (accumul
 		}
 	}
 
-	tools := toolFilesGenerator{registry: toolreg.DefaultRegistry()}
+	toolRegistry, err := toolreg.Default()
+	if err != nil {
+		return accumulatorResult{}, fmt.Errorf("loading the tool registry for tool file generation: %w", err)
+	}
+	tools := toolFilesGenerator{registry: toolRegistry}
 	if err := acc.RegisterProducer(toolFilesSource, generate.NewGeneratorAdapter(toolFilesSource, tools)); err != nil {
 		return accumulatorResult{}, err
 	}

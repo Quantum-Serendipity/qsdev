@@ -6,7 +6,90 @@ All notable changes to qsdev are recorded in this file. The format is based on
 
 ## [Unreleased]
 
+### Added
+
+- Team package policy for the package guard, committed in `.qsdev.yaml` as
+  `hooks.package_guard` (U17-WS4): `denylist`, an exclusive `allowlist`,
+  `min_age_days` and `new_dep_gate` (`allow`, `ask` or `deny` for packages
+  missing from the lockfiles). Entries are package names, optionally
+  ecosystem-qualified (`npm:evil`, `pypi:requests`). `min_age_days` only
+  raises the compliance level's release-age window, and merged layers union
+  the lists and keep the larger window and the stricter gate. `qsdev check`
+  and init reject an unknown qualifier, a malformed name, `min_age_days`
+  below 1 and an unknown `new_dep_gate`. Init writes the policy to the
+  `PACKAGE_GUARD_*` variables in `.claude/settings.json`, and with the
+  `soc2-audit` hook on also `PACKAGE_GUARD_SOC2_AUDIT=true`, so the guard
+  records its dependency decisions under `$CLAUDE_AUDIT_DIR` (default
+  `~/.claude/audit/`). `PACKAGE_GUARD_MIN_AGE_DAYS` is now written whenever
+  the package guard is registered, not only when the safety-block choice is
+  recorded. Run `qsdev init --update` to pick it up.
+
 ### Changed
+
+- Self-protection now applies the shell gate-dodge check (GD-003, GD-004),
+  the git code-execution check (GIT-001) and the shell-write half of SP-015
+  to every tool that runs a shell command, not only Bash: under Monitor and
+  PowerShell, `echo ignore-scripts=false >> .npmrc`, `rm .npmrc`,
+  `git commit --no-verify`, `git -c core.hooksPath=... commit`,
+  `git config ...` and `printf x >> ~/.bashrc` were allowed and are now
+  denied. PowerShell is judged in its own dialect (`Remove-Item C:\p\.npmrc`,
+  `Set-Content .npmrc x`, `git.exe commit --no-verify` are denied;
+  `Get-Content .npmrc` stays allowed). The commands of a PowerShell `$(...)`
+  subexpression inside a quoted string, and of an assignment's value
+  (`$x = git commit --no-verify`), are judged as commands of their own, so
+  `echo "$(Remove-Item .npmrc)"` and `Write-Host "$(git config ...)"` are
+  denied. A command a line redefines as an alias or function
+  (`alias gh='rm -f'; gh pr create .npmrc`, `alias cat='tee -a'`,
+  `Set-Alias`) no longer gets its read-only modelling, and neither does any
+  command on a line that sources a script (`. ./defs.sh`, `source x`), which
+  may define it as a function. Under PowerShell a writing cmdlet that takes
+  its path from pipeline input or a parenthesised argument fails closed when
+  the line names a guarded file (`gci .npmrc | ri`,
+  `Get-Item .qsdev.yaml | Clear-Content`, `Set-Content ('.npmrc') x`,
+  `Remove-Item -Path (Resolve-Path .qsdev.yaml)`); a read cmdlet in the
+  pipeline (`Get-Content .npmrc | Select-String x`) stays allowed, while any
+  other piped command (`gc .npmrc | Measure-Object`) is denied, as for
+  `.claude`. A Write or Edit of a guarded file through a name Windows strips
+  to it (`.qsdev.yaml.`, `.qsdev.yaml::$DATA`) gets that file's checks. A new architecture
+  test rejects code that compares a tool name with the literal `"Bash"`. A skill's bare `Bash`
+  or `PowerShell` grant is matched as every command of that tool by the
+  permission-rule matcher itself, as Claude Code does.
+
+- Self-protection now denies a shell rewrite of `.qsdev.yaml` (GD-001) under
+  every shell tool, as it already did for `.npmrc` and the other guarded
+  package-manager and pre-commit configs: `sed -i 's/level: strict/level:
+  minimal/' .qsdev.yaml` and `echo ... > .qsdev.yaml` were allowed and skipped
+  the security-level downgrade check that Edit and Write go through. Change
+  `.qsdev.yaml` with Edit or Write. `gh pr` and `gh issue` `create`,
+  `comment`, `edit`, `view` and `list` are now known to write no file, so a
+  pull request body that names a guarded file through `$(cat <<'EOF' ...)`
+  is allowed. Known limitation, deferred to U18-WS8: as for `.npmrc` before,
+  a line that names `.qsdev.yaml` is denied when another command on it is a
+  reader the write analysis does not model or writes an expansion operand
+  (`yq '.security.level' .qsdev.yaml`, `md5sum .qsdev.yaml`,
+  `qsdev check --config .qsdev.yaml`, `python3 -c "...open('.qsdev.yaml')"`,
+  the index-only `git restore --staged .qsdev.yaml` and
+  `git rm --cached .qsdev.yaml`, `rm -rf "$TMPDIR/b" && cat .qsdev.yaml`,
+  `cp .qsdev.yaml "$TMPDIR/b"`). Under Monitor and PowerShell the readers
+  Bash already denied for `.npmrc` (`md5sum`, `sha256sum`, `less`, `bat`,
+  `awk`, `find -name .npmrc`, `python3 scripts/check.py --config .npmrc`)
+  are now denied too. Also deferred to U18-WS8: a script handed to
+  `pwsh -c`/`powershell -c` or `cmd /c` (`cmd /c "echo x > .npmrc"`,
+  `cmd /c git commit --no-verify -m x`), and operands `xargs` reads from
+  standard input, are not judged by these checks.
+
+- MCP server code attestation (the `external-attestation` criterion of
+  `qsdev mcp grade`) now trusts only the embedded qsdev release key and the
+  keys in the new code keyring `~/.qsdev/keys/code/` (U16-16). Keys in
+  `~/.qsdev/keys/` stay trusted for docs and content signatures but no longer
+  attest the code an MCP server runs, so a docs-signing key cannot vouch for
+  an executable. Move code-signing `.pub` files into `~/.qsdev/keys/code/`:
+  while the top-level directory holds keys and the code keyring is empty,
+  `qsdev mcp grade` prints one line on stderr naming the code keyring, whether
+  or not any server reaches Verified. The attestation check also runs under
+  the caller's context, so cancelling `qsdev mcp grade` (or an MCP `mcp_list`
+  call or `qsdev://project/mcp-servers` resource read) stops signature
+  verification.
 
 - The MCP server's opt-in `qsdev_nix_run` tool is now held to what a Bash call
   may do, not only to the Bash deny rules: a call whose Bash equivalent (the
@@ -287,6 +370,32 @@ All notable changes to qsdev are recorded in this file. The format is based on
 
 ### Fixed
 
+- `qsdev mcp grade`'s `matches-registry-definition` criterion now uses the
+  same trust check as `qsdev mcp status` and is reported for every configured
+  server (U16-01, U16-13). An entry passes only when it is exactly a
+  definition qsdev trusts (a catalog launcher, its hardened form at any valid
+  release cutoff, or the binary `qsdev mcp install` provides, with any catalog optional arguments; an organization
+  overlay server; or a server built into qsdev), comparing command,
+  arguments, URL, headers and environment. qsdev's own installed binaries
+  (e.g. `context7-mcp`) now pass, and an exact catalog launcher with an
+  injected variable such as `LD_PRELOAD` now fails. A failing criterion, and
+  the not-probed reason in `qsdev mcp status`, name the first field that
+  differs (e.g. `env "LD_PRELOAD" not in trusted definition`) without
+  printing env or header values, and a package launcher that is also
+  untrusted names both. The criterion name is unchanged and it still does
+  not affect the grade level.
+- `qsdev mcp status`/`health` probes, `qsdev devenv doctor` and `qsdev mcp
+  grade` now treat an `.mcp.json` server as Claude Code does: it runs from
+  the project root, so a relative command (`./server.sh`) or script argument
+  (`server.js`) resolves against the root, not the directory qsdev is run
+  from (U16-10). Run from a subdirectory, `--probe-untrusted` used to fail
+  with `fork/exec ./server.sh: no such file or directory`, the doctor flagged
+  the command as missing, and attestation checked the wrong file. A bare
+  command name is still looked up on `PATH` only. Accepted risk: because a
+  probed server now starts in the project root, toolchain shims it runs
+  (asdf, mise, pyenv, nvm and the like) read the repository's version pins,
+  as they do under Claude Code itself; only trusted catalog launches are
+  probed unless `--probe-untrusted` is given.
 - The generated `devenv.nix` for an Elixir project failed to evaluate: qsdev
   and devenv's Elixir module both defined the `mix-format` hook's package at
   the same priority, which Nix rejects as "defined multiple times" (U10-01).
@@ -308,6 +417,57 @@ All notable changes to qsdev are recorded in this file. The format is based on
   or release-age window when the catalog cannot be loaded (U12-09).
 
 ### Security
+
+- A package on the package guard's team allowlist
+  (`PACKAGE_GUARD_TEAM_ALLOWLIST`) no longer skips the OSV.dev and
+  release-age checks, so a hijacked release of an approved package published
+  today is blocked like any other (U17-WS4). The allowlist still blocks every
+  package not on it and satisfies the new-dependency gate. The developer's
+  own `PACKAGE_GUARD_DENYLIST` is now applied before the team allowlist, so a
+  personal list can only narrow team policy.
+
+- `qsdev check` now vouches for the `.mcp.json` entries of required
+  always-on MCP tools (such as context7) instead of only checking that they
+  exist (W0N-08). An entry must be exactly a definition qsdev trusts, using
+  the same check as `qsdev mcp status` and `qsdev mcp grade` (a catalog
+  launcher or installed binary, with any optional arguments), or the entry
+  the project's own generation writes. A replaced command, changed arguments
+  or an injected variable such as `LD_PRELOAD` now fails
+  `tool_mcp_server_untrusted_<tool>`, naming the first differing field
+  without printing env or header values. To fix it, run `qsdev update
+  --configs-only --overwrite-modified`, which restores the generated
+  `.mcp.json` (`qsdev init --update` keeps an edited entry), or `qsdev
+  disable <tool> --force` to opt out.
+
+- qsdev now refuses an `.mcp.json` that spells a field two ways, such as
+  `"command"` and `"Command"`, `"env"` and `"ENV"`, or `"mcpServers"` and
+  `"MCPSERVERS"`. Go's JSON decoder matched keys case-insensitively (the last
+  spelling won) while Claude Code reads only the exact one, so such a file
+  could pass `qsdev check`, `qsdev mcp grade` and `qsdev mcp status` as a
+  trusted launch while Claude Code ran another command or kept an injected
+  `LD_PRELOAD`. `qsdev mcp grade` and `qsdev mcp status` now exit with an
+  error naming the key, and `qsdev check` fails
+  `tool_mcp_server_missing_<tool>` for each required server with the same
+  reason and the `qsdev update --configs-only --overwrite-modified`
+  remediation. Keys inside `env` and `headers` are the user's and still match
+  exactly.
+- The not-probed reason in `qsdev mcp status` and the trust failures of
+  `qsdev mcp grade` and `qsdev check` show only the scheme and host of a
+  configured URL (`https://example.invalid/…`), so a credential in its path,
+  query or userinfo (`?apiKey=...`) is not printed.
+- An `.mcp.json` entry that keeps a trusted remote URL but adds a command,
+  such as `{"type":"stdio","command":"./evil.sh","url":"https://mcp.socket.dev/"}`,
+  no longer passes as the trusted endpoint. Claude Code launches such an
+  entry as a stdio server running the command, so `qsdev mcp grade`,
+  `qsdev mcp status` and `qsdev check` now compare the whole launch (command,
+  arguments, URL, headers and environment) whatever the transport, and name
+  the extra command (`command "./evil.sh" where the trusted definition is
+  remote url ...`).
+- qsdev now refuses an `.mcp.json` that repeats a key, such as two
+  `"mcpServers"` objects or two `"env"` maps in one entry. Go's JSON decoder
+  merged them while Claude Code keeps only the last, so a required server
+  defined only in the first `"mcpServers"` object passed `qsdev check` though
+  Claude Code never loaded it. It is reported like a miscased key.
 
 - A committed `security.credential_vend.enabled: true` no longer mounts
   `qsdev_credential_vend` by itself (U21-V02, U21-07). The operator must

@@ -99,7 +99,7 @@ func configuredPackageManagers(managers []ecosystem.PackageManagerInfo, config e
 // BuildClaudeMdData assembles all template data from wizard answers and ecosystem
 // modules. It maps language choices to display names, derives commands from
 // ecosystem module VerificationCommands, and collects package manager metadata.
-func BuildClaudeMdData(answers types.WizardAnswers, registry *ecosystem.Registry) *ClaudeMdTemplateData {
+func BuildClaudeMdData(answers types.WizardAnswers, registry *ecosystem.Registry) (*ClaudeMdTemplateData, error) {
 	data := &ClaudeMdTemplateData{
 		ProjectName: answers.ProjectName,
 	}
@@ -127,7 +127,11 @@ func BuildClaudeMdData(answers types.WizardAnswers, registry *ecosystem.Registry
 	data.PackageManagers = sliceutil.Dedup(data.PackageManagers)
 
 	// Build tool sections from enabled tools + catalog metadata.
-	data.ToolSections = buildToolSections(answers, registry)
+	sections, err := buildToolSections(answers, registry)
+	if err != nil {
+		return nil, err
+	}
+	data.ToolSections = sections
 
 	// Generate a default description if none provided.
 	if data.ProjectName != "" && len(data.Languages) > 0 {
@@ -228,13 +232,16 @@ func BuildClaudeMdData(answers types.WizardAnswers, registry *ecosystem.Registry
 	// project has .nix files), so the navigation pointer always renders.
 	data.LSPEnabled = true
 
-	return data
+	return data, nil
 }
 
 // GenerateClaudeMd produces a GeneratedFile containing the rendered CLAUDE.md
 // from wizard answers and ecosystem module registry.
 func GenerateClaudeMd(answers types.WizardAnswers, registry *ecosystem.Registry) (*types.GeneratedFile, error) {
-	data := BuildClaudeMdData(answers, registry)
+	data, err := BuildClaudeMdData(answers, registry)
+	if err != nil {
+		return nil, err
+	}
 
 	renderer, err := tmpl.NewMarkdownRenderer(templateFS, "templates")
 	if err != nil {
@@ -258,8 +265,11 @@ func GenerateClaudeMd(answers types.WizardAnswers, registry *ecosystem.Registry)
 // content from the catalog's section_content field. Tools with a
 // SectionDataFunc get their content rendered as a Go template; all others
 // use their section_content as-is or fall back to a default one-liner.
-func buildToolSections(answers types.WizardAnswers, ecoReg *ecosystem.Registry) []ToolSection {
-	reg := toolreg.DefaultRegistry()
+func buildToolSections(answers types.WizardAnswers, ecoReg *ecosystem.Registry) ([]ToolSection, error) {
+	reg, err := toolreg.Default()
+	if err != nil {
+		return nil, fmt.Errorf("loading the tool registry for CLAUDE.md tool sections: %w", err)
+	}
 	var sections []ToolSection
 
 	for toolName, enabled := range answers.EnabledTools {
@@ -302,7 +312,7 @@ func buildToolSections(answers types.WizardAnswers, ecoReg *ecosystem.Registry) 
 	sort.Slice(sections, func(i, j int) bool {
 		return sections[i].SectionID < sections[j].SectionID
 	})
-	return sections
+	return sections, nil
 }
 
 // producesFiles reports whether an enabled tool emits anything for answers. A

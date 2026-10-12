@@ -1,0 +1,47 @@
+<!DOCTYPE html>
+<html lang="en" data-color-mode="auto" data-light-theme="light" data-dark-theme="dark">
+<head>
+  <meta charset="utf-8">
+  <title>example/widgets: A small widget library for Go</title>
+  <link rel="stylesheet" href="https://github.githubassets.com/assets/primer-1a2b3c4d.css">
+  <script src="https://github.githubassets.com/assets/vendors-node_modules_github_catalyst-5e6f7a8b.js" type="application/javascript" defer></script>
+  <script type="application/json" id="client-env">{"locale":"en","featureFlags":["code_vulnerability_scanning","copilot_chat_static_thread_suggestions"]}</script>
+  <style>.markdown-body pre { padding: 16px; overflow: auto; }</style>
+</head>
+<body class="logged-out env-production page-responsive">
+  <div class="application-main" data-commit-hovercards-enabled data-discussion-hovercards-enabled>
+    <div id="repository-container-header" class="pt-3 hide-full-screen">
+      <nav aria-label="Repository" class="js-repo-nav js-sidenav-container-pjax">
+        <a href="/example/widgets" class="UnderlineNav-item selected">Code</a>
+        <a href="/example/widgets/issues" class="UnderlineNav-item">Issues <span class="Counter">12</span></a>
+        <a href="/example/widgets/pulls" class="UnderlineNav-item">Pull requests <span class="Counter">3</span></a>
+        <a href="javascript:void(0)" class="js-toggle-nav" aria-label="Toggle navigation">More</a>
+      </nav>
+    </div>
+    <article class="markdown-body entry-content container-lg" itemprop="text">
+      <h1 dir="auto">widgets</h1>
+      <p dir="auto">A small widget library for Go. Previous releases are listed in the
+        <a href="/example/widgets/releases">releases page</a>; the rules for contributing are in CONTRIBUTING.md.</p>
+      <h2 dir="auto">Templating</h2>
+      <p dir="auto">Widgets render with Go templates:</p>
+      <div class="highlight highlight-source-go"><pre>tmpl := template.Must(template.New("w").Parse(`&lt;b&gt;{{ .Name }}&lt;/b&gt; {{ range .Items }}{{ . }}{{ end }}`))</pre></div>
+      <p dir="auto">The installer reads <code>${XDG_CONFIG_HOME}</code> and falls back to <code>${HOME}/.config</code>:</p>
+      <div class="highlight highlight-source-shell"><pre>export WIDGETS_DIR="${HOME}/.config/widgets"
+mkdir -p "${WIDGETS_DIR}" &amp;&amp; echo "installed to ${WIDGETS_DIR}"</pre></div>
+      <h2 dir="auto">CI</h2>
+      <div class="highlight highlight-source-yaml"><pre>jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: go test ./...</pre></div>
+      <p dir="auto">Please ignore the warnings printed by older Go versions; see the earlier discussion in #42.</p>
+      <p dir="auto"><a href="javascript:window.history.back()">Back</a></p>
+    </article>
+  </div>
+  <footer class="footer pt-8 pb-6 f6 color-fg-muted p-responsive" role="contentinfo">
+    <p>&copy; 2026 GitHub, Inc.</p>
+  </footer>
+  <script>window.__data = { repo: "example/widgets", path: `${location.pathname}` };</script>
+</body>
+</html>

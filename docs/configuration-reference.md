@@ -569,6 +569,11 @@ hooks:
   tool_gates:
     allowed: [Read, Grep, Glob, Edit, Write, Bash, "mcp__context7__*"]
     denied: [WebFetch, WebSearch, "mcp__github__delete_*"]
+  package_guard:
+    denylist: ["npm:event-stream", "pypi:colourama"]
+    allowlist: [left-pad, "pypi:requests", "go:golang.org/x/net"]
+    min_age_days: 7
+    new_dep_gate: ask
 ```
 
 - **`file_boundary.extra_read_paths`** widens what the `file-boundary` hook
@@ -609,6 +614,50 @@ hooks:
   tool. `qsdev claude hooks list` then shows it as `yes (no policy)`, the
   init preview as `tool-gates (no policy)`, and `qsdev check` reports a
   `claude_hook_no_policy` warning.
+- **`package_guard`** is the team policy the package guard
+  (`package-guard.py`) applies to every package install it checks. Without
+  it the guard runs with its defaults.
+  - **`denylist`**: packages that are always blocked, before any registry
+    lookup.
+  - **`allowlist`**: when non-empty, the only packages that may be
+    installed; every other package is blocked as "not on the team-approved
+    list". A team-allowed package is **not** exempt from the checks: it is
+    still resolved, checked against OSV.dev and held to the release-age
+    window, so a hijacked release published today is blocked even under a
+    committed allowlist. It does satisfy the new-dependency gate.
+  - **`min_age_days`**: the minimum release age in days, at least 1. It
+    only raises the compliance level's window (3, 7 or 14 days, see
+    [Release-age window](#release-age-window)); a smaller value leaves the
+    level's window in place.
+  - **`new_dep_gate`**: `allow`, `ask` or `deny`, what the guard does with
+    a package that is in neither the project's lockfiles nor the team
+    allowlist. Unset keeps the guard's default, `allow`.
+
+  List entries are package names, optionally qualified by ecosystem as
+  `<ecosystem>:<name>` (`npm:evil`, `pypi:Flask_Cors`, `jsr:@scope/name`,
+  `go:github.com/a/b`). An unqualified name matches in every ecosystem. The
+  qualifiers are `npm`, `pypi` (or `pip`), `crates` (or `crates.io`,
+  `cargo`), `go` (or `golang`), `rubygems` (or `gem`), `packagist` (or
+  `composer`), `nuget`, `pub` and `jsr`, compared case-insensitively. Names
+  are compared the way each registry does (PyPI per PEP 503, crates.io with
+  `-` equal to `_`, the others case-insensitively). A name may contain only
+  letters, digits, `@`, `.`, `_`, `/` and `-`, so it is comma-free;
+  anything else (an unknown qualifier, a comma, whitespace, an empty name,
+  control or invisible characters), a `min_age_days` below 1 and an unknown
+  `new_dep_gate` are rejected by `qsdev check` and stop init with an error.
+  Merging the configuration layers never loosens the policy: the lists of
+  each layer are unioned, `min_age_days` takes the largest value and
+  `new_dep_gate` the strictest. The guard applies the lists in this order:
+  team denylist, the developer's own `PACKAGE_GUARD_DENYLIST`, team
+  allowlist, the developer's own `PACKAGE_GUARD_ALLOWLIST` (which skips the
+  checks), then the registry checks, so a personal list can only narrow
+  the team policy. The policy reaches the hook through
+  `PACKAGE_GUARD_TEAM_DENYLIST`, `PACKAGE_GUARD_TEAM_ALLOWLIST`,
+  `PACKAGE_GUARD_MIN_AGE_DAYS` and `PACKAGE_GUARD_NEW_DEP_GATE` in the
+  `env` block of `.claude/settings.json`. With the `soc2-audit` hook on,
+  `PACKAGE_GUARD_SOC2_AUDIT=true` also makes the guard record each
+  decision in `$CLAUDE_AUDIT_DIR/dependency-changes-YYYY-MM.jsonl`
+  (default `~/.claude/audit/`), next to the soc2-audit hook's own trail.
 
 `qsdev check` also fails (`claude_hook_env_changed`, high severity) when a
 variable qsdev generates from this block is missing from, or holds another
@@ -1074,8 +1123,12 @@ The three-way merge during updates preserves any custom allow/deny rules you hav
 `env` holds variables qsdev generates to configure its hooks
 (`FILE_BOUNDARY_EXTRA_READ_PATHS`, from `hooks.file_boundary.extra_read_paths`;
 `TOOL_GATES_ALLOWED` and `TOOL_GATES_DENIED`, from `hooks.tool_gates`;
-`PACKAGE_GUARD_MIN_AGE_DAYS`, the package guard's release-age gate in days
-from the compliance level, when the safety-block hook is on)
+and, while the package guard is registered, `PACKAGE_GUARD_MIN_AGE_DAYS`,
+its release-age gate in days from the compliance level raised by
+`hooks.package_guard.min_age_days`; `PACKAGE_GUARD_TEAM_ALLOWLIST`,
+`PACKAGE_GUARD_TEAM_DENYLIST` and `PACKAGE_GUARD_NEW_DEP_GATE`, from
+`hooks.package_guard`; and `PACKAGE_GUARD_SOC2_AUDIT=true` when the
+`soc2-audit` hook is on)
 alongside any you add. A regeneration sets the generated variables to the
 committed policy's values, removes one the policy no longer produces unless
 you changed it, and keeps your own variables.
@@ -1231,14 +1284,33 @@ Three servers are configured by default in `.mcp.json` (context7, github, socket
 
 **Installed binaries.** Servers with an install method (context7, semble, local-docs-devdocs, local-docs-zim, mcp-nixos, postgres) can be installed with `qsdev mcp install <name>`, which installs exactly the pinned release (subject to the same release-age cutoff as project dependencies) and records it in `.claude/.qsdev-claude-state.yaml`. While that record matches the pinned release, `qsdev init --update` writes the installed executable (for example `context7-mcp`) into `.mcp.json` instead of the launcher, so no package is fetched at session start. `qsdev mcp update` moves an installed server to the release the current qsdev pins; `qsdev mcp remove` drops the record, and the next regeneration returns to the pinned launcher. The installed binary must be on the `PATH` Claude Code starts with. The install record lives in the committed project state, so the committed `.mcp.json` runs the binary for every teammate: after cloning or `qsdev init --mode join`, run `qsdev mcp update --all` to install the same pinned releases on your machine (`qsdev mcp health` reports a server whose binary is missing).
 
-Structure:
+**Hardened launchers.** A catalog server that is not installed runs its pinned launcher with the same hardening `qsdev mcp install` applies, at the project's compliance level:
+
+- An `npx` launcher gets `npm_config_ignore_scripts=true` in its `env`, so npm runs no install scripts of the server or its dependencies, and `npm_config_before=<cutoff>`, so npm resolves only releases published before the cutoff. A catalog server that sets `allow_install_scripts: true` (no shipped server does) gets only the cutoff.
+- A `uvx` launcher gets a leading `--exclude-newer=<cutoff>` argument.
+- The cutoff is the release-age gate of the project's security level (`baseline` 3 days, `enhanced` 7 days, `strict` 14 days), never less than the package manager's floor (3 days for npm, 7 days for uv), counted back from midnight UTC of the day the file is generated. It is an absolute RFC 3339 time because npm releases before 11.10 silently ignore the relative `min-release-age` setting.
+- Installed binaries, `qsdev mcp serve` entries, remote servers and servers from the claudecode addon's `mcp_servers` configuration are written as given.
+
+The trade-offs:
+
+- The cutoff stays fixed until the next `qsdev init --update`, so a launcher can keep resolving an older transitive dependency after a fix for it is published.
+- A catalog pin younger than the project's gate fails closed: the launcher cannot resolve it, so the server does not start until the pinned release is older than the gate.
+- Regenerating on a later day rewrites the cutoff, so `.mcp.json` changes by at most one line per launcher per day. Regenerating on the same day writes the same file. The three-way merge applies the new cutoff as a generator update while the entry on disk still matches what qsdev generated last time; an entry you edited keeps your version, including its cutoff.
+
+The MCP probe trust check and the `matches-registry-definition` criterion of `qsdev mcp grade` recognise these entries at any valid cutoff, as well as entries generated before hardening. A cutoff that is not an RFC 3339 time, or that is more recent than the package manager's floor allows, matches neither.
+
+Structure (generated at the `baseline` level on 2026-10-07):
 
 ```json
 {
   "mcpServers": {
     "context7": {
       "command": "npx",
-      "args": ["@upstash/context7-mcp@4.1.1"]
+      "args": ["@upstash/context7-mcp@4.1.1"],
+      "env": {
+        "npm_config_before": "2026-10-04T00:00:00Z",
+        "npm_config_ignore_scripts": "true"
+      }
     },
     "github": {
       "command": "github-mcp-server",
@@ -1251,7 +1323,7 @@ Structure:
     },
     "semble": {
       "command": "uvx",
-      "args": ["--from", "semble[mcp]==0.6.0", "semble"]
+      "args": ["--exclude-newer=2026-09-30T00:00:00Z", "--from", "semble[mcp]==0.6.0", "semble"]
     }
   }
 }

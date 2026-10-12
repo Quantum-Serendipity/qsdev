@@ -1,7 +1,5 @@
-//go:build race
-
 package rules
 
-// raceScale widens wall-clock test budgets under the race detector, which
-// slows this code about four-fold.
-const raceScale = 5
+// Time budgets in this package's tests scale by testutil.RaceScale, the one
+// race-detector factor of the repository. This file no longer declares
+// anything and is due for removal.

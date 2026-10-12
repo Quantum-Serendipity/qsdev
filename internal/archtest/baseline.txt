@@ -15,7 +15,6 @@ config-parseqsdevconfig	internal/mcpserve/projectctx	1
 config-parseqsdevconfig	internal/mcpserve/tools/security	1
 config-parseqsdevconfig	internal/mcpserve/tools/status	1
 config-parseqsdevconfig	internal/posture	1
-context-background	addons/claudecode	1
 context-background	addons/devenv	2
 context-background	addons/devinit	8
 context-background	internal/detect	1
@@ -135,12 +134,10 @@ os-writefile	internal/bugreport	1
 os-writefile	internal/posture/render	1
 os-writefile	internal/sandbox/policy	1
 os-writefile	internal/shelltest	3
-panic	addons/claudecode	3
 panic	instance	1
 panic	internal/catalog	1
 panic	internal/mcpregistry	1
 panic	internal/posture	1
-panic	internal/toolreg	1
 panic	pkg/ecosystem	1
 panic	pkg/lsp	1
 pkg-public-leaf	pkg/aiframework -> internal/enumtext	1
@@ -159,7 +156,3 @@ severity-type	internal/container	1
 severity-type	internal/policyengine/policy	1
 severity-type	internal/posture/drift	1
 severity-type	pkg/aiframework	1
-toolreg-defaultregistry	addons/claudecode	2
-toolreg-defaultregistry	addons/devinit	10
-toolreg-defaultregistry	internal/posture	2
-toolreg-defaultregistry	internal/posture/drift	1

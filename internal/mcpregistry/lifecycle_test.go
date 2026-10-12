@@ -743,3 +743,38 @@ func TestInstall_RefusesOtherRelease(t *testing.T) {
 		t.Error("a release other than the pin must not be recorded in state")
 	}
 }
+
+// TestPackageCommand_MinReleaseAge: a project's release-age gate raises the
+// install cutoff above the per-manager floor, never below it, and a zero gate
+// keeps the baseline commands exactly.
+func TestPackageCommand_MinReleaseAge(t *testing.T) {
+	t.Parallel()
+
+	const strictCutoff = "2026-09-09T12:00:00Z" // testNow - 14 days
+	tests := []struct {
+		name    string
+		minAge  time.Duration
+		wantNpm string
+		wantUv  string
+	}{
+		{"zero keeps the baseline floors", 0, testNpmCutoff, testUvCutoff},
+		{"gate below the floors keeps the floors", 24 * time.Hour, testNpmCutoff, testUvCutoff},
+		{"strict", 14 * 24 * time.Hour, strictCutoff, strictCutoff},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			lc := newTestLifecycle(&mockRunner{}, &types.GeneratedState{})
+			lc.MinReleaseAge = tc.minAge
+
+			name, args := lc.packageCommand(InstallNpmGlobal, "p@1.0.0")
+			if want := []string{"install", "-g", "--ignore-scripts", "--before=" + tc.wantNpm, "p@1.0.0"}; name != "npm" || !slices.Equal(args, want) {
+				t.Errorf("npm command = %s %q, want npm %q", name, args, want)
+			}
+			name, args = lc.packageCommand(InstallUvTool, "p==1.0.0")
+			if want := []string{"tool", "install", "--exclude-newer", tc.wantUv, "p==1.0.0"}; name != "uv" || !slices.Equal(args, want) {
+				t.Errorf("uv command = %s %q, want uv %q", name, args, want)
+			}
+		})
+	}
+}

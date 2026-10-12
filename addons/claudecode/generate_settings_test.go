@@ -2,7 +2,13 @@ package claudecode_test
 
 import (
 	"encoding/json"
+	"go/ast"
+	"go/parser"
+	"go/token"
+	"os"
+	"path/filepath"
 	"reflect"
+	"regexp"
 	"slices"
 	"strconv"
 	"strings"
@@ -11,6 +17,8 @@ import (
 
 	"github.com/Quantum-Serendipity/qsdev/addons/claudecode"
 	"github.com/Quantum-Serendipity/qsdev/internal/catalog"
+	"github.com/Quantum-Serendipity/qsdev/internal/claudesettings"
+	"github.com/Quantum-Serendipity/qsdev/internal/validation"
 	"github.com/Quantum-Serendipity/qsdev/pkg/denyutil"
 	"github.com/Quantum-Serendipity/qsdev/pkg/ecosystem"
 	"github.com/Quantum-Serendipity/qsdev/pkg/types"
@@ -1345,7 +1353,9 @@ func TestGenerateSettings_FileBoundaryExtraReadPaths(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 			answers := types.WizardAnswers{
-				Hooks:      types.HookChoices{FileBoundary: tt.boundary},
+				// The opt-out leaves out package-guard.py's own env, which
+				// TestBuildHookEnv_PackageGuard covers.
+				Hooks:      types.HookChoices{FileBoundary: tt.boundary, SafetyBlockOptOut: true},
 				HookPolicy: tt.policy,
 			}
 			if tt.wantErr != "" {
@@ -1398,7 +1408,9 @@ func TestGenerateSettings_ToolGatesPolicy(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 			answers := types.WizardAnswers{
-				Hooks:      types.HookChoices{ToolGates: tt.gates},
+				// The opt-out leaves out package-guard.py's own env, which
+				// TestBuildHookEnv_PackageGuard covers.
+				Hooks:      types.HookChoices{ToolGates: tt.gates, SafetyBlockOptOut: true},
 				HookPolicy: tt.policy,
 			}
 			if tt.wantErr != "" {
@@ -1425,6 +1437,7 @@ func TestBuildHookEnv_PackageGuardMinAgeDays(t *testing.T) {
 		name        string
 		level       string
 		safetyBlock bool
+		optOut      bool
 		want        string // "" means the variable is absent
 	}{
 		{name: "baseline", level: "baseline", safetyBlock: true, want: "3"},
@@ -1432,14 +1445,17 @@ func TestBuildHookEnv_PackageGuardMinAgeDays(t *testing.T) {
 		{name: "strict", level: "strict", safetyBlock: true, want: "14"},
 		{name: "unset level gets baseline", level: "", safetyBlock: true, want: "3"},
 		{name: "unknown level gets baseline", level: "bogus", safetyBlock: true, want: "3"},
-		{name: "safety block off", level: "strict", safetyBlock: false},
+		{name: "safety block off", level: "strict", optOut: true},
+		// package-guard.py is registered unless the answers record the
+		// opt-out, so the unset SafetyBlock mirror does not drop its window.
+		{name: "safety block mirror unset without opt-out", level: "strict", want: "14"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 			answers := types.WizardAnswers{
 				ComplianceLevel: tt.level,
-				Hooks:           types.HookChoices{SafetyBlock: tt.safetyBlock},
+				Hooks:           types.HookChoices{SafetyBlock: tt.safetyBlock, SafetyBlockOptOut: tt.optOut},
 			}
 			settings := mustUnmarshalSettings(t, mustGenerateSettings(t, answers, nil))
 			got, ok := settings.Env[claudecode.PackageGuardMinAgeDaysEnv]
@@ -1482,14 +1498,192 @@ func TestPackageGuardMinAgeDays_NeverBelowFloor(t *testing.T) {
 	}
 }
 
-// TestPackageGuardMinAgeEnvNameInTemplate verifies that package-guard.py reads
-// the variable the generator sets, so the two cannot drift apart.
-func TestPackageGuardMinAgeEnvNameInTemplate(t *testing.T) {
+// TestBuildHookEnv_PackageGuard covers handing .qsdev.yaml
+// hooks.package_guard to the package-guard hook through settings.json "env":
+// the team lists, the new-dependency gate, and a release-age window that only
+// raises the compliance level's (D18).
+func TestBuildHookEnv_PackageGuard(t *testing.T) {
 	t.Parallel()
-	want := `_int_env("` + claudecode.PackageGuardMinAgeDaysEnv + `"`
-	if !strings.Contains(string(claudecode.PackageGuardContent()), want) {
-		t.Errorf("package-guard.py does not read %s (looked for %s)", claudecode.PackageGuardMinAgeDaysEnv, want)
+	days := func(n int) *int { return &n }
+	deny := types.PackageGuardConfig{Denylist: []string{"npm:evil"}, MinAgeDays: days(7)}
+	tests := []struct {
+		name    string
+		level   string
+		optOut  bool
+		policy  types.PackageGuardConfig
+		wantEnv map[string]string
+		wantErr string
+	}{
+		{
+			name: "denylist and min age at baseline", level: "baseline", policy: deny,
+			wantEnv: map[string]string{
+				claudesettings.EnvPackageGuardMinAgeDays:   "7",
+				claudesettings.EnvPackageGuardTeamDenylist: "npm:evil",
+			},
+		},
+		{
+			name: "strict keeps its longer window", level: "strict", policy: deny,
+			wantEnv: map[string]string{
+				claudesettings.EnvPackageGuardMinAgeDays:   "14",
+				claudesettings.EnvPackageGuardTeamDenylist: "npm:evil",
+			},
+		},
+		{
+			name: "allowlist deduplicated", level: "baseline",
+			policy: types.PackageGuardConfig{Allowlist: []string{"lodash", "npm:react", "lodash"}},
+			wantEnv: map[string]string{
+				claudesettings.EnvPackageGuardMinAgeDays:    "3",
+				claudesettings.EnvPackageGuardTeamAllowlist: "lodash,npm:react",
+			},
+		},
+		{
+			name: "new dependency gate", level: "baseline",
+			policy: types.PackageGuardConfig{NewDepGate: types.NewDepGateDeny},
+			wantEnv: map[string]string{
+				claudesettings.EnvPackageGuardMinAgeDays: "3",
+				claudesettings.EnvPackageGuardNewDepGate: "deny",
+			},
+		},
+		{
+			name: "no block is as on base", level: "baseline",
+			wantEnv: map[string]string{claudesettings.EnvPackageGuardMinAgeDays: "3"},
+		},
+		{name: "safety block opt-out", level: "baseline", optOut: true, policy: deny},
+		{
+			name: "zero min age rejected", level: "baseline",
+			policy:  types.PackageGuardConfig{MinAgeDays: days(0)},
+			wantErr: "hooks.package_guard.min_age_days",
+		},
+		{
+			name: "unknown qualifier rejected", level: "baseline",
+			policy:  types.PackageGuardConfig{Allowlist: []string{"npmm:x"}},
+			wantErr: "hooks.package_guard.allowlist",
+		},
 	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			answers := types.WizardAnswers{
+				ComplianceLevel: tt.level,
+				Hooks:           types.HookChoices{SafetyBlock: !tt.optOut, SafetyBlockOptOut: tt.optOut},
+				HookPolicy:      types.HooksConfig{PackageGuard: tt.policy},
+			}
+			if tt.wantErr != "" {
+				_, err := claudecode.GenerateSettings(answers, nil, claudecode.NewConfig())
+				if err == nil || !strings.Contains(err.Error(), tt.wantErr) {
+					t.Fatalf("GenerateSettings error = %v, want one containing %q", err, tt.wantErr)
+				}
+				return
+			}
+			settings := mustUnmarshalSettings(t, mustGenerateSettings(t, answers, nil))
+			if !reflect.DeepEqual(settings.Env, tt.wantEnv) {
+				t.Errorf("env = %#v, want %#v", settings.Env, tt.wantEnv)
+			}
+		})
+	}
+}
+
+// TestBuildHookEnv_SOC2EnablesDependencyTrail checks that the soc2-audit hook
+// choice also turns on package-guard.py's dependency-decision trail, and only
+// while package-guard.py is registered.
+func TestBuildHookEnv_SOC2EnablesDependencyTrail(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name  string
+		hooks types.HookChoices
+		want  string // "" means the variable is absent
+	}{
+		{name: "soc2 audit on", hooks: types.HookChoices{SafetyBlock: true, SOC2Audit: true}, want: "true"},
+		{name: "soc2 audit off", hooks: types.HookChoices{SafetyBlock: true}},
+		{name: "safety block opt-out", hooks: types.HookChoices{SOC2Audit: true, SafetyBlockOptOut: true}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			settings := mustUnmarshalSettings(t, mustGenerateSettings(t, types.WizardAnswers{Hooks: tt.hooks}, nil))
+			got, ok := settings.Env[claudesettings.EnvPackageGuardSOC2Audit]
+			if tt.want == "" {
+				if ok {
+					t.Errorf("%s = %q, want it absent", claudesettings.EnvPackageGuardSOC2Audit, got)
+				}
+				return
+			}
+			if got != tt.want {
+				t.Errorf("%s = %q, want %q", claudesettings.EnvPackageGuardSOC2Audit, got, tt.want)
+			}
+		})
+	}
+}
+
+// TestPackageGuardEnvNamesMatchScript verifies that package-guard.py reads
+// every PACKAGE_GUARD_* variable claudesettings names, and accepts exactly
+// types.NewDepGates() for the new-dependency gate, so the generator and the
+// hook cannot drift apart.
+func TestPackageGuardEnvNamesMatchScript(t *testing.T) {
+	t.Parallel()
+	script := string(claudecode.PackageGuardContent())
+	names := packageGuardEnvConstants(t)
+	if len(names) == 0 {
+		t.Fatal("internal/claudesettings defines no PACKAGE_GUARD_* constants")
+	}
+	for _, name := range names {
+		if !strings.Contains(script, `"`+name+`"`) {
+			t.Errorf("package-guard.py does not read %s", name)
+		}
+	}
+	m := regexp.MustCompile(`NEW_DEP_GATE not in \(([^)]*)\)`).FindStringSubmatch(script)
+	if m == nil {
+		t.Fatal("package-guard.py has no accepted NEW_DEP_GATE tuple")
+	}
+	var accepted []string
+	for _, v := range regexp.MustCompile(`"([^"]*)"`).FindAllStringSubmatch(m[1], -1) {
+		accepted = append(accepted, v[1])
+	}
+	if got := types.NewDepGates(); !slices.Equal(got, accepted) {
+		t.Errorf("types.NewDepGates() = %v, package-guard.py accepts %v", got, accepted)
+	}
+}
+
+// packageGuardEnvConstants returns the value of every string constant in
+// internal/claudesettings that names a PACKAGE_GUARD_* variable, read from
+// the package source so a new constant is covered without being listed.
+func packageGuardEnvConstants(t *testing.T) []string {
+	t.Helper()
+	dir := filepath.Join("..", "..", "internal", "claudesettings")
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		t.Fatalf("reading %s: %v", dir, err)
+	}
+	fset := token.NewFileSet()
+	var names []string
+	for _, e := range entries {
+		if !strings.HasSuffix(e.Name(), ".go") || strings.HasSuffix(e.Name(), "_test.go") {
+			continue
+		}
+		f, err := parser.ParseFile(fset, filepath.Join(dir, e.Name()), nil, 0)
+		if err != nil {
+			t.Fatalf("parsing %s: %v", e.Name(), err)
+		}
+		ast.Inspect(f, func(n ast.Node) bool {
+			decl, ok := n.(*ast.GenDecl)
+			if !ok || decl.Tok != token.CONST {
+				return true
+			}
+			for _, spec := range decl.Specs {
+				for _, v := range spec.(*ast.ValueSpec).Values {
+					lit, ok := v.(*ast.BasicLit)
+					if !ok || lit.Kind != token.STRING {
+						continue
+					}
+					if s, err := strconv.Unquote(lit.Value); err == nil && strings.HasPrefix(s, "PACKAGE_GUARD_") {
+						names = append(names, s)
+					}
+				}
+			}
+			return false
+		})
+	}
+	return names
 }
 
 // TestPackageGuardDefaultMinAgeMatchesBaseline pins that package-guard.py,
@@ -1501,6 +1695,27 @@ func TestPackageGuardDefaultMinAgeMatchesBaseline(t *testing.T) {
 		strconv.Itoa(ecosystem.ReleaseAgeDays(ecosystem.DefaultMinReleaseAge)) + `, 1)`
 	if !strings.Contains(string(claudecode.PackageGuardContent()), want) {
 		t.Errorf("package-guard.py does not default its release-age window to DefaultMinReleaseAge (looked for %s)", want)
+	}
+}
+
+// TestPackageGuardQualifiersMatchScript pins validation's Go mirror of the
+// ecosystem qualifiers to the keys of package-guard.py's
+// _ECOSYSTEM_QUALIFIERS, so .qsdev.yaml validation accepts exactly the
+// qualifiers the hook resolves.
+func TestPackageGuardQualifiersMatchScript(t *testing.T) {
+	t.Parallel()
+	block := regexp.MustCompile(`(?s)\n_ECOSYSTEM_QUALIFIERS: dict = \{(.*?)\n\}`).
+		FindSubmatch(claudecode.PackageGuardContent())
+	if block == nil {
+		t.Fatal("package-guard.py has no _ECOSYSTEM_QUALIFIERS dict literal")
+	}
+	var keys []string
+	for _, m := range regexp.MustCompile(`"([^"]+)"\s*:`).FindAllSubmatch(block[1], -1) {
+		keys = append(keys, string(m[1]))
+	}
+	slices.Sort(keys)
+	if got := validation.PackageGuardQualifiers(); !slices.Equal(got, keys) {
+		t.Errorf("validation.PackageGuardQualifiers() = %v, package-guard.py _ECOSYSTEM_QUALIFIERS keys = %v", got, keys)
 	}
 }
 

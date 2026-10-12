@@ -12,7 +12,7 @@ import (
 // (CLAUDE.md), never to another file that reuses the section ID (devenv.nix).
 func TestSharedContent_KeyedPerFile(t *testing.T) {
 	t.Parallel()
-	reg := DefaultRegistry()
+	reg := mustDefault(t)
 	tests := []struct {
 		tool    string
 		present []SharedSection
@@ -56,7 +56,7 @@ func TestSharedContent_KeyedPerFile(t *testing.T) {
 
 func TestSharedSectionsFor_DevenvNix(t *testing.T) {
 	t.Parallel()
-	reg := DefaultRegistry()
+	reg := mustDefault(t)
 	answers := types.WizardAnswers{EnabledTools: map[string]bool{
 		"starship-integration": true,
 		"gitleaks":             true, // declares a devenv.nix section but has no Nix content

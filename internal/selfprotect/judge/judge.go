@@ -10,7 +10,6 @@ import (
 	"fmt"
 	"path"
 
-	"github.com/Quantum-Serendipity/qsdev/internal/selfprotect/canon"
 	"github.com/Quantum-Serendipity/qsdev/internal/selfprotect/evasion"
 	"github.com/Quantum-Serendipity/qsdev/internal/selfprotect/gatedodge"
 	"github.com/Quantum-Serendipity/qsdev/internal/selfprotect/hookio"
@@ -58,26 +57,28 @@ func Evaluate(ctx *rules.EvalContext) (Denial, bool) {
 	return Denial{}, false
 }
 
-// shellGateDodge blocks a shell command that rewrites a file guarded by a
-// gate-dodge result rule: the before/after check runs only for Write and
-// Edit, so a shell append, delete or in-place edit, or a package manager's
-// config command, would skip it. Reading the file stays allowed.
+// shellGateDodge blocks a shell command that rewrites a file with a
+// gate-dodge Change check (gatedodge.ChangeGuardedNames, .qsdev.yaml
+// included; gatedodge.Lookup gives the rule ID): the before/after check runs
+// only for Write and Edit, so a shell append, delete or in-place edit, or a
+// package manager's config command, would skip it. Reading the file stays
+// allowed.
 func shellGateDodge(ctx *rules.EvalContext) (ruleID, reason string, blocked bool) {
-	name, ok := rules.BashRewritesFile(ctx, canon.GuardedConfigFiles())
+	name, ok := rules.ShellRewritesFile(ctx, gatedodge.ChangeGuardedNames())
 	if !ok {
 		name = configCommandTarget(ctx)
 	}
 	if name == "" {
 		return "", "", false
 	}
-	return gatedodge.ResultRuleFor(name).ID,
+	return gatedodge.Lookup(name)[0].RuleID,
 		"shell command changes " + name + ", whose security settings are only verified for the Edit and Write tools; make the change with Edit or Write",
 		true
 }
 
 // configCommandTarget returns the guarded file a package-manager command on
 // the line rewrites (see gatedodge.ConfigCommandTarget), or "". An
-// unparseable line is left to BashRewritesFile, which fails closed when it
+// unparseable line is left to ShellRewritesFile, which fails closed when it
 // names a guarded file.
 func configCommandTarget(ctx *rules.EvalContext) string {
 	cmds, err := ctx.ParsedCommands()

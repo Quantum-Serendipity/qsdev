@@ -13,6 +13,7 @@ import (
 
 	_ "github.com/Quantum-Serendipity/qsdev/addons/claudecode"
 	_ "github.com/Quantum-Serendipity/qsdev/addons/devenv"
+	"github.com/Quantum-Serendipity/qsdev/internal/catalog"
 	"github.com/Quantum-Serendipity/qsdev/internal/cmdutil"
 	"github.com/Quantum-Serendipity/qsdev/internal/defaults"
 )
@@ -56,10 +57,15 @@ func projectProfiles() (*ProjectProfileRegistry, error) {
 }
 
 // newProjectProfiles builds a registry of the catalog's built-in profiles and
-// the given embedder profiles. A built-in that fails to load or an embedder
-// profile that collides with one is an error, not a skipped entry.
+// the given embedder profiles. A catalog that fails to load, a built-in that
+// fails to convert, or an embedder profile that collides with a built-in is
+// returned as an error, never logged and skipped.
 func newProjectProfiles(embedder map[string]Profile) (*ProjectProfileRegistry, error) {
-	reg, err := loadDefaultProjectProfiles()
+	cat, err := catalog.Default()
+	if err != nil {
+		return nil, fmt.Errorf("loading built-in project profiles: %w", err)
+	}
+	reg, err := catalogProjectProfiles(cat)
 	if err != nil {
 		return nil, fmt.Errorf("loading built-in project profiles: %w", err)
 	}

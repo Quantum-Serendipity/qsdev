@@ -33,22 +33,7 @@ func TestInvalidTierComplianceNoPanic(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	const (
-		gateErr    = "loading qsdev defaults"
-		gateHint   = "(run 'qsdev defaults validate')"
-		repairHint = "defaults validate"
-		profileErr = "loading built-in project profiles"
-		checkFail  = "[FAIL] config_catalog: loading qsdev defaults:"
-	)
-	tests := []struct {
-		args    []string
-		code    int
-		want    []string
-		notWant []string
-		// jsonFail: the output is a JSON report whose config_integrity
-		// config_catalog check failed.
-		jsonFail bool
-	}{
+	runBrokenDefaultsCases(t, env, dir, []brokenDefaultsCase{
 		{args: []string{"status"}, code: 1, want: []string{gateErr, gateHint}},
 		{args: []string{"list"}, code: 1, want: []string{gateErr, gateHint}},
 		{args: []string{"info"}, code: 1, want: []string{gateErr, gateHint}},
@@ -58,8 +43,76 @@ func TestInvalidTierComplianceNoPanic(t *testing.T) {
 		{args: []string{"version"}, code: 0, notWant: []string{gateErr, profileErr}},
 		{args: []string{"defaults", "validate"}, code: 1, notWant: []string{gateErr, profileErr}},
 		{args: []string{"enforce", "--help"}, code: 0, notWant: []string{gateErr, profileErr}},
+	})
+}
+
+// Output fragments of a command run against project defaults the catalog
+// rejects.
+const (
+	gateErr    = "loading qsdev defaults"
+	gateHint   = "(run 'qsdev defaults validate')"
+	repairHint = "defaults validate"
+	profileErr = "loading built-in project profiles"
+	checkFail  = "[FAIL] config_catalog: loading qsdev defaults:"
+)
+
+// TestMalformedProjectOverlayMatchesBase pins the exit-code matrix for a
+// project defaults file that does not parse ('tools: [') and one the catalog
+// rejects ('tiers:' redefining a built-in tier). Every command keeps the exit
+// code it had before the tool registry stopped panicking: the commands that
+// need the registry fail with the gate error and its hint, check reports a
+// failed config_catalog check, the catalog-free commands succeed, and
+// defaults validate reports its own error. None of them panics.
+func TestMalformedProjectOverlayMatchesBase(t *testing.T) {
+	env := guardrailEnv(t)
+	overlays := []struct{ name, content string }{
+		{"unparsable", "tools: [\n"},
+		{"rejected-tiers", "tiers: {baseline: {description: x}}\n"},
 	}
-	for _, tt := range tests {
+	for _, ov := range overlays {
+		t.Run(ov.name, func(t *testing.T) {
+			dir, _ := initialisedProject(t, env, false)
+			defaultsPath := catalog.ProjectConfigPath(dir)
+			if err := os.MkdirAll(filepath.Dir(defaultsPath), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(defaultsPath, []byte(ov.content), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			gated := []string{gateErr, gateHint}
+			runBrokenDefaultsCases(t, env, dir, []brokenDefaultsCase{
+				{args: []string{"list"}, code: 1, want: gated},
+				{args: []string{"info"}, code: 1, want: gated},
+				{args: []string{"status"}, code: 1, want: gated},
+				{args: []string{"enable", "semgrep", "--dry-run"}, code: 1, want: gated},
+				{args: []string{"repair", "--dry-run"}, code: 1, want: gated},
+				{args: []string{"check"}, code: 1, want: []string{checkFail}, notWant: []string{gateHint}},
+				{args: []string{"version"}, code: 0, notWant: []string{gateErr}},
+				{args: []string{"devenv"}, code: 0, notWant: []string{gateErr}},
+				{args: []string{"addons"}, code: 0, notWant: []string{gateErr}},
+				{args: []string{"defaults", "validate"}, code: 1, notWant: []string{gateErr, gateHint}},
+			})
+		})
+	}
+}
+
+// brokenDefaultsCase is one command run against broken project defaults and
+// what its output and exit code must be.
+type brokenDefaultsCase struct {
+	args    []string
+	code    int
+	want    []string
+	notWant []string
+	// jsonFail: the output is a JSON report whose config_integrity
+	// config_catalog check failed.
+	jsonFail bool
+}
+
+// runBrokenDefaultsCases runs each case in dir as a subtest. No case may
+// panic or dump goroutines.
+func runBrokenDefaultsCases(t *testing.T, env []string, dir string, cases []brokenDefaultsCase) {
+	t.Helper()
+	for _, tt := range cases {
 		t.Run(strings.Join(tt.args, "_"), func(t *testing.T) {
 			out, code := runQsdev(t, env, dir, nil, tt.args...)
 			if code != tt.code {

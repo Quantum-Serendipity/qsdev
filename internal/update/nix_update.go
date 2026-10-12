@@ -48,7 +48,8 @@ func UpdateDevenvNix(opts NixUpdateOptions) (*NixUpdateResult, error) {
 
 	relPath := filepath.FromSlash(opts.FilePath)
 	absPath := filepath.Join(opts.ProjectRoot, relPath)
-	sidecarPath := absPath + ".new"
+	sidecarRel := relPath + ".new"
+	sidecarPath := filepath.Join(opts.ProjectRoot, sidecarRel)
 
 	// write performs every file write below, so DryRun is honored uniformly.
 	// rel is relative to the project root, and the write is confined to it: a
@@ -62,7 +63,7 @@ func UpdateDevenvNix(opts NixUpdateOptions) (*NixUpdateResult, error) {
 
 	// Clean up any stale sidecar.
 	if !opts.DryRun {
-		if err := CleanupSidecar(sidecarPath); err != nil {
+		if err := CleanupSidecar(opts.ProjectRoot, sidecarRel); err != nil {
 			return nil, fmt.Errorf("cleanup stale sidecar: %w", err)
 		}
 	}
@@ -113,7 +114,7 @@ func UpdateDevenvNix(opts NixUpdateOptions) (*NixUpdateResult, error) {
 			return nil, fmt.Errorf("compute diff: %w", err)
 		}
 
-		if err := write(relPath + ".new"); err != nil {
+		if err := write(sidecarRel); err != nil {
 			return nil, fmt.Errorf("write sidecar %s: %w", sidecarPath, err)
 		}
 

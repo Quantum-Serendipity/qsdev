@@ -6,19 +6,23 @@ import (
 	"fmt"
 	"io/fs"
 	"log/slog"
+	"maps"
 	"os"
 	"path"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"sort"
 	"sync"
 	"time"
 
 	"github.com/Quantum-Serendipity/qsdev/internal/config"
 	"github.com/Quantum-Serendipity/qsdev/internal/detect"
+	"github.com/Quantum-Serendipity/qsdev/internal/mcpregistry"
 	"github.com/Quantum-Serendipity/qsdev/internal/posture/drift"
 	"github.com/Quantum-Serendipity/qsdev/internal/state"
 	"github.com/Quantum-Serendipity/qsdev/internal/tier"
+	"github.com/Quantum-Serendipity/qsdev/internal/toolreg"
 	"github.com/Quantum-Serendipity/qsdev/internal/version"
 	"github.com/Quantum-Serendipity/qsdev/internal/vulnscan"
 	"github.com/Quantum-Serendipity/qsdev/pkg/branding"
@@ -46,6 +50,9 @@ var ErrNotInitialized = errors.New("project not initialized: run 'qsdev init' fi
 // assembles a PostureReport. Returns ErrNotInitialized if no state files or
 // .qsdev.yaml exist.
 func Assess(projectPath string, opts AssessOptions) (*PostureReport, error) {
+	// One root context bounds the assessment's detection and MCP grading.
+	ctx := context.Background()
+
 	// Validate that the project path exists.
 	info, err := os.Stat(projectPath)
 	if err != nil {
@@ -172,7 +179,7 @@ func Assess(projectPath string, opts AssessOptions) (*PostureReport, error) {
 		Files:        merged.Files,
 		EnabledTools: merged.EnabledTools,
 	}
-	detected := detect.Detect(context.Background(), projectPath, opts.DetectOptions...)
+	detected := detect.Detect(ctx, projectPath, opts.DetectOptions...)
 
 	// Defense and conformance also credit protection the project has outside
 	// qsdev's state, such as a hand-written pre-commit config. That goes into a
@@ -258,7 +265,12 @@ func Assess(projectPath string, opts AssessOptions) (*PostureReport, error) {
 		}
 	}
 
-	report.Tools = buildToolStatuses(enabledTools)
+	tools, err := buildToolStatuses(toolreg.Default, enabledTools)
+	if err != nil {
+		return nil, fmt.Errorf("assessing tools: %w", err)
+	}
+	report.Tools = tools
+	report.McpServers = gradeMcpServers(ctx, projectPath, mcpregistry.DefaultRegistry())
 
 	// Compute aggregate score.
 	report.Score = ComputeAggregateScore(report.Defense.Score, configScore, report.Dependencies.Score)
@@ -286,6 +298,30 @@ func resolveTierAndLevel(configPath string) (tierName, level string, err error) 
 		return cfg.Tier, level, nil
 	}
 	return tier.Infer(cfg.ClaudeCode.PermissionLevel, cfg.ClaudeCode.MCPServers).String(), level, nil
+}
+
+// gradeMcpServers grades, sorted by name, each server the .mcp.json at
+// projectPath configures, as `qsdev mcp grade` grades it
+// (mcpregistry.GradeConfigured). A server whose registry definition in reg
+// pins a binary the entry does not run carries the command that installs it.
+// A missing or unreadable .mcp.json yields no section; it never fails the
+// assessment. ctx bounds each server's attestation check.
+func gradeMcpServers(ctx context.Context, projectPath string, reg *mcpregistry.McpServerRegistry) []McpServerGrade {
+	configured, err := mcpregistry.ScanMcpJSON(projectPath)
+	if err != nil {
+		slog.Warn("posture: MCP server grades omitted", "error", err)
+		return nil
+	}
+	var grades []McpServerGrade
+	for _, name := range slices.Sorted(maps.Keys(configured)) {
+		def := configured[name]
+		g := McpServerGrade{Name: name, Grade: mcpregistry.GradeConfigured(ctx, def).Level.String()}
+		if known, ok := reg.ByName(name); ok && mcpregistry.SuggestsPinnedInstall(known, &def) {
+			g.InstallHint = fmt.Sprintf("%s mcp install %s", branding.Get().AppName, name)
+		}
+		grades = append(grades, g)
+	}
+	return grades
 }
 
 // addDriftFinding records a finding under the named category and updates the

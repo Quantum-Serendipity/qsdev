@@ -1,6 +1,7 @@
 package toolreg
 
 import (
+	"errors"
 	"fmt"
 	"log/slog"
 	"sort"
@@ -136,8 +137,9 @@ type ToolBehavior struct {
 
 // BehaviorProvider attaches behavior to, or registers additional tools in, a
 // freshly built default registry. Providers run while the default registry
-// is being constructed, so they must not call Default or DefaultRegistry.
-type BehaviorProvider func(r *Registry)
+// is being constructed, so they must not call Default. An error a provider
+// returns is reported by Default.
+type BehaviorProvider func(r *Registry) error
 
 var (
 	defaultMu          sync.Mutex
@@ -151,22 +153,23 @@ var (
 // when it is built. Registering is side-effect free — the catalog is not
 // loaded — so a package may call it while initializing without freezing the
 // catalog before main has configured branding, and without turning a bad
-// user config into a start-up panic. If the default registry has already
-// been built, the provider is applied to it immediately.
+// user config into a start-up failure. If the default registry has already
+// been built, the provider is applied to it immediately and any error it
+// returns is reported by every later Default call.
 func RegisterBehaviors(p BehaviorProvider) {
 	defaultMu.Lock()
 	defer defaultMu.Unlock()
 	behaviorProviders = append(behaviorProviders, p)
 	if defaultBuilt && defaultRegistryVal != nil {
-		p(defaultRegistryVal)
+		defaultRegistryErr = errors.Join(defaultRegistryErr, p(defaultRegistryVal))
 	}
 }
 
-// Default returns the lazily-initialized singleton tool registry and any
-// error that occurred during initialization. On first use the registry is
-// built from the catalog, then the package's built-in behaviors and every
-// provider passed to RegisterBehaviors are attached. Callers that can
-// propagate errors should prefer this over DefaultRegistry.
+// Default returns the lazily-initialized singleton tool registry, or the
+// error that prevented building it. On first use the registry is built from
+// the catalog, then the package's built-in behaviors and every provider
+// passed to RegisterBehaviors are attached; the errors of all failing
+// providers are joined, and while any is recorded no registry is returned.
 func Default() (*Registry, error) {
 	defaultMu.Lock()
 	defer defaultMu.Unlock()
@@ -174,7 +177,10 @@ func Default() (*Registry, error) {
 		defaultRegistryVal, defaultRegistryErr = buildDefault()
 		defaultBuilt = true
 	}
-	return defaultRegistryVal, defaultRegistryErr
+	if defaultRegistryErr != nil {
+		return nil, defaultRegistryErr
+	}
+	return defaultRegistryVal, nil
 }
 
 // buildDefault constructs the default registry. The caller holds defaultMu.
@@ -186,21 +192,11 @@ func buildDefault() (*Registry, error) {
 	for name, b := range builtinBehaviors() {
 		r.AttachBehavior(name, b)
 	}
+	var errs []error
 	for _, p := range behaviorProviders {
-		p(r)
+		errs = append(errs, p(r))
 	}
-	return r, nil
-}
-
-// DefaultRegistry returns the lazily-initialized singleton tool registry.
-// It panics if the catalog fails to load. Callers that can propagate
-// errors should prefer Default() instead.
-func DefaultRegistry() *Registry {
-	r, err := Default()
-	if err != nil {
-		panic(fmt.Sprintf("toolreg: failed to build registry: %v", err))
-	}
-	return r
+	return r, errors.Join(errs...)
 }
 
 // ResetDefaultRegistry clears the cached registry so the next Default call

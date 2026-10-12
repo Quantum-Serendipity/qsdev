@@ -31,8 +31,13 @@ Configuration via environment variables:
   PACKAGE_GUARD_MIN_AGE_DAYS    — int  (default: 3, minimum: 1)
   PACKAGE_GUARD_ALLOWLIST       — comma-separated package names to always allow (max 200)
   PACKAGE_GUARD_DENYLIST        — comma-separated package names to always deny
-  PACKAGE_GUARD_TEAM_ALLOWLIST  — when set, only these packages may be installed
+  PACKAGE_GUARD_TEAM_ALLOWLIST  — when set, only these packages may be installed (they are
+                                  still age- and vulnerability-checked, and pass the new-dep gate)
   PACKAGE_GUARD_TEAM_DENYLIST   — checked before everything else
+
+  Lists are applied in order: team denylist, personal denylist, team allowlist
+  (exclusive), personal allowlist (skips the checks), then the registry checks.
+  A personal list can only narrow the team policy.
   PACKAGE_GUARD_NEW_DEP_GATE    — allow | ask | deny for packages missing from the lockfiles
   PACKAGE_GUARD_SOC2_AUDIT      — "true" writes a dependency-decision trail
 
@@ -195,8 +200,10 @@ ALLOWLIST: NameList = _name_list("PACKAGE_GUARD_ALLOWLIST", _MAX_ALLOWLIST_SIZE)
 # (known-malicious names, typosquats you've encountered, etc.).
 DENYLIST: NameList = _name_list("PACKAGE_GUARD_DENYLIST")
 
-# Team-level allowlist: packages pre-approved by the consulting firm.
-# Packages in this list bypass vulnerability and age checks entirely.
+# Team-level allowlist: when non-empty, only these packages may be installed.
+# It narrows what may be installed; a listed package is still checked for
+# known vulnerabilities and release age, and it satisfies the new-dependency
+# gate.
 TEAM_ALLOWLIST: NameList = _name_list("PACKAGE_GUARD_TEAM_ALLOWLIST")
 
 # Team-level denylist: packages blocked by consulting firm policy.
@@ -3739,16 +3746,15 @@ def validate_package(package_name: str, ecosystem: str, kind: str = "none", valu
     if TEAM_DENYLIST.matches(package_name, ecosystem):
         return "deny", f"Package '{package_name}' is on the team denylist per consulting policy.", ""
 
-    # 0b. Team allowlist (pre-approved, bypass vuln/age checks).
-    if TEAM_ALLOWLIST:
-        if TEAM_ALLOWLIST.matches(package_name, ecosystem):
-            return "allow", f"Package '{package_name}' is team-approved (pre-approved bypass).", ""
-        # If team allowlist is non-empty and package not in it, deny.
-        return "deny", f"Package '{package_name}' is not on the team-approved list.", ""
-
-    # 1. Check denylist.
+    # 0b. Personal denylist, before the team allowlist so a personal list can
+    # only narrow the team policy.
     if DENYLIST.matches(package_name, ecosystem):
         return "deny", f"Package '{package_name}' is on the explicit denylist.", ""
+
+    # 1. Team allowlist: when non-empty, only these packages may be installed.
+    # A listed package still goes through the age and vulnerability checks.
+    if TEAM_ALLOWLIST and not TEAM_ALLOWLIST.matches(package_name, ecosystem):
+        return "deny", f"Package '{package_name}' is not on the team-approved list.", ""
 
     # 2. Check allowlist.
     if ALLOWLIST.matches(package_name, ecosystem):
@@ -3986,7 +3992,7 @@ def main() -> None:
     results = {} if deny_reasons else validate_all(jobs)
     for job, (decision, reason, version) in results.items():
         is_new = None
-        if decision == "allow" and NEW_DEP_GATE != "allow":
+        if decision == "allow" and NEW_DEP_GATE != "allow" and not TEAM_ALLOWLIST.matches(job.name, job.ecosystem):
             in_lock = is_in_lockfile(job.name, job.ecosystem)
             if in_lock is False:
                 is_new = True

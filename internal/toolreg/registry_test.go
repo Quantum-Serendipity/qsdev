@@ -1,11 +1,55 @@
 package toolreg
 
 import (
+	"errors"
 	"sync"
 	"testing"
 
 	"github.com/Quantum-Serendipity/qsdev/internal/catalog"
 )
+
+// TestDefaultJoinsProviderErrors: a behavior provider that fails makes
+// Default return its error, joined with any other provider's, instead of a
+// half-built registry, so callers report it rather than run without the
+// provider's behaviors. Not parallel: it swaps the package's providers.
+func TestDefaultJoinsProviderErrors(t *testing.T) {
+	resetDefaultsForTest(t)
+	errA := errors.New("provider A failed")
+	errB := errors.New("provider B failed")
+	RegisterBehaviors(func(*Registry) error { return errA })
+	RegisterBehaviors(func(*Registry) error { return nil })
+	RegisterBehaviors(func(*Registry) error { return errB })
+
+	reg, err := Default()
+	if !errors.Is(err, errA) || !errors.Is(err, errB) {
+		t.Fatalf("Default() error = %v, want both provider errors joined", err)
+	}
+	if reg != nil {
+		t.Error("Default() returned a registry alongside a provider error")
+	}
+	if reg, again := Default(); reg != nil || !errors.Is(again, errA) {
+		t.Errorf("second Default() = (%v, %v), want (nil, the cached provider error)", reg, again)
+	}
+}
+
+// TestRegisterBehaviorsLateProviderError: a provider registered after the
+// default registry was built is applied at once, and its error is recorded so
+// every later Default call reports it. Not parallel: it swaps the package's
+// providers.
+func TestRegisterBehaviorsLateProviderError(t *testing.T) {
+	resetDefaultsForTest(t)
+	if _, err := Default(); err != nil {
+		t.Fatalf("Default() = %v", err)
+	}
+	errLate := errors.New("late provider failed")
+	RegisterBehaviors(func(*Registry) error { return errLate })
+
+	for range 2 {
+		if reg, err := Default(); reg != nil || !errors.Is(err, errLate) {
+			t.Fatalf("Default() = (%v, %v), want (nil, the late provider's error)", reg, err)
+		}
+	}
+}
 
 func TestRegister_Success(t *testing.T) {
 	reg := NewRegistry()
@@ -167,18 +211,29 @@ func TestCount(t *testing.T) {
 	}
 }
 
-func TestDefaultRegistry_Singleton(t *testing.T) {
-	// DefaultRegistry returns the same instance across calls.
-	r1 := DefaultRegistry()
-	r2 := DefaultRegistry()
+func TestDefault_Singleton(t *testing.T) {
+	// Default returns the same instance across calls.
+	r1 := mustDefault(t)
+	r2 := mustDefault(t)
 	if r1 != r2 {
-		t.Fatal("expected DefaultRegistry to return the same instance")
+		t.Fatal("expected Default to return the same instance")
 	}
+}
+
+// mustDefault returns the default registry, failing the test if it cannot be
+// built. Packages outside toolreg use toolregtest.Default instead.
+func mustDefault(t *testing.T) *Registry {
+	t.Helper()
+	r, err := Default()
+	if err != nil {
+		t.Fatalf("building the default tool registry: %v", err)
+	}
+	return r
 }
 
 func TestYAMLRegistryCorrespondence(t *testing.T) {
 	t.Parallel()
-	reg := DefaultRegistry()
+	reg := mustDefault(t)
 	yamlTools := catalog.MustDefault().Tools()
 
 	for name := range yamlTools {
@@ -198,7 +253,7 @@ func TestYAMLRegistryCorrespondence(t *testing.T) {
 func TestBridgeMetadataFidelity(t *testing.T) {
 	t.Parallel()
 	cat := catalog.MustDefault()
-	reg := DefaultRegistry()
+	reg := mustDefault(t)
 
 	for name, def := range cat.Tools() {
 		tool, ok := reg.ByName(name)
@@ -230,7 +285,7 @@ func TestBridgeMetadataFidelity(t *testing.T) {
 
 func TestBridgeOwnedFiles_SharedVsExclusive(t *testing.T) {
 	t.Parallel()
-	reg := DefaultRegistry()
+	reg := mustDefault(t)
 
 	tool, ok := reg.ByName("attach-guard")
 	if !ok {

@@ -2,6 +2,7 @@ package cmdscan
 
 import (
 	"reflect"
+	"slices"
 	"strings"
 	"testing"
 )
@@ -65,7 +66,7 @@ func TestParsePowerShell(t *testing.T) {
 			want: []PSCommand{
 				{Name: "a", Args: []string{"1"}},
 				{Name: "b", Args: []string{"2"}},
-				{Name: "c"},
+				{Name: "c", Piped: true, GroupArg: true},
 				{Name: "d", Args: []string{"3"}},
 				{Name: "e"},
 				{Name: "f"},
@@ -90,11 +91,56 @@ func TestParsePowerShell(t *testing.T) {
 		{name: "redirect only", text: `> f`,
 			want: []PSCommand{{WriteRedirects: []string{"f"}}}},
 		{name: "subexpression in double quotes runs code", text: `gc "$(ri x)"`,
-			want: []PSCommand{{Name: "gc", Args: []string{"$(ri x)"}, Subexpression: true}}},
+			want: []PSCommand{{Name: "ri", Args: []string{"x"}}, {Name: "gc", Args: []string{"$(ri x)"}, Subexpression: true}}},
+		{name: "subexpression with nested quotes and parens", text: `echo "a $(Set-Content .npmrc "x" (1)) b"; gc y`,
+			want: []PSCommand{
+				{Name: "set-content", Args: []string{".npmrc", "x"}, GroupArg: true},
+				{Name: "1"},
+				{Name: "echo", Args: []string{`a $(Set-Content .npmrc "x" (1)) b`}, Subexpression: true},
+				{Name: "gc", Args: []string{"y"}},
+			}},
+		{name: "nested subexpressions", text: `echo "$(Write-Host "$(git commit --no-verify)")"`,
+			want: []PSCommand{
+				{Name: "git", Args: []string{"commit", "--no-verify"}},
+				{Name: "write-host", Args: []string{"$(git commit --no-verify)"}, Subexpression: true},
+				{Name: "echo", Args: []string{`$(Write-Host "$(git commit --no-verify)")`}, Subexpression: true},
+			}},
+		{name: "unclosed subexpression", text: `echo "$(ri x`,
+			want: []PSCommand{{Name: "ri", Args: []string{"x"}}, {Name: "echo", Args: []string{"$(ri x"}, Subexpression: true}}},
+		{name: "expandable here-string subexpressions", text: "Write-Host @\"\na $(ri x) b $(gc y)\n\"@",
+			want: []PSCommand{
+				{Name: "ri", Args: []string{"x"}},
+				{Name: "gc", Args: []string{"y"}},
+				{Name: "write-host", Args: []string{"a $(ri x) b $(gc y)"}, Subexpression: true},
+			}},
+		{name: "spaced assignment", text: `$x = git commit --no-verify`,
+			want: []PSCommand{{Name: "$x", Args: []string{"="}}, {Name: "git", Args: []string{"commit", "--no-verify"}}}},
+		{name: "compact assignment", text: `$x=git config core.hooksPath /tmp`,
+			want: []PSCommand{{Name: "$x="}, {Name: "git", Args: []string{"config", "core.hooksPath", "/tmp"}}}},
+		{name: "assignment of a call", text: `$out += & git commit -n`,
+			want: []PSCommand{{Name: "$out", Args: []string{"+="}}, {Name: "git", Args: []string{"commit", "-n"}}}},
+		{name: "assignment of a value", text: `$x = 1`,
+			want: []PSCommand{{Name: "$x", Args: []string{"="}}, {Name: "1"}}},
+		{name: "comparison is not an assignment", text: `$x -eq 1`,
+			want: []PSCommand{{Name: "$x", Args: []string{"-eq", "1"}}}},
 		{name: "escaped subexpression is literal", text: "gc \"`$(ri x)\"",
 			want: []PSCommand{{Name: "gc", Args: []string{"$(ri x)"}}}},
 		{name: "bare subexpression is its own command", text: `gc $(ri x)`,
-			want: []PSCommand{{Name: "gc", Args: []string{"$"}}, {Name: "ri", Args: []string{"x"}}}},
+			want: []PSCommand{{Name: "gc", Args: []string{"$"}, GroupArg: true}, {Name: "ri", Args: []string{"x"}}}},
+		// A pipeline's or a group's value reaches a command through no word
+		// of its own (U18-WS3 review).
+		{name: "pipeline input", text: "gci .npmrc | ri",
+			want: []PSCommand{{Name: "gci", Args: []string{".npmrc"}}, {Name: "ri", Piped: true}}},
+		{name: "pipeline continued on the next line", text: "gci .npmrc |\n  ri",
+			want: []PSCommand{{Name: "gci", Args: []string{".npmrc"}}, {Name: "ri", Piped: true}}},
+		{name: "or operator is not a pipeline", text: "gc a || ri b",
+			want: []PSCommand{{Name: "gc", Args: []string{"a"}}, {Name: "ri", Args: []string{"b"}}}},
+		{name: "group argument", text: "Set-Content ('.npmrc') x",
+			want: []PSCommand{{Name: "set-content", GroupArg: true}, {Name: ".npmrc"}, {Name: "x"}}},
+		{name: "method call", text: "$f.Delete()",
+			want: []PSCommand{{Name: "$f.delete", GroupArg: true}}},
+		{name: "keyword condition is not an argument", text: "if ((Test-Path a) -and (b)) { gc a }",
+			want: []PSCommand{{Name: "if"}, {Name: "test-path", Args: []string{"a"}}, {Name: "-and"}, {Name: "b"}, {Name: "gc", Args: []string{"a"}}}},
 		{name: "line comment", text: "gc x # it's ; ri y\nri z",
 			want: []PSCommand{{Name: "gc", Args: []string{"x"}}, {Name: "ri", Args: []string{"z"}}}},
 		{name: "block comment", text: "gc x <# ' ri y #> z",
@@ -138,14 +184,17 @@ func TestPSCommandIsRead(t *testing.T) {
 		{"git status > x", false},
 		{"git commit -m x", false},
 		{"gc \"$(ri x)\"", false},
+		{"gc \"$(gc x)\"", false},
 		{"> f", false},
 	}
 	for _, tc := range cases {
+		// A subexpression's commands come first; the command holding it is
+		// the last one.
 		cmds := ParsePowerShell(tc.text)
-		if len(cmds) != 1 {
-			t.Fatalf("ParsePowerShell(%q) = %d commands, want 1", tc.text, len(cmds))
+		if want := 1 + strings.Count(tc.text, "$("); len(cmds) != want {
+			t.Fatalf("ParsePowerShell(%q) = %d commands, want %d", tc.text, len(cmds), want)
 		}
-		if got := cmds[0].IsRead(); got != tc.want {
+		if got := cmds[len(cmds)-1].IsRead(); got != tc.want {
 			t.Errorf("IsRead(%q) = %v, want %v", tc.text, got, tc.want)
 		}
 	}
@@ -225,6 +274,49 @@ func TestPowerShellAsPOSIX(t *testing.T) {
 	for _, tt := range tests {
 		if got := PowerShellAsPOSIX(ParsePowerShell(tt.line)); got != tt.want {
 			t.Errorf("PowerShellAsPOSIX(%q) = %q, want %q", tt.line, got, tt.want)
+		}
+	}
+}
+
+// TestParsePowerShellDeepSubexpressions verifies subexpressions nested past
+// maxPSSubexpressionDepth still report a command no read check accepts, and
+// that the inner command of a shallower nesting is found.
+func TestParsePowerShellDeepSubexpressions(t *testing.T) {
+	t.Parallel()
+	for _, depth := range []int{maxPSSubexpressionDepth, 4 * maxPSSubexpressionDepth} {
+		text := strings.Repeat(`echo "$(`, depth) + "ri .npmrc" + strings.Repeat(`)"`, depth)
+		cmds := ParsePowerShell(text)
+		found := slices.ContainsFunc(cmds, func(c PSCommand) bool { return c.Name == "ri" })
+		opaque := slices.ContainsFunc(cmds, func(c PSCommand) bool { return c.Name == "$(" && !c.IsRead() })
+		if !found && !opaque {
+			t.Errorf("depth %d: ParsePowerShell found neither ri nor an opaque command: %+v", depth, cmds)
+		}
+		if depth == maxPSSubexpressionDepth && !found {
+			t.Errorf("depth %d: ri not found", depth)
+		}
+	}
+}
+
+// TestPSCommandMayRedefine pins the commands that may give a command name
+// another meaning: an alias, a function or filter, or the function: drive.
+func TestPSCommandMayRedefine(t *testing.T) {
+	t.Parallel()
+	tests := map[string]bool{
+		"Set-Alias gh Remove-Item":            true,
+		"sal -Name gh -Value ri":              true,
+		"New-Alias gh ri":                     true,
+		"nal gh ri":                           true,
+		"function gh":                         true,
+		"filter gh":                           true,
+		"$function:gh = 1":                    true,
+		"Set-Item Function:gh -Value x":       true,
+		"New-Item -Path function:\\gh -Value": true,
+		"Get-Content .npmrc":                  false,
+		"gh pr create --title function":       false,
+	}
+	for text, want := range tests {
+		if got := ParsePowerShell(text)[0].MayRedefine(); got != want {
+			t.Errorf("MayRedefine(%q) = %v, want %v", text, got, want)
 		}
 	}
 }

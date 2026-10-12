@@ -195,6 +195,39 @@ func (c ClaudePermissionsConfig) Clone() ClaudePermissionsConfig {
 type HooksConfig struct {
 	FileBoundary FileBoundaryConfig `yaml:"file_boundary,omitempty"`
 	ToolGates    ToolGatesConfig    `yaml:"tool_gates,omitempty"`
+	PackageGuard PackageGuardConfig `yaml:"package_guard,omitempty"`
+}
+
+// Values of hooks.package_guard.new_dep_gate: what package-guard.py does with
+// a package that is in neither the lockfile nor the team allowlist.
+const (
+	NewDepGateAllow = "allow"
+	NewDepGateAsk   = "ask"
+	NewDepGateDeny  = "deny"
+)
+
+// NewDepGates returns the accepted new_dep_gate values ordered from loosest
+// to strictest, a fresh slice.
+func NewDepGates() []string {
+	return []string{NewDepGateAllow, NewDepGateAsk, NewDepGateDeny}
+}
+
+// PackageGuardConfig is hooks.package_guard: the committed team policy the
+// package-guard hook applies to every package install. List entries are
+// package names, optionally qualified by ecosystem ("npm:evil",
+// "pypi:requests"); an unqualified name matches in every ecosystem. The zero
+// value leaves the hook at its defaults.
+type PackageGuardConfig struct {
+	// Allowlist, when non-empty, is the only set of packages that may be
+	// installed. It does not bypass the release-age or vulnerability checks.
+	Allowlist []string `yaml:"allowlist,omitempty"`
+	// Denylist entries are always blocked.
+	Denylist []string `yaml:"denylist,omitempty"`
+	// MinAgeDays raises the minimum release age; it never lowers the
+	// security tier's own gate.
+	MinAgeDays *int `yaml:"min_age_days,omitempty"`
+	// NewDepGate is one of NewDepGates(); empty keeps the hook default.
+	NewDepGate string `yaml:"new_dep_gate,omitempty"`
 }
 
 // ToolGatesConfig is the policy the tool-gates hook enforces on every tool
@@ -228,6 +261,12 @@ func (c HooksConfig) Clone() HooksConfig {
 	out.FileBoundary.ExtraReadPaths = slices.Clone(c.FileBoundary.ExtraReadPaths)
 	out.ToolGates.Allowed = slices.Clone(c.ToolGates.Allowed)
 	out.ToolGates.Denied = slices.Clone(c.ToolGates.Denied)
+	out.PackageGuard.Allowlist = slices.Clone(c.PackageGuard.Allowlist)
+	out.PackageGuard.Denylist = slices.Clone(c.PackageGuard.Denylist)
+	if c.PackageGuard.MinAgeDays != nil {
+		days := *c.PackageGuard.MinAgeDays
+		out.PackageGuard.MinAgeDays = &days
+	}
 	return out
 }
 

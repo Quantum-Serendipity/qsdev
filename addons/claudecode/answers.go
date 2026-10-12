@@ -10,6 +10,7 @@ import (
 
 	"github.com/Quantum-Serendipity/qsdev/internal/answers"
 	qsdevconfig "github.com/Quantum-Serendipity/qsdev/internal/config"
+	"github.com/Quantum-Serendipity/qsdev/pkg/fileutil"
 	"github.com/Quantum-Serendipity/qsdev/pkg/types"
 )
 
@@ -20,21 +21,16 @@ func answersPath(projectRoot string) string {
 	return answers.PrimaryPath(projectRoot)
 }
 
-// legacyAnswersPath returns the path of the per-addon answers copy that older
-// releases kept in .claude/. It went stale whenever `qsdev enable/disable` or
-// another addon updated the primary file, so it is never read; saveAnswers
-// deletes it.
-func legacyAnswersPath(projectRoot string) string {
-	return filepath.Join(projectRoot, filepath.FromSlash(answers.LegacyClaudeCopyFile()))
-}
-
 // saveAnswers persists the wizard answers to the primary answers file and
-// removes the obsolete per-addon copy.
+// removes the obsolete per-addon copy that older releases kept in .claude/.
+// That copy went stale whenever `qsdev enable/disable` or another addon
+// updated the primary file, so it is never read.
 func saveAnswers(projectRoot string, a types.WizardAnswers) error {
 	if err := answers.SavePrimary(projectRoot, a); err != nil {
 		return fmt.Errorf("saving primary answers: %w", err)
 	}
-	if err := os.Remove(legacyAnswersPath(projectRoot)); err != nil && !errors.Is(err, fs.ErrNotExist) {
+	legacy := filepath.FromSlash(answers.LegacyClaudeCopyFile())
+	if err := fileutil.RemoveInRoot(projectRoot, legacy); err != nil && !errors.Is(err, fs.ErrNotExist) {
 		// The legacy copy is never read, so failing to delete it is harmless.
 		slog.Warn("removing legacy claude answers file", "error", err)
 	}

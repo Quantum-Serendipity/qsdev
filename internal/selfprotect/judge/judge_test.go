@@ -35,3 +35,30 @@ func TestEvaluate(t *testing.T) {
 		})
 	}
 }
+
+// TestShellGateDodge_RuleIDs pins the rule a shell rewrite of each guarded
+// file is denied under (U18-WS3): the gate-dodge rule of its registry entry,
+// for every file with a before/after check, .qsdev.yaml included. devenv.nix
+// is an environment source file, which the Tier-1 SP-015 rule denies first.
+func TestShellGateDodge_RuleIDs(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name     string
+		wantRule string
+	}{
+		{".qsdev.yaml", "GD-001"},
+		{".npmrc", "GD-004"},
+		{"pnpm-workspace.yaml", "GD-004"},
+		{".pre-commit-config.yaml", "GD-003"},
+		{"devenv.nix", "SP-015"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			d, denied := Evaluate(&rules.EvalContext{ToolName: "Bash", Command: "echo x >> " + tt.name, CWD: t.TempDir()})
+			if !denied || d.RuleID != tt.wantRule {
+				t.Errorf("Evaluate(echo x >> %s) = %+v, %v; want rule %s", tt.name, d, denied, tt.wantRule)
+			}
+		})
+	}
+}

@@ -1,61 +1,16 @@
 package gatedodge
 
 import (
-	"maps"
-	"slices"
 	"strings"
 	"testing"
-
-	"github.com/Quantum-Serendipity/qsdev/internal/selfprotect/canon"
 )
 
-// TestResultRules_MatchCanonGuardedFiles pins that canon, which owns the
-// guarded file list (selfprotect's Bash rule and the hook sandbox read it),
-// names exactly the files that have a result rule.
-func TestResultRules_MatchCanonGuardedFiles(t *testing.T) {
-	t.Parallel()
-	got := slices.Sorted(maps.Keys(resultRules))
-	if want := canon.GuardedConfigFiles(); !slices.Equal(got, want) {
-		t.Errorf("result rules cover %v, canon.GuardedConfigFiles() = %v", got, want)
-	}
-}
-
-func TestResultRuleFor(t *testing.T) {
-	t.Parallel()
-
-	tests := []struct {
-		path string
-		want string
-	}{
-		{"/p/.npmrc", "GD-004"},
-		{".npmrc", "GD-004"},
-		{"/p/.NPMRC", "GD-004"},
-		{"/p/.Pre-Commit-Config.yaml", "GD-003"},
-		{"/p/.pre-commit-config.yaml", "GD-003"},
-		{"/p/pnpm-workspace.yaml", "GD-004"},
-		{"/p/.yarnrc.yml", "GD-004"},
-		{"/p/.yarnrc", "GD-004"},
-		{"/p/bunfig.toml", "GD-004"},
-		{"/p/x.npmrc", ""},
-		{"/p/.qsdev.yaml", ""},
-		{"/p/main.go", ""},
-	}
-	for _, tt := range tests {
-		t.Run(tt.path, func(t *testing.T) {
-			t.Parallel()
-			got := ""
-			if r := ResultRuleFor(tt.path); r != nil {
-				got = r.ID
-			}
-			if got != tt.want {
-				t.Errorf("ResultRuleFor(%q) = %q, want %q", tt.path, got, tt.want)
-			}
-		})
-	}
-}
+// The canon subset check that was here is TestGuardedFileRegistryConsistency,
+// and the ResultRuleFor rows are in TestLookup (registry_test.go).
 
 // TestResultRule_Npmrc verifies that deleting or neutralizing ignore-scripts —
-// which Detect cannot see, since it only scans introduced text — is blocked.
+// which the Introduced check cannot see, since it only scans introduced text —
+// is blocked.
 func TestResultRule_Npmrc(t *testing.T) {
 	t.Parallel()
 
@@ -93,7 +48,7 @@ func TestResultRule_Npmrc(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
-			blocked, reason := ResultRuleFor(".npmrc").Check(tt.before, tt.after)
+			blocked, _, reason := checkChange(".npmrc", tt.before, tt.after)
 			if blocked != tt.blocked {
 				t.Errorf("Check(%q -> %q) = (%v, %q), want blocked %v", tt.before, tt.after, blocked, reason, tt.blocked)
 			}
@@ -157,7 +112,7 @@ func TestResultRule_Precommit(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
-			blocked, reason := ResultRuleFor(".pre-commit-config.yaml").Check(tt.before, tt.after)
+			blocked, _, reason := checkChange(".pre-commit-config.yaml", tt.before, tt.after)
 			if blocked != tt.blocked {
 				t.Errorf("Check = (%v, %q), want blocked %v", blocked, reason, tt.blocked)
 			}
@@ -228,7 +183,7 @@ func TestResultRule_JSPackageManagerConfigs(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
-			blocked, reason := ResultRuleFor(tt.file).Check(tt.before, tt.after)
+			blocked, _, reason := checkChange(tt.file, tt.before, tt.after)
 			if blocked != tt.blocked {
 				t.Errorf("Check(%q -> %q) = (%v, %q), want blocked %v", tt.before, tt.after, blocked, reason, tt.blocked)
 			}

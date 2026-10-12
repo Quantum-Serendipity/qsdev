@@ -40,7 +40,7 @@ func generateSembleConfig(answers types.WizardAnswers) (*sembleResult, error) {
 			if !ok {
 				return nil, fmt.Errorf("semble MCP server not found in catalog")
 			}
-			entry := catalogServerEntry(sembleServerName, def, installedMCPServers(answers.ProjectRoot))
+			entry := catalogServerEntry(sembleServerName, def, installedMCPServers(answers.ProjectRoot), mcpReleaseAge(answers))
 			override, err := sembleTextFilesServer(entry, def)
 			if err != nil {
 				return nil, err
@@ -82,7 +82,7 @@ const sembleServerName = types.SembleMCPServer
 
 // sembleTextFilesServer returns the .mcp.json definition written for semble
 // when text-file indexing is enabled: the server's entry (installed binary or
-// pinned launcher) plus the catalog's text-file argument group, the first of
+// hardened pinned launcher) plus the catalog's text-file argument group, the first of
 // def.OptionalArgs. The catalog is the only place the flag is defined, so the
 // written entry is always one of mcpregistry.LaunchVariants(def).
 func sembleTextFilesServer(entry MCPServerEntry, def catalog.MCPServerDef) (MCPServerConfig, error) {

@@ -6,6 +6,7 @@ package check
 import (
 	"fmt"
 
+	"github.com/Quantum-Serendipity/qsdev/internal/mcpregistry"
 	"github.com/Quantum-Serendipity/qsdev/pkg/types"
 )
 
@@ -166,7 +167,14 @@ type CheckContext struct {
 	// RequiredMCPServers maps each always-on tool that the project's expected
 	// generation backs with an MCP server to that server, which the on-disk
 	// .mcp.json must configure.
-	RequiredMCPServers   map[string]string
+	RequiredMCPServers map[string]string
+	// TrustedMCP maps each server name to the definitions qsdev vouches for
+	// (mcpregistry.TrustedDefinitions plus the expected generation's entry,
+	// which carries a server built into the binary that replaces the catalog
+	// definition of the same name).
+	// A required server whose on-disk entry is none of them fails. Nil when
+	// unknown, in which case only the entry's presence is checked.
+	TrustedMCP           map[string][]mcpregistry.LaunchSpec
 	MCPToolNames         []string // tools the MCP server can mount, for validating mcp.disabled_tools
 	ProfileNames         []string // project-type profiles, for validating `profile`
 	RequiredDenyRules    []string

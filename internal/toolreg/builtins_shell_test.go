@@ -8,12 +8,12 @@ import (
 )
 
 func TestShellToolsRegistered(t *testing.T) {
-	reg := DefaultRegistry()
+	reg := mustDefault(t)
 
 	for _, name := range []string{"starship-integration", "otel-config"} {
 		tool, ok := reg.ByName(name)
 		if !ok {
-			t.Errorf("tool %q not found in DefaultRegistry", name)
+			t.Errorf("tool %q not found in the default registry", name)
 			continue
 		}
 		if tool.DisplayName == "" {
@@ -26,7 +26,7 @@ func TestShellToolsRegistered(t *testing.T) {
 }
 
 func TestStarshipIntegrationCategory(t *testing.T) {
-	reg := DefaultRegistry()
+	reg := mustDefault(t)
 	tool, ok := reg.ByName("starship-integration")
 	if !ok {
 		t.Fatal("starship-integration not found in registry")
@@ -37,7 +37,7 @@ func TestStarshipIntegrationCategory(t *testing.T) {
 }
 
 func TestOtelConfigCategory(t *testing.T) {
-	reg := DefaultRegistry()
+	reg := mustDefault(t)
 	tool, ok := reg.ByName("otel-config")
 	if !ok {
 		t.Fatal("otel-config not found in registry")
@@ -48,7 +48,7 @@ func TestOtelConfigCategory(t *testing.T) {
 }
 
 func TestShellToolsOptIn(t *testing.T) {
-	reg := DefaultRegistry()
+	reg := mustDefault(t)
 
 	for _, name := range []string{"starship-integration", "otel-config"} {
 		tool, ok := reg.ByName(name)
@@ -63,11 +63,11 @@ func TestShellToolsOptIn(t *testing.T) {
 }
 
 func TestShellToolsLifecycleOnly(t *testing.T) {
-	assertLifecycleOnly(t, DefaultRegistry(), "starship-integration", "otel-config")
+	assertLifecycleOnly(t, mustDefault(t), "starship-integration", "otel-config")
 }
 
 func TestStarshipSharedContent(t *testing.T) {
-	reg := DefaultRegistry()
+	reg := mustDefault(t)
 	tool, ok := reg.ByName("starship-integration")
 	if !ok {
 		t.Fatal("starship-integration not found in registry")
@@ -97,7 +97,7 @@ func TestStarshipSharedContent(t *testing.T) {
 }
 
 func TestOtelConfigSharedContent(t *testing.T) {
-	reg := DefaultRegistry()
+	reg := mustDefault(t)
 	tool, ok := reg.ByName("otel-config")
 	if !ok {
 		t.Fatal("otel-config not found in registry")
@@ -208,7 +208,7 @@ func TestOtelConfigSharedContent_EscapesNixStrings(t *testing.T) {
 }
 
 func TestStarshipGenerateFunc(t *testing.T) {
-	reg := DefaultRegistry()
+	reg := mustDefault(t)
 	tool, ok := reg.ByName("starship-integration")
 	if !ok {
 		t.Fatal("starship-integration not found in registry")
@@ -236,7 +236,7 @@ func TestStarshipGenerateFunc(t *testing.T) {
 }
 
 func TestOtelConfigGenerateFunc_Nil(t *testing.T) {
-	reg := DefaultRegistry()
+	reg := mustDefault(t)
 	tool, ok := reg.ByName("otel-config")
 	if !ok {
 		t.Fatal("otel-config not found in registry")

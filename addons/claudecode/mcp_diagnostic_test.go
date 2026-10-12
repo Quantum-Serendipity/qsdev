@@ -96,7 +96,8 @@ func runMCPSubcommand(t *testing.T, dir string, cmd *cobra.Command, args ...stri
 	cmd.SetOut(&out)
 	cmd.SetErr(io.Discard)
 	cmd.SilenceUsage = true // as under the real root command
-	cmd.SetArgs(args)
+	// Never nil: cobra reads a nil args slice from the test binary's os.Args.
+	cmd.SetArgs(append([]string{}, args...))
 	cmd.SetContext(context.Background())
 	err := cmd.Execute()
 	return out.String(), err

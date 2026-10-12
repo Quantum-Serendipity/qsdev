@@ -58,10 +58,10 @@ func runJoin(cmd *cobra.Command, opts InitOptions, projectRoot string) error {
 		return writeLocalConfigTemplate(projectRoot, answers, true, cmd.OutOrStdout())
 	}
 
-	// 5. Gitignore the local config, then create it from the template if the
-	// developer has none. It is human-owned, so it is never tracked in state.
-	localCfg := branding.Get().LocalConfig
-	if err := EnsureGitignoreEntry(projectRoot, localCfg); err != nil {
+	// 5. Ignore the local-state paths (the local config among them), then
+	// create the local config from the template if the developer has none.
+	// It is human-owned, so it is never tracked in state.
+	if err := ensureLocalStateGitignore(projectRoot); err != nil {
 		return fmt.Errorf("updating .gitignore: %w", err)
 	}
 	localOut := cmd.OutOrStdout()
@@ -218,6 +218,9 @@ func applyJoinDefaults(a *types.WizardAnswers, defaults types.DefaultsProvider, 
 	filled.FillDefaults(a.Detected, defaults)
 
 	a.Hooks = filled.Hooks
+	// .qsdev.yaml does not record semble's mode, so a joiner gets the default
+	// every other path resolves it to; replaying tools.enabled keeps it.
+	a.AgentTools.SembleMode = filled.AgentTools.SembleMode
 	if toolsRecorded {
 		restoreToolToggles(a, registry)
 		return

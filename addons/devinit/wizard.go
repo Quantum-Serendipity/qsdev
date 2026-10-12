@@ -137,6 +137,7 @@ func newFormState(detected types.DetectedProject, defaults, partial types.Wizard
 	if len(partial.Languages) > 0 {
 		seedLangs = partial.Languages
 	}
+	cat := catalog.MustDefault()
 	fs := &formState{
 		partial:              partial,
 		quickChoice:          "yes",
@@ -144,10 +145,10 @@ func newFormState(detected types.DetectedProject, defaults, partial types.Wizard
 		direnv:               true,
 		claudeCode:           true,
 		permissionLevel:      "standard",
-		mcpServers:           catalog.MustDefault().DefaultMCPServers(),
+		mcpServers:           cat.DefaultMCPServers(),
 		agentVersionSentinel: hasVSSupportedLanguage(seedLangs),
 		agentSemble:          pythonVersionAtLeast(detected.PythonVersion, 3, 10),
-		agentSembleMode:      "mcp",
+		agentSembleMode:      cat.DefaultSembleMode(),
 	}
 
 	// Explicit flags already answer part of the quick-setup question, so

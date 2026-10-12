@@ -205,6 +205,13 @@ func runUpdateWith(cmd *cobra.Command, opts UpdateOptions, edit answersEdit) err
 		return nil
 	}
 
+	// 6b. Ignore the local-state paths before anything is written, so a
+	// project whose .gitignore predates an entry (the hook audit log) gains
+	// it. Only these entries: the language entries are create-only.
+	if err := ensureLocalStateGitignore(projectRoot); err != nil {
+		return fmt.Errorf("updating .gitignore: %w", err)
+	}
+
 	// 7. Execute plan.
 	outcome, execErr := executeUpdatePlan(plan, projectRoot, opts)
 	reportUpdateFailures(cmd.ErrOrStderr(), outcome.failures)

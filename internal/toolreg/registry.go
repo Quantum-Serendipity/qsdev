@@ -7,6 +7,7 @@ import (
 	"sort"
 	"sync"
 
+	"github.com/Quantum-Serendipity/qsdev/internal/catalog"
 	"github.com/Quantum-Serendipity/qsdev/internal/registry"
 	"github.com/Quantum-Serendipity/qsdev/pkg/types"
 )
@@ -185,11 +186,15 @@ func Default() (*Registry, error) {
 
 // buildDefault constructs the default registry. The caller holds defaultMu.
 func buildDefault() (*Registry, error) {
-	r, err := BuildFromCatalogE()
+	cat, err := catalog.Default()
+	if err != nil {
+		return nil, fmt.Errorf("loading catalog: %w", err)
+	}
+	r, err := buildRegistryFromCatalog(cat)
 	if err != nil {
 		return nil, err
 	}
-	for name, b := range builtinBehaviors() {
+	for name, b := range builtinBehaviors(cat) {
 		r.AttachBehavior(name, b)
 	}
 	var errs []error

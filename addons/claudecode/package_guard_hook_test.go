@@ -1060,7 +1060,7 @@ func TestPackageGuard_VersionGateIsReachable(t *testing.T) {
 	python, template := guardTemplate(t)
 	const driver = `
 import ast, os
-tree = ast.parse(open(os.environ['PG_PATH']).read(), feature_version=(3, 7))
+tree = ast.parse(open(os.environ['PG_PATH'], encoding='utf-8').read(), feature_version=(3, 7))
 bad = [n.lineno for n in ast.walk(tree) if isinstance(n, ast.ImportFrom) and n.module == '__future__'
        and any(a.name == 'annotations' for a in n.names)]
 print('future annotations import at line %s' % bad[0] if bad else 'ok')

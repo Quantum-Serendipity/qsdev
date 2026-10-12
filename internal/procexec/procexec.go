@@ -74,6 +74,19 @@ var localProbes = []localProbe{
 	{Name: "sysctl", Args: []string{"-n", "sysctl.proc_translated"}},
 }
 
+// LocalProbeNames returns the binaries the forbid-exec guard lets a command
+// run by name (see localProbes), sorted and without repeats. With the
+// binaries of the version probes it serves, they are every host program a
+// read-only command can start, so a hermetic test can stand in for each.
+func LocalProbeNames() []string {
+	names := make([]string, 0, len(localProbes))
+	for _, p := range localProbes {
+		names = append(names, p.Name)
+	}
+	slices.Sort(names)
+	return slices.Compact(names)
+}
+
 // Command is exec.Command behind the forbid-exec guard.
 func Command(name string, args ...string) *exec.Cmd {
 	guard(name, args)

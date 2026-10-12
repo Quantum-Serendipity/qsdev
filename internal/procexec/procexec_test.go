@@ -333,6 +333,26 @@ func TestLocalProbes_DeclaredOnce(t *testing.T) {
 	}
 }
 
+// TestLocalProbeNames: every allowlisted binary is named once, in order, and
+// the guard lets each run under its local-probe argv.
+func TestLocalProbeNames(t *testing.T) {
+	t.Parallel()
+	names := LocalProbeNames()
+	if !slices.IsSorted(names) || len(slices.Compact(slices.Clone(names))) != len(names) {
+		t.Errorf("LocalProbeNames = %q, want sorted names without repeats", names)
+	}
+	for _, p := range localProbes {
+		if !slices.Contains(names, p.Name) {
+			t.Errorf("LocalProbeNames lacks %q, which localProbes allows", p.Name)
+		}
+	}
+	for _, n := range names {
+		if !slices.ContainsFunc(localProbes, func(p localProbe) bool { return p.Name == n && isLocalProbe(n, p.Args) }) {
+			t.Errorf("LocalProbeNames names %q, which no local probe allows", n)
+		}
+	}
+}
+
 // TestProcexecLookPath proves LookPath resolves the way exec.LookPath does:
 // a bare name through PATH, a path containing a separator directly, and a
 // name PATH lacks to an error wrapping exec.ErrNotFound.

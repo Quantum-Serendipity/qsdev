@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"maps"
 	"path/filepath"
+	"regexp"
 	"slices"
 	"strings"
 
@@ -41,6 +42,7 @@ func (c *Catalog) Validate() []CatalogError {
 	errs = append(errs, c.validatePresetRefs()...)
 	errs = append(errs, c.validateComplianceHooks()...)
 	errs = append(errs, c.validateHookIDs("defaults.yaml")...)
+	errs = append(errs, c.validateSecurityHookExcludes()...)
 	errs = append(errs, c.validateTools()...)
 
 	return errs
@@ -182,6 +184,24 @@ func (c *Catalog) validateHookTiers() []CatalogError {
 // compliance level requires) is a plain Nix identifier. devenv.nix renders each id bare
 // as git-hooks.hooks.<id>, so any other id would splice Nix code into the
 // generated file. file names the source reported in each error.
+// validateSecurityHookExcludes checks that every excluded hook is an always-on
+// hook and every exclude is a regular expression.
+func (c *Catalog) validateSecurityHookExcludes() []CatalogError {
+	var errs []CatalogError
+	for _, id := range slices.Sorted(maps.Keys(c.security.Hooks.Excludes)) {
+		field := "security_hook_excludes." + id
+		if !slices.Contains(c.security.Hooks.Default, id) {
+			errs = append(errs, CatalogError{"defaults.yaml", field, fmt.Sprintf("%q is not in security_hooks", id)})
+		}
+		for _, re := range c.security.Hooks.Excludes[id] {
+			if _, err := regexp.Compile(re); err != nil {
+				errs = append(errs, CatalogError{"defaults.yaml", field, fmt.Sprintf("invalid exclude %q: %v", re, err)})
+			}
+		}
+	}
+	return errs
+}
+
 func (c *Catalog) validateHookIDs(file string) []CatalogError {
 	var errs []CatalogError
 	check := func(field, id string) {

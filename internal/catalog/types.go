@@ -120,6 +120,10 @@ type SecurityFile struct {
 // SecurityHooks holds hook configuration.
 type SecurityHooks struct {
 	Default []string `yaml:"default"`
+	// Excludes maps an always-on hook to the path regexes it skips
+	// (git-hooks.nix excludes). Only the built-in catalog sets it: an
+	// exemption lowers the security floor (see securityFloorViolations).
+	Excludes map[string][]string `yaml:"excludes,omitempty"`
 }
 
 // CleanEnvironmentDef holds environment variable sanitization config.

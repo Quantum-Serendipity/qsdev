@@ -38,8 +38,9 @@ func customHookBlock(content, id string) string {
 }
 
 // shellcheckScoped is the always-on shellcheck hook as rendered with its zsh
-// exclusion (W122); the formatter folds the dotted override into the block.
-const shellcheckScoped = "    shellcheck = {\n      enable = true;\n      exclude_types = [ \"zsh\" ];\n    };"
+// exclusion (W122) and vendored-tree exclusion; the formatter folds the
+// dotted overrides into the block.
+const shellcheckScoped = "    shellcheck = {\n      enable = true;\n      exclude_types = [ \"zsh\" ];\n      excludes = [ \"(^|/)vendor/\" ];\n    };"
 
 // TestGenerateDevenvNix_HookScoping verifies the rendered git-hooks scoping:
 // custom hooks carry types_or/exclude_types and pin their package, and
@@ -72,10 +73,21 @@ func TestGenerateDevenvNix_HookScoping(t *testing.T) {
 			contains: []string{shellcheckScoped},
 		},
 		{
+			// gofmt -l -w rewrites its operands, so an all-files hook run
+			// (prek run -a, devenv test) must skip what go fmt ./... skips:
+			// it reformatted vendored dependencies.
+			name:  "go formatter skips vendored and fixture trees",
+			langs: []types.LanguageChoice{{Name: "go"}},
+			contains: []string{
+				"    gofmt = {\n      enable = true;\n      excludes = [ \"(^|/)(testdata|vendor)/\" \"(^|/)[._][^/]*/\" ];\n    };",
+			},
+			notContains: []string{"gofmt.enable = true;"},
+		},
+		{
 			name:  "shell module",
 			langs: []types.LanguageChoice{{Name: "shell"}},
 			contains: []string{
-				"    shfmt = {\n      enable = true;\n      exclude_types = [ \"zsh\" ];\n    };",
+				"    shfmt = {\n      enable = true;\n      exclude_types = [ \"zsh\" ];\n      excludes = [ \"(^|/)vendor/\" ];\n    };",
 				shellcheckScoped,
 			},
 		},

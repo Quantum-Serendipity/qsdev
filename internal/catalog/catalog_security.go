@@ -11,6 +11,11 @@ func (c *Catalog) SecurityHooks() []string {
 	return out
 }
 
+// SecurityHookExcludes returns the path regexes the always-on hook id skips.
+func (c *Catalog) SecurityHookExcludes(id string) []string {
+	return slices.Clone(c.security.Hooks.Excludes[id])
+}
+
 // BasePackages returns the default base package names.
 func (c *Catalog) BasePackages() []string {
 	out := make([]string, len(c.security.BasePackages))

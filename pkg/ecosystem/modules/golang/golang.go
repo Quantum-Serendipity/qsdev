@@ -183,6 +183,10 @@ func (m *Module) PreCommitHooks(_ ecosystem.ModuleConfig) []ecosystem.HookConfig
 			Stages:        []string{"pre-commit"},
 			PassFilenames: true,
 			BuiltIn:       true,
+			// gofmt -w rewrites the files it is given. An all-files run
+			// (prek run -a, devenv test) must not reformat vendored
+			// dependencies or testdata fixtures, which go fmt ./... skips too.
+			Excludes: goToolIgnoredDirs,
 		},
 		{
 			ID:            "govet",

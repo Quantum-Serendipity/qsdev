@@ -574,6 +574,10 @@ hooks:
     allowlist: [left-pad, "pypi:requests", "go:golang.org/x/net"]
     min_age_days: 7
     new_dep_gate: ask
+  credential_scan:
+    extra_patterns:
+      - "corp_[a-z0-9]{20,40}"
+      - "(?i)acme[_-]?token\\s*[=:]\\s*(?P<secret>[A-Za-z0-9]{24,})"
 ```
 
 - **`file_boundary.extra_read_paths`** widens what the `file-boundary` hook
@@ -669,6 +673,39 @@ hooks:
   `PACKAGE_GUARD_SOC2_AUDIT=true` also makes the guard record each
   decision in `$CLAUDE_AUDIT_DIR/dependency-changes-YYYY-MM.jsonl`
   (default `~/.claude/audit/`), next to the soc2-audit hook's own trail.
+- **`credential_scan.extra_patterns`** adds regexes that the
+  `credential-scan` hook (`scan-secrets.py`) looks for in every file the
+  agent writes or edits, next to its built-in token shapes. A match blocks
+  the write unless it is a placeholder: a pattern without a group is judged
+  on its whole match, and a pattern that marks the credential with one
+  `(?P<secret>...)` group is judged on that value alone, so
+  `(?i)corp_(?P<secret>[a-z0-9_]{20,})` lets `corp_your_token_here_123456`
+  through. Merging the configuration layers unions the lists, so a layer can
+  only add detection. The patterns reach the hook through
+  `CREDENTIAL_SCAN_EXTRA_PATTERNS` in the `env` block of
+  `.claude/settings.json`, deduplicated and one per line (a regex may
+  contain a comma), and are generated only while the `credential-scan` hook
+  is enabled. The hook blocks every write while an entry there does not
+  compile, reporting `invalid CREDENTIAL_SCAN_EXTRA_PATTERNS entry N`.
+
+  An entry must use the regex syntax that Go's RE2 and Python's `re` read
+  alike. `qsdev check` and init accept only this subset and reject
+  anything else:
+
+  | Syntax | Accepted |
+  |---|---|
+  | Literals | Any printable character; no control, format or line-separator characters |
+  | Escapes | `\d` `\D` `\w` `\W` `\s` `\S` `\b` `\B` `\t` `\n` `\r`, and a backslash before ASCII punctuation (`\.`, `\{`, `\\`) |
+  | Operators | `.` `^` `$` `\|` |
+  | Quantifiers | `*` `+` `?` `{n}` `{n,}` `{n,m}`, each optionally lazy (`*?`); a `{` that starts no quantifier must be escaped |
+  | Groups | `(...)`, `(?:...)` and at most one `(?P<secret>...)`; `(?i)` only at the very start |
+  | Classes | `[...]` and `[^...]` holding literals, ranges between two plain characters (`a-z`) and the escapes above except `\b` and `\B`; an unescaped `-` only first or last, and `[` and `]` escaped |
+
+  Rejected among others: lookarounds (`(?=`, `(?!`, `(?<=`), other named
+  groups, backreferences (`\1`), Unicode classes (`\pL`), `\z`, `\Q...\E`,
+  POSIX classes (`[[:alpha:]]`), `a{,3}`, inline flags after the start, an
+  empty entry, an entry with leading or trailing spaces, tabs or carriage
+  returns, and one longer than 1024 bytes.
 
 `qsdev check` also fails (`claude_hook_env_changed`, high severity) when a
 variable qsdev generates from this block is missing from, or holds another
@@ -1138,6 +1175,8 @@ The three-way merge during updates preserves any custom allow/deny rules you hav
 with `FILE_BOUNDARY_DENY_PATHS`, the home credential stores the hook keeps
 out of those paths, set exactly when they are;
 `TOOL_GATES_ALLOWED` and `TOOL_GATES_DENIED`, from `hooks.tool_gates`;
+`CREDENTIAL_SCAN_EXTRA_PATTERNS`, one regex per line, from
+`hooks.credential_scan.extra_patterns`;
 and, while the package guard is registered, `PACKAGE_GUARD_MIN_AGE_DAYS`,
 its release-age gate in days from the compliance level raised by
 `hooks.package_guard.min_age_days`; `PACKAGE_GUARD_TEAM_ALLOWLIST`,

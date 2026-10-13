@@ -23,6 +23,16 @@ All notable changes to qsdev are recorded in this file. The format is based on
   `~/.claude/audit/`). `PACKAGE_GUARD_MIN_AGE_DAYS` is now written whenever
   the package guard is registered, not only when the safety-block choice is
   recorded. Run `qsdev init --update` to pick it up.
+- Team credential-scan patterns, committed in `.qsdev.yaml` as
+  `hooks.credential_scan.extra_patterns` (U17-09). Each entry is a regex
+  the credential-scan hook adds to its built-in token shapes; an optional
+  `(?P<secret>...)` group marks the credential so only that value is
+  judged as a placeholder. Merged layers union the lists. `qsdev check` and
+  init accept only the regex subset RE2 and Python share (see the
+  configuration reference) and reject anything else, naming the entry.
+  With the `credential-scan` hook on, init writes the deduplicated list one
+  per line to `CREDENTIAL_SCAN_EXTRA_PATTERNS` in `.claude/settings.json`.
+  Run `qsdev init --update` to pick it up.
 
 ### Changed
 
@@ -48,6 +58,22 @@ All notable changes to qsdev are recorded in this file. The format is based on
   store or a directory containing it (`~/.m2`, `~/.config/gh`) now fails
   `qsdev check`; name a sub-directory such as `~/.m2/repository` instead.
   Run `qsdev init --update` to pick it up.
+- The credential-scan hook now looks for a placeholder word in an
+  assignment's value only as a word, not glued into camel case (U17-08).
+  `password = "MyExamplePassword"` and, in a config file,
+  `password: SampleCorpProd2024` are now denied: they have the same shape
+  as a real password that contains such a word. Use a separated word
+  (`my_example_password`), a template (`${DB_PASSWORD}`) or an environment
+  variable instead.
+- `CREDENTIAL_SCAN_EXTRA_PATTERNS` now holds one regex per line instead of a
+  comma-separated list (U17-09, W1N-47), so a quantifier such as `{20,40}`
+  stays in its pattern. Each line is stripped of spaces, tabs and CRs and
+  blank lines are ignored. A hand-set comma list is now read as a single
+  regex; put each pattern on its own line. A pattern may mark the credential
+  with a `(?P<secret>...)` group so that only that value is tested for a
+  placeholder. An entry that does not compile now blocks the call (exit 2)
+  with `invalid CREDENTIAL_SCAN_EXTRA_PATTERNS entry N: <error>` and an
+  `invalid_extra_pattern` audit entry, instead of being skipped silently.
 - Self-protection now applies the shell gate-dodge check (GD-003, GD-004),
   the git code-execution check (GIT-001) and the shell-write half of SP-015
   to every tool that runs a shell command, not only Bash: under Monitor and
@@ -392,6 +418,20 @@ All notable changes to qsdev are recorded in this file. The format is based on
 
 ### Fixed
 
+- The credential-scan hook judges an assignment or connection string by its
+  credential value, not by the whole match (U17-08). A placeholder word in a
+  key or host no longer hides a real secret, so
+  `postgres://app:<real>@todo-db.prod.internal/todo` and
+  `password = "SampleCorpProd2024!"` are now denied, and a placeholder
+  connection string no longer hides a real one later in the same list. A
+  value that is entirely a template (`${DB_PASSWORD}`, `<your-password>`,
+  `{{db_pw}}`, `%(db_pw)s`) or names a placeholder as a word
+  (`your-password`, `replace_with_your_password`) is now allowed. A value
+  that is itself a token shape (`api_key = "sk_live_EXAMPLE..."`) is judged
+  by that token's own pattern, as before. Quoted and JSON AWS secret keys
+  (`aws_secret_access_key = "..."`, `{"aws_secret_access_key": "..."}`) are
+  now detected, and a pattern that matches the empty string no longer
+  denies every write.
 - `qsdev mcp grade`'s `matches-registry-definition` criterion now uses the
   same trust check as `qsdev mcp status` and is reported for every configured
   server (U16-01, U16-13). An entry passes only when it is exactly a

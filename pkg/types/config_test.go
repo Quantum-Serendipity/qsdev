@@ -40,6 +40,18 @@ func TestHooksConfigClone_PackageGuard(t *testing.T) {
 	}
 }
 
+// TestHooksConfigClone_CredentialScan checks that Clone deep-copies
+// credential_scan.extra_patterns.
+func TestHooksConfigClone_CredentialScan(t *testing.T) {
+	t.Parallel()
+	orig := types.HooksConfig{CredentialScan: types.CredentialScanConfig{ExtraPatterns: []string{"corp_[a-z]{20}"}}}
+	cp := orig.Clone()
+	cp.CredentialScan.ExtraPatterns[0] = "changed"
+	if got := orig.CredentialScan.ExtraPatterns[0]; got != "corp_[a-z]{20}" {
+		t.Errorf("original extra_patterns mutated through clone: %q", got)
+	}
+}
+
 func TestNewDepGates(t *testing.T) {
 	t.Parallel()
 	got := types.NewDepGates()

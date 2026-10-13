@@ -84,6 +84,7 @@ func TestParseLocalConfig_StrictKeys(t *testing.T) {
 		// Hook settings are team policy: a local file cannot widen them.
 		{"hooks block", "hooks:\n  file_boundary:\n    extra_read_paths: [/]\n", true},
 		{"hooks package_guard block", "hooks:\n  package_guard:\n    allowlist: [evil]\n", true},
+		{"hooks credential_scan block", "hooks:\n  credential_scan:\n    extra_patterns: [x]\n", true},
 		{"empty file", "", false},
 		{"comments only", "# extra_packages:\n#   - neovim\n", false},
 	}

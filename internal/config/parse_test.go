@@ -649,6 +649,42 @@ func TestQsdevConfig_HooksToolGates(t *testing.T) {
 	}
 }
 
+// TestQsdevConfig_HooksCredentialScan covers parsing and validating
+// hooks.credential_scan.extra_patterns, the extra regexes scan-secrets.py
+// runs.
+func TestQsdevConfig_HooksCredentialScan(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name       string
+		yaml       string
+		wantFields []string
+	}{
+		{name: "valid entries", yaml: `['corp_[a-z0-9]{20,40}', '(?i)tok_(?P<secret>[a-z0-9]{20})']`},
+		{name: "unclosed class", yaml: `['corp_[']`, wantFields: []string{"hooks.credential_scan.extra_patterns[0]"}},
+		{name: "range from escape", yaml: `[ok, '[\d-x]{20}']`, wantFields: []string{"hooks.credential_scan.extra_patterns[1]"}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			data := "version: 2\nhooks:\n  credential_scan:\n    extra_patterns: " + tt.yaml + "\n"
+			cfg, err := ParseQsdevConfigBytes([]byte(data))
+			if err != nil {
+				t.Fatalf("ParseQsdevConfigBytes: %v", err)
+			}
+			if len(cfg.Hooks.CredentialScan.ExtraPatterns) == 0 {
+				t.Fatal("extra_patterns not parsed")
+			}
+			var fields []string
+			for _, e := range ValidateQsdevConfig(cfg, ValidateOptions{}) {
+				fields = append(fields, e.Field)
+			}
+			if strings.Join(fields, " ") != strings.Join(tt.wantFields, " ") {
+				t.Errorf("validation error fields = %v, want %v", fields, tt.wantFields)
+			}
+		})
+	}
+}
+
 // TestParseQsdevConfig_PackageGuardBlock checks that the committed
 // hooks.package_guard block parses (U17-05: it used to fail with "field
 // package_guard not found") and is valid.

@@ -2,6 +2,7 @@ package claudecode_test
 
 import (
 	"encoding/json"
+	"errors"
 	"go/ast"
 	"go/parser"
 	"go/token"
@@ -1668,6 +1669,62 @@ func TestBuildHookEnv_PackageGuard(t *testing.T) {
 				_, err := claudecode.GenerateSettings(answers, nil, claudecode.NewConfig())
 				if err == nil || !strings.Contains(err.Error(), tt.wantErr) {
 					t.Fatalf("GenerateSettings error = %v, want one containing %q", err, tt.wantErr)
+				}
+				return
+			}
+			settings := mustUnmarshalSettings(t, mustGenerateSettings(t, answers, nil))
+			if !reflect.DeepEqual(settings.Env, tt.wantEnv) {
+				t.Errorf("env = %#v, want %#v", settings.Env, tt.wantEnv)
+			}
+		})
+	}
+}
+
+// TestBuildHookEnv_CredentialScanPatterns covers handing .qsdev.yaml
+// hooks.credential_scan.extra_patterns to the scan-secrets hook through
+// settings.json "env": deduplicated and newline-separated, since a regex may
+// contain a comma.
+func TestBuildHookEnv_CredentialScanPatterns(t *testing.T) {
+	t.Parallel()
+	const p1, p2 = "corp_[a-z0-9]{20,40}", "(?i)tok_(?P<secret>[a-z0-9,]{8,})"
+	tests := []struct {
+		name     string
+		scan     bool
+		patterns []string
+		wantEnv  map[string]string
+		wantErr  bool
+	}{
+		{
+			name: "deduplicated and newline-joined", scan: true, patterns: []string{p1, p2, p1},
+			wantEnv: map[string]string{claudesettings.EnvCredentialScanExtraPatterns: p1 + "\n" + p2},
+		},
+		{name: "hook disabled", scan: false, patterns: []string{p1}},
+		{name: "no patterns", scan: true},
+		{name: "invalid entry rejected", scan: true, patterns: []string{p1, "corp_["}, wantErr: true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			answers := types.WizardAnswers{
+				// The opt-out leaves out package-guard.py's own env, which
+				// TestBuildHookEnv_PackageGuard covers.
+				Hooks: types.HookChoices{CredentialScan: tt.scan, SafetyBlockOptOut: true},
+				HookPolicy: types.HooksConfig{
+					CredentialScan: types.CredentialScanConfig{ExtraPatterns: tt.patterns},
+				},
+			}
+			if tt.wantErr {
+				_, err := claudecode.GenerateSettings(answers, nil, claudecode.NewConfig())
+				var entryErr validation.PolicyEntryError
+				if !errors.As(err, &entryErr) {
+					t.Fatalf("GenerateSettings error = %v, want a PolicyEntryError", err)
+				}
+				if entryErr.Field != "hooks.credential_scan.extra_patterns" || entryErr.Index != 1 {
+					t.Errorf("PolicyEntryError = %s[%d], want hooks.credential_scan.extra_patterns[1]",
+						entryErr.Field, entryErr.Index)
+				}
+				if !errors.Is(err, validation.ErrSecretPattern) {
+					t.Errorf("GenerateSettings error = %v, want one wrapping ErrSecretPattern", err)
 				}
 				return
 			}

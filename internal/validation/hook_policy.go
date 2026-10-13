@@ -45,8 +45,9 @@ func checkEntries(errs []PolicyEntryError, field string, values []string, check 
 
 // CheckHookPolicy returns every invalid entry of the hooks block h, in field
 // order: file-boundary extra read paths (see CheckBoundaryReadPath),
-// tool-gates entries (see CheckToolNamePattern) and the package-guard policy
-// (see checkPackageGuard). It is the one validation shared by .qsdev.yaml
+// tool-gates entries (see CheckToolNamePattern), the package-guard policy
+// (see checkPackageGuard) and credential-scan extra patterns (see
+// CheckSecretPattern). It is the one validation shared by .qsdev.yaml
 // parsing, answers validation and settings generation, so they agree on what
 // reaches the hooks.
 func CheckHookPolicy(h types.HooksConfig) []PolicyEntryError {
@@ -54,7 +55,8 @@ func CheckHookPolicy(h types.HooksConfig) []PolicyEntryError {
 	errs = checkEntries(errs, "hooks.file_boundary.extra_read_paths", h.FileBoundary.ExtraReadPaths, CheckBoundaryReadPath)
 	errs = checkEntries(errs, "hooks.tool_gates.allowed", h.ToolGates.Allowed, CheckToolNamePattern)
 	errs = checkEntries(errs, "hooks.tool_gates.denied", h.ToolGates.Denied, CheckToolNamePattern)
-	return checkPackageGuard(errs, h.PackageGuard)
+	errs = checkPackageGuard(errs, h.PackageGuard)
+	return checkEntries(errs, "hooks.credential_scan.extra_patterns", h.CredentialScan.ExtraPatterns, CheckSecretPattern)
 }
 
 // checkPackageGuard appends to errs the invalid values of hooks.package_guard:

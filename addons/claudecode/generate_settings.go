@@ -387,12 +387,18 @@ func buildHookEnv(answers types.WizardAnswers) (map[string]string, error) {
 	}
 	env := make(map[string]string)
 	if extras := answers.HookPolicy.FileBoundary.ExtraReadPaths; answers.Hooks.FileBoundary && len(extras) > 0 {
-		setListEnv(env, FileBoundaryExtraReadPathsEnv, extras)
-		setListEnv(env, FileBoundaryDenyPathsEnv, secrets.CredentialHomePaths())
+		setListEnv(env, FileBoundaryExtraReadPathsEnv, ",", extras)
+		setListEnv(env, FileBoundaryDenyPathsEnv, ",", secrets.CredentialHomePaths())
 	}
 	if answers.Hooks.ToolGates {
-		setListEnv(env, ToolGatesAllowedEnv, answers.HookPolicy.ToolGates.Allowed)
-		setListEnv(env, ToolGatesDeniedEnv, answers.HookPolicy.ToolGates.Denied)
+		setListEnv(env, ToolGatesAllowedEnv, ",", answers.HookPolicy.ToolGates.Allowed)
+		setListEnv(env, ToolGatesDeniedEnv, ",", answers.HookPolicy.ToolGates.Denied)
+	}
+	if answers.Hooks.CredentialScan {
+		// A regex may contain a comma, so the patterns go one per line; an
+		// entry was validated to hold no line break or edge whitespace.
+		setListEnv(env, claudesettings.EnvCredentialScanExtraPatterns, "\n",
+			answers.HookPolicy.CredentialScan.ExtraPatterns)
 	}
 	if packageGuardEnabled(answers) {
 		packageGuardEnv(answers, env)
@@ -415,8 +421,8 @@ func packageGuardEnv(answers types.WizardAnswers, env map[string]string) {
 		days = max(days, *policy.MinAgeDays)
 	}
 	env[PackageGuardMinAgeDaysEnv] = strconv.Itoa(days)
-	setListEnv(env, claudesettings.EnvPackageGuardTeamAllowlist, policy.Allowlist)
-	setListEnv(env, claudesettings.EnvPackageGuardTeamDenylist, policy.Denylist)
+	setListEnv(env, claudesettings.EnvPackageGuardTeamAllowlist, ",", policy.Allowlist)
+	setListEnv(env, claudesettings.EnvPackageGuardTeamDenylist, ",", policy.Denylist)
 	if policy.NewDepGate != "" {
 		env[claudesettings.EnvPackageGuardNewDepGate] = policy.NewDepGate
 	}
@@ -425,11 +431,12 @@ func packageGuardEnv(answers types.WizardAnswers, env map[string]string) {
 	}
 }
 
-// setListEnv sets env[key] to values, deduplicated and comma-separated, when
-// there are any. The entries were validated to contain no comma.
-func setListEnv(env map[string]string, key string, values []string) {
+// setListEnv sets env[key] to values, deduplicated and joined with sep, when
+// there are any. The entries were validated to contain no sep: the
+// comma-separated lists hold entries that contain no comma.
+func setListEnv(env map[string]string, key, sep string, values []string) {
 	if len(values) > 0 {
-		env[key] = strings.Join(sliceutil.Dedup(values), ",")
+		env[key] = strings.Join(sliceutil.Dedup(values), sep)
 	}
 }
 

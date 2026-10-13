@@ -108,6 +108,27 @@ func TestCheckHookPolicy_PackageGuard(t *testing.T) {
 	}
 }
 
+// TestCheckHookPolicy_BadRegex checks that hooks.credential_scan entries are
+// validated with CheckSecretPattern and reported under their list index.
+func TestCheckHookPolicy_BadRegex(t *testing.T) {
+	t.Parallel()
+	errs := CheckHookPolicy(types.HooksConfig{CredentialScan: types.CredentialScanConfig{
+		ExtraPatterns: []string{`corp_[a-z0-9]{20,40}`, "corp_[", `[\d-x]{20}`},
+	}})
+	want := []string{"hooks.credential_scan.extra_patterns[1]", "hooks.credential_scan.extra_patterns[2]"}
+	if len(errs) != len(want) {
+		t.Fatalf("CheckHookPolicy = %v, want %d errors %v", errs, len(want), want)
+	}
+	for i, e := range errs {
+		if got := fmt.Sprintf("%s[%d]", e.Field, e.Index); got != want[i] {
+			t.Errorf("error %d at %s, want %s", i, got, want[i])
+		}
+		if !errors.Is(e, ErrSecretPattern) {
+			t.Errorf("error %d = %v, want it to wrap ErrSecretPattern", i, e)
+		}
+	}
+}
+
 func TestPolicyEntryError_ScalarRendersWithoutEntry(t *testing.T) {
 	t.Parallel()
 	zero := 0

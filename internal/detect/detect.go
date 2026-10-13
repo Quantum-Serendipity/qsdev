@@ -104,18 +104,21 @@ func Detect(ctx context.Context, projectRoot string, opts ...Option) types.Detec
 }
 
 // detectContainerRuntime returns the active container runtime name, or "" when
-// none is found. Probe commands cut short by the timeout are treated like
-// failed commands, so the result is the best information gathered in time.
+// none is found. It runs only the probes that decide the active runtime (see
+// container.ActiveRuntime): detection runs on every status, repair, check and
+// update, which need nothing else about the runtime. Probe commands cut short
+// by the timeout are treated like failed commands, so the result is the best
+// information gathered in time.
 func detectContainerRuntime(ctx context.Context, o options) string {
 	probeCtx, cancel := context.WithTimeout(ctx, o.probeTimeout)
 	defer cancel()
 
-	rtInfo, err := container.Detect(probeCtx, o.prober)
+	active := container.ActiveRuntime(probeCtx, o.prober)
 	if probeCtx.Err() != nil {
 		slog.Debug("container runtime probe cut short", "error", probeCtx.Err())
 	}
-	if err != nil || rtInfo.Active == container.RuntimeNone {
+	if active == container.RuntimeNone {
 		return ""
 	}
-	return string(rtInfo.Active)
+	return string(active)
 }

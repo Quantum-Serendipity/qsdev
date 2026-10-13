@@ -100,7 +100,7 @@ try:
     _lib_spec.loader.exec_module(lib)
     # What this hook uses: an empty or stale library blocks here, not with an
     # AttributeError (exit 1, which Claude Code lets through) mid-evaluation.
-    lib.arm_deadline, lib.audit_log, lib.append_private, lib.WRAPPERS, lib.skip_wrapper  # noqa: B018
+    lib.arm_deadline, lib.audit_log, lib.append_private, lib.WRAPPERS, lib.skip_wrapper, lib.expand_home  # noqa: B018
 except Exception as _exc:
     print(f"package-guard: hook library unavailable ({_exc}); blocking (fail closed)", file=sys.stderr)
     sys.exit(2)
@@ -4619,7 +4619,9 @@ def _archive_issues(detections: list, cwd: object, command: str) -> list:
     issues = []
     chdir = _DIR_CHANGE_RE.search(command)
     for path in paths:
-        local = os.path.expanduser(path)
+        # Another user's ~name stays unexpanded (no user-database lookup), so
+        # it is never taken for an unmodified committed file.
+        local = lib.expand_home(path) or path
         if _names_archive_elsewhere(command, path):
             issues.append(f"installs local archive {path}, which the same command also names elsewhere "
                           f"and may change before the install runs")

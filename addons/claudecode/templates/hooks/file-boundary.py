@@ -74,7 +74,7 @@ try:
     _lib_spec.loader.exec_module(lib)
     # What this hook uses: an empty or stale library blocks here, not with an
     # AttributeError (exit 1, which Claude Code lets through) mid-evaluation.
-    lib.arm_deadline, lib.audit_log  # noqa: B018
+    lib.arm_deadline, lib.audit_log, lib.expand_home  # noqa: B018
 except Exception as _exc:
     print(f"file-boundary: hook library unavailable ({_exc}); blocking (fail closed)", file=sys.stderr)
     sys.exit(2)
@@ -313,10 +313,11 @@ def main() -> None:
     except (OSError, ValueError):
         cwd_resolved = cwd
 
-    # Expand ~ as Claude Code does. A path still led by ~ (an unknown user)
-    # or a shell variable cannot be resolved the way the tool will, so deny.
-    expanded = os.path.expanduser(file_path)
-    if expanded.startswith(("~", "$")):
+    # Expand ~ as Claude Code does, without a user-database lookup. Another
+    # user's ~name (outside the project in any case) or a shell variable
+    # cannot be resolved the way the tool will, so deny.
+    expanded = lib.expand_home(file_path)
+    if expanded is None or expanded.startswith(("~", "$")):
         deny(
             f"File operation blocked: cannot resolve {file_path} the way the tool will.",
             file_path, cwd,

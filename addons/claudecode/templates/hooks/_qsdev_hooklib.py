@@ -28,6 +28,7 @@ if sys.version_info < MIN_PYTHON:
           f"(found {sys.version.split()[0]}); blocking to fail closed.", file=sys.stderr)
     sys.exit(2)
 
+import getpass  # noqa: E402
 import itertools  # noqa: E402
 import json  # noqa: E402
 import os  # noqa: E402
@@ -95,6 +96,39 @@ def append_private(path: str, line: str) -> None:
     fd = _open_private(str(path), os.O_WRONLY | os.O_APPEND)
     with os.fdopen(fd, "a") as f:
         f.write(line)
+
+
+# ---------------------------------------------------------------------------
+# Home directory expansion
+# ---------------------------------------------------------------------------
+
+
+def _current_user() -> str:
+    """The name of the user running the hook, from the login environment or
+    the process's own uid: never a lookup of another name."""
+    try:
+        return getpass.getuser()
+    except Exception:  # no login variable and no passwd entry for the uid
+        return ""
+
+
+def expand_home(path: str) -> Optional[str]:
+    """Expand a leading ~ the way the tools do, without asking the user
+    database about anyone else: os.path.expanduser("~name") looks the name
+    up, and for an unknown name that can block for seconds (macOS directory
+    services) and outlast a hook's deadline.
+
+    Returns path unchanged when it does not start with ~, the expansion of ~
+    and ~<the current user>, and None for another user's ~name, which a hook
+    cannot resolve without that lookup and must treat as unresolved."""
+    if not path.startswith("~"):
+        return path
+    rest = path[1:]
+    cut = min((i for i in (rest.find("/"), rest.find(os.sep)) if i >= 0), default=len(rest))
+    name, tail = rest[:cut], rest[cut:]
+    if name and name != _current_user():
+        return None
+    return os.path.expanduser("~") + tail
 
 
 # ---------------------------------------------------------------------------

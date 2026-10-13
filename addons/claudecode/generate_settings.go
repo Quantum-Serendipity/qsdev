@@ -3,13 +3,16 @@ package claudecode
 import (
 	"encoding/json"
 	"fmt"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
 
 	"github.com/Quantum-Serendipity/qsdev/internal/catalog"
+	"github.com/Quantum-Serendipity/qsdev/internal/claudesettings"
 	"github.com/Quantum-Serendipity/qsdev/internal/merge"
 	"github.com/Quantum-Serendipity/qsdev/internal/policyengine/trust"
+	"github.com/Quantum-Serendipity/qsdev/internal/secrets"
 	"github.com/Quantum-Serendipity/qsdev/internal/sliceutil"
 	"github.com/Quantum-Serendipity/qsdev/internal/validation"
 	"github.com/Quantum-Serendipity/qsdev/pkg/ecosystem"
@@ -42,7 +45,7 @@ const (
 
 // PackageGuardMinAgeDaysEnv is the variable through which the package-guard
 // hook receives the compliance level's release-age window, in whole days.
-const PackageGuardMinAgeDaysEnv = "PACKAGE_GUARD_MIN_AGE_DAYS"
+const PackageGuardMinAgeDaysEnv = claudesettings.EnvPackageGuardMinAgeDays
 
 // Permissions defines the permission rules for Claude Code.
 type Permissions struct {
@@ -95,7 +98,28 @@ func AllBaseDenyRules() []string {
 	if err != nil {
 		return nil
 	}
-	return cat.AllPermissionDenyRules()
+	return withNestedSecretFileRules(cat.AllPermissionDenyRules())
+}
+
+// rootSecretsReadRule is the catalog rule that read-denies the project's
+// top-level secrets/ directory. It is anchored at the project root because
+// an unanchored secrets/** would also deny source directories such as
+// internal/secrets/ (U15-14).
+const rootSecretsReadRule = "Read(/secrets/**)"
+
+// withNestedSecretFileRules adds, to a deny list that read-denies the
+// top-level secrets/ directory, a rule for each secret-material file pattern
+// of the secrets canon (secrets.SecretFilePatterns) inside a directory named
+// secrets at any depth (services/api/secrets/prod.env, deploy/secrets/tls.key),
+// so nested secret stores are guarded while source code beside them is not.
+func withNestedSecretFileRules(deny []string) []string {
+	if !slices.Contains(deny, rootSecretsReadRule) {
+		return deny
+	}
+	for _, p := range secrets.SecretFilePatterns() {
+		deny = append(deny, "Read(/**/secrets/**/"+p+")")
+	}
+	return deny
 }
 
 // AllBaseAskRules returns every rule the catalog gates behind ask. Exported
@@ -151,6 +175,7 @@ func buildPermissions(preset PermissionPreset, answers types.WizardAnswers, regi
 	for _, setName := range presetDef.DenySets {
 		deny = append(deny, cat.PermissionDenyRules(setName)...)
 	}
+	deny = withNestedSecretFileRules(deny)
 
 	// Assemble ask rules from preset's ask sets.
 	var ask []string

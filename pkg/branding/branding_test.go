@@ -458,3 +458,19 @@ func TestConcurrentSetDoesNotLoseUpdates(t *testing.T) {
 	}
 	resetToDefault(t)
 }
+
+func TestDevenvAnswersCopy(t *testing.T) {
+	t.Parallel()
+	tests := []struct{ app, want string }{
+		{"qsdev", ".devenv/.qsdev-answers.yaml"},
+		{"myapp", ".devenv/.myapp-answers.yaml"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.app, func(t *testing.T) {
+			t.Parallel()
+			if got := (Config{AppName: tt.app}).DevenvAnswersCopy(); got != tt.want {
+				t.Errorf("DevenvAnswersCopy() = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}

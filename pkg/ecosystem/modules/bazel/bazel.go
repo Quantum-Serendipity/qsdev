@@ -15,6 +15,7 @@ import (
 	"strings"
 
 	"github.com/Quantum-Serendipity/qsdev/pkg/branding"
+	"github.com/Quantum-Serendipity/qsdev/pkg/denyutil"
 	"github.com/Quantum-Serendipity/qsdev/pkg/ecosystem"
 	"github.com/Quantum-Serendipity/qsdev/pkg/fileutil"
 	"github.com/Quantum-Serendipity/qsdev/pkg/types"
@@ -212,13 +213,58 @@ func (m *Module) PreCommitHooks(_ ecosystem.ModuleConfig) []ecosystem.HookConfig
 	}
 }
 
-// DenyRules returns Claude Code deny-rule patterns for the Bazel ecosystem.
-// Prevents running arbitrary external repository targets.
+// bazelBinaries are the CLIs the deny rules cover: bazel and the bazelisk
+// launcher, which takes the same command line.
+var bazelBinaries = []string{"bazel", "bazelisk"}
+
+// DenyRules returns Claude Code deny-rule patterns for the Bazel ecosystem,
+// for bazel and bazelisk, plain, after startup options and behind an env
+// prefix (denyutil.SubcommandRules). They block:
+//
+//   - `run` of an external repository target (`@repo//:target`), which
+//     executes code fetched from the registry or an archive URL, wherever the
+//     label appears after run (flags, `--`), and `test` or `coverage` of one
+//     given as its own word (`bazel test @repo//:t`), which executes it the
+//     same way;
+//   - every --lockfile_mode other than error (update, refresh and off), in
+//     the = and the space-separated spelling, on any command (build, test,
+//     mod deps, ...): update and refresh rewrite MODULE.bazel.lock past the
+//     committed resolution, and off overrides the generated .bazelrc.qsdev
+//     `common --lockfile_mode=error`, so neither the lockfile nor the
+//     registry file hashes are checked. The rules key on the value's first
+//     letter in either case, since Bazel matches enum values
+//     case-insensitively, and deny a quoted, backslash-escaped or
+//     $-expanded value outright (`"update"`, `\update`, `$'update'`).
+//
+// Residual risks the rules cannot see: a .bazelrc line such as
+// `common --lockfile_mode=update` applies the mode without it appearing on
+// the command line. Over-blocked, because the rules cannot tell a label from
+// other text containing `@`: an `@` inside run arguments after `--` (an
+// e-mail address passed to a workspace binary), a Starlark flag naming an
+// external label before the run target
+// (`bazel run --@rules_python//python/config_settings:python_version=3.12
+// //app:main`), and a quoted, escaped or $-expanded
+// `--lockfile_mode='error'`. Run such a command yourself in a terminal.
 func (m *Module) DenyRules(_ ecosystem.ModuleConfig) []string {
-	return []string{
-		"Bash(bazel run @*)",
+	subs := []string{"run *@*", "test @*", "test * @*", "coverage @*", "coverage * @*"}
+	for _, sep := range []string{"=", " "} {
+		for _, start := range lockfileModeDenied {
+			subs = append(subs, "*--lockfile_mode"+sep+start+"*")
+		}
 	}
+	var rules []string
+	for _, bin := range bazelBinaries {
+		rules = append(rules, denyutil.SubcommandRules(bin, subs...)...)
+	}
+	return rules
 }
+
+// lockfileModeDenied are the first characters of the --lockfile_mode values
+// the deny rules block: update, refresh and off in either case, an opening
+// quote, and the backslash and `$` that start the shell spellings `\update`
+// and `$'update'`, which the shell turns into update. Only error, the mode
+// .bazelrc.qsdev sets, stays allowed.
+var lockfileModeDenied = []string{"u", "U", "r", "R", "o", "O", `"`, "'", `\`, "$"}
 
 // CICommands returns CI pipeline commands for the Bazel ecosystem.
 func (m *Module) CICommands(_ ecosystem.ModuleConfig) []ecosystem.CICommand {

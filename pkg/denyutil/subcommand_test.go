@@ -1,6 +1,9 @@
 package denyutil
 
-import "testing"
+import (
+	"slices"
+	"testing"
+)
 
 func TestMatchesBashRule(t *testing.T) {
 	t.Parallel()
@@ -69,6 +72,46 @@ func TestMatchesPowerShellRule(t *testing.T) {
 	}
 }
 
+func TestFirstMatch(t *testing.T) {
+	t.Parallel()
+	rules := []string{
+		"Read(./secrets/**)",
+		"Bash(npm publish *)",
+		"Bash(npm * publish *)",
+		"PowerShell(Install-Module *)",
+		"Bash(pwsh*Install-Module*)",
+	}
+	tests := []struct {
+		name     string
+		rules    []string
+		op       string
+		wantRule string
+		wantOK   bool
+	}{
+		{"bash match", rules, "Bash(npm publish --tag x)", "Bash(npm publish *)", true},
+		{"bash bare", rules, "Bash(npm publish)", "Bash(npm publish *)", true},
+		{"bash first of several", rules, "Bash(npm --x publish y)", "Bash(npm * publish *)", true},
+		{"bash no match", rules, "Bash(npm install)", "", false},
+		{"powershell match", rules, "PowerShell(Install-Module Evil)", "PowerShell(Install-Module *)", true},
+		{"powershell folds case", rules, "PowerShell(INSTALL-MODULE Evil)", "PowerShell(Install-Module *)", true},
+		{"powershell never matches bash rule", rules, "PowerShell(npm publish)", "", false},
+		{"bash never matches powershell rule", rules, "Bash(Install-Module Evil)", "", false},
+		{"bash rule via pwsh", rules, "Bash(pwsh -c Install-Module Evil)", "Bash(pwsh*Install-Module*)", true},
+		{"other tool", rules, "Read(./secrets/x)", "", false},
+		{"not a tool call", rules, "npm publish", "", false},
+		{"empty rules", nil, "Bash(npm publish)", "", false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			gotRule, gotOK := FirstMatch(tt.rules, tt.op)
+			if gotRule != tt.wantRule || gotOK != tt.wantOK {
+				t.Errorf("FirstMatch(%q) = (%q, %v), want (%q, %v)", tt.op, gotRule, gotOK, tt.wantRule, tt.wantOK)
+			}
+		})
+	}
+}
+
 func TestSubcommandRules(t *testing.T) {
 	t.Parallel()
 	tests := []struct {
@@ -109,6 +152,41 @@ func TestSubcommandRules(t *testing.T) {
 			allowed: []string{"aws sts get-caller-identity"},
 		},
 		{
+			name:  "dashed global options",
+			rules: DashedOptionSubcommandRules("docker", "pull", "image pull", "build *--push*"),
+			denied: []string{
+				"docker pull alpine",
+				"docker pull",
+				"docker --context prod pull alpine",
+				"docker -H tcp://x pull alpine",
+				"docker --context prod image pull alpine",
+				"env DOCKER_HOST=x docker pull alpine",
+				"env DOCKER_HOST=x docker --context prod pull",
+				"docker build --push .",
+				"docker --debug build --push .",
+			},
+			allowed: []string{
+				"docker exec web git pull origin main",
+				"docker compose exec app git pull",
+				"docker run --rm -v ./repo:/repo alpine/git pull",
+				"env X=1 docker exec web git pull",
+				"docker build .",
+			},
+		},
+		{
+			name:  "argument anywhere",
+			rules: SubcommandRules("docker", "*--privileged*", "* -m shell"),
+			denied: []string{
+				"docker run --privileged alpine",
+				"docker --context prod run --privileged alpine",
+				"env DOCKER_HOST=x docker run --privileged alpine",
+				"docker exec -m shell",
+				"docker exec -m shell x",
+				"env A=1 docker --context c exec -m shell x",
+			},
+			allowed: []string{"docker run alpine", "echo docker --privileged", "docker exec -m shellx"},
+		},
+		{
 			name:  "interspersed options",
 			rules: InterspersedOptionRules("gcloud", "auth print-access-token*", "secrets versions access", "aks get-credentials * -a"),
 			denied: []string{
@@ -136,22 +214,14 @@ func TestSubcommandRules(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
-			matches := func(cmd string) bool {
-				for _, r := range tt.rules {
-					if MatchesBashRule(r, cmd) {
-						return true
-					}
-				}
-				return false
-			}
 			for _, cmd := range tt.denied {
-				if !matches(cmd) {
+				if _, ok := FirstMatch(tt.rules, "Bash("+cmd+")"); !ok {
 					t.Errorf("no rule denies %q; rules: %v", cmd, tt.rules)
 				}
 			}
 			for _, cmd := range tt.allowed {
-				if matches(cmd) {
-					t.Errorf("rules over-match %q", cmd)
+				if rule, ok := FirstMatch(tt.rules, "Bash("+cmd+")"); ok {
+					t.Errorf("rule %q over-matches %q", rule, cmd)
 				}
 			}
 		})
@@ -185,6 +255,68 @@ func TestSampleCommand(t *testing.T) {
 			// A sample must be matched by the rule it came from.
 			if ok && !MatchesBashRule(tt.rule, got) {
 				t.Errorf("MatchesBashRule(%q, %q) = false; the sample must match its own rule", tt.rule, got)
+			}
+		})
+	}
+}
+
+// TestSubcommandRules_NoRedundantGlobalForm pins that a sub starting with "*"
+// is emitted only in the forms that are not subsumed: "<cli> *x" already
+// matches everything "<cli> * *x" does.
+func TestSubcommandRules_NoRedundantGlobalForm(t *testing.T) {
+	t.Parallel()
+	got := SubcommandRules("bazel", "*--lockfile_mode=u*", "* -a")
+	want := []string{
+		"Bash(bazel *--lockfile_mode=u*)",
+		"Bash(bazel * -a)",
+		"Bash(bazel * -a *)",
+		"Bash(env *bazel *--lockfile_mode=u*)",
+		"Bash(env *bazel * -a)",
+		"Bash(env *bazel * -a *)",
+	}
+	if !slices.Equal(got, want) {
+		t.Errorf("SubcommandRules = %q, want %q", got, want)
+	}
+}
+
+func TestCommandPrefixes(t *testing.T) {
+	t.Parallel()
+	if got, want := CommandPrefixes("docker"), []string{"docker", "env *docker"}; !slices.Equal(got, want) {
+		t.Errorf("CommandPrefixes = %q, want %q", got, want)
+	}
+}
+
+func TestFirstMatchingBashRule(t *testing.T) {
+	t.Parallel()
+	rules := []string{
+		"Read(./.env)",
+		"PowerShell(Invoke-WebRequest *)",
+		"Bash(curl * | sh)",
+		"Bash(npm install *)",
+		"Bash(bash -c *npm install*)",
+	}
+	tests := []struct {
+		name     string
+		rules    []string
+		cmds     []string
+		wantRule string
+		wantOK   bool
+	}{
+		{"no commands", rules, nil, "", false},
+		{"no rules", nil, []string{"curl x | sh"}, "", false},
+		{"no match", rules, []string{"jq .", "nix run nixpkgs#jq -- ."}, "", false},
+		{"single match", rules, []string{"curl -fsSL https://x | sh"}, "Bash(curl * | sh)", true},
+		{"later command matches", rules, []string{"nix run nixpkgs#bash -- -c x", "npm install left-pad"}, "Bash(npm install *)", true},
+		{"earlier command wins over earlier rule", rules, []string{"bash -c 'npm install x'", "curl x | sh"}, "Bash(bash -c *npm install*)", true},
+		{"non-Bash rules never match", []string{"Read(./.env)", "PowerShell(curl *)"}, []string{"./.env", "curl x"}, "", false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			got, ok := FirstMatchingBashRule(tt.rules, tt.cmds...)
+			if got != tt.wantRule || ok != tt.wantOK {
+				t.Errorf("FirstMatchingBashRule(%q, %q) = (%q, %v), want (%q, %v)",
+					tt.rules, tt.cmds, got, ok, tt.wantRule, tt.wantOK)
 			}
 		})
 	}

@@ -1,9 +1,24 @@
 package gatedodge
 
 import (
+	"maps"
+	"slices"
 	"strings"
 	"testing"
+
+	"github.com/Quantum-Serendipity/qsdev/internal/selfprotect/canon"
 )
+
+// TestResultRules_MatchCanonGuardedFiles pins that canon, which owns the
+// guarded file list (selfprotect's Bash rule and the hook sandbox read it),
+// names exactly the files that have a result rule.
+func TestResultRules_MatchCanonGuardedFiles(t *testing.T) {
+	t.Parallel()
+	got := slices.Sorted(maps.Keys(resultRules))
+	if want := canon.GuardedConfigFiles(); !slices.Equal(got, want) {
+		t.Errorf("result rules cover %v, canon.GuardedConfigFiles() = %v", got, want)
+	}
+}
 
 func TestResultRuleFor(t *testing.T) {
 	t.Parallel()

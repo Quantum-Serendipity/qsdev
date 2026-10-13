@@ -23,7 +23,18 @@ const secretSpecRevision = "1.0"
 // tables (description, required, type, generate). Providers are chosen per
 // user by secretspec itself, so none are declared here.
 func GenerateSecretSpecToml(answers types.WizardAnswers, registry *ecosystem.Registry) (*types.GeneratedFile, error) {
-	decls := collectSecretDecls(answers, registry)
+	ctx, err := newGenContext(answers, registry)
+	if err != nil {
+		return nil, err
+	}
+	return generateSecretSpecToml(ctx)
+}
+
+// generateSecretSpecToml is GenerateSecretSpecToml for an already-loaded
+// context.
+func generateSecretSpecToml(ctx *genContext) (*types.GeneratedFile, error) {
+	answers := ctx.answers
+	decls := ctx.collectSecretDecls()
 	if len(decls) == 0 {
 		return nil, nil
 	}
@@ -57,14 +68,14 @@ func GenerateSecretSpecToml(answers types.WizardAnswers, registry *ecosystem.Reg
 // collectSecretDecls gathers the declarations from services and from
 // ecosystem modules implementing SecretDeclarer, deduplicated by name (first
 // occurrence wins).
-func collectSecretDecls(answers types.WizardAnswers, registry *ecosystem.Registry) []ecosystem.SecretDecl {
+func (c *genContext) collectSecretDecls() []ecosystem.SecretDecl {
 	var decls []ecosystem.SecretDecl
-	for _, svc := range answers.Services {
+	for _, svc := range c.answers.Services {
 		decls = append(decls, ServiceSecretDeclarations(svc.Name)...)
 	}
-	if registry != nil {
-		for _, lang := range answers.Languages {
-			mod, ok := registry.ByName(lang.Name)
+	if c.modules != nil {
+		for _, lang := range c.answers.Languages {
+			mod, ok := c.modules.ByName(lang.Name)
 			if !ok {
 				continue
 			}
@@ -72,7 +83,7 @@ func collectSecretDecls(answers types.WizardAnswers, registry *ecosystem.Registr
 			if !ok {
 				continue
 			}
-			decls = append(decls, declarer.SecretDeclarations(ecosystem.ToModuleConfig(lang))...)
+			decls = append(decls, declarer.SecretDeclarations(c.moduleConfig(mod))...)
 		}
 	}
 

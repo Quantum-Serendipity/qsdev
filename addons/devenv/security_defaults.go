@@ -12,72 +12,11 @@ import (
 	"github.com/Quantum-Serendipity/qsdev/pkg/types"
 )
 
-// defaultUnsetEnvVars returns the canonical list of credential-bearing
-// environment variables stripped from the devenv shell.
-func defaultUnsetEnvVars() []string {
-	cat, err := catalog.Default()
-	if err != nil {
-		return nil
-	}
-	return cat.UnsetVars()
-}
-
-// defaultSecurityHooks returns the built-in git-hooks.nix hooks that are
-// always enabled for security scanning.
-func defaultSecurityHooks() []string {
-	cat, err := catalog.Default()
-	if err != nil {
-		return nil
-	}
-	return cat.SecurityHooks()
-}
-
-// defaultBasePackages returns the minimal set of packages always included.
-func defaultBasePackages() []string {
-	cat, err := catalog.Default()
-	if err != nil {
-		return nil
-	}
-	return cat.BasePackages()
-}
-
-// defaultCleanKeep returns the allowlist of environment variables that pass
-// through when clean.enabled is true.
-func defaultCleanKeep() []string {
-	cat, err := catalog.Default()
-	if err != nil {
-		return nil
-	}
-	return cat.KeepVars()
-}
-
-// defaultToolNixPackages returns the tool→Nix package map from the catalog.
-func defaultToolNixPackages() map[string]string {
-	cat, err := catalog.Default()
-	if err != nil {
-		return nil
-	}
-	return cat.ToolNixPackages()
-}
-
-// defaultToolNixExprs returns the tool→Nix expression map from the catalog.
-func defaultToolNixExprs() map[string]string {
-	cat, err := catalog.Default()
-	if err != nil {
-		return nil
-	}
-	return cat.ToolNixExprs()
-}
-
-// defaultSpecializedHooks returns the specialized custom security hooks that
-// are always present. These use custom Nix expressions for advanced checks.
-// lockFiles are the project's ecosystem lock files, which lock-file-audit
-// watches in addition to the Nix lock files the catalog lists.
-func defaultSpecializedHooks(lockFiles []string) []CustomHookData {
-	cat, err := catalog.Default()
-	if err != nil {
-		return nil
-	}
+// specializedHooks returns the catalog's specialized custom security hooks,
+// which are always present. These use custom Nix expressions for advanced
+// checks. lockFiles are the project's ecosystem lock files, which
+// lock-file-audit watches in addition to the Nix lock files the catalog lists.
+func specializedHooks(cat *catalog.Catalog, lockFiles []string) []CustomHookData {
 	defs := cat.CustomHooks()
 
 	hooks := make([]CustomHookData, 0, len(defs))

@@ -90,3 +90,20 @@ func TestPrerequisiteResult_PrintReport_WithVersion(t *testing.T) {
 		t.Errorf("PrintReport should include version string, got: %s", output)
 	}
 }
+
+func TestPrerequisiteResult_HasMissing_BelowFloor(t *testing.T) {
+	result := PrerequisiteResult{
+		Tools: []PrerequisiteStatus{
+			{Name: "git", Found: true, Required: true},
+			{Name: "devenv", Found: true, Required: true, Version: "1.4.1", MinVersion: "2.1"},
+		},
+	}
+	if !result.HasMissing() {
+		t.Error("HasMissing() = false, want true when a required tool is below its floor")
+	}
+	var buf bytes.Buffer
+	result.PrintReport(&buf)
+	if !strings.Contains(buf.String(), "below minimum 2.1 (1.4.1)") {
+		t.Errorf("PrintReport should say devenv is below its minimum, got: %s", buf.String())
+	}
+}

@@ -47,7 +47,7 @@ func TestClaudeInit_NestedRepoWritesToCwd(t *testing.T) {
 	if err := os.Mkdir(filepath.Join(ancestor, ".git"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	chdir(t, ancestor)
+	t.Chdir(ancestor)
 	mustRunClaude(t, "init", "--yes")
 
 	sub := filepath.Join(ancestor, "sub")
@@ -57,7 +57,7 @@ func TestClaudeInit_NestedRepoWritesToCwd(t *testing.T) {
 	}
 	before := snapshotTree(t, ancestor, sub)
 
-	chdir(t, nested)
+	t.Chdir(nested)
 	mustRunClaude(t, "init", "--yes", "--force")
 
 	for _, path := range []string{filepath.Join(nested, filepath.FromSlash(settingsRel)), answers.PrimaryPath(nested)} {

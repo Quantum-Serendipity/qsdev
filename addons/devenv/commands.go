@@ -102,6 +102,8 @@ func initCmd() *cobra.Command {
 				}
 			}
 
+			PrintProjectDefaults(cmd.OutOrStdout())
+
 			// Detect project characteristics.
 			detected := detect.Detect(cmd.Context(), projectRoot)
 
@@ -477,30 +479,9 @@ func languageSpec(add bool) itemSpec {
 			}
 			return nil
 		},
-		contains: func(a *types.WizardAnswers, name string) bool {
-			for _, lang := range a.Languages {
-				if lang.Name == name {
-					return true
-				}
-			}
-			return false
-		},
-		add: func(a *types.WizardAnswers, name string) {
-			a.Languages = append(a.Languages, types.LanguageChoice{Name: name})
-		},
-		remove: func(a *types.WizardAnswers, name string) bool {
-			found := false
-			var kept []types.LanguageChoice
-			for _, lang := range a.Languages {
-				if lang.Name == name {
-					found = true
-				} else {
-					kept = append(kept, lang)
-				}
-			}
-			a.Languages = kept
-			return found
-		},
+		contains: func(a *types.WizardAnswers, name string) bool { return a.HasLanguage(name) },
+		add:      func(a *types.WizardAnswers, name string) { a.AddLanguage(name) },
+		remove:   func(a *types.WizardAnswers, name string) bool { return a.RemoveLanguage(name) },
 	}
 	if add {
 		s.use = "add-language <name>"
@@ -654,6 +635,7 @@ func regenerateAndPersist(cmd *cobra.Command, answers types.WizardAnswers, opts 
 	if err := settleAgainstCommitted(cmd.ErrOrStderr(), opts.projectRoot, &answers); err != nil {
 		return nil, err
 	}
+	PrintProjectDefaults(cmd.OutOrStdout())
 	registry := ecosystem.DefaultRegistry()
 	gen := NewDevenvGenerator(registry, WithProfileRegistry(profile.DefaultProfileRegistry()))
 	files, err := gen.Generate(answers)

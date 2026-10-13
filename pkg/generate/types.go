@@ -91,7 +91,7 @@ func (r WriteResult) Summary() string {
 			fmt.Fprintf(&b, "\n  FAILED %s: %v", fr.Path, fr.Error)
 		case fr.Action == ActionKept:
 			fmt.Fprintf(&b, "\n  kept existing %s (never overwritten); delete it to use the generated version", fr.Path)
-		case fr.SidecarPath != "":
+		case fr.SidecarPath != "" && fr.Note == "":
 			fmt.Fprintf(&b, "\n  %s has local changes; merge %s into it manually", fr.Path, fr.SidecarPath)
 		}
 		if fr.Note != "" {

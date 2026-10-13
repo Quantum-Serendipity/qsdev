@@ -59,7 +59,7 @@ func isolateLogging(t *testing.T) string {
 // directory, changes into the sub directory and returns the project root.
 func chdirProject(t *testing.T) string {
 	t.Helper()
-	proj := testutil.MarkerFreeTempDir(t)
+	proj := testutil.IsolatedDir(t)
 	if err := os.WriteFile(filepath.Join(proj, branding.Get().ConfigFile), []byte("version: 1\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -120,7 +120,7 @@ func TestInitLogging_ProfileSelectsTier(t *testing.T) {
 	// Outside a project the interactive and hook tiers fall back to the
 	// global tier.
 	t.Run("outside a project", func(t *testing.T) {
-		t.Chdir(testutil.MarkerFreeTempDir(t))
+		t.Chdir(testutil.IsolatedDir(t))
 		for args, want := range map[string]string{
 			"interactive":    global,
 			"automated-hook": filepath.Join(global, logging.AutomatedLogSubdir),
@@ -199,7 +199,7 @@ func TestUpdateCheckSkippedForHookAndMCPProfiles(t *testing.T) {
 	t.Setenv("HOME", home)
 	t.Setenv("USERPROFILE", home)
 	writeUpdateCache(t, home, time.Now().UTC())
-	t.Chdir(testutil.MarkerFreeTempDir(t))
+	t.Chdir(testutil.IsolatedDir(t))
 
 	for _, tt := range []struct {
 		profile   cmdutil.Profile
@@ -240,7 +240,7 @@ func TestIgnoredMarkerNoticeInteractiveOnly(t *testing.T) {
 	}
 	isolateLogging(t)
 	b := branding.Get()
-	base := testutil.MarkerFreeTempDir(t)
+	base := testutil.IsolatedDir(t)
 	shared := filepath.Join(base, "shared")
 	victim := filepath.Join(shared, "victim")
 	if err := os.MkdirAll(filepath.Join(shared, b.StateDir), 0o755); err != nil {
@@ -338,7 +338,7 @@ func TestLegacyLogsMigratedForHumanProfilesOnly(t *testing.T) {
 			if err := os.WriteFile(filepath.Join(legacyLogs, "old.jsonl"), []byte("{}\n"), 0o600); err != nil {
 				t.Fatal(err)
 			}
-			t.Chdir(testutil.MarkerFreeTempDir(t))
+			t.Chdir(testutil.IsolatedDir(t))
 
 			rt := &Runtime{}
 			rt.initCommand(profileTree(), []string{string(tt.profile)}, io.Discard, false)
@@ -374,7 +374,7 @@ func TestLegacyLogsMigratedAfterHookRun(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(legacyLogs, "old.jsonl"), []byte("{}\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	t.Chdir(testutil.MarkerFreeTempDir(t))
+	t.Chdir(testutil.IsolatedDir(t))
 	stateLogs := filepath.Join(state, b.AppName, "logs")
 
 	hook := &Runtime{}

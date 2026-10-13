@@ -443,6 +443,8 @@ func TestPreCommitHooks_OpenTofu(t *testing.T) {
 // read-only plan/validate runs stay allowed.
 func TestDenyRules(t *testing.T) {
 	t.Parallel()
+	// Every command is written for terraform and asserted for both binaries
+	// (iacBinaries) under both variants.
 	denied := []string{
 		"terraform init",
 		"terraform init -upgrade",
@@ -463,9 +465,21 @@ func TestDenyRules(t *testing.T) {
 		"terraform -chdir=infra output -raw db_password",
 		"terraform show -json",
 		"terraform show -no-color -json plan.out",
-		"tofu apply -auto-approve",
-		"tofu -chdir=infra destroy",
-		"tofu state pull",
+		// U11-09: tests can create real resources, refresh rewrites state,
+		// taint/untaint mutate it, console evaluates against state, login
+		// and logout handle registry tokens.
+		"terraform test",
+		"terraform -chdir=infra test",
+		"terraform refresh",
+		"terraform taint aws_instance.x",
+		"terraform untaint aws_instance.x",
+		"terraform console",
+		"terraform login",
+		"terraform logout",
+		"terraform state replace-provider a b",
+		"terraform workspace delete prod",
+		"terraform -chdir=infra workspace delete prod",
+		"env TF_LOG=debug terraform test",
 	}
 	allowed := []string{
 		"terraform plan",
@@ -476,21 +490,26 @@ func TestDenyRules(t *testing.T) {
 		"terraform fmt -check -recursive",
 		"terraform state list",
 		"terraform show",
-		"tofu -chdir=infra validate",
+		"terraform -chdir=infra validate",
+		"terraform workspace select dev",
+		"terraform workspace new dev",
+		"terraform plan -refresh=false",
+		"terraform fmt",
 	}
 	for _, variant := range []string{"terraform", "opentofu"} {
 		rules := newModule().DenyRules(ecosystem.ModuleConfig{Extras: map[string]string{"variant": variant}})
-		matches := func(cmd string) bool {
-			return slices.ContainsFunc(rules, func(r string) bool { return denyutil.MatchesBashRule(r, cmd) })
-		}
-		for _, cmd := range denied {
-			if !matches(cmd) {
-				t.Errorf("variant %s: no deny rule blocks %q", variant, cmd)
+		for _, bin := range []string{"terraform", "tofu"} {
+			for _, cmd := range denied {
+				cmd = strings.Replace(cmd, "terraform", bin, 1)
+				if _, ok := denyutil.FirstMatch(rules, "Bash("+cmd+")"); !ok {
+					t.Errorf("variant %s: no deny rule blocks %q", variant, cmd)
+				}
 			}
-		}
-		for _, cmd := range allowed {
-			if matches(cmd) {
-				t.Errorf("variant %s: deny rules over-block %q", variant, cmd)
+			for _, cmd := range allowed {
+				cmd = strings.Replace(cmd, "terraform", bin, 1)
+				if rule, ok := denyutil.FirstMatch(rules, "Bash("+cmd+")"); ok {
+					t.Errorf("variant %s: deny rule %q over-blocks %q", variant, rule, cmd)
+				}
 			}
 		}
 	}

@@ -31,7 +31,7 @@ linters:
       # Only process entrypoints decide the exit code.
       - linters:
           - forbidigo
-        path: ^(cmd|instance|internal/selfupdate/internal/gentrustedroot|internal/cigeneration/cmd/syncpins)/
+        path: ^(cmd|instance|internal/selfupdate/internal/gentrustedroot|internal/cigeneration/cmd/syncpins|internal/testutil/cmd/skipreport)/
         text: "os\\.Exit"
   settings:
     depguard:

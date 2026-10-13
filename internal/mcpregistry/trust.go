@@ -84,18 +84,15 @@ func LaunchVariants(def catalog.MCPServerDef) []LaunchSpec {
 }
 
 // TrustedDefinitions returns the server definitions qsdev itself vouches for,
-// keyed by server name: every LaunchVariants of the embedded catalog plus the
-// user's organization overlay, followed by extra (the servers configured into
-// the binary). The project catalog overlay is deliberately excluded — like
-// .mcp.json, it is repository content. A catalog that fails to load
-// contributes nothing, so its servers are treated as untrusted.
+// keyed by server name: every LaunchVariants of the user-scope catalog
+// (catalog.LoadUserScope: the embedded catalog plus the user's organization
+// overlay), followed by extra (the servers configured into the binary). The
+// project catalog overlay is deliberately excluded — like .mcp.json, it is
+// repository content. An org overlay that fails to load contributes nothing,
+// so its servers are treated as untrusted.
 func TrustedDefinitions(extra map[string][]LaunchSpec) map[string][]LaunchSpec {
 	trusted := make(map[string][]LaunchSpec)
-	var opts []catalog.LoadOption
-	if org := catalog.PolicyOrgConfigFile(); org != "" {
-		opts = append(opts, catalog.WithOrgConfigFile(org))
-	}
-	if cat, err := catalog.Load(opts...); err == nil {
+	if cat, err := catalog.LoadUserScope(); err == nil {
 		for name, def := range cat.MCPServers() {
 			trusted[name] = LaunchVariants(def)
 		}

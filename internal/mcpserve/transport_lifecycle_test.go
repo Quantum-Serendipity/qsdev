@@ -60,7 +60,7 @@ func TestServeHTTPShutdownWithOpenStream(t *testing.T) {
 	defer cancel()
 
 	serveErr := make(chan error, 1)
-	go func() { serveErr <- srv.ServeHTTP(ctx, addr, nil) }()
+	go func() { serveErr <- srv.ServeHTTP(ctx, addr, nil, nil) }()
 
 	url := "http://" + addr + mcpEndpointPath
 	waitForHTTP(t, url)
@@ -120,7 +120,7 @@ func TestHTTPHandlerCapsRequestBody(t *testing.T) {
 			})
 			req := httptest.NewRequest(http.MethodPost, mcpEndpointPath, bytes.NewReader(make([]byte, tt.size)))
 			req.Host = "127.0.0.1:8765"
-			httpHandler(inner, nil).ServeHTTP(httptest.NewRecorder(), req)
+			httpHandler(inner, nil, "").ServeHTTP(httptest.NewRecorder(), req)
 
 			var maxErr *http.MaxBytesError
 			if got := errors.As(readErr, &maxErr); got != tt.wantErr {

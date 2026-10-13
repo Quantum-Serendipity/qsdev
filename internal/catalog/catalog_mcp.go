@@ -51,6 +51,22 @@ func (c *Catalog) AlwaysOnMCPServers() []string {
 	return slices.Compact(out)
 }
 
+// MCPServeOptIns is the mcp_serve section of the user's org overlay: the
+// operator's opt-ins for the MCP server tools that start processes
+// (qsdev_nix_run) or hand out credentials (qsdev_credential_vend). The
+// embedded defaults leave both off, and a project defaults file cannot set
+// the section, so a repository can never opt itself in. Read it from
+// LoadUserScope.
+type MCPServeOptIns struct {
+	AllowNixRun         bool `yaml:"allow_nix_run"`
+	AllowCredentialVend bool `yaml:"allow_credential_vend"`
+}
+
+// MCPServeOptIns returns the catalog's mcp_serve opt-ins.
+func (c *Catalog) MCPServeOptIns() MCPServeOptIns {
+	return c.mcpServe
+}
+
 // --- Bootstrap tool accessors ---
 
 // BootstrapToolClaudeCode is the bootstrap_tools entry that pins the Claude

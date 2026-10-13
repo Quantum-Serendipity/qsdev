@@ -394,35 +394,37 @@ func (c *Catalog) validatePresetStrictness() []CatalogError {
 }
 
 // validateComplianceHooks checks that each compliance level's required
-// pre-commit hooks name a known pre-commit hook (security_hooks, hook_tiers
-// or custom_hooks) or a known tool.
+// pre-commit hooks are a known tool or an always-on hook (security_hooks or
+// custom_hooks). Those are the only sources devenv.nix always renders:
+// hook_tiers membership filters hooks by security level but never renders
+// one, so a required hook found only there would never run.
 func (c *Catalog) validateComplianceHooks() []CatalogError {
 	var errs []CatalogError
 
-	known := make(map[string]bool)
+	alwaysOn := make(map[string]bool)
 	for _, h := range c.security.Hooks.Default {
-		known[h] = true
-	}
-	for _, hooks := range c.hookTiers.Tiers {
-		for _, h := range hooks {
-			known[h] = true
-		}
+		alwaysOn[h] = true
 	}
 	for _, h := range c.security.CustomHooks {
-		known[h.ID] = true
+		alwaysOn[h.ID] = true
 	}
-	for name := range c.tools.Tools {
-		known[name] = true
+	tiered := make(map[string]bool)
+	for _, hooks := range c.hookTiers.Tiers {
+		for _, h := range hooks {
+			tiered[h] = true
+		}
 	}
 
-	for level, def := range c.compliance.Levels {
-		for _, hook := range def.RequiredPreCommitHooks {
-			if !known[hook] {
-				errs = append(errs, CatalogError{
-					"compliance.yaml", level + ".required_pre_commit_hooks",
-					fmt.Sprintf("references unknown hook or tool %q", hook),
-				})
+	for _, level := range slices.Sorted(maps.Keys(c.compliance.Levels)) {
+		for _, hook := range c.compliance.Levels[level].RequiredPreCommitHooks {
+			if _, isTool := c.tools.Tools[hook]; isTool || alwaysOn[hook] {
+				continue
 			}
+			msg := fmt.Sprintf("references unknown hook or tool %q", hook)
+			if tiered[hook] {
+				msg = fmt.Sprintf("hook %q is only in hook_tiers, which never enables a hook; add it to security_hooks or custom_hooks", hook)
+			}
+			errs = append(errs, CatalogError{"compliance.yaml", level + ".required_pre_commit_hooks", msg})
 		}
 	}
 

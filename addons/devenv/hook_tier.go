@@ -15,12 +15,12 @@ import (
 // hook no tier lists run at every level, so an uncatalogued hook, such as a
 // new ecosystem security scanner, is never silently removed.
 
-// FilterHooksByTier returns hooks without the ones the catalog assigns to a
-// tier above the given one, keeping their order. An empty tier keeps every
-// hook. It fails closed: an unknown tier, or a catalog that cannot be loaded,
-// is an error rather than a guess at which hooks to keep.
-func FilterHooksByTier(hooks []string, tier string) ([]string, error) {
-	keep, err := hookTierFilter(tier)
+// FilterHooksByTier returns hooks without the ones cat assigns to a tier
+// above the given one, keeping their order. An empty tier keeps every hook.
+// It fails closed: an unknown tier is an error rather than a guess at which
+// hooks to keep.
+func FilterHooksByTier(cat *catalog.Catalog, hooks []string, tier string) ([]string, error) {
+	keep, err := hookTierFilter(cat, tier)
 	if err != nil {
 		return nil, err
 	}
@@ -35,19 +35,15 @@ func FilterHooksByTier(hooks []string, tier string) ([]string, error) {
 }
 
 // hookTierFilter returns a predicate that reports whether the hook with the
-// given ID runs at the strictest of levels. Empty levels are ignored, and
-// with none left every hook runs. BuildDevenvNixData passes both the answers'
+// given ID runs at the strictest of levels, as cat tiers the hooks. Empty
+// levels are ignored, and with none left every hook runs. BuildDevenvNixData passes both the answers'
 // HookTier and ComplianceLevel: HookTier is set from the effective security
 // level when answers come from .qsdev.yaml, ComplianceLevel is the floor on
 // every path, and the stricter of the two can only keep more hooks.
-func hookTierFilter(levels ...string) (func(id string) bool, error) {
+func hookTierFilter(cat *catalog.Catalog, levels ...string) (func(id string) bool, error) {
 	levels = slices.DeleteFunc(slices.Clone(levels), func(l string) bool { return l == "" })
 	if len(levels) == 0 {
 		return func(string) bool { return true }, nil
-	}
-	cat, err := catalog.Default()
-	if err != nil {
-		return nil, fmt.Errorf("loading hook tiers from catalog: %w", err)
 	}
 	above, err := hooksAboveTier(cat.HookTierOrder(), cat.HookTiers(), levels)
 	if err != nil {

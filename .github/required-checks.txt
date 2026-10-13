@@ -1,0 +1,15 @@
+# Check runs every commit must pass before it can be released, one name per
+# line: the status-check contexts branch protection requires on main.
+# scripts/verify-ci.sh, run by release.yml's verify-ci job, fails the release
+# unless each one concluded success on the tag's commit. Only checks that run
+# on push to main belong here (TestRequiredChecksRunOnPushToMain): a
+# pull_request-only check never runs on the tag's commit.
+test (ubuntu-latest)
+test (macos-latest)
+test (windows-latest)
+lint
+vulncheck
+nix-sandbox
+snapshot
+install-scripts (ubuntu-latest, bash scripts/install.sh --dry-run)
+install-scripts (windows-latest, pwsh scripts/install.ps1 -DryRun)

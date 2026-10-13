@@ -114,6 +114,13 @@ var envHints = []cloudcommon.EnvVarHint{
 const gkeAuthPluginExpr = "(pkgs.google-cloud-sdk.withExtraComponents " +
 	"[ pkgs.google-cloud-sdk.components.gke-gcloud-auth-plugin ])"
 
+// KeepEnvVars returns the envHints names, which devenv.yaml clean.keep passes
+// through from the user's shell. They select a configuration and project
+// and carry no credential.
+func (m *Module) KeepEnvVars() []string {
+	return cloudcommon.EnvHintNames(envHints)
+}
+
 // DevenvNixFragment returns the Nix code fragment to include in devenv.nix
 // for GCP. It documents the per-project environment variables without setting
 // them (see cloudcommon.EnvGuidanceFragment) and, with

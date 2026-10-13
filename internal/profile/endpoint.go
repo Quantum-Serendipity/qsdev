@@ -9,6 +9,7 @@ import (
 	"net/url"
 	"regexp"
 	"slices"
+	"strconv"
 	"strings"
 
 	"github.com/Quantum-Serendipity/qsdev/pkg/ecosystem"
@@ -80,15 +81,22 @@ func checkProxyPath(field, base, path string) error {
 }
 
 // checkEndpointURL validates a user-supplied endpoint URL: absolute, https
-// (plain http only to a loopback host), without embedded credentials, and
-// not an example/placeholder host.
+// (plain http only to a loopback host), with a port in 1-65535 when one is
+// given, without embedded credentials, and not an example/placeholder host.
+// The host is compared without the trailing dot of a fully qualified name
+// ("myorg.cachix.org."), which resolves to the same host.
 func checkEndpointURL(field, raw string) error {
 	u, err := url.Parse(raw)
 	if err != nil || u.Host == "" || (u.Scheme != "https" && u.Scheme != "http") {
 		return fmt.Errorf("%w: %s %q is not an absolute http(s) URL", ErrInvalidEndpoint, field, raw)
 	}
 	shown := u.Redacted() // never echo an embedded password
-	host := strings.ToLower(u.Hostname())
+	if port := u.Port(); port != "" {
+		if n, err := strconv.Atoi(port); err != nil || n < 1 || n > 65535 {
+			return fmt.Errorf("%w: %s %q has port %s outside 1-65535", ErrInvalidEndpoint, field, shown, port)
+		}
+	}
+	host := strings.TrimSuffix(strings.ToLower(u.Hostname()), ".")
 	if u.Scheme == "http" && !isLoopbackHost(host) {
 		return fmt.Errorf("%w: %s %q uses plain http to a non-local host; use https", ErrInvalidEndpoint, field, shown)
 	}
@@ -109,7 +117,6 @@ func checkEndpointURL(field, raw string) error {
 // (RFC 2606/6761): example.com/.net/.org and the .example, .invalid and .test
 // top-level domains.
 func isPlaceholderHost(host string) bool {
-	host = strings.TrimSuffix(host, ".")
 	for _, d := range []string{"example.com", "example.net", "example.org"} {
 		if host == d || strings.HasSuffix(host, "."+d) {
 			return true

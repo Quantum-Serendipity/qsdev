@@ -12,6 +12,7 @@ import (
 	"github.com/Quantum-Serendipity/qsdev/addons/claudecode"
 	qsdevconfig "github.com/Quantum-Serendipity/qsdev/internal/config"
 	"github.com/Quantum-Serendipity/qsdev/internal/state"
+	"github.com/Quantum-Serendipity/qsdev/internal/testutil"
 	"github.com/Quantum-Serendipity/qsdev/pkg/types"
 )
 
@@ -118,8 +119,8 @@ func addUserSettings(t *testing.T, path string) {
 // top-level init the claude addon has no state record for settings.json, and
 // `claude update` must still merge rather than overwrite user-owned keys.
 func TestUpdate_WithoutClaudeState_MergesUserSettings(t *testing.T) {
-	dir := t.TempDir()
-	chdir(t, dir)
+	dir := testutil.IsolatedDir(t)
+	t.Chdir(dir)
 	mustRunClaude(t, "init", "--yes", "--permission-preset", "standard")
 	if err := os.Remove(filepath.Join(dir, claudeStateRel)); err != nil {
 		t.Fatal(err)
@@ -143,8 +144,8 @@ func TestUpdate_WithoutClaudeState_MergesUserSettings(t *testing.T) {
 // TestRegen_MalformedSettingsNotOverwritten guards F517: a merge failure on
 // user content must fail the command and leave the file (and answers) alone.
 func TestRegen_MalformedSettingsNotOverwritten(t *testing.T) {
-	dir := t.TempDir()
-	chdir(t, dir)
+	dir := testutil.IsolatedDir(t)
+	t.Chdir(dir)
 	initFullTier(t, dir)
 	settings := filepath.Join(dir, settingsRel)
 	malformed := `{"env": {"MY_SECRET_ENDPOINT": "x"}, "permissions": {"allow": ["Bash(make:*)"],}}`
@@ -208,8 +209,8 @@ func TestRegen_RestoresTamperedGuardHook(t *testing.T) {
 	for _, args := range commands {
 		for _, how := range []string{"deleted", "neutered"} {
 			t.Run(args[0]+"/"+how, func(t *testing.T) {
-				dir := t.TempDir()
-				chdir(t, dir)
+				dir := testutil.IsolatedDir(t)
+				t.Chdir(dir)
 				initFullTier(t, dir)
 				guard := filepath.Join(dir, guardRel)
 				original := readFile(t, guard)
@@ -227,8 +228,8 @@ func TestRegen_RestoresTamperedGuardHook(t *testing.T) {
 	}
 
 	t.Run("unchanged files are not counted", func(t *testing.T) {
-		dir := t.TempDir()
-		chdir(t, dir)
+		dir := testutil.IsolatedDir(t)
+		t.Chdir(dir)
 		initFullTier(t, dir)
 		mustRunClaude(t, "update") // realize the raised tier
 		out := mustRunClaude(t, "update")
@@ -245,8 +246,8 @@ func TestRegen_RestoresTamperedGuardHook(t *testing.T) {
 // TestRegen_PreservesMcpLifecycleStateAndVersions guards F093: regenerations
 // must carry forward MCP lifecycle records and version stamps they do not own.
 func TestRegen_PreservesMcpLifecycleStateAndVersions(t *testing.T) {
-	dir := t.TempDir()
-	chdir(t, dir)
+	dir := testutil.IsolatedDir(t)
+	t.Chdir(dir)
 	initFullTier(t, dir)
 	stPath := filepath.Join(dir, claudeStateRel)
 
@@ -293,8 +294,8 @@ func TestRegen_PreservesMcpLifecycleStateAndVersions(t *testing.T) {
 // .claude/skills/<name>.md that qsdev did not generate (or that was edited) is
 // never deleted by an unrelated regeneration.
 func TestRegen_KeepsUnrecordedLegacyFlatSkill(t *testing.T) {
-	dir := t.TempDir()
-	chdir(t, dir)
+	dir := testutil.IsolatedDir(t)
+	t.Chdir(dir)
 	initFullTier(t, dir, "--skills", "review-pr")
 
 	legacy := filepath.Join(dir, ".claude", "skills", "review-pr.md")
@@ -316,8 +317,8 @@ func TestRegen_KeepsUnrecordedLegacyFlatSkill(t *testing.T) {
 // their change in the committed .qsdev.yaml, so a teammate's join generates
 // the same Claude Code configuration.
 func TestRegen_AddSkillRecordedInProjectConfig(t *testing.T) {
-	dir := t.TempDir()
-	chdir(t, dir)
+	dir := testutil.IsolatedDir(t)
+	t.Chdir(dir)
 	initFullTier(t, dir)
 	cfgPath := filepath.Join(dir, ".qsdev.yaml")
 	writeFile(t, cfgPath, "version: 1\nclaude_code:\n  enabled: true\n  permission_level: standard\n")

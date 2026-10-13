@@ -215,3 +215,42 @@ func TestToSandboxConfig_SkipsInvalidOverrideMounts(t *testing.T) {
 		t.Errorf("expected 1 valid extra mount, got %d: %v", len(cfg.Mounts), cfg.Mounts)
 	}
 }
+
+// TestValidateMountDecl_RejectsWritableGuardrail pins that a policy cannot
+// declare a writable mount on the project's control plane: the read-only
+// guardrail overlays would silently win, so the author is told instead. A
+// read-only mount of the same path changes nothing and stays allowed.
+func TestValidateMountDecl_RejectsWritableGuardrail(t *testing.T) {
+	t.Parallel()
+
+	in := func(rel string) string { return filepath.Join(testProjectDir, rel) }
+	tests := []struct {
+		name    string
+		mount   MountDecl
+		wantErr bool
+	}{
+		{"writable .claude", MountDecl{Source: in(".claude"), Target: in(".claude")}, true},
+		{"writable .git/hooks", MountDecl{Source: in(".git/hooks"), Target: in(".git/hooks")}, true},
+		{"writable target onto .envrc", MountDecl{Source: in("envrc.tmpl"), Target: in(".envrc")}, true},
+		{"writable source from .claude", MountDecl{Source: in(".claude/hooks"), Target: in("hooks")}, true},
+		{"read-only .claude", MountDecl{Source: in(".claude"), Target: in(".claude"), ReadOnly: true}, false},
+		{"read-only .git/hooks", MountDecl{Source: in(".git/hooks"), Target: in(".git/hooks"), ReadOnly: true}, false},
+		{"writable non-guardrail", MountDecl{Source: in(".cache"), Target: in(".cache")}, false},
+		{"writable sibling sharing a prefix", MountDecl{Source: in(".claude-old"), Target: in(".claude-old")}, false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			err := ValidateMountDecl(tt.mount, testProjectDir)
+			if tt.wantErr {
+				if err == nil || !strings.Contains(err.Error(), "guardrail") {
+					t.Fatalf("ValidateMountDecl = %v, want a guardrail rejection", err)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("ValidateMountDecl = %v, want nil", err)
+			}
+		})
+	}
+}

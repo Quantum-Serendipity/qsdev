@@ -12,6 +12,8 @@ import (
 
 	"github.com/Quantum-Serendipity/qsdev/internal/mcpserve/spi"
 	"github.com/Quantum-Serendipity/qsdev/internal/mcpserve/tools/toolutil"
+	"github.com/Quantum-Serendipity/qsdev/internal/selfprotect/cmdscan"
+	"github.com/Quantum-Serendipity/qsdev/pkg/denyutil"
 )
 
 // defaultNixRunTimeout bounds a nix_run invocation when the caller omits timeout.
@@ -81,14 +83,64 @@ func (c *cappedBuffer) String() string { return c.buf.String() }
 // so that, on timeout or cancellation, the entire group (including orphaned nix
 // build children) is killed rather than leaked. nix runs in projectRoot, so a
 // local installable such as "." or ".#pkg" names the project's own flake.
+//
+// Each call is held to policy as the Bash command lines it is equivalent to
+// (see cmdscan.NixRunCommandLines), so the tool cannot run what a Bash call
+// may not.
 type nixRunner struct {
 	projectRoot string
+	policy      NixRunPolicy
 }
 
-func newNixRunner(projectRoot string) *nixRunner { return &nixRunner{projectRoot: projectRoot} }
+// NixRunPolicy is what qsdev_nix_run holds each call to, as the Bash command
+// lines it is equivalent to (cmdscan.NixRunCommandLines). Every check runs
+// before nix is looked up, so a refusal is deterministic and starts nothing.
+type NixRunPolicy struct {
+	// DenyRules are the Bash deny rules; one matching any line refuses the
+	// call.
+	DenyRules []string
+	// AskRules are the Bash ask rules (package installs among them). One
+	// matching a line other than the literal `nix run` one, which
+	// `Bash(nix run *)` always asks for and the client's prompt for the tool
+	// stands in for, refuses the call: the server cannot ask anyone.
+	AskRules []string
+	// Judge returns the self-protection verdict on one line as a Bash call
+	// (the rule and reason when it is denied). Nil refuses every call, so a
+	// server that forgot to set it fails closed.
+	Judge func(line string) (rule, reason string, denied bool)
+}
 
-// handle validates input, ensures nix is available, and runs the command in a
-// process group with a timeout. A missing nix binary degrades to not_configured.
+func newNixRunner(projectRoot string, policy NixRunPolicy) *nixRunner {
+	return &nixRunner{projectRoot: projectRoot, policy: policy}
+}
+
+// refusal returns why policy refuses a call equivalent to lines (lines[0]
+// being the literal `nix run` line), as the structured fields of the error
+// result, or nil when it allows the call.
+func (p NixRunPolicy) refusal(lines []string) (summary string, fields map[string]any) {
+	if rule, denied := denyutil.FirstMatchingBashRule(p.DenyRules, lines...); denied {
+		return "refused by a Bash deny rule", map[string]any{"deny_rule": rule}
+	}
+	if len(lines) > 1 {
+		if rule, asked := denyutil.FirstMatchingBashRule(p.AskRules, lines[1:]...); asked {
+			return "refused: a Bash call would need approval (an ask rule); run it through Bash",
+				map[string]any{"ask_rule": rule}
+		}
+	}
+	if p.Judge == nil {
+		return "refused: no self-protection check is configured", map[string]any{}
+	}
+	for _, line := range lines {
+		if rule, reason, denied := p.Judge(line); denied {
+			return "refused by self-protection", map[string]any{"selfprotect_rule": rule, "reason": reason, "line": line}
+		}
+	}
+	return "", nil
+}
+
+// handle validates input, holds it to the policy, ensures nix
+// is available, and runs the command in a process group with a timeout. A
+// missing nix binary degrades to not_configured.
 func (n *nixRunner) handle(ctx context.Context, _ *spi.ToolCallContext, req *spi.ToolRequest) (*spi.ToolResult, error) {
 	command, ok := toolutil.StringArg(req.Arguments, "command")
 	if !ok || command == "" {
@@ -101,14 +153,20 @@ func (n *nixRunner) handle(ctx context.Context, _ *spi.ToolCallContext, req *spi
 		return toolutil.ErrorResult("rejected nix installable",
 			map[string]any{"command": command, "reason": reason}), nil
 	}
+	extraArgs := toolutil.StringSliceArg(req.Arguments, "args")
+	stdin := toolutil.StringArgOr(req.Arguments, "stdin", "")
+	// The policy check, like the installable policy, runs before nix is
+	// looked up, so a refusal is deterministic and never starts anything.
+	if summary, fields := n.policy.refusal(cmdscan.NixRunCommandLines(command, extraArgs, stdin)); fields != nil {
+		fields["command"], fields["args"] = command, extraArgs
+		return toolutil.ErrorResult(summary, fields), nil
+	}
 	if _, err := exec.LookPath("nix"); err != nil {
 		return toolutil.NotConfigured("nix is not installed or not on PATH",
 			map[string]any{"error": err.Error(), "remediation": "install Nix or enter the devenv shell"}), nil
 	}
 
 	timeout, clamped := nixRunTimeout(req.Arguments)
-	extraArgs := toolutil.StringSliceArg(req.Arguments, "args")
-	stdin := toolutil.StringArgOr(req.Arguments, "stdin", "")
 
 	// argv is an explicit argument array (never a shell string), so user-supplied
 	// command/args cannot be interpreted by a shell. command is guaranteed to be

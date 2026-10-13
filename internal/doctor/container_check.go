@@ -34,7 +34,8 @@ type ContainerCheckItem struct {
 // capabilities relevant to the project at projectRoot, and returns a
 // ContainerSection for the doctor report. Returns nil when no container
 // runtime is installed; an installed but unusable runtime is reported through
-// the section's warnings.
+// the section's warnings. The project-scoped NFS item is left out when
+// projectRoot is "" (not inside a project).
 func RunContainerCheck(ctx context.Context, prober container.Prober, osInfo *sysinfo.OSInfo, projectRoot string) *ContainerSection {
 	info, err := container.Detect(ctx, prober)
 	if err != nil {
@@ -75,7 +76,9 @@ func RunContainerCheck(ctx context.Context, prober container.Prober, osInfo *sys
 	cs.Items = append(cs.Items, buildCgroupsItem(caps))
 	cs.Items = append(cs.Items, buildUserNSItem(caps, rootless, osInfo))
 	cs.Items = append(cs.Items, buildGPUItem(caps, rootless))
-	cs.Items = append(cs.Items, buildNFSItem(caps, rootless))
+	if projectRoot != "" { // NFS overlap is a property of the project tree
+		cs.Items = append(cs.Items, buildNFSItem(caps, rootless))
+	}
 
 	// Warnings from NeedsRootfulFallback when Podman rootless.
 	if rootless {

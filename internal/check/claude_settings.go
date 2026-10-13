@@ -463,10 +463,15 @@ func checkLocalOverride(projectRoot, userDir string, project claudesettings.Sett
 		add(StatusWarn, SeverityMedium, fmt.Sprintf("sets %s.%s to %q; the committed settings require %q",
 			claudesettings.KeyPermissions, claudesettings.KeyDisableBypassPermissionsMode, eff.DisableBypassPermissionsMode, wantBypass))
 	}
+	// Env names are case-insensitive on Windows, so any spelling of a policy
+	// variable can override it there; every spelling is flagged on every OS.
+	localKeys := slices.Sorted(maps.Keys(local.Env))
 	for _, key := range slices.Sorted(maps.Keys(wantEnv)) {
-		if got, ok := local.Env[key]; ok && got != wantEnv[key] {
-			add(StatusWarn, SeverityMedium, fmt.Sprintf("sets %s %s to %q; the committed hook policy sets it to %q",
-				claudesettings.KeyEnv, key, got, wantEnv[key]))
+		for _, k := range localKeys {
+			if got := local.Env[k]; strings.EqualFold(k, key) && got != wantEnv[key] {
+				add(StatusWarn, SeverityMedium, fmt.Sprintf("sets %s %s to %q; the committed hook policy sets %s to %q",
+					claudesettings.KeyEnv, k, got, key, wantEnv[key]))
+			}
 		}
 	}
 	for _, msg := range launchEnvOverrides(local.Env) {
@@ -595,8 +600,13 @@ type hookRun struct {
 // checkHookScripts), is built from any other expansion (including ~user), or
 // cannot be named is left out, as is every program of an unparseable
 // command. On Windows a POSIX absolute path is left out, as Git Bash maps it
-// into its own layer.
+// into its own layer. A command wrapped by claudesettings.FailClosedCommand
+// is scanned without the wrapper: it handles a failure by blocking every
+// matching call, not by letting the hook go without its program.
 func hookPrograms(projectRoot, command string) []hookRun {
+	if inner, ok := claudesettings.FailClosedInner(command); ok {
+		command = inner
+	}
 	s := hookScan{projectRoot: projectRoot, funcs: map[string]bool{}, dir: projectRoot}
 	s.scan(command, 0)
 	return s.runs

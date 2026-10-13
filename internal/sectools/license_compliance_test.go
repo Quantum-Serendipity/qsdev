@@ -10,6 +10,7 @@ import (
 	"gopkg.in/yaml.v3"
 
 	"github.com/Quantum-Serendipity/qsdev/internal/sectools"
+	"github.com/Quantum-Serendipity/qsdev/internal/testutil"
 	"github.com/Quantum-Serendipity/qsdev/pkg/types"
 )
 
@@ -211,10 +212,7 @@ func TestGenerateScancodeYml_PassesRipsecrets(t *testing.T) {
 		}
 	}
 
-	bin, err := exec.LookPath("ripsecrets")
-	if err != nil {
-		t.Skip("ripsecrets not available")
-	}
+	bin := testutil.RequireTool(t, "ripsecrets", testutil.RequireSecTools)
 	path := filepath.Join(t.TempDir(), ".scancode.yml")
 	if err := os.WriteFile(path, f.Content, 0o644); err != nil {
 		t.Fatalf("writing policy: %v", err)

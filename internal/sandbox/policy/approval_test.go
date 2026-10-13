@@ -6,12 +6,13 @@ import (
 	"context"
 	"errors"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/Quantum-Serendipity/qsdev/internal/testutil"
 )
 
 // newPolicyDir writes policy.nix (and a shared.nix it may import) to a fresh
@@ -298,9 +299,7 @@ func TestNixEvalEnv_DropsNixPath(t *testing.T) {
 // read other files, the environment or URLs.
 func TestNixEval_RestrictedEvaluation(t *testing.T) {
 	t.Parallel()
-	if _, err := exec.LookPath("nix"); err != nil {
-		t.Skip("nix is not installed")
-	}
+	testutil.RequireTool(t, "nix", testutil.RequireNix)
 
 	secret := filepath.Join(t.TempDir(), "secret")
 	writePolicyFile(t, secret, "top secret")
@@ -345,9 +344,7 @@ func TestNixEval_RestrictedEvaluation(t *testing.T) {
 // inherited Nix configuration enables it. It uses t.Setenv, so it is not
 // parallel.
 func TestNixEval_UnsafeNativeCodeStaysOff(t *testing.T) {
-	if _, err := exec.LookPath("nix"); err != nil {
-		t.Skip("nix is not installed")
-	}
+	testutil.RequireTool(t, "nix", testutil.RequireNix)
 	t.Setenv("NIX_CONFIG", "allow-unsafe-native-code-during-evaluation = true")
 
 	policyPath := newPolicyDir(t)

@@ -15,15 +15,6 @@ func TestDenyRules_CommandForms(t *testing.T) {
 	t.Parallel()
 
 	rules := (&java.Module{}).DenyRules(ecosystem.ModuleConfig{PackageManager: "both"})
-	denied := func(cmd string) bool {
-		for _, r := range rules {
-			if denyutil.MatchesBashRule(r, cmd) {
-				return true
-			}
-		}
-		return false
-	}
-
 	for _, cmd := range []string{
 		"mvn dependency:get -Dartifact=evil:pkg:1.0",
 		"mvn dependency:copy -Dartifact=evil:pkg:1.0 -DoutputDirectory=lib",
@@ -35,7 +26,7 @@ func TestDenyRules_CommandForms(t *testing.T) {
 		"mvn dependency:resolve -U",
 		"./gradlew dependencies --configuration runtimeClasspath",
 	} {
-		if !denied(cmd) {
+		if _, ok := denyutil.FirstMatch(rules, "Bash("+cmd+")"); !ok {
 			t.Errorf("%q is not denied by %v", cmd, rules)
 		}
 	}
@@ -46,8 +37,8 @@ func TestDenyRules_CommandForms(t *testing.T) {
 		"./mvnw verify",
 		"./gradlew build",
 	} {
-		if denied(cmd) {
-			t.Errorf("%q is unexpectedly denied by %v", cmd, rules)
+		if rule, ok := denyutil.FirstMatch(rules, "Bash("+cmd+")"); ok {
+			t.Errorf("%q is unexpectedly denied by %q", cmd, rule)
 		}
 	}
 }

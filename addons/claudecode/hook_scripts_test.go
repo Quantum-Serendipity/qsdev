@@ -345,6 +345,42 @@ func TestBlockDestructive_WrapperIndirection(t *testing.T) {
 	}
 }
 
+// TestBlockDestructive_TimeoutDuration guards R1: timeout's DURATION is any
+// one word, not only one that starts with a digit. GNU timeout takes a
+// fraction, a sign, inf/infinity and leading blanks, and options may come
+// before it, so the command after it is judged in every shell tool.
+func TestBlockDestructive_TimeoutDuration(t *testing.T) {
+	t.Parallel()
+	env := []string{"CLAUDE_PROJECT_DIR=/qsdev-hook-test/project"}
+	cases := []struct {
+		command string
+		want    string
+	}{
+		{`timeout 5 rm -rf /`, "deny"},
+		{`timeout .5 rm -rf /`, "deny"},
+		{`timeout inf git push --force origin main`, "deny"},
+		{`timeout infinity git push --force origin main`, "deny"},
+		{`timeout +5 rm -rf /`, "deny"},
+		{`timeout ' 5' rm -rf /`, "deny"},
+		{`timeout -k 1 .1 rm -rf /`, "deny"},
+		{`timeout -v inf rm -rf /`, "deny"},
+		{`timeout inf ls`, "allow"},
+		{`timeout .5 git push origin main`, "allow"},
+	}
+	for _, tool := range []string{"Bash", "PowerShell", "Monitor"} {
+		for _, tc := range cases {
+			t.Run(tool+"/"+tc.command, func(t *testing.T) {
+				t.Parallel()
+				input := map[string]any{"command": tc.command, "description": "d"}
+				payload := map[string]any{"tool_name": tool, "tool_input": input}
+				if got := runHookScript(t, "block-destructive.py", payload, env...); got != tc.want {
+					t.Errorf("decision = %q, want %q", got, tc.want)
+				}
+			})
+		}
+	}
+}
+
 // TestBlockDestructive_SystemDirs pins that a recursive delete of a
 // top-level system directory is denied whatever HOME is (a temp dir, a root
 // container's /root, macOS /Users/..., Linux /home/...), directly or through

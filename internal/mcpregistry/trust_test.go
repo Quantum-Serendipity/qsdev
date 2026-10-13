@@ -149,13 +149,11 @@ func TestTrustedDefinitions_ExcludesProjectOverlay(t *testing.T) {
 	if err := os.WriteFile(projFile, []byte(projYAML), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	prevRoot := catalog.ProjectRoot()
-	catalog.SetProjectRoot(project)
 	catalog.ResetDefault()
-	t.Cleanup(func() {
-		catalog.SetProjectRoot(prevRoot)
-		catalog.ResetDefault()
-	})
+	t.Cleanup(catalog.ResetDefault)
+	if err := catalog.SetProjectRoot(project); err != nil {
+		t.Fatalf("SetProjectRoot: %v", err)
+	}
 
 	extra := map[string][]LaunchSpec{"bin-srv": {{Command: "bin-srv"}}}
 	trusted := TrustedDefinitions(extra)
@@ -168,6 +166,32 @@ func TestTrustedDefinitions_ExcludesProjectOverlay(t *testing.T) {
 	}
 	if !reflect.DeepEqual(trusted["bin-srv"], extra["bin-srv"]) {
 		t.Errorf("extra specs = %#v, want %#v", trusted["bin-srv"], extra["bin-srv"])
+	}
+	embedded, err := catalog.LoadEmbeddedOnly()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for name, def := range embedded.MCPServers() {
+		if !reflect.DeepEqual(trusted[name], LaunchVariants(def)) {
+			t.Errorf("%s specs = %#v, want LaunchVariants %#v", name, trusted[name], LaunchVariants(def))
+		}
+	}
+}
+
+// TestTrustedDefinitions_BrokenOrgOverlayKeepsEmbedded: TrustedDefinitions
+// reads the user scope through catalog.LoadUserScope, so a broken org overlay
+// drops only the overlay's servers; the embedded ones stay trusted.
+func TestTrustedDefinitions_BrokenOrgOverlayKeepsEmbedded(t *testing.T) {
+	org := filepath.Join(t.TempDir(), "org.yaml")
+	orgYAML := "mcp_servers:\n  orgsrv:\n    command: org-mcp\n    transport: stdio\nnot_a_section: 1\n"
+	if err := os.WriteFile(org, []byte(orgYAML), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv(branding.Get().EnvPrefix+"ORG_CONFIG", org)
+
+	trusted := TrustedDefinitions(nil)
+	if _, ok := trusted["orgsrv"]; ok {
+		t.Error("server from a broken org overlay is trusted")
 	}
 	embedded, err := catalog.LoadEmbeddedOnly()
 	if err != nil {

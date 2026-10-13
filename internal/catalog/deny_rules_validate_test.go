@@ -37,6 +37,70 @@ func TestEveryDenyRuleValidates(t *testing.T) {
 	}
 }
 
+// TestContainerEscape_HostRootMounts pins that the container_escape set
+// denies a host-root mount in every flag spelling (-v, -v=, glued -v,
+// --volume, --volume=), with or without a container path, and in the
+// path-normalized spellings of / (//, /., /./), for docker and podman alike,
+// while ordinary bind mounts stay allowed.
+func TestContainerEscape_HostRootMounts(t *testing.T) {
+	t.Parallel()
+	c, err := Default()
+	if err != nil {
+		t.Fatalf("loading catalog: %v", err)
+	}
+	rules := c.PermissionDenyRules("container_escape")
+	denied := []string{
+		"run -v /:/host alpine",
+		"run -v=/:/host alpine",
+		"run -v/:/host alpine",
+		"run --volume /:/host alpine",
+		"run --volume=/:/host alpine",
+		"run -v / alpine",
+		"run -v=/ alpine",
+		"run -v/ alpine",
+		"run --volume / alpine",
+		"run --volume=/ alpine",
+		"run -v //:/x alpine",
+		"run -v /.:/x alpine",
+		"run -v /./:/x alpine",
+		"run -v=//:/x alpine",
+		"run --volume //:/x alpine",
+		"run --volume=/.:/x alpine",
+		"run -v // alpine",
+		"run -v /. alpine",
+	}
+	allowed := []string{
+		"run -v ./data:/data alpine",
+		"run -v /srv/app:/app alpine",
+		"run -v=/srv/app:/app alpine",
+		"run --volume=/srv alpine",
+		"run -v /.cache:/cache alpine",
+		"run -v /data alpine",
+	}
+	matches := func(cmd string) (string, bool) {
+		for _, r := range rules {
+			if denyutil.MatchesBashRule(r, cmd) {
+				return r, true
+			}
+		}
+		return "", false
+	}
+	for _, cli := range []string{"docker", "podman"} {
+		for _, args := range denied {
+			cmd := cli + " " + args
+			if _, ok := matches(cmd); !ok {
+				t.Errorf("container_escape does not deny %q", cmd)
+			}
+		}
+		for _, args := range allowed {
+			cmd := cli + " " + args
+			if r, ok := matches(cmd); ok {
+				t.Errorf("container_escape rule %q unexpectedly denies %q", r, cmd)
+			}
+		}
+	}
+}
+
 // TestColonRules_MatchWhatTheyGuard pins each catalog rule that guards text
 // after a colon (deno npm:/jsr: specifiers, docker/podman host-root binds),
 // which once ended in the legacy ":*" and matched nothing. Every rule must be

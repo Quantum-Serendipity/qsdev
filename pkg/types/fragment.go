@@ -63,6 +63,7 @@ type FragmentEntry struct {
 	Strategy    MergeStrategy      // On-disk merge strategy for the resolved file.
 	Mode        os.FileMode        // File permission mode (0 = default 0o644).
 	Owner       string             // Tool owner for teardown tracking.
+	HeldWith    string             // Partner file of the resolved file; see GeneratedFile.HeldWith.
 	Provenance  FragmentProvenance // Metadata for the provenance ledger.
 }
 

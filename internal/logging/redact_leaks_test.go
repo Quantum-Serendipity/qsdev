@@ -9,6 +9,8 @@ import (
 	"net/url"
 	"strings"
 	"testing"
+
+	"github.com/Quantum-Serendipity/qsdev/internal/secrets/secretstest"
 )
 
 // secretLogValuer is a slog.LogValuer whose resolved value carries a secret.
@@ -239,11 +241,12 @@ func TestRedactString_PrivateKeyBlock(t *testing.T) {
 	t.Parallel()
 
 	const body = "MIIEowIBAAKCAQEAsecretbodyline"
-	tests := []struct {
+	type blockCase struct {
 		name  string
 		input string
 		keep  []string
-	}{
+	}
+	tests := []blockCase{
 		{
 			name:  "multi-line rsa",
 			input: "before\n-----BEGIN RSA PRIVATE KEY-----\n" + body + "\n-----END RSA PRIVATE KEY-----\nafter",
@@ -271,12 +274,29 @@ func TestRedactString_PrivateKeyBlock(t *testing.T) {
 			input: "-----BEGIN EC PRIVATE KEY-----\n" + body,
 		},
 	}
+	// Every canon header shape gets a full block (body redacted, surrounding
+	// text kept) and a header with no END (redacted through end of input).
+	for i, header := range secretstest.ValuePatternSamples()["private-key"] {
+		end := strings.Replace(header, "BEGIN", "END", 1)
+		tests = append(tests,
+			blockCase{
+				name:  fmt.Sprintf("canon header %d full block", i),
+				input: "log: " + header + "\n" + body + "\n" + end + " done",
+				keep:  []string{"log: ", " done"},
+			},
+			blockCase{
+				name:  fmt.Sprintf("canon header %d no end", i),
+				input: "log: " + header + "\n" + body + "\ntrailing line",
+				keep:  []string{"log: "},
+			},
+		)
+	}
 	r := NewRedactor()
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 			got := r.RedactString(tt.input)
-			if strings.Contains(got, body) || strings.Contains(got, "PRIVATE KEY") {
+			if strings.Contains(got, body) || strings.Contains(got, "PRIVATE KEY") || strings.Contains(got, "trailing line") {
 				t.Errorf("key material survived: %q", got)
 			}
 			for _, k := range tt.keep {

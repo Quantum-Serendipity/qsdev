@@ -3,10 +3,12 @@ package claudesettings
 import (
 	"cmp"
 	"encoding/json"
+	"math"
 	"path"
 	"regexp"
 	"regexp/syntax"
 	"slices"
+	"strconv"
 	"strings"
 )
 
@@ -60,6 +62,10 @@ const (
 // EnvShellPrefix is the env variable whose value Claude Code prepends to
 // every hook command: set, it decides whether the hook's own command runs.
 const EnvShellPrefix = "CLAUDE_CODE_SHELL_PREFIX"
+
+// EnvPackageGuardMinAgeDays is the env variable through which the package
+// guard hook receives its release-age window, in whole days.
+const EnvPackageGuardMinAgeDays = "PACKAGE_GUARD_MIN_AGE_DAYS"
 
 // launchEnvNames and launchEnvPrefixes name the env variables that decide
 // which program a hook command runs or what code it loads before the hook's
@@ -152,13 +158,13 @@ type Settings struct {
 	DisableBypassPermissionsMode string
 	DisableAllHooks              bool
 	Hooks                        map[string][]Matcher
-	// Env is the "env" object; a value that is not a string is kept as
-	// absent, since it cannot be the policy qsdev generated.
+	// Env is the "env" object, each value converted to the string Claude
+	// Code passes to hooks (see envString).
 	Env map[string]string
 	// Unloadable is why Claude Code applies none of this file, or "" when it
 	// loads it: a PreToolUse or PermissionRequest hook entry it cannot load
 	// (see unloadableHooks), such hooks declared outside "hooks" (see
-	// guardHooksOutsideHooks) or a posture key of the wrong type (see
+	// guardHooksOutsideHooks) or a value its settings schema rejects (see
 	// settingsSchemaProblem) makes it refuse the whole file, deny rules
 	// included. The other fields still hold what the file says.
 	Unloadable string
@@ -229,9 +235,7 @@ func Parse(data []byte) (Settings, error) {
 	env, _ := root[KeyEnv].(map[string]any)
 	s.Env = make(map[string]string, len(env))
 	for k, v := range env {
-		if str, ok := v.(string); ok {
-			s.Env[k] = str
-		}
+		s.Env[k] = envString(v)
 	}
 
 	rawHooks, hasHooks := root[KeyHooks]
@@ -366,6 +370,18 @@ func IsFailClosed(cmd string) bool {
 	return failClosedSuffixRe.MatchString(cmd)
 }
 
+// FailClosedInner returns the command FailClosedCommand wrapped, for any
+// owner, and false when cmd is not wrapped that way. The wrapper handles the
+// command's failure by blocking, so what it runs is the inner command's
+// programs.
+func FailClosedInner(cmd string) (string, bool) {
+	loc := failClosedSuffixRe.FindStringIndex(cmd)
+	if loc == nil {
+		return "", false
+	}
+	return cmd[:loc[0]], true
+}
+
 // programRe returns a pattern matching a hook command whose program is a
 // project hook script, capturing the script. Only the forms qsdev emits are
 // accepted: the script, addressed through the project-dir variable, may
@@ -483,4 +499,51 @@ func repeatsAssertion(re *syntax.Regexp) bool {
 		}
 	}
 	return slices.ContainsFunc(re.Sub, repeatsAssertion)
+}
+
+// envString returns the string Claude Code sets an "env" value to. Its
+// settings schema validates env values with z.coerce.string() (verified in
+// Claude Code 2.1.280), which applies JavaScript's String(v): a number, bool
+// or array is not rejected but converted, so {"X": 1} sets X to "1".
+func envString(v any) string {
+	switch v := v.(type) {
+	case string:
+		return v
+	case nil:
+		return "null"
+	case bool:
+		return strconv.FormatBool(v)
+	case float64:
+		return jsNumberString(v)
+	case []any:
+		// Array.prototype.toString: elements joined with ",", where null
+		// and undefined become "".
+		parts := make([]string, len(v))
+		for i, e := range v {
+			if e != nil {
+				parts[i] = envString(e)
+			}
+		}
+		return strings.Join(parts, ",")
+	default:
+		return "[object Object]"
+	}
+}
+
+// jsNumberString formats f as JavaScript's Number.prototype.toString does:
+// positional notation for magnitudes in [1e-6, 1e21), the shortest
+// round-tripping digits, and otherwise exponent notation without a padded
+// exponent ("1e+21", "1.5e-7"). JSON has no NaN or Infinity, so f is
+// finite.
+func jsNumberString(f float64) string {
+	if f == 0 {
+		return "0" // -0 included
+	}
+	if a := math.Abs(f); a >= 1e-6 && a < 1e21 {
+		return strconv.FormatFloat(f, 'f', -1, 64)
+	}
+	s := strconv.FormatFloat(f, 'e', -1, 64)
+	mant, exp, _ := strings.Cut(s, "e")
+	sign, digits := exp[:1], strings.TrimLeft(exp[1:], "0")
+	return mant + "e" + sign + digits
 }

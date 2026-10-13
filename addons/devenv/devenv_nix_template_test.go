@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/Quantum-Serendipity/qsdev/addons/devenv"
+	"github.com/Quantum-Serendipity/qsdev/internal/testutil"
 	"github.com/Quantum-Serendipity/qsdev/pkg/ecosystem"
 	"github.com/Quantum-Serendipity/qsdev/pkg/types"
 
@@ -82,10 +83,7 @@ func TestGenerateDevenvNix_Structure(t *testing.T) {
 // Nix and that escaped values and task scripts evaluate to what was intended.
 func TestGenerateDevenvNix_ParsesAndEvaluates(t *testing.T) {
 	t.Parallel()
-	nixInstantiate, err := exec.LookPath("nix-instantiate")
-	if err != nil {
-		t.Skip("nix-instantiate not available")
-	}
+	nixInstantiate := testutil.RequireTool(t, "nix-instantiate", testutil.RequireNix)
 	path := filepath.Join(t.TempDir(), "devenv.nix")
 	if err := os.WriteFile(path, []byte(renderFullDevenvNix(t)), 0o644); err != nil {
 		t.Fatal(err)
@@ -139,10 +137,7 @@ func TestGenerateDevenvNix_HaskellStackGHC(t *testing.T) {
 		}
 	}
 
-	nixInstantiate, err := exec.LookPath("nix-instantiate")
-	if err != nil {
-		t.Skip("nix-instantiate not available")
-	}
+	nixInstantiate := testutil.RequireTool(t, "nix-instantiate", testutil.RequireNix)
 	path := filepath.Join(t.TempDir(), "devenv.nix")
 	if err := os.WriteFile(path, got.Content, 0o644); err != nil {
 		t.Fatal(err)

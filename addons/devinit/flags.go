@@ -141,7 +141,7 @@ func RegisterInitFlags(cmd *cobra.Command, opts *InitOptions) {
 	cmd.Flags().StringVar(&opts.RegistryProxy, "registry-proxy", "", `Package registry proxy base URL (infrastructure.registry_proxy; "none" opts out)`)
 	cmd.Flags().StringVar(&opts.NixCache, "nix-cache", "", `Nix binary cache URL or Cachix cache name (infrastructure.nix_cache; "none" opts out)`)
 	cmd.Flags().StringVar(&opts.NixCachePublicKey, "nix-cache-public-key", "", "Nix binary cache public key, name:base64 (infrastructure.nix_cache_public_key)")
-	cmd.Flags().StringVar(&opts.Tier, "tier", "", tierFlagUsage())
+	cmd.Flags().StringVar(&opts.Tier, "tier", "", tierFlagStaticUsage)
 
 	// Claude Code flags.
 	cmd.Flags().BoolVar(&opts.ClaudeCode, "claude-code", true, "Enable Claude Code configuration")
@@ -180,14 +180,36 @@ func RegisterInitFlags(cmd *cobra.Command, opts *InitOptions) {
 	cmd.MarkFlagsMutuallyExclusive("tier", "infra-profile")
 }
 
+// tierFlagStaticUsage is the --tier usage registered with the flag. Building
+// the command tree must not load the catalog (see projectProfiles), so the
+// catalog's tiers are filled in only when help renders (describeTierOnHelp).
+const tierFlagStaticUsage = "Security tier (default: the catalog's default tier)"
+
 // tierFlagUsage describes --tier from the catalog: its tiers and the default
 // tier an unset flag resolves to (FillDefaults records it in .qsdev.yaml).
 func tierFlagUsage() string {
 	cat, err := catalog.Default()
 	if err != nil {
-		return "Security tier (default: the catalog's default tier)"
+		return tierFlagStaticUsage
 	}
 	return fmt.Sprintf("Security tier: %s (default: %s)", strings.Join(cat.TierOrder(), ", "), cat.DefaultTier())
+}
+
+// describeTierOnHelp makes cmd's help describe --tier from the catalog
+// (tierFlagUsage), then render as it otherwise would. Cobra renders help
+// without running the command's initializers, so the catalog loads here
+// without a project defaults layer, which cannot change the tier names.
+func describeTierOnHelp(cmd *cobra.Command) {
+	cmd.SetHelpFunc(func(c *cobra.Command, args []string) {
+		if f := c.Flags().Lookup("tier"); f != nil {
+			f.Usage = tierFlagUsage()
+		}
+		inherited := (&cobra.Command{}).HelpFunc()
+		if c.HasParent() {
+			inherited = c.Parent().HelpFunc()
+		}
+		inherited(c, args)
+	})
 }
 
 // AnswersFromFlags converts flag values into WizardAnswers.

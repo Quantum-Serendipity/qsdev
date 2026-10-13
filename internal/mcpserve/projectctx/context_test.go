@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -210,6 +211,29 @@ func TestDoctor(t *testing.T) {
 	}
 	if _, ok := structured["checks"]; !ok {
 		t.Errorf("doctor structured missing checks field")
+	}
+}
+
+// TestDoctor_HookProgramsRequired: the MCP doctor tool checks what the
+// project's Claude Code hooks need, like `qsdev devenv doctor`, so a hook
+// program missing from PATH fails it.
+func TestDoctor_HookProgramsRequired(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	dir, pc := newGoProject(t)
+	const missing = "qsdev-no-such-hook-tool"
+	writeFile(t, dir, ".claude/settings.json",
+		`{"hooks":{"PreToolUse":[{"matcher":"Bash","hooks":[{"type":"command","command":"`+missing+` --check"}]}]}}`)
+
+	res := callTool(t, pc, toolDoctor, nil)
+	structured, ok := res.Structured.(map[string]any)
+	if !ok {
+		t.Fatalf("doctor structured is %T, want map", res.Structured)
+	}
+	if structured["pass"] != false {
+		t.Errorf("pass = %v, want false with a hook program missing", structured["pass"])
+	}
+	if got, _ := structured["missing_required"].([]string); !slices.Contains(got, missing) {
+		t.Errorf("missing_required = %v, want it to name %s", structured["missing_required"], missing)
 	}
 }
 

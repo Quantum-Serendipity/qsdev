@@ -211,6 +211,13 @@ type GeneratedFile struct {
 	Strategy       MergeStrategy `yaml:"strategy"        json:"strategy"`
 	SkipValidation bool          `yaml:"skip_validation" json:"skip_validation"`
 	Owner          string        `yaml:"owner,omitempty" json:"owner,omitempty"`
+	// HeldWith names the generated file (project-relative path) this file
+	// must change together with. When that file is not written in place (its
+	// update is kept back, or left in a sidecar for manual merge), this file's
+	// new content goes to a sidecar too instead of replacing it: devenv.yaml
+	// declares the flake inputs devenv.nix's options read, so writing one
+	// without the other would split the pair.
+	HeldWith string `yaml:"-" json:"-"`
 	// BaseContent, when non-nil, is the generator's own output for a file
 	// whose Content holds the merged bytes written to disk. State recording
 	// keeps it as the three-way merge base instead of Content. Generators
@@ -268,6 +275,29 @@ func (a *WizardAnswers) IsComplete() bool {
 		return false
 	}
 	return true
+}
+
+// HasLanguage reports whether the named language is selected.
+func (a *WizardAnswers) HasLanguage(name string) bool {
+	return slices.ContainsFunc(a.Languages, func(l LanguageChoice) bool { return l.Name == name })
+}
+
+// AddLanguage selects the named language with default settings. It reports
+// whether the answers changed (false when the language is already selected).
+func (a *WizardAnswers) AddLanguage(name string) bool {
+	if a.HasLanguage(name) {
+		return false
+	}
+	a.Languages = append(a.Languages, LanguageChoice{Name: name})
+	return true
+}
+
+// RemoveLanguage deselects every entry for the named language. It reports
+// whether the answers changed (false when the language was not selected).
+func (a *WizardAnswers) RemoveLanguage(name string) bool {
+	n := len(a.Languages)
+	a.Languages = slices.DeleteFunc(a.Languages, func(l LanguageChoice) bool { return l.Name == name })
+	return len(a.Languages) != n
 }
 
 // DefaultsProvider supplies catalog-driven default values for FillDefaults.

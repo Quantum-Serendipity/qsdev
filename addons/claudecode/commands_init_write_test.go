@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/Quantum-Serendipity/qsdev/internal/state"
+	"github.com/Quantum-Serendipity/qsdev/internal/testutil"
 )
 
 const (
@@ -42,7 +43,7 @@ func writeBrokenSettings(t *testing.T, dir string) string {
 // settings.json belongs cannot be fixed by --force, so init must fail, name
 // the file, and still record the files it did write.
 func TestClaudeInitFailsOnUnwritableSettings(t *testing.T) {
-	dir := t.TempDir()
+	dir := testutil.IsolatedDir(t)
 	if err := os.MkdirAll(filepath.Join(dir, filepath.FromSlash(settingsRel)), 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -80,7 +81,7 @@ func TestClaudeInitFailsOnUnwritableSettings(t *testing.T) {
 // U14-V02: --force left an unparseable settings.json untouched (and reported
 // it only as "failed 1"), unlike regen's --force, which overwrites it.
 func TestClaudeInitForceOverwritesBrokenSettings(t *testing.T) {
-	dir := t.TempDir()
+	dir := testutil.IsolatedDir(t)
 	path := writeBrokenSettings(t, dir)
 
 	out, err := runClaudeInit(t, dir, "--yes", "--force")
@@ -113,7 +114,7 @@ func TestClaudeInitForceOverwritesBrokenSettings(t *testing.T) {
 // TestClaudeInitBrokenSettingsWithoutForceRefuses checks that without --force
 // init refuses to touch an existing (even broken) settings.json.
 func TestClaudeInitBrokenSettingsWithoutForceRefuses(t *testing.T) {
-	dir := t.TempDir()
+	dir := testutil.IsolatedDir(t)
 	path := writeBrokenSettings(t, dir)
 
 	out, err := runClaudeInit(t, dir, "--yes")

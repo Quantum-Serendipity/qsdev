@@ -2,6 +2,7 @@ package catalog
 
 import (
 	"errors"
+	"fmt"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -122,14 +123,22 @@ func ProjectConfigPath(projectRoot string) string {
 }
 
 // ProjectConfigFile returns the project-level defaults file path if it exists,
-// or empty string if not.
-func ProjectConfigFile(projectRoot string) string {
+// or "" if not. The file is policy, so an existing one must pass the project
+// trust rule (projectctx.CheckTrusted), as must the state directory holding
+// it: when the file, the directory, or the project root holding that
+// directory could have been written by another local user (it is foreign-
+// owned or world-writable), ProjectConfigFile refuses it with an error that
+// wraps projectctx.ErrUntrusted and names the file and the fix, rather than
+// applying or dropping it.
+func ProjectConfigFile(projectRoot string) (string, error) {
 	p := ProjectConfigPath(projectRoot)
-	if p == "" {
-		return ""
+	if p == "" || !fileExists(p) {
+		return "", nil
 	}
-	if fileExists(p) {
-		return p
+	for _, entry := range []string{p, filepath.Dir(p)} {
+		if err := projectctx.CheckTrusted(entry); err != nil {
+			return "", fmt.Errorf("refusing project defaults %s: %w (fix: remove world write access with 'chmod o-w', or 'chown' it to yourself)", p, err)
+		}
 	}
-	return ""
+	return p, nil
 }

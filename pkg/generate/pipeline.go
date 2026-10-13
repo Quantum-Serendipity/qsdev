@@ -62,8 +62,14 @@ func WriteFiles(files []types.GeneratedFile, opts PipelineOptions) (WriteResult,
 		opts:         opts,
 		resolvedRoot: resolvedRoot,
 	}
-	for _, file := range files {
-		w.write(file)
+	// A file held with a partner is decided after every partner, whose
+	// outcome it follows (see types.GeneratedFile.HeldWith).
+	for _, held := range []bool{false, true} {
+		for _, file := range files {
+			if (file.HeldWith != "") == held {
+				w.write(file)
+			}
+		}
 	}
 	return w.result, nil
 }
@@ -164,6 +170,7 @@ func (w *fileWriter) write(file types.GeneratedFile) {
 				return
 			}
 			fr.Action = ActionSidecar
+			fr.Note = decision.note
 			w.record(fr)
 			return
 		case decision.skip:
@@ -233,7 +240,10 @@ type existingDecision struct {
 	note    string // user-facing remark copied into FileResult.Note
 }
 
-// existingContent applies file.Strategy to an existing target:
+// existingContent applies file.Strategy to an existing target, unless the
+// file is held with a partner that was not written in place: it then gets a
+// sidecar like a ManualMerge file, unless it already holds the generated
+// content. Otherwise:
 //
 //   - Overwrite, LibraryManaged: replace with the generated content.
 //   - Skip: keep the existing file (it belongs to the user, or cannot be
@@ -251,6 +261,15 @@ type existingDecision struct {
 //   - Any other strategy has no merge implementation and fails rather than
 //     overwrite content it cannot preserve.
 func (w *fileWriter) existingContent(file types.GeneratedFile, fullPath string) (existingDecision, error) {
+	if w.partnerHeld(file.HeldWith) {
+		existing, err := os.ReadFile(fullPath)
+		if err == nil && state.EqualText(existing, file.Content) {
+			return existingDecision{content: file.Content}, nil
+		}
+		return existingDecision{sidecar: true, note: fmt.Sprintf(
+			"held with %s, which kept your edits; merge %s together with %s",
+			file.HeldWith, file.Path+SidecarSuffix, file.HeldWith+SidecarSuffix)}, nil
+	}
 	switch file.Strategy {
 	case types.Overwrite, types.LibraryManaged:
 		return existingDecision{content: file.Content}, nil
@@ -305,6 +324,21 @@ func (w *fileWriter) existingContent(file types.GeneratedFile, fullPath string) 
 	default:
 		return existingDecision{}, fmt.Errorf("merge strategy %s is not supported for an existing file", file.Strategy)
 	}
+}
+
+// partnerHeld reports whether the generated file at path was not written in
+// place: kept, left beside a sidecar, or failed. An empty path, or one not
+// among the files written, holds nothing back.
+func (w *fileWriter) partnerHeld(path string) bool {
+	if path == "" {
+		return false
+	}
+	for _, fr := range w.result.Files {
+		if fr.Path == path {
+			return fr.Action == ActionKept || fr.Action == ActionSidecar || fr.Action == ActionFailed
+		}
+	}
+	return false
 }
 
 // mergeExisting runs the section-marker or three-way merge for an existing

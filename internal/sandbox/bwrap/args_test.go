@@ -585,3 +585,412 @@ func TestBuildArgs_RejectsInternalMountCollision(t *testing.T) {
 		})
 	}
 }
+
+// guardrailFixture creates a project holding a real .git/hooks, .claude and
+// .envrc, and nothing for the other guardrail paths. It returns the project
+// and the guardrail paths that exist in it.
+func guardrailFixture(t *testing.T) (project string, present []string) {
+	t.Helper()
+	project = t.TempDir()
+	for _, dir := range []string{".git/hooks", ".claude"} {
+		if err := os.MkdirAll(filepath.Join(project, dir), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := os.WriteFile(filepath.Join(project, ".envrc"), []byte("use devenv\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	for _, g := range sandbox.GuardrailPaths(project) {
+		if _, err := os.Lstat(g); err == nil {
+			present = append(present, g)
+		}
+	}
+	if len(present) != 3 {
+		t.Fatalf("fixture guardrails = %v, want .git, .claude and .envrc", present)
+	}
+	return project, present
+}
+
+// lastIndexOfMountTarget returns the index of the last bind (--bind/--ro-bind
+// SRC DST) whose source is src, or -1.
+func lastIndexOfBindSource(args []string, src string) int {
+	idx := -1
+	for i := 0; i+2 < len(args); i++ {
+		if (args[i] == "--bind" || args[i] == "--ro-bind") && args[i+1] == src {
+			idx = i
+		}
+	}
+	return idx
+}
+
+// TestBuildArgs_GuardrailOverlaysAfterProjectBind is the U05-05 regression: a
+// read-write category exposes the whole project, so every existing guardrail
+// path is re-bound read-only after the project bind and after every policy
+// mount (which therefore cannot re-widen it), but before the deny masks
+// (which must still win). A read-only worktree needs no overlay, and a
+// guardrail absent on the host gets none (bwrap would create it).
+func TestBuildArgs_GuardrailOverlaysAfterProjectBind(t *testing.T) {
+	t.Parallel()
+
+	project, present := guardrailFixture(t)
+	secret := filepath.Join(project, "secret.txt")
+	if err := os.WriteFile(secret, []byte("s"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cache := filepath.Join(project, ".cache")
+	if err := os.Mkdir(cache, 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	for _, cat := range []sandbox.HookCategory{sandbox.CategoryGenerator, sandbox.CategoryTestRunner, sandbox.CategoryFormatter} {
+		t.Run(cat.String(), func(t *testing.T) {
+			t.Parallel()
+			cfg := sandbox.SandboxConfig{
+				ProjectDir:   project,
+				HookCategory: cat,
+				Network:      sandbox.NetworkPolicy{Mode: "deny"},
+				Mounts:       []sandbox.MountSpec{{Source: cache, Target: cache}},
+				Deny:         []string{secret},
+			}
+			args, err := BuildArgs(&cfg, sandbox.TierFull)
+			if err != nil {
+				t.Fatalf("BuildArgs: %v", err)
+			}
+			projectIdx := indexOfSequence(args, []string{"--bind", project, project})
+			mountIdx := lastIndexOfBindSource(args, cache)
+			maskIdx := indexOfMask(args, secret)
+			if projectIdx < 0 || mountIdx < 0 || maskIdx < 0 {
+				t.Fatalf("missing project bind, policy mount or deny mask: %v", args)
+			}
+			for _, g := range present {
+				i := indexOfSequence(args, []string{"--ro-bind", g, g})
+				if i < 0 {
+					t.Errorf("guardrail %s not overlaid read-only: %v", g, args)
+					continue
+				}
+				if i < projectIdx || i < mountIdx || i > maskIdx {
+					t.Errorf("overlay of %s at %d must follow the project bind (%d) and policy mounts (%d) and precede the deny masks (%d)",
+						g, i, projectIdx, mountIdx, maskIdx)
+				}
+			}
+			for _, g := range sandbox.GuardrailPaths(project) {
+				if !slices.Contains(present, g) && slices.Contains(args, g) {
+					t.Errorf("absent guardrail %s must not appear in args (bwrap would create it): %v", g, args)
+				}
+			}
+		})
+	}
+
+	t.Run("linter", func(t *testing.T) {
+		t.Parallel()
+		cfg := sandbox.SandboxConfig{ProjectDir: project, HookCategory: sandbox.CategoryLinter, Network: sandbox.NetworkPolicy{Mode: "deny"}}
+		args, err := BuildArgs(&cfg, sandbox.TierFull)
+		if err != nil {
+			t.Fatalf("BuildArgs: %v", err)
+		}
+		for _, g := range present {
+			if slices.Contains(args, g) {
+				t.Errorf("read-only worktree must get no overlay for %s: %v", g, args)
+			}
+		}
+	})
+
+	t.Run("linter with a writable policy mount over the project", func(t *testing.T) {
+		t.Parallel()
+		// A writable mount of an ancestor re-exposes the control plane even
+		// though the worktree itself is read-only.
+		cfg := sandbox.SandboxConfig{
+			ProjectDir: project, HookCategory: sandbox.CategoryLinter, Network: sandbox.NetworkPolicy{Mode: "deny"},
+			Mounts: []sandbox.MountSpec{{Source: project, Target: project}},
+		}
+		args, err := BuildArgs(&cfg, sandbox.TierFull)
+		if err != nil {
+			t.Fatalf("BuildArgs: %v", err)
+		}
+		mountIdx := lastIndexOfBindSource(args, project)
+		for _, g := range present {
+			if i := indexOfSequence(args, []string{"--ro-bind", g, g}); i < mountIdx {
+				t.Errorf("guardrail %s must be overlaid after the writable mount (%d), got %d: %v", g, mountIdx, i, args)
+			}
+		}
+	})
+}
+
+// TestBuildArgs_GuardrailOverlayImagesUnderPolicyMount: a policy mount whose
+// source is an ancestor of a guardrail places another copy of it inside the
+// sandbox, which is overlaid read-only too.
+func TestBuildArgs_GuardrailOverlayImagesUnderPolicyMount(t *testing.T) {
+	t.Parallel()
+
+	project, present := guardrailFixture(t)
+	cfg := sandbox.SandboxConfig{
+		ProjectDir:   project,
+		HookCategory: sandbox.CategoryGenerator,
+		Network:      sandbox.NetworkPolicy{Mode: "deny"},
+		Mounts:       []sandbox.MountSpec{{Source: project, Target: "/work"}},
+	}
+	args, err := BuildArgs(&cfg, sandbox.TierFull)
+	if err != nil {
+		t.Fatalf("BuildArgs: %v", err)
+	}
+	mountIdx := indexOfSequence(args, []string{"--bind", project, "/work"})
+	if mountIdx < 0 {
+		t.Fatalf("policy mount missing: %v", args)
+	}
+	for _, g := range present {
+		rel, err := filepath.Rel(project, g)
+		if err != nil {
+			t.Fatal(err)
+		}
+		image := filepath.Join("/work", rel)
+		if i := indexOfSequence(args, []string{"--ro-bind", g, image}); i < mountIdx {
+			t.Errorf("guardrail %s must be overlaid at its image %s after the mount (%d), got %d: %v", g, image, mountIdx, i, args)
+		}
+	}
+}
+
+// TestBuildArgs_GuardrailSymlinkOverlaysResolvedTarget: a guardrail that is a
+// symlink to another project file is protected where its content lives (the
+// link itself is checked by the post-run snapshot); one pointing outside the
+// project is not visible in the sandbox and is not bound, which would make
+// bwrap fail every hook.
+func TestBuildArgs_GuardrailSymlinkOverlaysResolvedTarget(t *testing.T) {
+	t.Parallel()
+
+	project := t.TempDir()
+	real := filepath.Join(project, "config", "claude")
+	if err := os.MkdirAll(real, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(filepath.Join("config", "claude"), filepath.Join(project, ".claude")); err != nil {
+		t.Fatal(err)
+	}
+	outside := filepath.Join(t.TempDir(), "envrc")
+	if err := os.WriteFile(outside, nil, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(outside, filepath.Join(project, ".envrc")); err != nil {
+		t.Fatal(err)
+	}
+
+	cfg := sandbox.SandboxConfig{ProjectDir: project, HookCategory: sandbox.CategoryGenerator, Network: sandbox.NetworkPolicy{Mode: "deny"}}
+	args, err := BuildArgs(&cfg, sandbox.TierFull)
+	if err != nil {
+		t.Fatalf("BuildArgs: %v", err)
+	}
+	if !containsSequence(args, []string{"--ro-bind", real, real}) {
+		t.Errorf("symlinked .claude must be overlaid at its in-project target %s: %v", real, args)
+	}
+	if slices.Contains(args, outside) || slices.Contains(args, filepath.Join(project, ".envrc")) {
+		t.Errorf(".envrc resolves outside the project and must not be bound: %v", args)
+	}
+}
+
+// TestBuildArgs_GuardrailOverlayImagesUnderResolvedMount: a policy mount of
+// the symlink-resolved project re-exposes the guardrails under its target
+// even though the project is spelled through the link; that image is
+// overlaid too.
+func TestBuildArgs_GuardrailOverlayImagesUnderResolvedMount(t *testing.T) {
+	t.Parallel()
+
+	base := t.TempDir()
+	real := filepath.Join(base, "real")
+	if err := os.MkdirAll(filepath.Join(real, ".git", "hooks"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	link := filepath.Join(base, "link")
+	if err := os.Symlink(real, link); err != nil {
+		t.Fatal(err)
+	}
+	cfg := sandbox.SandboxConfig{
+		ProjectDir:   link,
+		HookCategory: sandbox.CategoryGenerator,
+		Network:      sandbox.NetworkPolicy{Mode: "deny"},
+		Mounts:       []sandbox.MountSpec{{Source: real, Target: "/work"}},
+	}
+	args, err := BuildArgs(&cfg, sandbox.TierFull)
+	if err != nil {
+		t.Fatalf("BuildArgs: %v", err)
+	}
+	hooks := filepath.Join(link, ".git", "hooks")
+	mountIdx := indexOfSequence(args, []string{"--bind", real, "/work"})
+	if i := indexOfSequence(args, []string{"--ro-bind", hooks, "/work/.git/hooks"}); i < 0 || i < mountIdx {
+		t.Errorf("guardrail %s must be overlaid at /work/.git/hooks after the mount (%d), got %d: %v", hooks, mountIdx, i, args)
+	}
+}
+
+// TestBuildArgs_HookLogDirStaysWritable is the regression for the generated
+// audit and analytics hooks: their log directory lies inside the read-only
+// .claude overlay, so it is bound writable again right after the overlays
+// (and before the deny masks), for a writable worktree only, and never
+// through a symlink.
+func TestBuildArgs_HookLogDirStaysWritable(t *testing.T) {
+	t.Parallel()
+
+	newProject := func(t *testing.T, logs func(t *testing.T, dir string)) (string, string) {
+		t.Helper()
+		project := t.TempDir()
+		if err := os.MkdirAll(filepath.Join(project, ".claude"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		dir := sandbox.HookLogDir(project)
+		logs(t, dir)
+		return project, dir
+	}
+	realDir := func(t *testing.T, dir string) {
+		if err := os.Mkdir(dir, 0o700); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	t.Run("writable worktree", func(t *testing.T) {
+		t.Parallel()
+		project, dir := newProject(t, realDir)
+		secret := filepath.Join(project, "secret")
+		if err := os.WriteFile(secret, nil, 0o600); err != nil {
+			t.Fatal(err)
+		}
+		cfg := sandbox.SandboxConfig{ProjectDir: project, HookCategory: sandbox.CategoryGenerator,
+			Network: sandbox.NetworkPolicy{Mode: "deny"}, Deny: []string{secret}}
+		args, err := BuildArgs(&cfg, sandbox.TierFull)
+		if err != nil {
+			t.Fatalf("BuildArgs: %v", err)
+		}
+		claude := filepath.Join(project, ".claude")
+		overlay := indexOfSequence(args, []string{"--ro-bind", claude, claude})
+		bind := indexOfSequence(args, []string{"--bind", dir, dir})
+		mask := indexOfMask(args, secret)
+		if overlay < 0 || bind < overlay || mask < bind {
+			t.Errorf("want .claude overlay (%d) < log dir bind (%d) < deny mask (%d): %v", overlay, bind, mask, args)
+		}
+	})
+
+	t.Run("read-only worktree", func(t *testing.T) {
+		t.Parallel()
+		project, dir := newProject(t, realDir)
+		cfg := sandbox.SandboxConfig{ProjectDir: project, HookCategory: sandbox.CategoryLinter, Network: sandbox.NetworkPolicy{Mode: "deny"}}
+		args, err := BuildArgs(&cfg, sandbox.TierFull)
+		if err != nil {
+			t.Fatalf("BuildArgs: %v", err)
+		}
+		if slices.Contains(args, dir) {
+			t.Errorf("a read-only worktree must not get a writable log dir: %v", args)
+		}
+	})
+
+	t.Run("symlinked log dir", func(t *testing.T) {
+		t.Parallel()
+		project, dir := newProject(t, func(t *testing.T, dir string) {
+			hooks := filepath.Join(filepath.Dir(dir), "hooks")
+			if err := os.Mkdir(hooks, 0o755); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.Symlink(hooks, dir); err != nil {
+				t.Fatal(err)
+			}
+		})
+		cfg := sandbox.SandboxConfig{ProjectDir: project, HookCategory: sandbox.CategoryGenerator, Network: sandbox.NetworkPolicy{Mode: "deny"}}
+		args, err := BuildArgs(&cfg, sandbox.TierFull)
+		if err != nil {
+			t.Fatalf("BuildArgs: %v", err)
+		}
+		hooks := filepath.Join(filepath.Dir(dir), "hooks")
+		if slices.Contains(args, dir) || slices.Contains(args, hooks) {
+			t.Errorf("a symlinked log dir must not be bound writable: %v", args)
+		}
+	})
+}
+
+// TestBuildArgs_DevenvStateStaysWritable is the regression for devenv's
+// mutable state (GOPATH, the venv) under the read-only .devenv overlay: it is
+// bound writable again after the overlay for a writable worktree only, while
+// .devenv itself stays read-only.
+func TestBuildArgs_DevenvStateStaysWritable(t *testing.T) {
+	t.Parallel()
+
+	project := t.TempDir()
+	state := sandbox.DevenvStateDir(project)
+	if err := os.MkdirAll(state, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	dotDir := filepath.Dir(state)
+	for _, tc := range []struct {
+		cat      sandbox.HookCategory
+		writable bool
+	}{
+		{sandbox.CategoryTestRunner, true},
+		{sandbox.CategoryGenerator, true},
+		{sandbox.CategoryFormatter, true},
+		{sandbox.CategoryLinter, false},
+	} {
+		t.Run(tc.cat.String(), func(t *testing.T) {
+			t.Parallel()
+			cfg := sandbox.SandboxConfig{ProjectDir: project, HookCategory: tc.cat, Network: sandbox.NetworkPolicy{Mode: "deny"}}
+			args, err := BuildArgs(&cfg, sandbox.TierFull)
+			if err != nil {
+				t.Fatalf("BuildArgs: %v", err)
+			}
+			bind := indexOfSequence(args, []string{"--bind", state, state})
+			if !tc.writable {
+				if bind >= 0 {
+					t.Errorf("a read-only worktree must not get a writable devenv state: %v", args)
+				}
+				return
+			}
+			overlay := indexOfSequence(args, []string{"--ro-bind", dotDir, dotDir})
+			if overlay < 0 || bind < overlay {
+				t.Errorf("want .devenv overlay (%d) before the state bind (%d): %v", overlay, bind, args)
+			}
+		})
+	}
+}
+
+// TestBuildArgs_GuardrailPins: every in-project directory holding a guardrail
+// is bound onto itself, before the overlays, so a hook cannot rename it away
+// and plant a writable replacement; nothing else is pinned.
+func TestBuildArgs_GuardrailPins(t *testing.T) {
+	t.Parallel()
+
+	project, _ := guardrailFixture(t)
+	git := filepath.Join(project, ".git")
+	hooks := filepath.Join(git, "hooks")
+
+	t.Run("writable worktree", func(t *testing.T) {
+		t.Parallel()
+		cfg := sandbox.SandboxConfig{ProjectDir: project, HookCategory: sandbox.CategoryGenerator, Network: sandbox.NetworkPolicy{Mode: "deny"}}
+		args, err := BuildArgs(&cfg, sandbox.TierFull)
+		if err != nil {
+			t.Fatalf("BuildArgs: %v", err)
+		}
+		projectIdx := indexOfSequence(args, []string{"--bind", project, project})
+		pinIdx := indexOfSequence(args, []string{"--bind", git, git})
+		overlayIdx := indexOfSequence(args, []string{"--ro-bind", hooks, hooks})
+		if pinIdx < 0 || pinIdx < projectIdx || pinIdx > overlayIdx {
+			t.Errorf("pin of %s at %d must follow the project bind (%d) and precede the hooks overlay (%d): %v",
+				git, pinIdx, projectIdx, overlayIdx, args)
+		}
+		var pins []string
+		for i := 0; i+2 < len(args); i++ {
+			if args[i] == "--bind" && args[i+1] == args[i+2] && args[i+1] != project {
+				pins = append(pins, args[i+1])
+			}
+		}
+		// The hook log directory is re-opened only when it exists, which the
+		// fixture does not create.
+		if !slices.Equal(pins, []string{git}) {
+			t.Errorf("pinned %v, want only %s", pins, git)
+		}
+	})
+
+	t.Run("read-only worktree", func(t *testing.T) {
+		t.Parallel()
+		cfg := sandbox.SandboxConfig{ProjectDir: project, HookCategory: sandbox.CategoryLinter, Network: sandbox.NetworkPolicy{Mode: "deny"}}
+		args, err := BuildArgs(&cfg, sandbox.TierFull)
+		if err != nil {
+			t.Fatalf("BuildArgs: %v", err)
+		}
+		if slices.Contains(args, git) {
+			t.Errorf("a read-only worktree with no writable mount needs no pin: %v", args)
+		}
+	})
+}

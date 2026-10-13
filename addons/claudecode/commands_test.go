@@ -10,6 +10,7 @@ import (
 
 	"github.com/Quantum-Serendipity/qsdev/addons/claudecode"
 	"github.com/Quantum-Serendipity/qsdev/internal/state"
+	"github.com/Quantum-Serendipity/qsdev/internal/testutil"
 	"github.com/Quantum-Serendipity/qsdev/internal/toolreg"
 	"github.com/Quantum-Serendipity/qsdev/pkg/types"
 )
@@ -52,7 +53,7 @@ func TestClaudeCmd_HasSubcommands(t *testing.T) {
 }
 
 func TestInitCmd_DryRun(t *testing.T) {
-	tmpDir := t.TempDir()
+	tmpDir := testutil.IsolatedDir(t)
 
 	// Create a minimal go.mod so detection has something.
 	if err := os.WriteFile(filepath.Join(tmpDir, "go.mod"), []byte("module test\n\ngo 1.21\n"), 0o644); err != nil {
@@ -65,12 +66,7 @@ func TestInitCmd_DryRun(t *testing.T) {
 	cmd.SetErr(&buf)
 	cmd.SetArgs([]string{"init", "--dry-run", "--yes", "--permission-preset", "standard"})
 
-	// Change to temp dir so os.Getwd() works.
-	origDir, _ := os.Getwd()
-	if err := os.Chdir(tmpDir); err != nil {
-		t.Fatal(err)
-	}
-	defer func() { _ = os.Chdir(origDir) }()
+	t.Chdir(tmpDir)
 
 	if err := cmd.Execute(); err != nil {
 		t.Fatalf("init --dry-run failed: %v", err)
@@ -91,7 +87,7 @@ func TestInitCmd_DryRun(t *testing.T) {
 }
 
 func TestInitCmd_WritesFiles(t *testing.T) {
-	tmpDir := t.TempDir()
+	tmpDir := testutil.IsolatedDir(t)
 
 	// Create a minimal go.mod so detection has something.
 	if err := os.WriteFile(filepath.Join(tmpDir, "go.mod"), []byte("module test\n\ngo 1.21\n"), 0o644); err != nil {
@@ -104,11 +100,7 @@ func TestInitCmd_WritesFiles(t *testing.T) {
 	cmd.SetErr(&buf)
 	cmd.SetArgs([]string{"init", "--yes", "--permission-preset", "standard"})
 
-	origDir, _ := os.Getwd()
-	if err := os.Chdir(tmpDir); err != nil {
-		t.Fatal(err)
-	}
-	defer func() { _ = os.Chdir(origDir) }()
+	t.Chdir(tmpDir)
 
 	if err := cmd.Execute(); err != nil {
 		t.Fatalf("init failed: %v", err)
@@ -140,7 +132,7 @@ func TestInitCmd_WritesFiles(t *testing.T) {
 }
 
 func TestAddSkillCmd_ValidSkill(t *testing.T) {
-	tmpDir := t.TempDir()
+	tmpDir := testutil.IsolatedDir(t)
 
 	// First run init to create saved answers.
 	cmd := claudecode.ExportClaudeCmd()
@@ -149,11 +141,7 @@ func TestAddSkillCmd_ValidSkill(t *testing.T) {
 	cmd.SetErr(&buf)
 	cmd.SetArgs([]string{"init", "--yes", "--permission-preset", "standard"})
 
-	origDir, _ := os.Getwd()
-	if err := os.Chdir(tmpDir); err != nil {
-		t.Fatal(err)
-	}
-	defer func() { _ = os.Chdir(origDir) }()
+	t.Chdir(tmpDir)
 
 	if err := cmd.Execute(); err != nil {
 		t.Fatalf("init failed: %v", err)
@@ -197,7 +185,7 @@ func TestAddSkillCmd_ValidSkill(t *testing.T) {
 // add-skill, including the second one (the merge must not be gated on the file
 // showing as Modified).
 func TestAddSkill_PreservesEnv(t *testing.T) {
-	tmpDir := t.TempDir()
+	tmpDir := testutil.IsolatedDir(t)
 	claudeDir := filepath.Join(tmpDir, ".claude")
 	if err := os.MkdirAll(claudeDir, 0o755); err != nil {
 		t.Fatal(err)
@@ -208,11 +196,7 @@ func TestAddSkill_PreservesEnv(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	origDir, _ := os.Getwd()
-	if err := os.Chdir(tmpDir); err != nil {
-		t.Fatal(err)
-	}
-	defer func() { _ = os.Chdir(origDir) }()
+	t.Chdir(tmpDir)
 
 	run := func(args ...string) {
 		t.Helper()
@@ -257,8 +241,8 @@ func TestAddSkill_PreservesEnv(t *testing.T) {
 // command must fail WITHOUT recording the skill in answers, so a retry reports
 // the same tier error instead of a wedging "already configured".
 func TestAddSkill_TierSuppressedDoesNotPersist(t *testing.T) {
-	tmpDir := t.TempDir()
-	chdir(t, tmpDir)
+	tmpDir := testutil.IsolatedDir(t)
+	t.Chdir(tmpDir)
 
 	runClaude := func(args ...string) error {
 		cmd := claudecode.ExportClaudeCmd()
@@ -306,8 +290,8 @@ func TestAddSkill_TierSuppressedDoesNotPersist(t *testing.T) {
 // a qsdev-generated pre-migration flat .claude/skills/<name>.md is removed
 // when the new <name>/SKILL.md is (re)generated.
 func TestAddSkill_RemovesLegacyFlatSkillFile(t *testing.T) {
-	tmpDir := t.TempDir()
-	chdir(t, tmpDir)
+	tmpDir := testutil.IsolatedDir(t)
+	t.Chdir(tmpDir)
 
 	runClaude := func(args ...string) {
 		t.Helper()
@@ -356,7 +340,7 @@ func TestAddSkill_RemovesLegacyFlatSkillFile(t *testing.T) {
 }
 
 func TestAddSkillCmd_UnknownSkill(t *testing.T) {
-	tmpDir := t.TempDir()
+	tmpDir := testutil.IsolatedDir(t)
 
 	// First run init to create saved answers.
 	cmd := claudecode.ExportClaudeCmd()
@@ -365,11 +349,7 @@ func TestAddSkillCmd_UnknownSkill(t *testing.T) {
 	cmd.SetErr(&buf)
 	cmd.SetArgs([]string{"init", "--yes"})
 
-	origDir, _ := os.Getwd()
-	if err := os.Chdir(tmpDir); err != nil {
-		t.Fatal(err)
-	}
-	defer func() { _ = os.Chdir(origDir) }()
+	t.Chdir(tmpDir)
 
 	if err := cmd.Execute(); err != nil {
 		t.Fatalf("init failed: %v", err)
@@ -392,7 +372,7 @@ func TestAddSkillCmd_UnknownSkill(t *testing.T) {
 }
 
 func TestListSkillsCmd_ShowsAvailable(t *testing.T) {
-	tmpDir := t.TempDir()
+	tmpDir := testutil.IsolatedDir(t)
 
 	cmd := claudecode.ExportClaudeCmd()
 	var buf bytes.Buffer
@@ -400,11 +380,7 @@ func TestListSkillsCmd_ShowsAvailable(t *testing.T) {
 	cmd.SetErr(&buf)
 	cmd.SetArgs([]string{"list-skills"})
 
-	origDir, _ := os.Getwd()
-	if err := os.Chdir(tmpDir); err != nil {
-		t.Fatal(err)
-	}
-	defer func() { _ = os.Chdir(origDir) }()
+	t.Chdir(tmpDir)
 
 	if err := cmd.Execute(); err != nil {
 		t.Fatalf("list-skills failed: %v", err)
@@ -487,23 +463,9 @@ func TestInvalidPermissionPresetRejected(t *testing.T) {
 	}
 }
 
-// chdir changes the working directory to dir and registers a cleanup to restore
-// the original directory when the test finishes.
-func chdir(t *testing.T, dir string) {
-	t.Helper()
-	origDir, err := os.Getwd()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := os.Chdir(dir); err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { _ = os.Chdir(origDir) })
-}
-
 func TestInitCmd_InvalidPreset(t *testing.T) {
-	tmpDir := t.TempDir()
-	chdir(t, tmpDir)
+	tmpDir := testutil.IsolatedDir(t)
+	t.Chdir(tmpDir)
 
 	cmd := claudecode.ExportClaudeCmd()
 	var buf bytes.Buffer
@@ -524,8 +486,8 @@ func TestInitCmd_InvalidPreset(t *testing.T) {
 }
 
 func TestInitCmd_ExistingSettings_NoForce(t *testing.T) {
-	tmpDir := t.TempDir()
-	chdir(t, tmpDir)
+	tmpDir := testutil.IsolatedDir(t)
+	t.Chdir(tmpDir)
 
 	// Create existing .claude/settings.json.
 	claudeDir := filepath.Join(tmpDir, ".claude")
@@ -553,8 +515,8 @@ func TestInitCmd_ExistingSettings_NoForce(t *testing.T) {
 }
 
 func TestInitCmd_ExistingSettings_Force(t *testing.T) {
-	tmpDir := t.TempDir()
-	chdir(t, tmpDir)
+	tmpDir := testutil.IsolatedDir(t)
+	t.Chdir(tmpDir)
 
 	// Create existing .claude/settings.json.
 	claudeDir := filepath.Join(tmpDir, ".claude")
@@ -592,8 +554,8 @@ func TestInitCmd_ExistingSettings_Force(t *testing.T) {
 }
 
 func TestUpdateCmd_NoSavedAnswers(t *testing.T) {
-	tmpDir := t.TempDir()
-	chdir(t, tmpDir)
+	tmpDir := testutil.IsolatedDir(t)
+	t.Chdir(tmpDir)
 
 	cmd := claudecode.ExportClaudeCmd()
 	var buf bytes.Buffer
@@ -611,8 +573,8 @@ func TestUpdateCmd_NoSavedAnswers(t *testing.T) {
 }
 
 func TestUpdateCmd_AfterInit(t *testing.T) {
-	tmpDir := t.TempDir()
-	chdir(t, tmpDir)
+	tmpDir := testutil.IsolatedDir(t)
+	t.Chdir(tmpDir)
 
 	// First, init.
 	cmd := claudecode.ExportClaudeCmd()
@@ -649,8 +611,8 @@ func TestUpdateCmd_AfterInit(t *testing.T) {
 }
 
 func TestUpdateCmd_DryRun(t *testing.T) {
-	tmpDir := t.TempDir()
-	chdir(t, tmpDir)
+	tmpDir := testutil.IsolatedDir(t)
+	t.Chdir(tmpDir)
 
 	// First, init.
 	cmd := claudecode.ExportClaudeCmd()
@@ -697,8 +659,8 @@ func TestUpdateCmd_DryRun(t *testing.T) {
 }
 
 func TestAddSkillCmd_Duplicate(t *testing.T) {
-	tmpDir := t.TempDir()
-	chdir(t, tmpDir)
+	tmpDir := testutil.IsolatedDir(t)
+	t.Chdir(tmpDir)
 
 	// First, init with a skill.
 	cmd := claudecode.ExportClaudeCmd()
@@ -728,8 +690,8 @@ func TestAddSkillCmd_Duplicate(t *testing.T) {
 }
 
 func TestAddHookCmd_Valid(t *testing.T) {
-	tmpDir := t.TempDir()
-	chdir(t, tmpDir)
+	tmpDir := testutil.IsolatedDir(t)
+	t.Chdir(tmpDir)
 
 	// First, init.
 	cmd := claudecode.ExportClaudeCmd()
@@ -769,8 +731,8 @@ func TestAddHookCmd_Valid(t *testing.T) {
 }
 
 func TestAddHookCmd_Invalid(t *testing.T) {
-	tmpDir := t.TempDir()
-	chdir(t, tmpDir)
+	tmpDir := testutil.IsolatedDir(t)
+	t.Chdir(tmpDir)
 
 	// First, init.
 	cmd := claudecode.ExportClaudeCmd()
@@ -800,8 +762,8 @@ func TestAddHookCmd_Invalid(t *testing.T) {
 }
 
 func TestListSkillsCmd_ShowsInstalledStatus(t *testing.T) {
-	tmpDir := t.TempDir()
-	chdir(t, tmpDir)
+	tmpDir := testutil.IsolatedDir(t)
+	t.Chdir(tmpDir)
 
 	// Init with a skill installed.
 	cmd := claudecode.ExportClaudeCmd()
@@ -845,8 +807,8 @@ func TestListSkillsCmd_ShowsInstalledStatus(t *testing.T) {
 // always-on package guard: --no-safety-block fails, points at the only
 // opt-out, and writes nothing.
 func TestClaudeInit_NoSafetyBlockRejected(t *testing.T) {
-	tmpDir := t.TempDir()
-	chdir(t, tmpDir)
+	tmpDir := testutil.IsolatedDir(t)
+	t.Chdir(tmpDir)
 
 	cmd := claudecode.ExportClaudeCmd()
 	var buf bytes.Buffer
@@ -892,8 +854,8 @@ func TestClaudeInit_EnforcesAlwaysOnTools(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			tmpDir := t.TempDir()
-			chdir(t, tmpDir)
+			tmpDir := testutil.IsolatedDir(t)
+			t.Chdir(tmpDir)
 			saved := types.WizardAnswers{
 				ProjectRoot:  tmpDir,
 				ProjectName:  filepath.Base(tmpDir),
@@ -967,8 +929,8 @@ func TestClaudeUpdate_RestoresUncommittedSafetyBlockOptOut(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			tmpDir := t.TempDir()
-			chdir(t, tmpDir)
+			tmpDir := testutil.IsolatedDir(t)
+			t.Chdir(tmpDir)
 			runClaude(t, "init", "--yes", "--permission-preset", "standard")
 			if err := os.WriteFile(filepath.Join(tmpDir, ".qsdev.yaml"), []byte(tt.committed), 0o644); err != nil {
 				t.Fatal(err)
@@ -1024,8 +986,8 @@ func TestClaudeUpdate_RestoresUncommittedSafetyBlockOptOut(t *testing.T) {
 // starts from the always-on defaults, so it warns about no always-on tool:
 // nothing switched one off.
 func TestClaudeInit_FreshProjectDoesNotWarn(t *testing.T) {
-	tmpDir := t.TempDir()
-	chdir(t, tmpDir)
+	tmpDir := testutil.IsolatedDir(t)
+	t.Chdir(tmpDir)
 
 	cmd := claudecode.ExportClaudeCmd()
 	var stdout, stderr bytes.Buffer
@@ -1050,8 +1012,8 @@ func TestClaudeInit_FreshProjectDoesNotWarn(t *testing.T) {
 }
 
 func TestInitCmd_SavesStateAndAnswers(t *testing.T) {
-	tmpDir := t.TempDir()
-	chdir(t, tmpDir)
+	tmpDir := testutil.IsolatedDir(t)
+	t.Chdir(tmpDir)
 
 	cmd := claudecode.ExportClaudeCmd()
 	var buf bytes.Buffer
@@ -1091,8 +1053,8 @@ func TestInitCmd_SavesStateAndAnswers(t *testing.T) {
 }
 
 func TestInitCmd_DryRunNoFiles(t *testing.T) {
-	tmpDir := t.TempDir()
-	chdir(t, tmpDir)
+	tmpDir := testutil.IsolatedDir(t)
+	t.Chdir(tmpDir)
 
 	cmd := claudecode.ExportClaudeCmd()
 	var buf bytes.Buffer
@@ -1122,7 +1084,7 @@ func TestInitCmd_DryRunNoFiles(t *testing.T) {
 }
 
 func TestSaveLoadAnswers_RoundTrip(t *testing.T) {
-	tmpDir := t.TempDir()
+	tmpDir := testutil.IsolatedDir(t)
 
 	original := types.WizardAnswers{
 		ProjectName:     "test-project",

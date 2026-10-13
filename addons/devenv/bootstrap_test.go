@@ -9,7 +9,9 @@ import (
 
 	"github.com/Quantum-Serendipity/qsdev/addons/devenv"
 	"github.com/Quantum-Serendipity/qsdev/internal/catalog"
+	"github.com/Quantum-Serendipity/qsdev/internal/doctor"
 	"github.com/Quantum-Serendipity/qsdev/internal/installer"
+	"github.com/Quantum-Serendipity/qsdev/pkg/types"
 )
 
 func TestInstallDevenvStep_NotNil(t *testing.T) {
@@ -103,5 +105,39 @@ func TestNixToolSpec_RefusesUnpinnedOverlay(t *testing.T) {
 				t.Errorf("toolSpec error = %v, want %v wrapping %v", err, installer.ErrBootstrapPin, installer.ErrUnpinned)
 			}
 		})
+	}
+}
+
+// TestDevenvToolSpec_UsesDoctorFloor covers U13-09: the bootstrap devenv
+// install takes its version probe, parser and floor from doctor's devenv
+// check, so a devenv below the floor is upgraded rather than certified.
+func TestDevenvToolSpec_UsesDoctorFloor(t *testing.T) {
+	t.Parallel()
+
+	cat, err := catalog.Load()
+	if err != nil {
+		t.Fatalf("catalog.Load: %v", err)
+	}
+	check, ok := doctor.CheckNamed("devenv")
+	if !ok {
+		t.Fatal(`doctor.CheckNamed("devenv") found no check`)
+	}
+	spec, err := devenv.ExportDevenvToolSpec(cat)
+	if err != nil {
+		t.Fatalf("toolSpec: %v", err)
+	}
+	if spec.MinVersion == "" || spec.MinVersion != check.MinVersion || spec.MinVersion != types.MinDevenv {
+		t.Errorf("MinVersion = %q, want doctor's %q (types.MinDevenv %q)", spec.MinVersion, check.MinVersion, types.MinDevenv)
+	}
+	if spec.VersionFlag != check.VersionFlag {
+		t.Errorf("VersionFlag = %q, want doctor's %q", spec.VersionFlag, check.VersionFlag)
+	}
+	if spec.ParseVersion == nil {
+		t.Fatal("ParseVersion is nil")
+	}
+	for _, raw := range []string{"devenv 1.4.1 (x86_64-linux)\n", "2.1.2\n"} {
+		if got, want := spec.ParseVersion(raw), check.ParseVersion(raw); got != want {
+			t.Errorf("ParseVersion(%q) = %q, want doctor's %q", raw, got, want)
+		}
 	}
 }

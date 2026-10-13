@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"reflect"
 	"slices"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -1488,6 +1489,18 @@ func TestPackageGuardMinAgeEnvNameInTemplate(t *testing.T) {
 	want := `_int_env("` + claudecode.PackageGuardMinAgeDaysEnv + `"`
 	if !strings.Contains(string(claudecode.PackageGuardContent()), want) {
 		t.Errorf("package-guard.py does not read %s (looked for %s)", claudecode.PackageGuardMinAgeDaysEnv, want)
+	}
+}
+
+// TestPackageGuardDefaultMinAgeMatchesBaseline pins that package-guard.py,
+// with PACKAGE_GUARD_MIN_AGE_DAYS unset, enforces DefaultMinReleaseAge with a
+// 1-day minimum: posture judges an unset window as exactly that.
+func TestPackageGuardDefaultMinAgeMatchesBaseline(t *testing.T) {
+	t.Parallel()
+	want := `_int_env("` + claudecode.PackageGuardMinAgeDaysEnv + `", ` +
+		strconv.Itoa(ecosystem.ReleaseAgeDays(ecosystem.DefaultMinReleaseAge)) + `, 1)`
+	if !strings.Contains(string(claudecode.PackageGuardContent()), want) {
+		t.Errorf("package-guard.py does not default its release-age window to DefaultMinReleaseAge (looked for %s)", want)
 	}
 }
 

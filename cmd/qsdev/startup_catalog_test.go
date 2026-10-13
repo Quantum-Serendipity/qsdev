@@ -6,9 +6,15 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/Quantum-Serendipity/qsdev/instance"
+	"github.com/Quantum-Serendipity/qsdev/internal/catalog"
 )
 
-const startupHelperEnv = "QSDEV_STARTUP_CATALOG_HELPER"
+const (
+	startupHelperEnv = "QSDEV_STARTUP_CATALOG_HELPER"
+	treeHelperEnv    = "QSDEV_TREE_CATALOG_HELPER"
+)
 
 // TestStartupCatalogHelper is not a real test. TestStartupDoesNotLoadCatalog
 // re-runs this test binary with a malformed org config; the binary gets this
@@ -37,6 +43,37 @@ func TestStartupDoesNotLoadCatalog(t *testing.T) {
 		t.Fatalf("package initialization failed with a malformed org config: %v\n%s", err, out)
 	}
 	if !strings.Contains(string(out), "--- PASS: TestStartupCatalogHelper") {
+		t.Fatalf("helper did not run:\n%s", out)
+	}
+}
+
+// TestCommandTreeCatalogHelper is not a real test. TestCommandTreeDoesNotLoadCatalog
+// runs it in a fresh process, where TestMain has wired the runtime and
+// initialized the addons exactly as Main does; it builds the root command and
+// checks the catalog is still unloaded: setting a new project root succeeds
+// only before the first load.
+func TestCommandTreeCatalogHelper(t *testing.T) {
+	if os.Getenv(treeHelperEnv) != "1" {
+		t.Skip("helper process for TestCommandTreeDoesNotLoadCatalog")
+	}
+	instance.NewRootCommand()
+	if err := catalog.SetProjectRoot(t.TempDir()); err != nil {
+		t.Fatalf("building the command tree loaded the catalog: SetProjectRoot = %v", err)
+	}
+}
+
+// TestCommandTreeDoesNotLoadCatalog guards the ordering the project defaults
+// layer depends on: nothing may load the catalog before the command line is
+// parsed and the command's project root is resolved, or the catalog would be
+// frozen with some other root's project defaults.
+func TestCommandTreeDoesNotLoadCatalog(t *testing.T) {
+	cmd := exec.Command(os.Args[0], "-test.run=^TestCommandTreeCatalogHelper$", "-test.v")
+	cmd.Env = append(os.Environ(), treeHelperEnv+"=1")
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("helper failed: %v\n%s", err, out)
+	}
+	if !strings.Contains(string(out), "--- PASS: TestCommandTreeCatalogHelper") {
 		t.Fatalf("helper did not run:\n%s", out)
 	}
 }

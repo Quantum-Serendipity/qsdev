@@ -10,6 +10,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/Quantum-Serendipity/qsdev/internal/claudesettings"
 	"github.com/Quantum-Serendipity/qsdev/internal/state"
 	"github.com/Quantum-Serendipity/qsdev/pkg/types"
 )
@@ -473,6 +474,24 @@ func TestGuardEffective(t *testing.T) {
 			want:     LayerEnabled,
 		},
 		{
+			// Claude Code refuses the whole file over a value its settings
+			// schema rejects, so the guard registered in it never runs.
+			name: "settings_schema_defaultMode_yolo",
+			files: guardedFiles(map[string]string{
+				".claude/settings.json": strings.Replace(settingsWithPackageGuard, "{", `{"permissions": {"defaultMode": "yolo"}, `, 1),
+			}),
+			want:       LayerDisabled,
+			wantReason: "permissions.defaultMode is not one of",
+		},
+		{
+			name: "settings_schema_model_number",
+			files: guardedFiles(map[string]string{
+				".claude/settings.json": strings.Replace(settingsWithPackageGuard, "{", `{"model": 5, `, 1),
+			}),
+			want:       LayerDisabled,
+			wantReason: `Claude Code does not load .claude/settings.json ("model" is not a string)`,
+		},
+		{
 			name:       "settings_unparseable",
 			files:      guardedFiles(map[string]string{localPath: `{"hooks": `}),
 			want:       LayerDisabled,
@@ -556,7 +575,7 @@ func TestGuardEffective(t *testing.T) {
 			if tt.noTemplate {
 				opts = AssessOptions{}
 			}
-			cov := AssessDefenseLayers(dir, opts, tools, types.DetectedProject{}, genState, 3)
+			cov := AssessDefenseLayers(dir, opts, tools, types.DetectedProject{}, genState, 3, "")
 			for _, name := range guardLayers {
 				got := layerByName(t, cov, name)
 				if got.Status != tt.want {
@@ -658,7 +677,7 @@ func TestGuardEffective_UnloadableSibling(t *testing.T) {
 					files = guardedFiles(map[string]string{file: strings.Replace(tt.settings, "package-guard.py", "other.py", 1)})
 				}
 				dir, genState := writeProjectFiles(t, files)
-				cov := AssessDefenseLayers(dir, testAssessOpts, map[string]bool{"attach-guard": true}, types.DetectedProject{}, genState, 3)
+				cov := AssessDefenseLayers(dir, testAssessOpts, map[string]bool{"attach-guard": true}, types.DetectedProject{}, genState, 3, "")
 				got := layerByName(t, cov, "pretooluse-hooks")
 				if file == ".claude/settings.json" {
 					if got.Status != LayerDisabled || !strings.Contains(got.Reason, "Claude Code does not load .claude/settings.json") {
@@ -741,7 +760,7 @@ func TestGuardEffective_ModeChanged(t *testing.T) {
 	fs := genState.Files[packageGuardPath]
 	fs.Mode = 0o755 // fixtures write 0o644: the guard lost its exec bit
 	genState.Files[packageGuardPath] = fs
-	cov := AssessDefenseLayers(dir, testAssessOpts, map[string]bool{"attach-guard": true}, types.DetectedProject{}, genState, 3)
+	cov := AssessDefenseLayers(dir, testAssessOpts, map[string]bool{"attach-guard": true}, types.DetectedProject{}, genState, 3, "")
 	want := LayerDisabled
 	if runtime.GOOS == "windows" {
 		want = LayerEnabled
@@ -750,5 +769,238 @@ func TestGuardEffective_ModeChanged(t *testing.T) {
 		if got := layerByName(t, cov, name); got.Status != want {
 			t.Errorf("%s: status = %q (%s), want %q", name, got.Status, got.Reason, want)
 		}
+	}
+}
+
+// withGuardEnv returns settingsWithPackageGuard with an "env" object setting
+// the package guard's release-age window to days.
+func withGuardEnv(days string) string {
+	return strings.Replace(settingsWithPackageGuard, `{"hooks": {`,
+		`{"env": {"`+claudesettings.EnvPackageGuardMinAgeDays+`": "`+days+`"}, "hooks": {`, 1)
+}
+
+// TestAgeGatingThreshold pins U23-V03: the age-gating layer credits the
+// package guard only while the window it enforces (PACKAGE_GUARD_MIN_AGE_DAYS
+// in the effective settings, read as package-guard.py reads it) is at least
+// the project's compliance-level window. The guard itself stays in force, so
+// the other guard layers are unaffected.
+func TestAgeGatingThreshold(t *testing.T) {
+	t.Parallel()
+	const localPath = ".claude/settings.local.json"
+	localEnv := func(days string) string {
+		return `{"env": {"` + claudesettings.EnvPackageGuardMinAgeDays + `": "` + days + `"}}`
+	}
+	// localEnvRaw sets the env value to a JSON value of any type, which
+	// Claude Code coerces to a string (claudesettings.envString).
+	localEnvRaw := func(key, value string) string {
+		return `{"env": {"` + key + `": ` + value + `}}`
+	}
+	lowerName := strings.ToLower(claudesettings.EnvPackageGuardMinAgeDays)
+	tests := []struct {
+		name       string
+		level      string
+		files      map[string]string
+		want       LayerStatus
+		wantReason []string
+	}{
+		{
+			name: "strict without env", level: "strict", files: guardedFiles(nil),
+			want: LayerPartial,
+			wantReason: []string{"package-guard.py enforces 3 days", claudesettings.EnvPackageGuardMinAgeDays + " unset",
+				"compliance level strict requires 14 days"},
+		},
+		{
+			name: "strict with 14 in settings.json", level: "strict",
+			files: guardedFiles(map[string]string{".claude/settings.json": withGuardEnv("14")}),
+			want:  LayerEnabled, wantReason: []string{"14 days"},
+		},
+		{
+			name: "strict with longer window", level: "strict",
+			files: guardedFiles(map[string]string{".claude/settings.json": withGuardEnv(" 30 ")}),
+			want:  LayerEnabled, wantReason: []string{"30 days"},
+		},
+		{
+			name: "enhanced lowered locally", level: "enhanced",
+			files: guardedFiles(map[string]string{".claude/settings.json": withGuardEnv("7"), localPath: localEnv("1")}),
+			want:  LayerPartial,
+			wantReason: []string{"package-guard.py enforces 1 days", "in " + localPath,
+				"compliance level enhanced requires 7 days"},
+		},
+		{
+			name: "enhanced with 7 in settings.json", level: "enhanced",
+			files: guardedFiles(map[string]string{".claude/settings.json": withGuardEnv("7")}),
+			want:  LayerEnabled, wantReason: []string{"7 days"},
+		},
+		{
+			name: "enhanced lowered locally by a JSON number", level: "enhanced",
+			files: guardedFiles(map[string]string{
+				".claude/settings.json": withGuardEnv("7"),
+				localPath:               localEnvRaw(claudesettings.EnvPackageGuardMinAgeDays, "1"),
+			}),
+			want: LayerPartial,
+			wantReason: []string{"package-guard.py enforces 1 days", "in " + localPath,
+				"compliance level enhanced requires 7 days"},
+		},
+		{
+			name: "enhanced lowered locally by a JSON array", level: "enhanced",
+			files: guardedFiles(map[string]string{
+				".claude/settings.json": withGuardEnv("7"),
+				localPath:               localEnvRaw(claudesettings.EnvPackageGuardMinAgeDays, "[1]"),
+			}),
+			want:       LayerPartial,
+			wantReason: []string{"package-guard.py enforces 1 days", "in " + localPath},
+		},
+		{
+			name: "JSON bool is a config error", level: "enhanced",
+			files: guardedFiles(map[string]string{
+				".claude/settings.json": withGuardEnv("7"),
+				localPath:               localEnvRaw(claudesettings.EnvPackageGuardMinAgeDays, "true"),
+			}),
+			want: LayerPartial,
+			wantReason: []string{claudesettings.EnvPackageGuardMinAgeDays + `="true"`, "set in " + localPath,
+				"rejects its configuration"},
+		},
+		{
+			name: "JSON number in settings.json is not unset", level: "baseline",
+			files: guardedFiles(map[string]string{".claude/settings.json": strings.Replace(settingsWithPackageGuard,
+				`{"hooks": {`, `{"env": {"`+claudesettings.EnvPackageGuardMinAgeDays+`": 1}, "hooks": {`, 1)}),
+			want: LayerPartial,
+			wantReason: []string{"package-guard.py enforces 1 days",
+				claudesettings.EnvPackageGuardMinAgeDays + " in .claude/settings.json", "requires 3 days"},
+		},
+		{
+			// Windows folds env name case, so the lower-case spelling can be
+			// the value the guard reads; judged on every OS.
+			name: "lower-case spelling lowers the window", level: "enhanced",
+			files: guardedFiles(map[string]string{
+				".claude/settings.json": withGuardEnv("7"),
+				localPath:               localEnvRaw(lowerName, `"1"`),
+			}),
+			want:       LayerPartial,
+			wantReason: []string{"package-guard.py enforces 1 days", lowerName + " in " + localPath},
+		},
+		{
+			name: "lower-case spelling does not replace an unset default", level: "strict",
+			files: guardedFiles(map[string]string{localPath: localEnvRaw(lowerName, `"30"`)}),
+			want:  LayerPartial,
+			wantReason: []string{"package-guard.py enforces 3 days", claudesettings.EnvPackageGuardMinAgeDays + " unset",
+				"requires 14 days"},
+		},
+		{
+			name: "lower-case spelling with a bad value", level: "baseline",
+			files:      guardedFiles(map[string]string{localPath: localEnvRaw(lowerName, `"x"`)}),
+			want:       LayerPartial,
+			wantReason: []string{lowerName + `="x"`, "rejects its configuration"},
+		},
+		{
+			name: "longer lower-case spelling keeps the exact window", level: "enhanced",
+			files: guardedFiles(map[string]string{
+				".claude/settings.json": withGuardEnv("7"),
+				localPath:               localEnvRaw(lowerName, `"30"`),
+			}),
+			want: LayerEnabled, wantReason: []string{"7 days"},
+		},
+		{
+			name: "not a whole number", level: "baseline",
+			files: guardedFiles(map[string]string{".claude/settings.json": withGuardEnv("abc")}),
+			want:  LayerPartial,
+			wantReason: []string{claudesettings.EnvPackageGuardMinAgeDays + `="abc"`, "set in .claude/settings.json",
+				"not a whole number of days", "rejects its configuration"},
+		},
+		{
+			name: "zero clamped to one day", level: "baseline",
+			files:      guardedFiles(map[string]string{".claude/settings.json": withGuardEnv("0")}),
+			want:       LayerPartial,
+			wantReason: []string{"package-guard.py enforces 1 days", "compliance level baseline requires 3 days"},
+		},
+		{
+			name: "baseline without env", level: "baseline", files: guardedFiles(nil),
+			want: LayerEnabled, wantReason: []string{"3 days"},
+		},
+		{
+			name: "blank env is the default", level: "baseline",
+			files: guardedFiles(map[string]string{".claude/settings.json": withGuardEnv(" ")}),
+			want:  LayerEnabled, wantReason: []string{"3 days"},
+		},
+		{
+			name: "empty level without env", level: "", files: guardedFiles(nil),
+			want: LayerEnabled,
+		},
+		{
+			name: "empty level judged as baseline", level: "",
+			files: guardedFiles(map[string]string{".claude/settings.json": withGuardEnv("1")}),
+			want:  LayerPartial, wantReason: []string{"requires 3 days"},
+		},
+		{
+			name: "unknown level judged as baseline", level: "bogus",
+			files: guardedFiles(map[string]string{".claude/settings.json": withGuardEnv("2")}),
+			want:  LayerPartial, wantReason: []string{"compliance level bogus requires 3 days"},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			dir, genState := writeProjectFiles(t, tt.files)
+			cov := AssessDefenseLayers(dir, testAssessOpts, map[string]bool{"attach-guard": true},
+				types.DetectedProject{}, genState, 3, tt.level)
+			got := layerByName(t, cov, "age-gating")
+			if got.Status != tt.want {
+				t.Errorf("age-gating = %q (%s), want %q", got.Status, got.Reason, tt.want)
+			}
+			for _, want := range tt.wantReason {
+				if !strings.Contains(got.Reason, want) {
+					t.Errorf("age-gating reason = %q, want it to contain %q", got.Reason, want)
+				}
+			}
+			for _, name := range []string{"pretooluse-hooks", "install-script-blocking"} {
+				if l := layerByName(t, cov, name); l.Status != LayerEnabled {
+					t.Errorf("%s = %q (%s), want enabled: the window does not affect it", name, l.Status, l.Reason)
+				}
+			}
+		})
+	}
+}
+
+// TestAssess_AgeGatingFollowsComplianceLevel pins that Assess judges the
+// guard's window against the security.level of .qsdev.yaml: a strict project
+// whose settings carry the enhanced window fails enhanced conformance's
+// age-gating-configured check, and passes it with the strict window.
+func TestAssess_AgeGatingFollowsComplianceLevel(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		days       string
+		want       LayerStatus
+		wantPassed bool
+	}{
+		{days: "7", want: LayerPartial, wantPassed: false},
+		{days: "14", want: LayerEnabled, wantPassed: true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.days, func(t *testing.T) {
+			t.Parallel()
+			dir := writeT1GuardedProject(t)
+			writeFile(t, dir, ".claude/settings.json", withGuardEnv(tt.days))
+			writeFile(t, dir, ".qsdev.yaml", "version: 1\ntier: supply-chain-only\nsecurity:\n  level: strict\n")
+			report, err := Assess(dir, testAssessOpts)
+			if err != nil {
+				t.Fatalf("Assess: %v", err)
+			}
+			if got := layerByName(t, report.Defense, "age-gating"); got.Status != tt.want {
+				t.Errorf("age-gating = %q (%s), want %q", got.Status, got.Reason, tt.want)
+			}
+			var found bool
+			for _, c := range report.Conformance.Enhanced.Checks {
+				if c.Name != CheckAgeGatingConfigured {
+					continue
+				}
+				found = true
+				if c.Pass != tt.wantPassed {
+					t.Errorf("enhanced %s pass = %v (%s), want %v", c.Name, c.Pass, c.Reason, tt.wantPassed)
+				}
+			}
+			if !found {
+				t.Errorf("enhanced check %s missing", CheckAgeGatingConfigured)
+			}
+		})
 	}
 }

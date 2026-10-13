@@ -2,7 +2,11 @@ package doctor
 
 import (
 	"encoding/json"
+	"os"
 	"os/exec"
+	"regexp"
+	"runtime"
+	"slices"
 	"strings"
 
 	"github.com/Quantum-Serendipity/qsdev/internal/sysinfo"
@@ -15,16 +19,37 @@ type ToolCheck struct {
 	Name        string
 	Binary      string
 	AltBinaries []string
+	// VersionFlag is the argument that makes the binary print its version.
+	// Empty makes the check lookup-only: the binary is looked up on PATH
+	// and never run.
 	VersionFlag string
 	Required    bool
-	MinVersion  string
+	// RequiredBy says what needs a tool that is not an environment
+	// prerequisite (see RequireBinaries); "" for a prerequisite.
+	RequiredBy string
+	MinVersion string
+	// Constraint, when set, is a version constraint in qsdev_version syntax
+	// (">= 1.2", "^1.2") the version must satisfy, in place of MinVersion.
+	Constraint string
+	// PathHint, when set, replaces the install and upgrade advice for a tool
+	// no package manager provides: the CLI's own binary, which the hooks find
+	// on PATH (see ProjectChecks).
+	PathHint string
 	// InstallHint tells the user how to install a missing tool.
 	InstallHint string
 	// ParseVersion extracts the version from the tool's full version output
 	// (which may span several lines).
 	ParseVersion func(raw string) string
-	AutoInstall  func(osInfo *sysinfo.OSInfo) bool
-	Notes        func(osInfo *sysinfo.OSInfo) string
+	// ProjectVersion reads the version of a binary found inside the project,
+	// which doctor never runs, from metadata beside it; nil or "" leaves the
+	// version unknown.
+	ProjectVersion func(binPath string) string
+	// UpgradeHint, when set, is how to upgrade an installed tool that is
+	// below its floor: setup cannot upgrade it in place, so such a tool is
+	// not auto-installable.
+	UpgradeHint string
+	AutoInstall func(osInfo *sysinfo.OSInfo) bool
+	Notes       func(osInfo *sysinfo.OSInfo) string
 }
 
 // DefaultChecks returns the 20-tool registry used by qsdev doctor. It is the
@@ -39,7 +64,10 @@ func DefaultChecks() []ToolCheck {
 			Binary:      "nix",
 			VersionFlag: "--version",
 			Required:    true,
+			MinVersion:  types.MinNix,
 			InstallHint: "Install Nix: https://nixos.org/download.html",
+			// The Nix installer installs; it does not upgrade an existing Nix.
+			UpgradeHint: "upgrade Nix in place: https://nix.dev/manual/nix/stable/installation/upgrading",
 			ParseVersion: func(raw string) string {
 				// "nix (Nix) 2.19.3" → "2.19.3"
 				parts := strings.Fields(toolcheck.FirstLine(raw))
@@ -57,6 +85,7 @@ func DefaultChecks() []ToolCheck {
 			Binary:      "devenv",
 			VersionFlag: "version",
 			Required:    true,
+			MinVersion:  types.MinDevenv,
 			InstallHint: "Install devenv: https://devenv.sh/getting-started/",
 			ParseVersion: func(raw string) string {
 				// "devenv 2.1.2 (x86_64-linux)" or just "1.4.1" → the version field
@@ -260,7 +289,10 @@ func DefaultChecks() []ToolCheck {
 				// "Python 3.11.7" → "3.11.7"
 				return extractLastField(raw, "Python ")
 			},
-			AutoInstall: alwaysInstallable,
+			// An in-project virtualenv interpreter (.venv, devenv's
+			// .devenv/state/venv) is not run; its pyvenv.cfg says its version.
+			ProjectVersion: pyvenvVersion,
+			AutoInstall:    alwaysInstallable,
 		},
 		{
 			Name:        "syft",
@@ -350,6 +382,102 @@ func RequiredChecks() []ToolCheck {
 		}
 	}
 	return required
+}
+
+// CheckNamed returns the DefaultChecks entry called name, so other code
+// probing the same tool shares its version flag, parser and floor.
+func CheckNamed(name string) (ToolCheck, bool) {
+	checks := DefaultChecks()
+	i := slices.IndexFunc(checks, func(c ToolCheck) bool { return c.Name == name })
+	if i < 0 {
+		return ToolCheck{}, false
+	}
+	return checks[i], true
+}
+
+// RequireBinaries returns checks with every program in binaries required,
+// with requiredBy as the reason. The check whose Binary names the program
+// becomes required for that binary alone (no AltBinaries), keeping its floor
+// and version probe; a program a check names only as an alternative, or as
+// another version of a versioned binary (python or python3.11 for
+// python3), gets a required copy of that check for the program itself, so it
+// keeps the floor and finding another name would not let the hook run; and a
+// program no check names gets a required lookup-only check (see
+// ToolCheck.VersionFlag), so it is never run. Names compare as this OS's
+// PATH lookup does (see programKey). A check that is already required keeps
+// no reason, as it is a prerequisite anyway. checks itself is not modified.
+func RequireBinaries(checks []ToolCheck, binaries []string, requiredBy string) []ToolCheck {
+	return requireBinaries(checks, binaries, requiredBy, runtime.GOOS, os.Getenv("PATHEXT"))
+}
+
+// requireBinaries is RequireBinaries for the given OS and PATHEXT.
+func requireBinaries(checks []ToolCheck, binaries []string, requiredBy, goos, pathExt string) []ToolCheck {
+	key := func(name string) string { return programKey(name, goos, pathExt) }
+	out := slices.Clone(checks)
+	for _, b := range binaries {
+		k := key(b)
+		if i := slices.IndexFunc(out, func(c ToolCheck) bool { return key(c.Binary) == k }); i >= 0 {
+			out[i].AltBinaries = nil
+			if !out[i].Required {
+				out[i].Required, out[i].RequiredBy = true, requiredBy
+			}
+			continue
+		}
+		tc := ToolCheck{Name: b}
+		if i := slices.IndexFunc(out, func(c ToolCheck) bool {
+			return slices.ContainsFunc(c.AltBinaries, func(a string) bool { return key(a) == k }) ||
+				otherVersion(k, key(c.Binary))
+		}); i >= 0 {
+			tc = out[i]
+			tc.Name = b
+		}
+		tc.Binary, tc.AltBinaries = b, nil
+		tc.Required, tc.RequiredBy = true, requiredBy
+		out = append(out, tc)
+	}
+	return out
+}
+
+// defaultPathExt is the Windows PATHEXT default, used when it is unset.
+const defaultPathExt = ".COM;.EXE;.BAT;.CMD"
+
+// programKey is the name a PATH lookup of program resolves by on goos. On
+// Windows the lookup ignores case and appends a PATHEXT extension, so
+// "Python3.EXE" and "python3" name the same program there.
+func programKey(program, goos, pathExt string) string {
+	if goos != "windows" {
+		return program
+	}
+	if pathExt == "" {
+		pathExt = defaultPathExt
+	}
+	k := strings.ToLower(program)
+	for _, ext := range strings.Split(strings.ToLower(pathExt), ";") {
+		if base, ok := strings.CutSuffix(k, ext); ok && ext != "" && base != "" {
+			return base
+		}
+	}
+	return k
+}
+
+var (
+	// versionedBinaryRe splits a binary named with a trailing version
+	// ("python3") into its stem ("python").
+	versionedBinaryRe = regexp.MustCompile(`^(.*[^0-9.])[0-9][0-9.]*$`)
+	// versionTailRe matches a version appended to a stem ("3", "3.11").
+	versionTailRe = regexp.MustCompile(`^[0-9][0-9.]*$`)
+)
+
+// otherVersion reports whether program names another version of binary, a
+// name carrying a trailing version: its stem alone or with any version
+// ("python" or "python3.11" for "python3").
+func otherVersion(program, binary string) bool {
+	m := versionedBinaryRe.FindStringSubmatch(binary)
+	if m == nil || program == binary {
+		return false
+	}
+	rest, ok := strings.CutPrefix(program, m[1])
+	return ok && (rest == "" || versionTailRe.MatchString(rest))
 }
 
 // alwaysInstallable returns true for any OS.

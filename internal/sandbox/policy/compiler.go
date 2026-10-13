@@ -105,12 +105,15 @@ func (c compiler) compile(ctx context.Context, policyPath string) (*PolicySpec, 
 	cachePath := c.cachePath(snap)
 	if cachePath != "" {
 		if spec, err := parsePolicy(cachePath); err == nil {
-			return spec, nil
+			return validated(spec, snap)
 		}
 	}
 
 	spec, err := c.evaluate(ctx, snap)
 	if err != nil {
+		return nil, err
+	}
+	if spec, err = validated(spec, snap); err != nil {
 		return nil, err
 	}
 
@@ -120,6 +123,15 @@ func (c compiler) compile(ctx context.Context, policyPath string) (*PolicySpec, 
 				slog.Debug("caching compiled sandbox policy failed", "path", cachePath, "error", err)
 			}
 		}
+	}
+	return spec, nil
+}
+
+// validated returns spec when it passes the checks every compiled policy must
+// (validateCategories), and an error naming the policy otherwise.
+func validated(spec *PolicySpec, snap *Snapshot) (*PolicySpec, error) {
+	if err := validateCategories(spec); err != nil {
+		return nil, fmt.Errorf("policy %s: %w", snap.Path, err)
 	}
 	return spec, nil
 }

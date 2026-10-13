@@ -271,3 +271,33 @@ func fieldEvaluated(toolName, name string) bool {
 		return toolName == "Write" || toolName == "Edit" || toolName == "MultiEdit"
 	}
 }
+
+// NixRunInput is the tool_input of the MCP server's nix_run tool: the
+// installable to run, its arguments and its standard input.
+type NixRunInput struct {
+	Installable string   `json:"command"`
+	Args        []string `json:"args"`
+	Stdin       string   `json:"stdin"`
+}
+
+// ParseNixRunInput reads a nix_run tool_input. A field of the wrong type, or
+// input that is not a JSON object, is an error the hook must treat as a deny;
+// so is a field over MaxCommandBytes, as for a shell tool's command.
+func ParseNixRunInput(raw json.RawMessage) (NixRunInput, error) {
+	var in NixRunInput
+	trimmed := bytes.TrimSpace(raw)
+	if len(trimmed) == 0 || bytes.Equal(trimmed, []byte("null")) {
+		return in, nil
+	}
+	if err := json.Unmarshal(trimmed, &in); err != nil {
+		return NixRunInput{}, fmt.Errorf("parsing nix_run tool_input: %w", err)
+	}
+	size := len(in.Installable) + len(in.Stdin)
+	for _, a := range in.Args {
+		size += len(a) + 1
+	}
+	if size > MaxCommandBytes {
+		return NixRunInput{}, ErrCommandTooLarge
+	}
+	return in, nil
+}

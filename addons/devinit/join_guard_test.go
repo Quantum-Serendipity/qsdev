@@ -15,6 +15,7 @@ import (
 
 	"github.com/Quantum-Serendipity/qsdev/internal/answers"
 	"github.com/Quantum-Serendipity/qsdev/internal/state"
+	"github.com/Quantum-Serendipity/qsdev/internal/testutil"
 	"github.com/Quantum-Serendipity/qsdev/pkg/branding"
 )
 
@@ -168,7 +169,7 @@ func stubDevenvOnPath(t *testing.T, dir string) {
 // a directory that was never initialised: without a config it is not a clone
 // and must not be told to join.
 func TestLifecycle_NeverInitialized_EnableUnchanged(t *testing.T) {
-	dir := t.TempDir()
+	dir := testutil.IsolatedDir(t)
 	if err := os.WriteFile(filepath.Join(dir, "go.mod"), []byte("module example.com/lc\n\ngo 1.24\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}

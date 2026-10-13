@@ -1,12 +1,14 @@
 package devenv_test
 
 import (
+	"slices"
 	"strings"
 	"testing"
 
 	"gopkg.in/yaml.v3"
 
 	"github.com/Quantum-Serendipity/qsdev/addons/devenv"
+	"github.com/Quantum-Serendipity/qsdev/internal/catalog"
 	"github.com/Quantum-Serendipity/qsdev/pkg/branding"
 	"github.com/Quantum-Serendipity/qsdev/pkg/ecosystem"
 	"github.com/Quantum-Serendipity/qsdev/pkg/ecosystem/modules/python"
@@ -622,20 +624,68 @@ func TestMultipleEcosystemInputs(t *testing.T) {
 	}
 }
 
-func TestUnknownLanguageInRegistrySkipped(t *testing.T) {
+// TestUnknownLanguageInRegistryErrors checks that devenv.yaml generation,
+// like Generate, fails closed on a language the registry has no module for
+// instead of silently generating without it.
+func TestUnknownLanguageInRegistryErrors(t *testing.T) {
 	reg := ecosystem.NewRegistry()
 	// Registry has no "go" module registered.
 	answers := types.WizardAnswers{
 		Languages: []types.LanguageChoice{goLanguage()},
 	}
-	gf, err := devenv.GenerateDevenvYaml(answers, reg)
-	if err != nil {
-		t.Fatalf("unknown language should not cause error: %v", err)
+	_, err := devenv.GenerateDevenvYaml(answers, reg)
+	if err == nil || !strings.Contains(err.Error(), `unknown language module: "go"`) {
+		t.Fatalf("GenerateDevenvYaml() error = %v; want unknown language module", err)
 	}
-	m := mustUnmarshal(t, gf)
+}
 
-	// Should still produce valid YAML with hardened defaults.
-	if m["impure"] != false {
-		t.Errorf("impure should be false")
+// TestCleanKeep_IncludesModuleKeepVars verifies that the selector variables a
+// selected module keeps (ecosystem.EnvKeeper) are appended to the catalog
+// keep_vars in devenv.yaml clean.keep: catalog order first, then the module
+// names sorted, with no duplicates. An unselected module contributes nothing.
+func TestCleanKeep_IncludesModuleKeepVars(t *testing.T) {
+	t.Parallel()
+
+	catKeep := catalog.MustDefault().KeepVars()
+	newReg := func(t *testing.T) *ecosystem.Registry {
+		t.Helper()
+		reg := ecosystem.NewRegistry()
+		for _, m := range []*ecosystem.MockModule{
+			{NameVal: "cloudy", KeepEnvVarsVal: []string{"ZED_PROFILE", "ALPHA_REGION", "PATH"}},
+			{NameVal: "misty", KeepEnvVarsVal: []string{"ALPHA_REGION", "MID_PROJECT"}},
+			{NameVal: "plain"},
+		} {
+			if err := reg.Register(m); err != nil {
+				t.Fatalf("registering %q: %v", m.NameVal, err)
+			}
+		}
+		return reg
+	}
+
+	tests := []struct {
+		name  string
+		langs []string
+		extra []string
+	}{
+		{"selected keepers merged sorted and deduped", []string{"misty", "plain", "cloudy"}, []string{"ALPHA_REGION", "MID_PROJECT", "ZED_PROFILE"}},
+		{"keeper not selected", []string{"plain"}, nil},
+		{"no languages", nil, nil},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			var answers types.WizardAnswers
+			for _, l := range tt.langs {
+				answers.Languages = append(answers.Languages, types.LanguageChoice{Name: l})
+			}
+			var dy devenv.DevenvYaml
+			if err := yaml.Unmarshal(mustGenerate(t, answers, newReg(t)).Content, &dy); err != nil {
+				t.Fatalf("parsing devenv.yaml: %v", err)
+			}
+			want := append(slices.Clone(catKeep), tt.extra...)
+			if !slices.Equal(dy.Clean.Keep, want) {
+				t.Errorf("clean.keep = %v, want %v", dy.Clean.Keep, want)
+			}
+		})
 	}
 }

@@ -200,10 +200,11 @@ func TestResolveProjectRoot(t *testing.T) {
 }
 
 // TestResolveProjectRoot_NoMarkerNoRepo covers a start outside any project
-// and repository: the absolute start directory is the root.
+// and with no repository of its own (the walk ends at the isolation ceiling
+// above it): the absolute start directory is the root.
 func TestResolveProjectRoot_NoMarkerNoRepo(t *testing.T) {
 	t.Parallel()
-	start := filepath.Join(testutil.MarkerFreeTempDir(t), "loose")
+	start := filepath.Join(testutil.IsolatedDir(t), "loose")
 	if err := os.MkdirAll(start, 0o755); err != nil {
 		t.Fatal(err)
 	}

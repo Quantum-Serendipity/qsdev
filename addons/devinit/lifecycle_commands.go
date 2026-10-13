@@ -10,13 +10,13 @@ import (
 	"github.com/Quantum-Serendipity/qsdev/pkg/branding"
 )
 
-// enableCmd creates the `qsdev enable <tool>` command.
+// enableCmd creates the `qsdev enable <tool|language>` command.
 func enableCmd() *cobra.Command {
 	var opts enableOptions
 
 	cmd := &cobra.Command{
-		Use:   "enable <tool>",
-		Short: "Enable a tool in the current project",
+		Use:   "enable <tool|language>",
+		Short: "Enable a tool or language module in the current project",
 		Long: fmt.Sprintf(`Enable a tool and generate its configuration files.
 
 The tool's prerequisites are validated before enabling. Shared files (like
@@ -25,7 +25,14 @@ CLAUDE.md, devenv.nix or settings.json) are regenerated and merged exactly as
 fresh. Existing files %[1]s did not generate are never overwritten unless
 --force is given; files the tool only creates when absent (such as a PR
 template or labeler config) are kept even with --force. Use '%[1]s list' to
-see available tools.`, branding.Get().AppName),
+see available tools.
+
+A language module name (such as gcp, aws or python) instead adds that
+language to the project and regenerates every file exactly as '%[1]s update'
+would: devenv files, the Claude Code settings with the module's deny rules,
+and .qsdev.yaml. Your edits to managed files are merged or kept as
+sidecars, and --force is refused (use '%[1]s update --overwrite-modified' to
+replace them). Tool names take precedence; the two never overlap.`, branding.Get().AppName),
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return runEnable(cmd, args[0], opts)
@@ -38,19 +45,24 @@ see available tools.`, branding.Get().AppName),
 	return cmd
 }
 
-// disableCmd creates the `qsdev disable <tool>` command.
+// disableCmd creates the `qsdev disable <tool|language>` command.
 func disableCmd() *cobra.Command {
 	var opts disableOptions
 
 	cmd := &cobra.Command{
-		Use:   "disable <tool>",
-		Short: "Disable a tool in the current project",
+		Use:   "disable <tool|language>",
+		Short: "Disable a tool or language module in the current project",
 		Long: fmt.Sprintf(`Disable a tool and remove its configuration files.
 
 Files exclusively owned by the tool are deleted. Shared files are
 regenerated without the tool's contribution, preserving your edits. If any
 owned file has been modified by the user, the command warns and exits unless
---force is specified. Files %s did not generate are always left in place.`, branding.Get().AppName),
+--force is specified. Files %[1]s did not generate are always left in place.
+
+A language module name instead removes that language from the project and
+regenerates every file exactly as '%[1]s update' would, dropping the
+module's devenv configuration and Claude Code deny rules. Your edits to
+managed files are kept, and --force is refused.`, branding.Get().AppName),
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return runDisable(cmd, args[0], opts)

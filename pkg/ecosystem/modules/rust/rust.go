@@ -161,7 +161,7 @@ func (m *Module) DevenvNixFragment(config ecosystem.ModuleConfig) (string, error
 // evaluation for Rust projects.
 func (m *Module) DevenvYamlInputs(_ ecosystem.ModuleConfig) []ecosystem.DevenvInput {
 	return []ecosystem.DevenvInput{
-		{URL: "github:oxalica/rust-overlay", Follows: "nixpkgs"},
+		{URL: "github:oxalica/rust-overlay", Follows: "nixpkgs", Options: []string{"languages.rust.channel", "languages.rust.toolchainFile"}},
 	}
 }
 

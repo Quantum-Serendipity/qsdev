@@ -247,7 +247,7 @@ func TestBuildQsdevConfig_RoundTripsThroughJoin(t *testing.T) {
 		ComplianceLevel: "strict",
 		EnabledTools:    map[string]bool{"gitleaks": true, "semble": false},
 		Infrastructure: types.InfraConfig{
-			RegistryProxy:      "https://proxy.example.com",
+			RegistryProxy:      "https://proxy.corp.internal",
 			RegistryProxyPaths: map[string]string{"npm": "/npm/"},
 		},
 	}
@@ -305,7 +305,11 @@ func TestJoin_InfraProfileRoundTrips(t *testing.T) {
 				t.Errorf("persisted infrastructure %+v, want %+v", cfg.Infrastructure, created.Infrastructure)
 			}
 			// `qsdev check` validates `profile` against the project-type registry.
-			opts := qsdevconfig.ValidateOptions{ProfileNames: ensureProfileRegistry().Names()}
+			profiles, err := projectProfiles()
+			if err != nil {
+				t.Fatal(err)
+			}
+			opts := qsdevconfig.ValidateOptions{ProfileNames: profiles.Names()}
 			if errs := qsdevconfig.ValidateQsdevConfig(cfg, opts); len(errs) > 0 {
 				t.Errorf("committed config fails validation: %v", errs)
 			}
@@ -469,7 +473,7 @@ func TestBuildJoinAnswers_OverridesLayerOverConfig(t *testing.T) {
 	dir := newGoProject(t)
 	config := "version: 1\ntier: full\nlanguages:\n  - name: go\n    version: \"1.24\"\n" +
 		"claude_code:\n  enabled: true\n  permission_level: standard\n" +
-		"infrastructure:\n  registry_proxy: https://proxy.example.com\n"
+		"infrastructure:\n  registry_proxy: https://proxy.corp.internal\n"
 	if err := os.WriteFile(filepath.Join(dir, ".qsdev.yaml"), []byte(config), 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -487,7 +491,7 @@ func TestBuildJoinAnswers_OverridesLayerOverConfig(t *testing.T) {
 		if len(answers.Languages) != 1 || answers.Languages[0].Name != "python" {
 			t.Errorf("languages = %+v, want the answers file's python", answers.Languages)
 		}
-		if answers.Tier != "full" || answers.Infrastructure.RegistryProxy != "https://proxy.example.com" {
+		if answers.Tier != "full" || answers.Infrastructure.RegistryProxy != "https://proxy.corp.internal" {
 			t.Errorf("config values lost: tier=%q infra=%+v", answers.Tier, answers.Infrastructure)
 		}
 	})

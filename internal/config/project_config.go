@@ -38,7 +38,12 @@ import (
 //   - the hooks block and claude_code.permissions are the committed ones, and
 //     are cleared when there is no .qsdev.yaml, so a rule the team removed
 //     (or one written into the answers file) never comes back through a
-//     regeneration from stale saved answers.
+//     regeneration from stale saved answers;
+//   - each language the committed file pins keeps that version, raised to
+//     what detection requires (go.mod's go directive, say) when that is newer
+//     (see WizardAnswers.RaiseVersionsToDetected), so a stale answers file
+//     never lowers the team's toolchain pin. Lowering a pin is a committed
+//     change to .qsdev.yaml, never a local one.
 //
 // An unreadable config is left to the caller's policy load and
 // SyncProjectConfig, which report it.
@@ -47,11 +52,13 @@ func AdoptCommitted(projectRoot string, a *types.WizardAnswers) {
 	if errors.Is(err, fs.ErrNotExist) {
 		a.HookPolicy = types.HooksConfig{}
 		a.ClaudePermissions = types.ClaudePermissionsConfig{}
+		a.RaiseVersionsToDetected()
 		return
 	}
 	if err != nil {
 		return
 	}
+	adoptCommittedVersions(a, cfg)
 	a.HookPolicy = cfg.Hooks.Clone()
 	a.ClaudePermissions = cfg.ClaudeCode.Permissions.Clone()
 	if ClaudeCodeEnabled(cfg) {
@@ -65,6 +72,24 @@ func AdoptCommitted(projectRoot string, a *types.WizardAnswers) {
 		return
 	}
 	a.Tier = cfg.Tier
+}
+
+// adoptCommittedVersions gives every answers language the version cfg pins for
+// it and then raises it to what detection requires. A language cfg does not
+// pin a version for keeps the answers' version, still raised to detection.
+func adoptCommittedVersions(a *types.WizardAnswers, cfg *types.QsdevConfig) {
+	pinned := make(map[string]string, len(cfg.Languages))
+	for _, l := range cfg.Languages {
+		if l.Version != "" {
+			pinned[l.Name] = l.Version
+		}
+	}
+	for i := range a.Languages {
+		if v, ok := pinned[a.Languages[i].Name]; ok {
+			a.Languages[i].Version = v
+		}
+	}
+	a.RaiseVersionsToDetected()
 }
 
 // projectConfigHeader is written at the top of every generated .qsdev.yaml.

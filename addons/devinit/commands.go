@@ -47,6 +47,7 @@ for the current project. Detects existing languages and frameworks, applies
 project-type profiles, and writes all files atomically.`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if opts.Update {
+				devenv.PrintProjectDefaults(cmd.OutOrStdout())
 				return runUpdate(cmd, updateOptionsFromInit(opts))
 			}
 			return runInitWithModeDetection(cmd, opts)
@@ -54,6 +55,7 @@ project-type profiles, and writes all files atomically.`,
 	}
 
 	RegisterInitFlags(cmd, &opts)
+	describeTierOnHelp(cmd)
 
 	return cmdutil.MarkRootHere(cmdutil.MarkReadOnly(cmd, "dry-run"))
 }
@@ -117,8 +119,9 @@ func runInitWithModeDetection(cmd *cobra.Command, opts InitOptions) error {
 
 	slog.Info("onboarding mode detected", "mode", result.Mode)
 
-	// d. Print explanation.
+	// d. Print explanation, and the project defaults file the plan applies.
 	_, _ = fmt.Fprintf(cmd.OutOrStdout(), "[%s] %s\n", result.Mode, result.Explanation)
+	devenv.PrintProjectDefaults(cmd.OutOrStdout())
 
 	// e. Dispatch to appropriate handler.
 	switch result.Mode {
@@ -253,7 +256,11 @@ func buildAnswersFromInputs(cmd *cobra.Command, opts InitOptions, projectRoot st
 	}
 
 	if opts.ProfileName != "" {
-		p, ok := ensureProfileRegistry().Get(opts.ProfileName)
+		reg, err := projectProfiles()
+		if err != nil {
+			return types.WizardAnswers{}, err
+		}
+		p, ok := reg.Get(opts.ProfileName)
 		if !ok {
 			return types.WizardAnswers{}, fmt.Errorf("unknown profile %q; use --list-profiles to see available profiles", opts.ProfileName)
 		}
@@ -498,7 +505,11 @@ func runRepair(cmd *cobra.Command, opts InitOptions) error {
 
 // listProfiles prints all available project-type profiles and returns.
 func listProfiles(cmd *cobra.Command) error {
-	profiles := ensureProfileRegistry().List()
+	reg, err := projectProfiles()
+	if err != nil {
+		return err
+	}
+	profiles := reg.List()
 	if len(profiles) == 0 {
 		_, _ = fmt.Fprintln(cmd.OutOrStdout(), "No profiles available.")
 		return nil

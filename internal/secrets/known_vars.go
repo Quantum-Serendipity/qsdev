@@ -5,13 +5,19 @@ import "strings"
 // KnownCredentialVars is the canonical list of environment variable names
 // that carry credentials or secrets. Used by the log redaction handler and
 // the devenv addon's environment stripping.
+//
+// Only credentials belong here. Selector variables that pick an account
+// context without granting access (AWS_PROFILE, AWS_REGION,
+// AWS_DEFAULT_REGION, CLOUDSDK_CORE_PROJECT, GCLOUD_PROJECT, AZURE_TENANT_ID,
+// AZURE_SUBSCRIPTION_ID, ...) are deliberately absent: the catalog unset_vars
+// is a superset of this list, so a selector here would be stripped from the
+// devenv shell and discard the value a cloud module or the user set.
 var KnownCredentialVars = []string{
 	// AWS
 	"AWS_ACCESS_KEY_ID",
 	"AWS_SECRET_ACCESS_KEY",
 	"AWS_SESSION_TOKEN",
 	"AWS_SECURITY_TOKEN",
-	"AWS_DEFAULT_REGION",
 	// GitHub
 	"GITHUB_TOKEN",
 	"GH_TOKEN",
@@ -21,13 +27,9 @@ var KnownCredentialVars = []string{
 	"GL_TOKEN",
 	// GCP
 	"GOOGLE_APPLICATION_CREDENTIALS",
-	"GCLOUD_PROJECT",
-	"CLOUDSDK_CORE_PROJECT",
 	// Azure
 	"AZURE_CLIENT_ID",
 	"AZURE_CLIENT_SECRET",
-	"AZURE_TENANT_ID",
-	"AZURE_SUBSCRIPTION_ID",
 	// Package registries
 	"NPM_TOKEN",
 	"PYPI_TOKEN",
@@ -61,12 +63,13 @@ var KnownCredentialVars = []string{
 
 // SensitiveKeyPatterns are substrings that, when found in a variable or log
 // attribute key name (case-insensitive, token-boundary matched), indicate the
-// value should be redacted. The bare "key" token is only ever matched at a
-// token boundary (see IsSensitiveName), so it catches ACCESS_KEY / *_KEY /
-// KEY_* without matching KEYBOARD, KEYWORD, or MONKEY. The "pwd" token is
-// handled separately in MatchesSensitiveKeyPattern (as a non-whole-name token)
-// so it catches MYSQL_PWD / *_PWD without withholding the ubiquitous, non-secret
-// PWD (present working directory) variable.
+// value should be redacted. Every token also matches its plural (one trailing
+// "s": credentials, api_keys, sessions), see matchesTokenBoundary. The bare
+// "key" token is only ever matched at a token boundary (see IsSensitiveName), so
+// it catches ACCESS_KEY / *_KEY / KEY_* / keys without matching KEYBOARD,
+// KEYWORD, or MONKEY. "cookie" also covers Set-Cookie via the hyphen and case
+// normalization. The embedded-only tokens ("pwd", "pass") live in
+// embeddedOnlyTokens instead, see there.
 var SensitiveKeyPatterns = []string{
 	"password",
 	"secret",
@@ -81,7 +84,20 @@ var SensitiveKeyPatterns = []string{
 	"passwd",
 	"access_key",
 	"key",
+	"passphrase",
+	"cookie",
+	"dsn",
+	"connection_string",
+	"conn_string",
 }
+
+// embeddedOnlyTokens are credential tokens that are sensitive only as a
+// separated token inside a longer name (MYSQL_PWD, DB_PASS, smtp-pass), never
+// as the whole name. A bare "PWD" is the ubiquitous, non-secret present working
+// directory, and a bare "pass" is qsdev's own check/posture pass-count field
+// (json:"pass"), so treating either whole name as sensitive would withhold or
+// redact benign values.
+var embeddedOnlyTokens = []string{"pwd", "pass"}
 
 // credentialRootSubstrings are credential-word roots matched case-insensitively
 // ANYWHERE in a name (plain substring), complementing the token-boundary matcher
@@ -197,7 +213,8 @@ func IsSensitiveName(name string) bool {
 // MatchesSensitiveKeyPattern reports whether name looks credential-bearing by
 // name alone. It matches when name contains a SensitiveKeyPatterns token at a
 // token boundary (case-insensitive, with hyphens normalized to underscores so
-// "api-key" matches "api_key"), OR when it contains a credentialRootSubstrings
+// "api-key" matches "api_key", and a single plural "s" allowed), OR an
+// embeddedOnlyTokens token inside a longer name (DB_PASS, MYSQL_PWD), OR when it contains a credentialRootSubstrings
 // root anywhere (the substring fallback that catches concatenated credential
 // words the token boundary misses — e.g. AUTHORIZATION, PROXY_AUTHORIZATION,
 // bare PRIVATE, PRIVATE_FOO). Unlike IsSensitiveName it does not consult the
@@ -232,12 +249,13 @@ func MatchesSensitiveKeyPattern(name string) bool {
 			return true
 		}
 	}
-	// "pwd" is treated as sensitive only when it is a separated token inside a
-	// longer name (MYSQL_PWD, *_PWD), never as the whole name — otherwise the
-	// ubiquitous, non-secret PWD (present working directory) var would be withheld.
-	if lower != "pwd" && (matchesTokenBoundary(lower, "pwd") ||
-		(normalizedDiffers && matchesTokenBoundary(normalized, "pwd"))) {
-		return true
+	// Embedded-only tokens: sensitive as a separated token inside a longer name,
+	// never as the whole name (see embeddedOnlyTokens).
+	for _, tok := range embeddedOnlyTokens {
+		if lower != tok && (matchesTokenBoundary(lower, tok) ||
+			(normalizedDiffers && matchesTokenBoundary(normalized, tok))) {
+			return true
+		}
 	}
 	return false
 }
@@ -247,6 +265,9 @@ func MatchesSensitiveKeyPattern(name string) bool {
 // separator (e.g. "_" or "-"). It scans every occurrence, so a boundary match
 // later in the string is still found. The boundary rule keeps a short generic
 // token like "key" from matching inside "keyboard", "keyword", or "monkey".
+// Exactly one trailing "s" is also accepted before the right boundary, so the
+// plural of every token matches (credentials, api_keys, tokens) while longer
+// suffixes (tokenizer, keyss) still do not.
 func matchesTokenBoundary(s, pattern string) bool {
 	from := 0
 	for {
@@ -257,6 +278,9 @@ func matchesTokenBoundary(s, pattern string) bool {
 		idx := from + rel
 		leftOK := idx == 0 || !isAlphaNum(s[idx-1])
 		end := idx + len(pattern)
+		if end < len(s) && s[end] == 's' {
+			end++ // one plural "s" is part of the token
+		}
 		rightOK := end == len(s) || !isAlphaNum(s[end])
 		if leftOK && rightOK {
 			return true

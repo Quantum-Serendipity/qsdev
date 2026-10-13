@@ -359,3 +359,28 @@ func TestWorkingDirAndHomeDir(t *testing.T) {
 		t.Errorf("HomeDir() with a relative HOME = %q, want an error", got)
 	}
 }
+
+// TestCheckTrusted_StatCalls bounds CheckTrusted's filesystem calls on every
+// OS: an lstat of the entry and a stat of its parent, plus a stat of the
+// target for a symlink.
+func TestCheckTrusted_StatCalls(t *testing.T) {
+	root := t.TempDir()
+	touch(t, root, "f")
+	calls := countSeams(t)
+	if err := CheckTrusted(filepath.Join(root, "f")); err != nil {
+		t.Fatalf("CheckTrusted: %v", err)
+	}
+	if *calls != 2 {
+		t.Errorf("CheckTrusted of a regular file: %d stat/lstat calls, want 2", *calls)
+	}
+	if err := os.Symlink(filepath.Join(root, "f"), filepath.Join(root, "l")); err != nil {
+		t.Skipf("symlinks unavailable: %v", err)
+	}
+	*calls = 0
+	if err := CheckTrusted(filepath.Join(root, "l")); err != nil {
+		t.Fatalf("CheckTrusted(symlink): %v", err)
+	}
+	if *calls != 3 {
+		t.Errorf("CheckTrusted of a symlink: %d stat/lstat calls, want 3", *calls)
+	}
+}

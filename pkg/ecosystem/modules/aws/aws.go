@@ -130,28 +130,51 @@ func (m *Module) detectSAMTemplate(projectRoot string, result *ecosystem.Detecti
 	}
 }
 
+// selectorVars maps each AWS extra to the selector variables it sets. A
+// configured region sets both AWS_REGION, which the JS v3 and Go v2 SDKs read,
+// and AWS_DEFAULT_REGION, which the CLI and older SDKs read.
+var selectorVars = []struct {
+	extra string
+	names []string
+}{
+	{"aws_profile", []string{"AWS_PROFILE"}},
+	{"aws_default_region", []string{"AWS_REGION", "AWS_DEFAULT_REGION"}},
+}
+
+// KeepEnvVars returns the AWS selector variables devenv.yaml clean.keep
+// passes through from the user's shell: the profile and both region
+// variables. They select an account context and carry no credential.
+func (m *Module) KeepEnvVars() []string {
+	var names []string
+	for _, v := range selectorVars {
+		names = append(names, v.names...)
+	}
+	return names
+}
+
 // DevenvNixFragment returns the Nix code fragment to include in devenv.nix
-// for the AWS environment. AWS_PROFILE and AWS_DEFAULT_REGION are exported
+// for the AWS environment. AWS_PROFILE and the region variables are exported
 // only when configured (Extras aws_profile / aws_default_region): devenv env
 // values override the user's shell, so emitting a placeholder would clobber a
 // working profile and make every AWS CLI/SDK call fail. Unconfigured variables
-// are left to the user's environment and noted in a comment.
+// are inherited from the user's shell through devenv.yaml clean.keep (see
+// KeepEnvVars), as a comment notes.
 func (m *Module) DevenvNixFragment(config ecosystem.ModuleConfig) (string, error) {
-	vars := []struct{ name, extra string }{
-		{"AWS_PROFILE", "aws_profile"},
-		{"AWS_DEFAULT_REGION", "aws_default_region"},
-	}
 	var b strings.Builder
-	var unset []string
-	for _, v := range vars {
-		if val := strings.TrimSpace(config.Extra(v.extra, "")); val != "" {
-			fmt.Fprintf(&b, "  env.%s = %s;\n", v.name, ecosystem.NixString(val))
-		} else {
-			unset = append(unset, v.name)
+	var inherited []string
+	for _, v := range selectorVars {
+		val := strings.TrimSpace(config.Extra(v.extra, ""))
+		for _, name := range v.names {
+			if val != "" {
+				fmt.Fprintf(&b, "  env.%s = %s;\n", name, ecosystem.NixString(val))
+			} else {
+				inherited = append(inherited, name)
+			}
 		}
 	}
-	if len(unset) > 0 {
-		fmt.Fprintf(&b, "  # %s: not set here; inherited from your shell environment.\n", strings.Join(unset, ", "))
+	if len(inherited) > 0 {
+		fmt.Fprintf(&b, "  # %s: not set here; inherited from your shell through devenv.yaml clean.keep, or set in devenv.local.nix.\n",
+			strings.Join(inherited, ", "))
 	}
 	return b.String(), nil
 }
@@ -205,9 +228,16 @@ func (m *Module) WizardFields() []ecosystem.WizardField {
 		{
 			Key:         "aws_default_region",
 			Label:       "AWS Default Region",
-			Description: "Default AWS region for CLI operations; leave empty to inherit AWS_DEFAULT_REGION from your shell",
+			Description: "Default AWS region for the CLI and SDKs (sets AWS_REGION and AWS_DEFAULT_REGION); leave empty to inherit AWS_REGION and AWS_DEFAULT_REGION from your shell",
 			Type:        ecosystem.FieldTypeInput,
 			Placeholder: "us-east-1",
+		},
+		{
+			Key:         "aws_profile",
+			Label:       "AWS Profile",
+			Description: "Named profile from ~/.aws/config, committed to devenv.nix for the whole team; leave empty to inherit AWS_PROFILE from your shell (set a personal one in devenv.local.nix)",
+			Type:        ecosystem.FieldTypeInput,
+			Placeholder: "dev",
 		},
 		{
 			Key:         "aws_vault",

@@ -78,6 +78,17 @@ type DevenvYamlInputProvider interface {
 	DevenvYamlInputs(config ModuleConfig) []DevenvInput
 }
 
+// EnvKeeper is an optional interface for modules whose tools read
+// non-secret selector variables from the user's shell, such as a cloud
+// profile, region or project ID. The names are appended to devenv.yaml
+// clean.keep for every selected module, so a value the user exports reaches
+// the devenv shell. The list is static per module and must never name a
+// credential: pkg/ecosystem/modules TestEnvKeepers_NeverKeepCredentials checks
+// every registered keeper against the credential canon.
+type EnvKeeper interface {
+	KeepEnvVars() []string
+}
+
 // WizardFieldProvider is an optional interface that ecosystem modules can
 // implement to contribute additional wizard form fields. Modules that require
 // no extra user input simply omit this interface.

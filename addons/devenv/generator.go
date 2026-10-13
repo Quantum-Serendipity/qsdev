@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"maps"
 
-	"github.com/Quantum-Serendipity/qsdev/internal/catalog"
 	"github.com/Quantum-Serendipity/qsdev/internal/profile"
 	"github.com/Quantum-Serendipity/qsdev/internal/tier"
 	"github.com/Quantum-Serendipity/qsdev/pkg/ecosystem"
@@ -60,9 +59,13 @@ func (g *DevenvGenerator) Generate(answers types.WizardAnswers) ([]types.Generat
 	if err != nil {
 		return nil, err
 	}
+	ctx, err := newGenContext(answers, g.registry)
+	if err != nil {
+		return nil, err
+	}
 
 	// 1. devenv.yaml
-	yamlFile, err := GenerateDevenvYaml(answers, g.registry)
+	yamlFile, err := generateDevenvYaml(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("generating devenv.yaml: %w", err)
 	}
@@ -71,7 +74,7 @@ func (g *DevenvGenerator) Generate(answers types.WizardAnswers) ([]types.Generat
 	}
 
 	// 2. devenv.nix
-	nixFile, err := GenerateDevenvNix(answers, g.registry)
+	nixFile, err := generateDevenvNix(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("generating devenv.nix: %w", err)
 	}
@@ -92,9 +95,7 @@ func (g *DevenvGenerator) Generate(answers types.WizardAnswers) ([]types.Generat
 			if !ok {
 				return nil, fmt.Errorf("unknown language module: %q", lang.Name)
 			}
-			cfg := generationConfig(lang, answers)
-			secFiles := mod.SecurityConfigs(cfg)
-			files = append(files, secFiles...)
+			files = append(files, mod.SecurityConfigs(ctx.moduleConfig(mod))...)
 		}
 	}
 
@@ -125,7 +126,7 @@ func (g *DevenvGenerator) Generate(answers types.WizardAnswers) ([]types.Generat
 	t := tier.Resolve(answers.Tier, answers.PermissionLevel, answers.MCPServers)
 	if t >= tier.Standard && infraProfile != nil {
 		in := profile.ProjectInputsFromAnswers(answers)
-		if in.CI, err = g.ciCommands(answers); err != nil {
+		if in.CI, err = ctx.ciCommands(); err != nil {
 			return nil, err
 		}
 		profileFiles, err := infraProfile.ConfigFiles(in)
@@ -138,41 +139,28 @@ func (g *DevenvGenerator) Generate(answers types.WizardAnswers) ([]types.Generat
 	return files, nil
 }
 
-// generationConfig is the ModuleConfig generation passes to lang's module
-// (ecosystem.ToGenerationConfig), with the release-age window of the
-// answers' compliance level resolved from the catalog.
-func generationConfig(lang types.LanguageChoice, answers types.WizardAnswers) ecosystem.ModuleConfig {
-	return ecosystem.ToGenerationConfig(lang, answers, catalog.EffectiveAgeGate(answers.ComplianceLevel))
-}
-
 // ciCommands groups the CI commands of every selected language's module by
-// phase, each module configured as for its security configs (package
-// manager, extras, the effective infrastructure and the compliance level's
-// release-age window, which the uv cooldown must match in CI and the shell). Settings the language
-// entry leaves unset are completed from detection (WithSuggested), as a
-// create does: answers saved by an older qsdev lack settings some commands
-// are gated on (the renv or luarocks package manager, the Nix flake extra),
-// and update refreshes detection but not the saved entries, so without this
-// those projects would silently lose the lock-enforcing steps.
-func (g *DevenvGenerator) ciCommands(answers types.WizardAnswers) ([]ecosystem.CIPhaseGroup, error) {
-	if g.registry == nil {
+// phase, each module configured with the context's ModuleConfig, the same one
+// devenv.nix, devenv.yaml, the security configs and secretspec are generated
+// from, so the workflow's commands (and the uv cooldown, which must match the
+// shell's) run against the environment the project actually gets.
+func (c *genContext) ciCommands() ([]ecosystem.CIPhaseGroup, error) {
+	if c.modules == nil {
 		return nil, nil
 	}
-	modules := make([]ecosystem.EcosystemModule, 0, len(answers.Languages))
-	configs := make(map[string]ecosystem.ModuleConfig, len(answers.Languages))
-	for _, lang := range answers.Languages {
-		mod, ok := g.registry.ByName(lang.Name)
+	modules := make([]ecosystem.EcosystemModule, 0, len(c.answers.Languages))
+	seen := make(map[string]bool, len(c.answers.Languages))
+	for _, lang := range c.answers.Languages {
+		mod, ok := c.modules.ByName(lang.Name)
 		if !ok {
 			return nil, fmt.Errorf("unknown language module: %q", lang.Name)
 		}
-		if _, dup := configs[mod.Name()]; !dup {
+		if !seen[mod.Name()] {
+			seen[mod.Name()] = true
 			modules = append(modules, mod)
 		}
-		configs[mod.Name()] = generationConfig(answers.Detected.WithSuggested(lang), answers)
 	}
-	groups, err := ecosystem.AggregateCICommands(modules, func(mod ecosystem.EcosystemModule) ecosystem.ModuleConfig {
-		return configs[mod.Name()]
-	})
+	groups, err := ecosystem.AggregateCICommands(modules, c.moduleConfig)
 	if err != nil {
 		return nil, fmt.Errorf("collecting ecosystem CI commands: %w", err)
 	}

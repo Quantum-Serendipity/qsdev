@@ -95,6 +95,28 @@ func TestHasPlaintextSecrets(t *testing.T) {
 			want: true,
 		},
 		{
+			// The credential-name canon (secrets.IsSensitiveName) covers names a
+			// local regex missed: embedded pass/pwd tokens and the auth/private roots.
+			name: "literal under canon-only credential names flagged",
+			def:  McpServerDefinition{Env: map[string]string{"DB_PASS": "hunter2hunter2"}},
+			want: true,
+		},
+		{
+			name: "literal MYSQL_PWD flagged",
+			def:  McpServerDefinition{Env: map[string]string{"MYSQL_PWD": "hunter2hunter2"}},
+			want: true,
+		},
+		{
+			name: "literal Authorization header flagged",
+			def:  McpServerDefinition{Headers: map[string]string{"Authorization": "letmein-please"}},
+			want: true,
+		},
+		{
+			name: "literal PRIVATE_SIGNING value flagged",
+			def:  McpServerDefinition{Env: map[string]string{"PRIVATE_SIGNING": "hunter2hunter2"}},
+			want: true,
+		},
+		{
 			name: "literal next to a variable reference flagged",
 			def:  McpServerDefinition{Env: map[string]string{"X": "${HOME}ghp_abcdefghijklmnopqrstuvwxyz0123456789"}},
 			want: true,

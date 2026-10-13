@@ -252,13 +252,111 @@ mcp:
 - The key is set only in `.qsdev.yaml`: `.qsdev.local.yaml` cannot add to
   or remove from it. Re-creating a project (`qsdev init --force`) keeps it.
 
+### MCP server opt-ins
+
+Two tools of the qsdev MCP server (`qsdev mcp serve`) are off by default:
+`qsdev_nix_run` starts processes on the host, and `qsdev_credential_vend`
+hands out cloud credentials. The server does not mount `qsdev_nix_run` or
+`qsdev_credential_vend` without an operator opt-in that the project's qsdev
+configuration cannot set. The opt-ins come from the person or deployment
+running the server:
+
+| Tool | Opt-in (any one) | Also needed |
+|------|------------------|-------------|
+| `qsdev_nix_run` | `--allow-nix-run`, `QSDEV_MCP_ALLOW_NIX_RUN=1`, or `mcp_serve.allow_nix_run: true` in the user defaults file | gateway and standalone modes: `--gateway-allow-nix-run` or `QSDEV_GATEWAY_ALLOW_NIX_RUN=1` |
+| `qsdev_credential_vend` | `--allow-credential-vend`, `QSDEV_MCP_ALLOW_CREDENTIAL_VEND=1`, or `mcp_serve.allow_credential_vend: true` in the user defaults file | an enabled `security.credential_vend` in `.qsdev.yaml` (below); gateway and standalone modes: `--gateway-allow-credential-vend` or `QSDEV_GATEWAY_ALLOW_CREDENTIAL_VEND=1` |
+
+The user defaults file is `~/.config/qsdev/defaults.yaml` below the home
+directory your account's user database entry records, or an overlay a human
+approved with `qsdev defaults pin` (a `$QSDEV_ORG_CONFIG` that names an
+unpinned file is ignored with a warning; see
+[Org overlay pin](security-architecture.md)):
+
+```yaml
+# ~/.config/qsdev/defaults.yaml
+mcp_serve:
+  allow_nix_run: true
+  allow_credential_vend: true
+```
+
+- A project defaults file (`.qsdev/defaults.yaml`) that sets `mcp_serve` is
+  rejected, and `.qsdev.yaml` has no key for either opt-in: a committed
+  `mcp.credential_vend` or `mcp.nix_run` key fails the strict config parser,
+  so the server refuses to start rather than serving.
+- A user defaults file that fails to load is skipped with a warning, and both
+  opt-ins it would have set stay off.
+- Gateway credential vending without an agent allow-list
+  (`QSDEV_GATEWAY_AGENTS`) is refused at startup.
+- The server logs one line per tool at startup saying whether it is mounted
+  and which opt-in mounted it. When `.qsdev.yaml` enables
+  `security.credential_vend` but nobody has confirmed it, the line is a
+  warning naming the three ways to confirm.
+- The generated `.mcp.json` passes neither opt-in, so a default install
+  serves neither tool.
+- The flags and environment variables belong to whoever launches the
+  server, and are trusted only as far as the environment it is launched
+  from. `.qsdev.yaml`, `.qsdev.local.yaml` and `.qsdev/defaults.yaml` cannot
+  set them, but a committed `devenv.nix` (`env.QSDEV_MCP_ALLOW_NIX_RUN = "1";`)
+  or `.envrc` can export an environment variable into the shell a server is
+  started from, as it can run any other code there; review those files as
+  code. An agent that can run shell commands can also launch its own
+  `qsdev mcp serve` with the flags, so they keep the tools out of the
+  default install rather than out of an agent's reach.
+- A server on plain HTTP started with `--http-no-auth` mounts neither tool,
+  whatever the opt-ins say (see [MCP server over HTTP](#mcp-server-over-http)).
+
+### MCP server over HTTP
+
+`qsdev mcp serve --transport http` (and every standalone server) listens on
+HTTP. Without mTLS material it binds only a loopback address, and it
+requires a bearer token on every request:
+
+- At startup the server generates a random 32-byte token and, once the
+  port is bound, writes it (hex, mode `0600`) to
+  `<user state dir>/qsdev/mcp/<port>.token`: `$XDG_STATE_HOME/qsdev/mcp/`
+  when `XDG_STATE_HOME` is set, otherwise `~/.local/state/qsdev/mcp/` on
+  Linux, `~/Library/Application Support/qsdev/mcp/` on macOS and
+  `%LocalAppData%\qsdev\mcp\` on Windows. A directory it creates is mode
+  `0700`, and so is that `mcp` directory if it already existed. `<port>` is
+  the port actually bound, so `--port 0` names the port the system chose.
+  `--http-token-file <path>` chooses another file; its directory is left as
+  it is, with a warning when other users can write to it. The log names the
+  file, never the token, and the file is removed when the server stops.
+- A client sends `Authorization: Bearer <token>`. A request without it, or
+  with another token, gets `401` before any tool runs.
+- A standalone server's `GET /health` needs no token, so an orchestrator's
+  plain probe keeps working.
+- Under mTLS (`--tls-cert`, `--tls-key`, `--tls-client-ca`) the client
+  certificate is the authentication and no token is used.
+- `--http-no-auth` serves plain HTTP without the token. Any local process can
+  then call the server, so it logs a warning and mounts neither
+  `qsdev_nix_run` nor `qsdev_credential_vend`.
+
+| Flag | Default | Meaning |
+|------|---------|---------|
+| `--http-token-file <path>` | `<user state dir>/qsdev/mcp/<port>.token` | where plain HTTP writes its bearer token |
+| `--http-no-auth` | off | serve plain HTTP without the token; the gated tools are not mounted |
+
+The token keeps other local accounts and web pages out. A process running as
+your user, an agent included, can read the token file, so the server still
+holds each `qsdev_nix_run` call to what a Bash call may do. It judges the
+Bash command lines the call is equivalent to (the `nix run` line, the program
+the installable names with its arguments, a `-c` script and stdin) and
+refuses the call when a Bash deny rule matches one, when a Bash ask rule
+(package installs among them) would ask about one other than the `nix run`
+line, or when self-protection refuses one (a write to a protected file, a
+human-only `qsdev` command, an evasion pattern). The selfprotect hook judges
+`mcp__<server>__qsdev_nix_run` calls the same way.
+
 ### MCP credential vending
 
 `qsdev_credential_vend` exchanges the host's ambient cloud identity for
 short-lived credentials (AWS STS, GCP IAM Credentials, Azure Managed
 Identity). Its output is exempt from the MCP server's secret redaction, so
-it is opt-in. The server does not mount it unless `security.credential_vend`
-is enabled, and it vends only the identities the allow-lists name:
+it is opt-in twice: the committed `security.credential_vend` must enable it,
+and the operator must confirm it (see
+[MCP server opt-ins](#mcp-server-opt-ins)). It vends only the identities the
+allow-lists name:
 
 ```yaml
 security:
@@ -279,7 +377,8 @@ security:
 ```
 
 - Without the block, or with `enabled: false`, the tool is not offered to
-  any client. A call to it on a server that does mount it is still checked
+  any client, whatever the operator confirms. With the block but without an
+  operator confirmation, it is not offered either. A call to it on a server that does mount it is still checked
   against the block and refused (`status: denied`, naming the setting that
   would allow it) before any ambient credential is loaded.
 - An AWS request without `role_arn` calls `GetSessionToken`. Those
@@ -298,10 +397,46 @@ security:
 `qsdev_nix_run` runs its target with the server's environment minus every
 variable `qsdev_env_info` withholds (tokens, keys, passwords, and the
 `AWS_*`, `GCP_*`, `GOOGLE_*`, `AZURE_*`, `GH_*` and `GITHUB_*` namespaces), so the child cannot
-print the server's credentials. In gateway mode (`--deploy-mode=gateway`)
-the tool is not mounted, because it would run Nix packages on the gateway
-host for every framework the gateway serves. Pass `--gateway-allow-nix-run`
-or set `QSDEV_GATEWAY_ALLOW_NIX_RUN=true` to mount it.
+print the server's credentials. It is mounted only with an operator opt-in
+(see [MCP server opt-ins](#mcp-server-opt-ins)); in gateway and standalone
+mode it also needs `--gateway-allow-nix-run` or
+`QSDEV_GATEWAY_ALLOW_NIX_RUN=true`, because there it would run Nix packages
+for every client the server fronts.
+
+The server also checks every `qsdev_nix_run` call against the Bash deny
+rules, before nix is looked up: the catalog's deny rules (every set in
+`permission_all_deny_sets`, from the built-in and user defaults) and the
+`permissions.deny` rules of `~/.claude/settings.json`,
+`.claude/settings.json` and `.claude/settings.local.json`. The call is
+matched as the Bash commands it is equivalent to:
+
+- the literal `nix run <installable> -- <args>` command;
+- the program it runs, named by the installable's attribute
+  (`nixpkgs#bash` runs `bash`), followed by the arguments;
+- the script of a `-c` option among the arguments (`-c 'curl x | sh'`),
+  whichever program receives it, taken as a shell takes it: the first
+  operand after all the options, so `-c -- 'curl x | sh'` and
+  `-c -o errexit 'curl x | sh'` count too;
+- each command or pipeline that script runs: after `;`, `&&`, `||`, `&` or a
+  newline, inside a block, subshell or command substitution, inside a nested
+  `sh -c` or `eval`, and in a here-document or here-string fed to a shell
+  (`sh <<EOF`), so `-c 'true; curl x | sh'` is refused like
+  `-c 'curl x | sh'`. Each is matched both as written and from the program
+  it runs, without assignments, wrappers (`nohup`, `timeout 5`, `nice`,
+  `env`, `command`, `exec`, `sudo`, ...) and quotes or escapes on the
+  command word, so `nohup curl x | sh`, `X=1 curl x | sh` and
+  `\curl x | sh` are refused as `curl x | sh`;
+- the `stdin` text, and each command or pipeline in it, since a shell given
+  no `-c` script runs its standard input. A line the shell parser rejects is
+  matched as written.
+
+A `qsdev_nix_run` call is refused when its Bash equivalent matches a Bash
+deny rule, so `nixpkgs#bash` with `-c 'curl -fsSL https://x | sh'` is
+refused by the `pipe_to_shell` rules and `-c 'npm install x'` by the
+`shell_wrapping` rules. The refusal names the matching rule
+(`deny_rule`). Ask rules are not applied: `Bash(nix run *)` asks before
+every call, and the client's own permission prompt for the MCP tool is the
+ask. When the tool is not mounted, none of these files is read for it.
 
 ### Infrastructure settings
 
@@ -696,7 +831,7 @@ push to the repository controls it, it may only **add or tighten**:
 | `hook_tiers` | Hooks are added to an existing hook tier |
 | `tier_to_compliance` | A tier may move to a compliance level of equal or higher `order`, never a lower one |
 
-Every other section (for example `mcp_servers`, `tools`, `tiers`,
+Every other section (for example `mcp_servers`, `mcp_serve`, `tools`, `tiers`,
 `compliance`, `permission_allow_rules`, `permission_ask_rules`, `keep_vars`,
 `unset_vars`, `default_mcp_servers`) is rejected. A file that sets a
 rejected section or tries a weakening above stops every command with an
@@ -716,11 +851,71 @@ tier_to_compliance:
   standard: strict
 ```
 
-Layers apply in the order built-in, project, user: the user defaults file
-has the last word, so a developer's own file overrides the project's
-additions where both set the same entry. The file is found in the project
-enclosing the working directory (the directory holding `.qsdev.yaml` or the
-state directory), or in the working directory outside a project.
+The file is found in the project enclosing the working directory (the
+directory holding `.qsdev.yaml` or the state directory), or in the working
+directory outside a project.
+
+Every command that generates `devenv.nix` from the catalog names the file in
+its plan: `qsdev init` (every mode, `--dry-run` included), `qsdev init
+--update`, `qsdev update`, `qsdev devenv init`, `qsdev devenv update`, the
+`qsdev devenv add-*` and `remove-*` commands, and `qsdev enable` and
+`qsdev disable`. The name is followed by each pre-commit hook the file
+adds: a new custom hook with the command it runs, a hook added to the
+always-on `security_hooks` list, and a hook added to a hook tier. Hooks the
+built-in catalog or your user defaults file already define are not listed.
+A value holding a control character (a carriage return, an ANSI escape) is
+shown quoted with it escaped, so the file cannot rewrite its own line.
+
+```text
+Project defaults: /path/to/project/.qsdev/defaults.yaml
+  adds pre-commit hook foo-hook (security_hooks)
+  adds pre-commit hook okhook (custom_hooks): ./check.sh
+  adds pre-commit hook okhook (hook_tiers.baseline): ./check.sh
+```
+
+#### Layer order and the security floor
+
+Catalog layers apply in the order **built-in, user, project**:
+
+1. The built-in catalog sets the security floor.
+2. The user defaults file (`~/.config/qsdev/defaults.yaml` or the pinned
+   `$QSDEV_ORG_CONFIG` overlay) may change most of the catalog, but never
+   below that floor.
+3. The committed project policy applies last. It may only add or tighten
+   (table above), so a developer's own file cannot erase a deny rule, hook
+   or compliance raise the repository committed: where both set the same
+   deny set, the result is the user file's list plus the project's
+   additions, and where both raise a tier's compliance level the higher
+   one applies. The project file is judged against the built-in catalog
+   alone, so a user file never makes it fail to load.
+
+In the user defaults file, map sections (`tiers`, `tools`, `compliance`,
+...) merge per entry, and list sections replace the built-in list, except:
+
+| Section | User-file effect |
+|---------|------------------|
+| `security_hooks` | Hooks are added to the built-in always-on hooks; none can be removed |
+| `unset_vars` | Variables are added to the built-in credentials the shell strips; none can be removed |
+| `keep_vars` | Replaces the built-in list, but may not name a variable `unset_vars` strips |
+| `compliance.<level>.required_pre_commit_hooks` | May only grow for a built-in level |
+| `compliance.<level>.order` | Cannot change for a built-in level |
+| `compliance.<level>.age_gating_threshold_hours` | May not shrink for a built-in level |
+| `compliance.<level>.script_blocking`, `claude_audit_log`, `license_scanning` | May not be turned off for a built-in level |
+| `compliance.<level>.claude_permission_level` | May not name a less strict preset (by `strictness`) for a built-in level |
+| `tier_to_compliance` | A built-in tier may move only to a level of equal or higher `order` that is not weaker, in any of the ways above, than its built-in level |
+| `hook_tier_order`, `hook_tiers` | The built-in hook tiers stay first, in order; a `security_hooks` or `custom_hooks` entry may not move to a higher hook tier |
+
+`mcp_server_policy` and `sbom_policy` have no strictness order and are not
+part of the floor.
+
+A user defaults file that breaks one of these rules fails to load with
+an error that names the file and each offending field (for example
+`keep_vars: cannot keep "GITHUB_TOKEN"`); `qsdev defaults validate`
+reports the same error. A compliance level's required hook must also be
+a tool or an always-on hook (`security_hooks` or `custom_hooks`):
+`hook_tiers` only filters hooks by security level and never enables one,
+so a required hook listed only there is rejected. Use hook tiers to place
+non-security hooks such as formatters.
 
 ---
 
@@ -745,7 +940,7 @@ Key contents:
 - `permitted_unfree_packages: []` -- Empty allowlist
 - `permitted_insecure_packages: []` -- Empty allowlist
 - `clean.enabled: true` -- Strips environment on shell entry
-- `clean.keep: [TERM, HOME, USER, ...]` -- Minimal variable allowlist
+- `clean.keep: [PATH, TERM, HOME, USER, ...]` -- Minimal variable allowlist: the catalog `keep_vars` (`PATH` is required: devenv's shell rcfile runs `mktemp` under a Nix bash whose default `PATH` is `/no-such-path` before it sets its own `PATH`; the devenv profile still comes first), then the non-secret selector variables of each selected cloud module (AWS: `AWS_PROFILE`, `AWS_REGION`, `AWS_DEFAULT_REGION`; GCP: `CLOUDSDK_ACTIVE_CONFIG_NAME`, `CLOUDSDK_CORE_PROJECT`, `GOOGLE_CLOUD_PROJECT`; Azure: `ARM_SUBSCRIPTION_ID`, `ARM_TENANT_ID`), sorted. A module can never keep a credential variable.
 
 ### `devenv.nix`
 
@@ -1461,6 +1656,16 @@ Created once with an empty `exceptions:` list and an example entry (package, lic
 ## Per-Ecosystem Security Configs
 
 These files are generated by ecosystem modules based on the selected languages.
+`qsdev enable <language>` adds a language module the detector did not select
+(for example `qsdev enable gcp` for an application that only uses the Google
+Cloud SDK), and `qsdev disable <language>` removes one. Either command
+regenerates every file as `qsdev update` does, so the module's devenv
+configuration, its Claude Code deny and Read-deny rules and the `languages`
+list in `.qsdev.yaml` change in one step. `--dry-run` previews the plan
+without writing. Your edits to managed files are merged or kept as sidecars
+exactly as `qsdev update` keeps them; `--force` is refused for a language
+(run `qsdev update --overwrite-modified` to replace modified files). Tool names and language names never overlap; `qsdev list`
+shows the tools.
 
 ### Release-age window
 
@@ -1705,35 +1910,35 @@ When the version is known, devenv.nix sets `languages.haskell.package` to nixpkg
 
 ### AWS
 
-When AWS project files are detected (CDK, SAM, Terraform `aws` provider):
+When AWS project files are detected (CDK, SAM, Terraform `aws` provider), or after `qsdev enable aws`:
 
 | Control | Mechanism |
 |---------|-----------|
 | Deny rules | Blocks `aws configure`, `aws sts assume-role`, credential cat commands |
 | Read-deny rules | Blocks Read access to `~/.aws/credentials`, `~/.aws/config`, `~/.aws/sso/cache/` |
-| Environment | Sets `AWS_PROFILE` / `AWS_DEFAULT_REGION` in devenv.nix only when the `aws_profile` / `aws_default_region` extras are configured; otherwise they are inherited from your shell |
+| Environment | `AWS_PROFILE`, `AWS_REGION` and `AWS_DEFAULT_REGION` are inherited from your shell: the module adds them to devenv.yaml `clean.keep`, and none of them is in `unsetEnvVars`. The `aws_profile` extra sets `AWS_PROFILE` in the committed devenv.nix for the whole team (leave it empty for per-developer profiles), and the `aws_default_region` extra sets both `AWS_REGION` (read by the JS v3 and Go v2 SDKs) and `AWS_DEFAULT_REGION` (read by the CLI); a value set there overrides your shell. To pin a value without an extra, set it in `devenv.local.nix` |
 
 ### GCP
 
-When GCP project files are detected (Cloud Build, Firebase, Terraform `google` provider):
+When GCP project files are detected (Cloud Build, Firebase, Terraform `google` provider), or after `qsdev enable gcp`:
 
 | Control | Mechanism |
 |---------|-----------|
 | Deny rules | Blocks `gcloud auth print-access-token`, `gcloud config set`, credential cat commands |
 | Read-deny rules | Blocks Read access to `~/.config/gcloud/application_default_credentials.json`, `~/.config/gcloud/credentials.db` and the per-project `.qsdev/cloud/gcp/` |
-| Environment | Documents `CLOUDSDK_ACTIVE_CONFIG_NAME`, `CLOUDSDK_CORE_PROJECT` and `GOOGLE_CLOUD_PROJECT` as comments in devenv.nix; set real values in `devenv.local.nix` or with `qsdev init --env`. These select a default configuration and project; credentials stay shared in `~/.config/gcloud` |
+| Environment | `CLOUDSDK_ACTIVE_CONFIG_NAME`, `CLOUDSDK_CORE_PROJECT` and `GOOGLE_CLOUD_PROJECT` are inherited from your shell: the module adds them to devenv.yaml `clean.keep`, and devenv.nix documents them as comments. To pin a value for the project, set it in `devenv.local.nix` or with `qsdev init --env`. These select a default configuration and project; credentials stay shared in `~/.config/gcloud` |
 | CLI isolation | With `cloud.isolate_cli_config`, sets `CLOUDSDK_CONFIG` to `.qsdev/cloud/gcp` (see [Cloud CLI configuration isolation](#cloud-cli-configuration-isolation)) |
-| GKE auth | When Helm or container files are also detected, installs `google-cloud-sdk` with the `gke-gcloud-auth-plugin` component |
+| GKE auth | When Helm charts are also detected, installs `google-cloud-sdk` with the `gke-gcloud-auth-plugin` component |
 
 ### Azure
 
-When Azure project files are detected (Pipelines, Bicep, Terraform `azurerm` provider):
+When Azure project files are detected (Pipelines, Bicep, Terraform `azurerm` provider), or after `qsdev enable azure`:
 
 | Control | Mechanism |
 |---------|-----------|
 | Deny rules | Blocks `az account get-access-token`, `az login --service-principal`, credential cat commands |
 | Read-deny rules | Blocks Read access to `~/.azure/accessTokens.json`, `~/.azure/msal_token_cache.json` and the per-project `.qsdev/cloud/azure/` |
-| Environment | Documents `ARM_SUBSCRIPTION_ID` and `ARM_TENANT_ID` as comments in devenv.nix; set real values in `devenv.local.nix` or with `qsdev init --env`. Only Terraform's azurerm provider reads them: `az` ignores them and uses the subscription last selected with `az account set` |
+| Environment | `ARM_SUBSCRIPTION_ID` and `ARM_TENANT_ID` are inherited from your shell: the module adds them to devenv.yaml `clean.keep`, and devenv.nix documents them as comments. To pin a value for the project, set it in `devenv.local.nix` or with `qsdev init --env`. Only Terraform's azurerm provider reads them: `az` ignores them and uses the subscription last selected with `az account set` |
 | CLI isolation | With `cloud.isolate_cli_config`, sets `AZURE_CONFIG_DIR` to `.qsdev/cloud/azure` (see [Cloud CLI configuration isolation](#cloud-cli-configuration-isolation)) |
 
 ---

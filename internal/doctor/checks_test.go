@@ -1,6 +1,8 @@
 package doctor
 
 import (
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -231,6 +233,42 @@ func TestPythonMinVersionMatchesHooks(t *testing.T) {
 	}
 }
 
+// TestHostFloors pins doctor's nix and devenv floors to pkg/types, the single
+// source the generator's devenv.yaml require_version also reads.
+func TestHostFloors(t *testing.T) {
+	t.Parallel()
+	for name, want := range map[string]string{"nix": types.MinNix, "devenv": types.MinDevenv} {
+		if want == "" {
+			t.Fatalf("%s floor is empty", name)
+		}
+		if got := findCheck(t, name).MinVersion; got != want {
+			t.Errorf("%s MinVersion = %q, want %q", name, got, want)
+		}
+	}
+}
+
+// TestParseHostToolVersions keeps the nix and devenv parsers producing a
+// version the floor comparison understands, across the forms they print.
+func TestParseHostToolVersions(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		tool, raw, want string
+	}{
+		{"nix", "nix (Nix) 2.3.0", "2.3.0"},
+		{"nix", "nix (Nix) 2.4pre20211001_590e5f0", "2.4pre20211001_590e5f0"},
+		{"nix", "nix (Determinate Nix 3.6.2) 2.29.0", "2.29.0"},
+		{"nix", "nix (Lix, like Nix) 2.91.1", "2.91.1"},
+		{"devenv", "devenv 1.4.1 (x86_64-linux)", "1.4.1"},
+		{"devenv", "devenv 2.1.2+abc (x86_64-linux)", "2.1.2+abc"},
+		{"devenv", "1.4.1", "1.4.1"},
+	}
+	for _, tt := range tests {
+		if got := findCheck(t, tt.tool).ParseVersion(tt.raw); got != tt.want {
+			t.Errorf("%s ParseVersion(%q) = %q, want %q", tt.tool, tt.raw, got, tt.want)
+		}
+	}
+}
+
 func TestParseShellcheckVersion(t *testing.T) {
 	tc := findCheck(t, "shellcheck")
 	tests := []struct {
@@ -371,5 +409,49 @@ func TestParseGrypeVersion(t *testing.T) {
 		if got != tt.want {
 			t.Errorf("grype ParseVersion(%q) = %q, want %q", tt.raw, got, tt.want)
 		}
+	}
+}
+
+// TestPyvenvVersion reads the version a virtualenv's pyvenv.cfg records,
+// beside the interpreter's directory or in it, keeping only its numeric
+// components.
+func TestPyvenvVersion(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name, cfg, at, want string
+	}{
+		{"venv", "home = /usr/bin\nversion = 3.12.4\n", "root", "3.12.4"},
+		{"virtualenv/uv", "version_info = 3.11.9.final.0\n", "root", "3.11.9"},
+		{"key case and spacing", "Version=3.10.1\r\n", "root", "3.10.1"},
+		{"beside the interpreter", "version = 3.13.0\n", "bin", "3.13.0"},
+		{"no version", "home = /usr/bin\n", "root", ""},
+		{"not a version", "version = \x1b[2Jx\n", "root", ""},
+		{"no file", "", "", ""},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			root := t.TempDir()
+			bin := filepath.Join(root, "bin")
+			if err := os.MkdirAll(bin, 0o755); err != nil {
+				t.Fatal(err)
+			}
+			switch tt.at {
+			case "root":
+				writeTestFile(t, filepath.Join(root, "pyvenv.cfg"), tt.cfg)
+			case "bin":
+				writeTestFile(t, filepath.Join(bin, "pyvenv.cfg"), tt.cfg)
+			}
+			if got := pyvenvVersion(filepath.Join(bin, "python3")); got != tt.want {
+				t.Errorf("pyvenvVersion = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
+func writeTestFile(t *testing.T, path, content string) {
+	t.Helper()
+	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+		t.Fatal(err)
 	}
 }

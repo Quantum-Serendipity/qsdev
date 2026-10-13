@@ -37,7 +37,9 @@ func Command() *cobra.Command {
 		pinCmd(),
 	)
 
-	return cmd
+	// The defaults commands exist to diagnose and repair a defaults file
+	// that does not load, so the root catalog gate must not stop them.
+	return cmdutil.MarkCatalogOptional(cmd)
 }
 
 func initCmd() *cobra.Command {
@@ -101,7 +103,8 @@ func showCmd() *cobra.Command {
 }
 
 func runShow(cmd *cobra.Command, section string, jsonFlag bool) error {
-	cat, err := loadFresh()
+	// Show what the catalog applies: the pinned overlay (catalog.OrgConfigPin).
+	cat, err := loadFresh(catalog.PolicyOrgConfigFile())
 	if err != nil {
 		return fmt.Errorf("loading catalog: %w", err)
 	}
@@ -148,15 +151,20 @@ func validateCmd() *cobra.Command {
 
 func runValidate(cmd *cobra.Command) error {
 	orgFile := catalog.OrgConfigFile()
-	projFile := catalog.ProjectConfigFile(catalog.ProjectRoot())
+	projFile, err := catalog.ProjectConfigFile(catalog.ProjectRoot())
+	if err != nil {
+		return err
+	}
 	if orgFile == "" && projFile == "" {
 		path := catalog.OrgConfigPath()
 		fmt.Fprintf(cmd.OutOrStdout(), "No defaults file found at %s. Using embedded defaults.\n", path)
 		return nil
 	}
 
-	_, err := loadFresh()
-	if err != nil {
+	// Validate the overlay this run resolves, the one reported below, even
+	// before it is pinned: validating a file applies nothing, and a file a
+	// developer is about to pin must be checked first.
+	if _, err := loadFresh(orgFile); err != nil {
 		fmt.Fprintf(cmd.ErrOrStderr(), "Validation errors: %v\n", err)
 		return fmt.Errorf("defaults file is invalid")
 	}
@@ -293,17 +301,21 @@ func runReset(cmd *cobra.Command, yes bool) error {
 	return nil
 }
 
-// loadFresh loads the catalog, with the same project and user defaults files
-// as Default, without using the cached Default() singleton.
-func loadFresh() (*catalog.Catalog, error) {
+// loadFresh loads the catalog, with the same project defaults file as
+// Default and the org overlay orgFile ("" for none), without using the
+// cached Default() singleton. Like Default, it refuses a project defaults
+// file that fails the trust rule (see catalog.ProjectConfigFile).
+func loadFresh(orgFile string) (*catalog.Catalog, error) {
 	var opts []catalog.LoadOption
 
-	if projFile := catalog.ProjectConfigFile(catalog.ProjectRoot()); projFile != "" {
+	projFile, err := catalog.ProjectConfigFile(catalog.ProjectRoot())
+	if err != nil {
+		return nil, err
+	}
+	if projFile != "" {
 		opts = append(opts, catalog.WithProjectConfigFile(projFile))
 	}
-
-	// The overlay the catalog applies: the pinned one (catalog.OrgConfigPin).
-	if orgFile := catalog.PolicyOrgConfigFile(); orgFile != "" {
+	if orgFile != "" {
 		opts = append(opts, catalog.WithOrgConfigFile(orgFile))
 	}
 

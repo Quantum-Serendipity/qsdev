@@ -157,7 +157,7 @@ func (m *Module) DevenvYamlInputs(config ecosystem.ModuleConfig) []ecosystem.Dev
 	if release, _ := requiredGoRelease(config); release == "" {
 		return nil
 	}
-	return []ecosystem.DevenvInput{{URL: goOverlayInput, Follows: "nixpkgs"}}
+	return []ecosystem.DevenvInput{{URL: goOverlayInput, Follows: "nixpkgs", Options: []string{"languages.go.version"}}}
 }
 
 // SecurityConfigs returns generated security configuration files.

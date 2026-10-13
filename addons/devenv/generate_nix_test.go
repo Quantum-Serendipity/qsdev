@@ -12,6 +12,7 @@ import (
 
 	"github.com/Quantum-Serendipity/qsdev/addons/devenv"
 	"github.com/Quantum-Serendipity/qsdev/internal/catalog"
+	"github.com/Quantum-Serendipity/qsdev/internal/testutil"
 	"github.com/Quantum-Serendipity/qsdev/internal/tmpl"
 	"github.com/Quantum-Serendipity/qsdev/internal/validation"
 	"github.com/Quantum-Serendipity/qsdev/pkg/ecosystem"
@@ -339,10 +340,7 @@ func TestGenerateDevenvNix_EnterShellEscaping(t *testing.T) {
 // scope for `nix-instantiate --parse`, which also rejects references to
 // undefined variables.
 func TestGenerateDevenvNix_NixInstantiateParse(t *testing.T) {
-	nixInstantiate, err := exec.LookPath("nix-instantiate")
-	if err != nil {
-		t.Skip("nix-instantiate not available, skipping syntax validation")
-	}
+	nixInstantiate := testutil.RequireTool(t, "nix-instantiate", testutil.RequireNix)
 
 	cat, err := catalog.Default()
 	if err != nil {
@@ -676,10 +674,7 @@ func TestGenerateDevenvNix_RejectsHostileModuleHookID(t *testing.T) {
 // (languages.java.enable, jdk.package) is a Nix parse error that left
 // `qsdev init` without a devenv.nix for any Java+Scala repository.
 func TestGenerateDevenvNix_JVMCombinationsParse(t *testing.T) {
-	nixInstantiate, err := exec.LookPath("nix-instantiate")
-	if err != nil {
-		t.Skip("nix-instantiate not available, skipping syntax validation")
-	}
+	nixInstantiate := testutil.RequireTool(t, "nix-instantiate", testutil.RequireNix)
 
 	java := types.LanguageChoice{Name: "java", Version: "17", Extras: []string{"build_tool=both", "kotlin=true"}}
 	scalaSbt := types.LanguageChoice{Name: "scala", Extras: []string{"build_tool=sbt", "jdk_version=21"}}
@@ -763,15 +758,50 @@ func TestGenerateDevenvNix_JavaScriptSubproject(t *testing.T) {
 		t.Errorf("subproject eslint hook still uses the root-relative built-in binPath:\n%s", content)
 	}
 
-	nixInstantiate, err := exec.LookPath("nix-instantiate")
-	if err != nil {
-		t.Skip("nix-instantiate not available, skipping syntax validation")
-	}
+	nixInstantiate := testutil.RequireTool(t, "nix-instantiate", testutil.RequireNix)
 	path := filepath.Join(t.TempDir(), "devenv.nix")
 	if err := os.WriteFile(path, got.Content, 0o644); err != nil {
 		t.Fatalf("writing devenv.nix: %v", err)
 	}
 	if out, err := exec.Command(nixInstantiate, "--parse", path).CombinedOutput(); err != nil {
 		t.Fatalf("nix-instantiate --parse rejected generated devenv.nix: %v\n%s\n%s", err, out, content)
+	}
+}
+
+// TestGenerateDevenvNix_AWSRegionNotUnset verifies, with the real aws module
+// and a configured region, that devenv.nix exports AWS_REGION and
+// AWS_DEFAULT_REGION and that neither is in unsetEnvVars. devenv applies
+// unsetEnvVars after env, so an unset selector would discard the configured
+// value. No cloud selector variable may be stripped.
+func TestGenerateDevenvNix_AWSRegionNotUnset(t *testing.T) {
+	t.Parallel()
+	answers := types.WizardAnswers{
+		Languages: []types.LanguageChoice{{Name: "aws", Extras: []string{"aws_default_region=eu-west-1"}}},
+	}
+	got, err := devenv.GenerateDevenvNix(answers, ecosystem.DefaultRegistry())
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	content := string(got.Content)
+	requireContains(t, content, `    AWS_REGION = "eu-west-1";`)
+	requireContains(t, content, `    AWS_DEFAULT_REGION = "eu-west-1";`)
+
+	var unsetLine string
+	for line := range strings.SplitSeq(content, "\n") {
+		if strings.Contains(line, "unsetEnvVars = ") {
+			unsetLine = line
+			break
+		}
+	}
+	if unsetLine == "" {
+		t.Fatalf("no unsetEnvVars line in devenv.nix:\n%s", content)
+	}
+	for _, v := range []string{
+		"AWS_REGION", "AWS_DEFAULT_REGION", "AWS_PROFILE",
+		"CLOUDSDK_CORE_PROJECT", "GCLOUD_PROJECT", "AZURE_TENANT_ID", "AZURE_SUBSCRIPTION_ID",
+	} {
+		if strings.Contains(unsetLine, `"`+v+`"`) {
+			t.Errorf("unsetEnvVars strips selector %s: %s", v, unsetLine)
+		}
 	}
 }

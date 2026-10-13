@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/Quantum-Serendipity/qsdev/internal/gitworkflow"
+	"github.com/Quantum-Serendipity/qsdev/internal/testutil"
 	"github.com/Quantum-Serendipity/qsdev/internal/validation"
 	"github.com/Quantum-Serendipity/qsdev/pkg/types"
 )
@@ -128,13 +129,14 @@ func TestGitWorkflowNixHooksParse(t *testing.T) {
 				t.Errorf("hook content contains a backslash-escaped quote:\n%s", module)
 			}
 
-			if nixInstantiate, err := exec.LookPath("nix-instantiate"); err == nil {
+			t.Run("nix-parse", func(t *testing.T) {
+				nixInstantiate := testutil.RequireTool(t, "nix-instantiate", testutil.RequireNix)
 				cmd := exec.Command(nixInstantiate, "--parse", "-")
 				cmd.Stdin = strings.NewReader(module)
 				if out, err := cmd.CombinedOutput(); err != nil {
 					t.Errorf("nix-instantiate --parse failed: %v\n%s\n--- module ---\n%s", err, out, module)
 				}
-			}
+			})
 
 			if sh, err := exec.LookPath("sh"); err == nil {
 				cmd := exec.Command(sh, "-n")
@@ -147,32 +149,25 @@ func TestGitWorkflowNixHooksParse(t *testing.T) {
 	}
 }
 
-// branchNamingScript renders the branch-naming hook for pattern and returns
-// its shell script with the git call replaced by "$1", so the script checks
-// a fixed branch name. With nix-instantiate available the script is the
-// string Nix evaluates the indented string to (proving the Nix escaping);
-// otherwise it is the raw indented-string body, which is the same text for
-// patterns without Nix escapes.
-func branchNamingScript(t *testing.T, pattern string) string {
+// evalBranchNamingEntry returns the branch-naming hook script of module as
+// Nix evaluates the indented string, proving the Nix escaping. It skips (or
+// fails under testutil.RequireNix) without nix-instantiate.
+func evalBranchNamingEntry(t *testing.T, module string) string {
 	t.Helper()
-	module := renderInDevenvModuleFor(t, branchNamingNixContent, types.WizardAnswers{BranchPattern: pattern})
-	script := hookScriptBody(t, module)
-	if nixInstantiate, err := exec.LookPath("nix-instantiate"); err == nil {
-		expr := "let m = (" + module + ") { pkgs = { writeShellScript = name: text: text; }; lib = {}; config = {}; };" +
-			" in m.git-hooks.hooks.branch-naming.entry"
-		cmd := exec.Command(nixInstantiate, "--eval", "--strict", "--json", "-")
-		cmd.Stdin = strings.NewReader(expr)
-		out, err := cmd.Output()
-		if err != nil {
-			t.Fatalf("nix-instantiate --eval failed: %v\n--- module ---\n%s", err, module)
-		}
-		if err := json.Unmarshal(out, &script); err != nil {
-			t.Fatalf("decoding evaluated hook script %q: %v", out, err)
-		}
-	} else if strings.Contains(pattern, "${") {
-		t.Skip("nix-instantiate not available to evaluate a Nix-escaped pattern")
+	nixInstantiate := testutil.RequireTool(t, "nix-instantiate", testutil.RequireNix)
+	expr := "let m = (" + module + ") { pkgs = { writeShellScript = name: text: text; }; lib = {}; config = {}; };" +
+		" in m.git-hooks.hooks.branch-naming.entry"
+	cmd := exec.Command(nixInstantiate, "--eval", "--strict", "--json", "-")
+	cmd.Stdin = strings.NewReader(expr)
+	out, err := cmd.Output()
+	if err != nil {
+		t.Fatalf("nix-instantiate --eval failed: %v\n--- module ---\n%s", err, module)
 	}
-	return strings.Replace(script, "$(git rev-parse --abbrev-ref HEAD)", `"$1"`, 1)
+	var script string
+	if err := json.Unmarshal(out, &script); err != nil {
+		t.Fatalf("decoding evaluated hook script %q: %v", out, err)
+	}
+	return script
 }
 
 // TestBranchNamingHookScript runs the rendered branch-naming script against
@@ -217,12 +212,25 @@ func TestBranchNamingHookScript(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
-			script := branchNamingScript(t, tt.pattern)
-			cmd := exec.Command(sh, "-c", script, "branch-naming", tt.branch)
-			out, err := cmd.CombinedOutput()
-			if gotOK := err == nil; gotOK != tt.wantOK {
-				t.Errorf("pattern %q, branch %q: accepted=%v, want %v (output: %s)", tt.pattern, tt.branch, gotOK, tt.wantOK, out)
+			module := renderInDevenvModuleFor(t, branchNamingNixContent, types.WizardAnswers{BranchPattern: tt.pattern})
+			// check runs script with the git call replaced by "$1", so it
+			// checks a fixed branch name.
+			check := func(t *testing.T, script string) {
+				t.Helper()
+				script = strings.Replace(script, "$(git rev-parse --abbrev-ref HEAD)", `"$1"`, 1)
+				out, err := exec.Command(sh, "-c", script, "branch-naming", tt.branch).CombinedOutput()
+				if gotOK := err == nil; gotOK != tt.wantOK {
+					t.Errorf("pattern %q, branch %q: accepted=%v, want %v (output: %s)", tt.pattern, tt.branch, gotOK, tt.wantOK, out)
+				}
 			}
+			// Without Nix escapes the raw indented-string body is the text
+			// Nix evaluates it to, so it runs on hosts without nix too.
+			if !strings.Contains(tt.pattern, "${") {
+				check(t, hookScriptBody(t, module))
+			}
+			t.Run("nix-eval", func(t *testing.T) {
+				check(t, evalBranchNamingEntry(t, module))
+			})
 		})
 	}
 }

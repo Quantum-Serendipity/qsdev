@@ -12,7 +12,16 @@ import (
 // GenerateDevenvNix produces a GeneratedFile containing the rendered devenv.nix
 // from wizard answers and ecosystem module registry.
 func GenerateDevenvNix(answers types.WizardAnswers, registry *ecosystem.Registry) (*types.GeneratedFile, error) {
-	content, err := renderDevenvNix(answers, registry)
+	ctx, err := newGenContext(answers, registry)
+	if err != nil {
+		return nil, err
+	}
+	return generateDevenvNix(ctx)
+}
+
+// generateDevenvNix is GenerateDevenvNix for an already-loaded context.
+func generateDevenvNix(ctx *genContext) (*types.GeneratedFile, error) {
+	content, err := ctx.renderDevenvNix()
 	if err != nil {
 		return nil, err
 	}
@@ -25,17 +34,20 @@ func GenerateDevenvNix(answers types.WizardAnswers, registry *ecosystem.Registry
 	}
 
 	return &types.GeneratedFile{
-		Path:     "devenv.nix",
+		Path:     devenvNixPath,
 		Content:  []byte(normalized),
 		Mode:     fileutil.ModeReadWrite,
 		Strategy: types.ManualMerge,
 	}, nil
 }
 
+// devenvNixPath is the project-relative path of the generated devenv.nix.
+const devenvNixPath = "devenv.nix"
+
 // renderDevenvNix renders the devenv.nix template as assembled from its
 // pieces, before normalizeNixModule groups repeated keys.
-func renderDevenvNix(answers types.WizardAnswers, registry *ecosystem.Registry) ([]byte, error) {
-	data, err := BuildDevenvNixData(answers, registry)
+func (c *genContext) renderDevenvNix() ([]byte, error) {
+	data, err := c.buildDevenvNixData()
 	if err != nil {
 		return nil, fmt.Errorf("building devenv.nix template data: %w", err)
 	}

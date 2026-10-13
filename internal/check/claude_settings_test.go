@@ -122,10 +122,23 @@ func TestCheckClaudeSettingsPosture(t *testing.T) {
 			wantFail: []string{"claude_hook_env_changed"},
 		},
 		{
+			// Claude Code coerces env values with String(v), so an array
+			// sets the variable to its elements joined with ",".
 			name:     "hook policy env not a string",
-			actual:   withEnv(`{"TOOL_GATES_DENIED": ["WebFetch"]}`),
+			actual:   withEnv(`{"TOOL_GATES_DENIED": ["WebFetch", "Bash"]}`),
 			expected: withEnv(`{"TOOL_GATES_DENIED": "WebFetch"}`),
 			wantFail: []string{"claude_hook_env_changed"},
+		},
+		{
+			name:     "hook policy env as a JSON number",
+			actual:   withEnv(`{"PACKAGE_GUARD_MIN_AGE_DAYS": 1}`),
+			expected: withEnv(`{"PACKAGE_GUARD_MIN_AGE_DAYS": "7"}`),
+			wantFail: []string{"claude_hook_env_changed"},
+		},
+		{
+			name:     "hook policy env coerced to the same value",
+			actual:   withEnv(`{"PACKAGE_GUARD_MIN_AGE_DAYS": 7}`),
+			expected: withEnv(`{"PACKAGE_GUARD_MIN_AGE_DAYS": "7"}`),
 		},
 		{
 			name:     "unparseable settings",
@@ -182,6 +195,28 @@ func TestCheckClaudeSettingsPosture(t *testing.T) {
 			expected: withEnv(`{"TOOL_GATES_DENIED": "WebFetch"}`),
 			local:    `{"env": {"TOOL_GATES_DENIED": "", "MY_VAR": "x"}}`,
 			wantWarn: []string{"claude_settings_local_override"},
+		},
+		{
+			name:     "local env policy override as a JSON number warns",
+			actual:   withEnv(`{"PACKAGE_GUARD_MIN_AGE_DAYS": "7"}`),
+			expected: withEnv(`{"PACKAGE_GUARD_MIN_AGE_DAYS": "7"}`),
+			local:    `{"env": {"PACKAGE_GUARD_MIN_AGE_DAYS": 1}}`,
+			wantWarn: []string{"claude_settings_local_override"},
+		},
+		{
+			// Windows folds env name case, so another spelling can override
+			// the committed value; flagged on every OS.
+			name:     "local env policy override in another case warns",
+			actual:   withEnv(`{"PACKAGE_GUARD_MIN_AGE_DAYS": "7"}`),
+			expected: withEnv(`{"PACKAGE_GUARD_MIN_AGE_DAYS": "7"}`),
+			local:    `{"env": {"package_guard_min_age_days": "1"}}`,
+			wantWarn: []string{"claude_settings_local_override"},
+		},
+		{
+			name:     "local env policy restated in another case",
+			actual:   withEnv(`{"PACKAGE_GUARD_MIN_AGE_DAYS": "7"}`),
+			expected: withEnv(`{"PACKAGE_GUARD_MIN_AGE_DAYS": "7"}`),
+			local:    `{"env": {"package_guard_min_age_days": "7"}}`,
 		},
 		{
 			name:     "local launch env",
@@ -662,6 +697,9 @@ func TestCheckHookPrograms(t *testing.T) {
 		{name: "negated program", command: `! nonexistent-bin selfprotect`, event: "PreToolUse"},
 		{name: "or-handled block runs its first program", command: `{ nonexistent-bin selfprotect; gofmt -l .; } || true`, event: "PreToolUse", wantSev: SeverityCritical, wantProg: "nonexistent-bin"},
 		{name: "and-list left operand is not handled", command: `nonexistent-bin selfprotect && true`, event: "PreToolUse", wantSev: SeverityCritical, wantProg: "nonexistent-bin"},
+		// The generated fail-closed wrapper handles the failure by blocking, so the wrapped program must resolve.
+		{name: "fail-closed wrapped self-protection", command: claudesettings.FailClosedCommand("self-protection", "nonexistent-bin selfprotect"), event: "PreToolUse", wantSev: SeverityCritical, wantProg: "nonexistent-bin"},
+		{name: "fail-closed wrapped resolvable", command: claudesettings.FailClosedCommand("self-protection", "gofmt -l ."), event: "PreToolUse"},
 		// hash -p binds a name without PATH.
 		{name: "hash -p then bare program", command: `hash -p "$CLAUDE_PROJECT_DIR/.venv/bin/ruff" nonexistent-bin; nonexistent-bin check`, event: "PostToolUse"},
 		{name: "hash -r then bare program", command: `hash -r; nonexistent-bin selfprotect`, event: "PreToolUse", wantSev: SeverityCritical, wantProg: "nonexistent-bin"},
@@ -820,6 +858,40 @@ func TestCheckHookPrograms_SymlinkDotDot(t *testing.T) {
 			}
 			if len(results) != 1 || results[0].Metadata["program"] != tt.wantProg {
 				t.Fatalf("findings = %+v, want one naming %s", results, tt.wantProg)
+			}
+		})
+	}
+}
+
+// TestClaudeSettingsPosture_SchemaTypeErrorUnloadable pins that a
+// settings.json value Claude Code's schema rejects (W0N-06) fails the posture
+// check as critical: Claude Code then applies none of the file, the guard
+// hooks and deny rules included.
+func TestClaudeSettingsPosture_SchemaTypeErrorUnloadable(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name   string
+		actual string
+		key    string
+	}{
+		{"defaultMode yolo", strings.Replace(generatedSettings, `"defaultMode": "default"`, `"defaultMode": "yolo"`, 1), "permissions.defaultMode"},
+		{"model number", strings.Replace(generatedSettings, `"hooks": {`, `"model": 5, "hooks": {`, 1), `"model"`},
+		{"cleanupPeriodDays string", strings.Replace(generatedSettings, `"hooks": {`, `"cleanupPeriodDays": "30", "hooks": {`, 1), `"cleanupPeriodDays"`},
+		{"additionalDirectories string", strings.Replace(generatedSettings, `"allow": []`, `"allow": [], "additionalDirectories": "x"`, 1), "permissions.additionalDirectories"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			dir := t.TempDir()
+			writeTestFile(t, dir, ClaudeSettingsRelPath, tt.actual)
+			var found []CheckResult
+			for _, r := range CheckClaudeSettingsPosture(CheckContext{ProjectRoot: dir, ExpectedClaudeSettings: []byte(generatedSettings), LookPath: lookPathNoBuiltins}) {
+				if r.Name == "claude_settings_unloadable" {
+					found = append(found, r)
+				}
+			}
+			if len(found) != 1 || found[0].Status != StatusFail || found[0].Severity != SeverityCritical || !strings.Contains(found[0].Message, tt.key) {
+				t.Errorf("claude_settings_unloadable = %+v, want one critical failure naming %s", found, tt.key)
 			}
 		})
 	}

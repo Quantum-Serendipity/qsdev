@@ -14,9 +14,10 @@ import (
 // GitCodeExecutionRuleID identifies the denials of GitCodeExecution.
 const GitCodeExecutionRuleID = "GIT-001"
 
-// maxGitScriptDepth bounds how deep GitCodeExecution follows shell scripts
-// nested in `sh -c` or eval.
-const maxGitScriptDepth = 3
+// maxScriptDepth bounds how deep a check follows shell scripts nested in
+// `sh -c` or eval (GitCodeExecution, the worktree rewrite, the ancestor
+// checks).
+const maxScriptDepth = 3
 
 // reGitWord finds git in a command that cannot be parsed (fail closed).
 var reGitWord = regexp.MustCompile(`(^|[^A-Za-z0-9_.-])git([^A-Za-z0-9_.-]|$)`)
@@ -110,7 +111,7 @@ func gitCodeExecution(cmds []cmdscan.Command, depth int, env gitLineEnv) (string
 	for _, c := range cmds {
 		words := append([]string{c.Name}, c.Args...)
 		if script, ok := cmdscan.ShellScript(words); ok {
-			if depth >= maxGitScriptDepth {
+			if depth >= maxScriptDepth {
 				if reGitWord.MatchString(script) {
 					return "git runs inside too many nested shell scripts to be checked", true
 				}

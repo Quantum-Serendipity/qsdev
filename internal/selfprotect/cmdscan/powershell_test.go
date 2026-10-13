@@ -229,6 +229,48 @@ func TestPSParamName(t *testing.T) {
 	}
 }
 
+// psUnicodeSpaces are whitespace runes PowerShell's tokenizer separates
+// words on beyond the ASCII blanks: NEL, NBSP and Unicode Zs, Zl and Zp
+// separators.
+var psUnicodeSpaces = []rune{0x85, 0xa0, 0x1680, 0x2003, 0x2009, 0x2028, 0x2029, 0x202f, 0x3000}
+
+func TestIsPowerShellSpace(t *testing.T) {
+	t.Parallel()
+	for _, r := range append([]rune{' ', '\t', '\v', '\f', 0x2000, 0x200a, 0x205f}, psUnicodeSpaces...) {
+		if !IsPowerShellSpace(r) {
+			t.Errorf("IsPowerShellSpace(%U) = false, want true", r)
+		}
+	}
+	// Newlines end a statement rather than a word, and zero-width or
+	// format characters are not whitespace to PowerShell.
+	for _, r := range []rune{'\n', '\r', 'a', '-', 0, 0x180e, 0x200b, 0x2060, 0xfeff} {
+		if IsPowerShellSpace(r) {
+			t.Errorf("IsPowerShellSpace(%U) = true, want false", r)
+		}
+	}
+}
+
+// TestParsePowerShell_UnicodeWhitespace pins that a word ends at every rune
+// PowerShell reads as whitespace (W1bN-16), so git, NBSP, reset is git with
+// a reset argument, while the same rune inside quotes stays in the word.
+func TestParsePowerShell_UnicodeWhitespace(t *testing.T) {
+	t.Parallel()
+	for _, sep := range psUnicodeSpaces {
+		s := string(sep)
+		text := s + "Remove-Item" + s + `.claude\settings.json` + s + "'a" + s + "b'" + s + `"c` + s + `d"` + s + s
+		want := []PSCommand{{Name: "remove-item", Args: []string{`.claude\settings.json`, "a" + s + "b", "c" + s + "d"}}}
+		if got := ParsePowerShell(text); !reflect.DeepEqual(got, want) {
+			t.Errorf("ParsePowerShell(%q)\n got %#v\nwant %#v", text, got, want)
+		}
+	}
+	// A zero-width space is part of the word, as it is to PowerShell.
+	zwsp := "git" + string(rune(0x200b)) + "reset"
+	text := zwsp + " --hard"
+	if got := ParsePowerShell(text); len(got) != 1 || got[0].Name != zwsp {
+		t.Errorf("ParsePowerShell(%q) = %#v, want one command named git\\u200breset", text, got)
+	}
+}
+
 func TestPowerShellText(t *testing.T) {
 	t.Parallel()
 	cases := []struct {
@@ -239,6 +281,9 @@ func TestPowerShellText(t *testing.T) {
 		{`$p = '.cl' + 'aude'`, `$p = '.cl' + 'aude'`, `$p = .claude`},
 		{"ri .cl`aude", "ri .cl`aude", "ri .claude"},
 		{"ri \u2018.cl\u2019\u201c\u201daude", "ri \u2018.cl\u2019\u201c\u201daude", "ri .claude"},
+		// Every PowerShell whitespace rune reads as an ASCII space.
+		{"$env:X\u00a0=\u3000'.cl'\u2003+\u0085'aude'", "$env:x = '.cl' + 'aude'", "$env:x = .claude"},
+		{"ri\u2028.claude\u000b", "ri .claude ", "ri .claude "},
 	}
 	for _, tc := range cases {
 		norm, loose := PowerShellText(tc.in)

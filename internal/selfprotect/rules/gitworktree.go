@@ -1,8 +1,10 @@
 package rules
 
 import (
+	"cmp"
 	"context"
 	"errors"
+	"fmt"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -13,8 +15,9 @@ import (
 )
 
 // This file holds the worktree-rewrite check of SP-007 (U18-02c). A git
-// command such as `git checkout evil -- .` or `git reset --hard evil` writes
-// tracked files into the working tree without naming them, so a protected
+// command such as `git checkout evil -- .`, `git reset --hard evil`, `git
+// merge evil` or `git apply x.patch` writes files into the working tree
+// without naming them, so a protected
 // file (.claude/settings.json) it overwrites never appears on the command
 // line. The check parses each rewriting git command into the comparison git
 // would apply and asks git, read-only, which paths that comparison changes
@@ -30,12 +33,23 @@ const (
 	fromIndex rewriteSource = iota + 1
 	// fromRev copies a revision's tree over working-tree files.
 	fromRev
-	// betweenRevs moves the work tree from HEAD to a revision, carrying
-	// local changes along: only the paths that differ between the two
-	// trees are written.
+	// betweenRevs moves the work tree from HEAD (or base) to a revision,
+	// carrying local changes along: only the paths that differ between the
+	// two trees are written.
 	betweenRevs
 	// fromStash applies a stash entry.
 	fromStash
+	// mergeBase merges revisions into HEAD (or base), or rebases onto them:
+	// the paths each changed since its merge base with HEAD are written
+	// (`git diff HEAD...rev`; the two-dot form would also name what only
+	// HEAD's side changed).
+	mergeBase
+	// fromCommits replays commits (cherry-pick, revert): the paths they
+	// change are written.
+	fromCommits
+	// fromPatches applies patch files (apply, am): the paths they name are
+	// written, tracked or not.
+	fromPatches
 )
 
 // emptyTree is git's (SHA-1) empty tree, which git knows without storing it:
@@ -48,6 +62,15 @@ type worktreeRewrite struct {
 	source rewriteSource
 	// rev is the revision (fromRev, betweenRevs) or stash entry (fromStash).
 	rev string
+	// base is where betweenRevs and mergeBase start from; "" is HEAD.
+	base string
+	// revs are the revisions a mergeBase merges or the commits fromCommits
+	// replays.
+	revs []string
+	// patches are the files fromPatches applies, with the command's -p count
+	// (strip) and --directory prefix.
+	patches          []string
+	strip, directory string
 	// paths limits the rewrite (a pathspec relative to the command's
 	// directory); none means the whole tree.
 	paths []string
@@ -55,12 +78,17 @@ type worktreeRewrite struct {
 	// <operand>...` without "--": when the first operand does not name a
 	// revision, git restores all the operands as paths from the index.
 	orPaths []string
-	// alsoIndex, when set, adds the paths where the work tree differs from
-	// the index: the command writes both comparisons (`git stash -k`).
-	alsoIndex bool
+	// also are further comparisons the command writes: the index after a
+	// stash that keeps it (`git stash -k`), the branch a rebase switches to
+	// before it replays.
+	also []worktreeRewrite
 	// unchecked, when set, is why the command writes files this check
 	// cannot predict (an output prefix), so it is denied outright.
 	unchecked string
+	// remote is a pull's repository given as a path (isPathRemote): the
+	// pull is the merge of revs when it names the repository itself, and a
+	// fetch from elsewhere otherwise.
+	remote string
 }
 
 // gitOptSpec describes a git subcommand's options for parseGitOpts.
@@ -94,6 +122,13 @@ func (o gitOpts) value(names ...string) string {
 		}
 	}
 	return ""
+}
+
+// revisions returns the operands of a subcommand that takes no pathspec
+// (merge, pull, rebase, cherry-pick, revert, apply, am): its "--" only ends
+// the options, so the words after it are operands too (`git merge -- evil`).
+func (o gitOpts) revisions() []string {
+	return append(slices.Clone(o.operands), o.paths...)
 }
 
 // parseGitOpts splits args per spec. A long option is canonicalised to the
@@ -218,7 +253,94 @@ var (
 		longValue:  map[string]bool{"message": true, "pathspec-from-file": true},
 		shortValue: "m",
 	}
+	mergeSpec = gitOptSpec{
+		long: slices.Concat(mergeLong, sequencerControls),
+		longValue: map[string]bool{
+			"cleanup": true, "strategy": true, "strategy-option": true, "message": true, "file": true, "into-name": true,
+		},
+		shortValue: "sXmF",
+	}
+	// pullSpec adds fetch's options to merge's.
+	pullSpec = gitOptSpec{
+		long: slices.Concat(mergeLong, []string{
+			"rebase", "no-rebase", "all", "append", "atomic", "depth", "deepen", "shallow-since", "shallow-exclude",
+			"unshallow", "update-shallow", "force", "keep", "jobs", "prune", "no-prune", "prune-tags",
+			"recurse-submodules", "no-recurse-submodules", "tags", "no-tags", "upload-pack", "refmap",
+			"server-option", "set-upstream", "ipv4", "ipv6", "negotiation-tip", "show-forced-updates",
+			"no-show-forced-updates", "dry-run",
+		}),
+		longValue: map[string]bool{
+			"cleanup": true, "strategy": true, "strategy-option": true, "depth": true, "deepen": true,
+			"shallow-since": true, "shallow-exclude": true, "jobs": true, "upload-pack": true, "refmap": true,
+			"server-option": true, "negotiation-tip": true,
+		},
+		shortValue: "sXoj",
+	}
+	rebaseSpec = gitOptSpec{
+		long: slices.Concat([]string{
+			"onto", "keep-base", "no-keep-base", "apply", "merge", "empty", "keep-empty", "no-keep-empty",
+			"reapply-cherry-picks", "no-reapply-cherry-picks", "allow-empty-message", "strategy", "strategy-option",
+			"rerere-autoupdate", "no-rerere-autoupdate", "gpg-sign", "no-gpg-sign", "quiet", "verbose", "stat",
+			"no-stat", "verify", "no-verify", "force-rebase", "no-ff", "fork-point", "no-fork-point",
+			"ignore-whitespace", "whitespace", "committer-date-is-author-date", "ignore-date", "reset-author-date",
+			"signoff", "interactive", "rebase-merges", "no-rebase-merges", "update-refs", "no-update-refs", "root",
+			"autosquash", "no-autosquash", "autostash", "no-autostash", "exec", "reschedule-failed-exec",
+			"no-reschedule-failed-exec", "edit-todo", "show-current-patch",
+		}, sequencerControls),
+		longValue:  map[string]bool{"onto": true, "strategy": true, "strategy-option": true, "exec": true, "whitespace": true, "empty": true},
+		shortValue: "sXxC",
+	}
+	// pickSpec is cherry-pick's and revert's.
+	pickSpec = gitOptSpec{
+		long: slices.Concat([]string{
+			"edit", "no-edit", "mainline", "no-commit", "signoff", "no-signoff", "ff", "allow-empty",
+			"allow-empty-message", "keep-redundant-commits", "empty", "strategy", "strategy-option", "gpg-sign",
+			"no-gpg-sign", "rerere-autoupdate", "no-rerere-autoupdate", "cleanup", "reference", "no-reference",
+		}, sequencerControls),
+		longValue:  map[string]bool{"mainline": true, "strategy": true, "strategy-option": true, "cleanup": true},
+		shortValue: "mX",
+	}
+	applySpec = gitOptSpec{
+		long: []string{
+			"stat", "numstat", "summary", "check", "index", "intent-to-add", "cached", "3way", "ours", "theirs",
+			"union", "build-fake-ancestor", "apply", "no-add", "exclude", "include", "reject", "reverse",
+			"unidiff-zero", "recount", "allow-empty", "inaccurate-eof", "directory", "unsafe-paths", "verbose",
+			"quiet", "whitespace", "allow-overlap", "ignore-space-change", "ignore-whitespace",
+		},
+		longValue: map[string]bool{
+			"build-fake-ancestor": true, "exclude": true, "include": true, "directory": true, "whitespace": true,
+		},
+		shortValue: "pC",
+	}
+	amSpec = gitOptSpec{
+		long: slices.Concat([]string{
+			"signoff", "keep", "keep-non-patch", "keep-cr", "no-keep-cr", "scissors", "no-scissors", "quoted-cr",
+			"message-id", "no-message-id", "quiet", "utf8", "no-utf8", "3way", "no-3way", "rerere-autoupdate",
+			"no-rerere-autoupdate", "ignore-space-change", "ignore-whitespace", "whitespace", "directory", "exclude",
+			"include", "reject", "patch-format", "interactive", "commit-date-is-author-date", "ignore-date",
+			"gpg-sign", "no-gpg-sign", "empty", "resolved", "retry", "show-current-patch", "allow-empty", "no-verify",
+		}, sequencerControls),
+		longValue: map[string]bool{
+			"whitespace": true, "directory": true, "exclude": true, "include": true, "patch-format": true, "quoted-cr": true,
+		},
+		shortValue: "pC",
+	}
 )
+
+// mergeLong are the long options of git merge, which git pull shares.
+var mergeLong = []string{
+	"commit", "no-commit", "edit", "no-edit", "cleanup", "ff", "no-ff", "ff-only", "gpg-sign", "no-gpg-sign",
+	"log", "no-log", "signoff", "no-signoff", "stat", "no-stat", "summary", "no-summary", "squash", "no-squash",
+	"verify", "no-verify", "strategy", "strategy-option", "verify-signatures", "no-verify-signatures", "quiet",
+	"verbose", "progress", "no-progress", "autostash", "no-autostash", "allow-unrelated-histories",
+	"rerere-autoupdate", "no-rerere-autoupdate", "overwrite-ignore", "no-overwrite-ignore", "message", "file",
+	"into-name",
+}
+
+// sequencerControls are the long options that continue, skip or end a merge,
+// rebase, cherry-pick, revert or am in progress instead of starting one. The
+// operation was judged when it started; --abort restores what it replaced.
+var sequencerControls = []string{"continue", "skip", "abort", "quit"}
 
 // parseWorktreeRewrite returns the comparison git subcommand sub with
 // arguments rest applies to the working tree, and false when it leaves the
@@ -244,8 +366,204 @@ func parseWorktreeRewrite(sub string, rest []string) (worktreeRewrite, bool) {
 		return parseReadTree(parseGitOpts(rest, readTreeSpec))
 	case "stash":
 		return parseStash(rest)
+	case "merge":
+		return parseMerge(parseGitOpts(rest, mergeSpec))
+	case "pull":
+		return parsePull(parseGitOpts(rest, pullSpec))
+	case "rebase":
+		return parseRebase(parseGitOpts(rest, rebaseSpec))
+	case "cherry-pick", "revert":
+		return parsePick(parseGitOpts(rest, pickSpec))
+	case "apply":
+		o := parseGitOpts(rest, applySpec)
+		if o.has("--cached") || patchListing(o) {
+			return worktreeRewrite{}, false // --cached patches only the index
+		}
+		return parsePatches(o)
+	case "am":
+		o := parseGitOpts(rest, amSpec)
+		if o.controls("-r", "--resolved", "--retry", "--show-current-patch") {
+			return worktreeRewrite{}, false
+		}
+		return parsePatches(o)
 	}
 	return worktreeRewrite{}, false
+}
+
+// controls reports whether the options continue, skip or end an operation in
+// progress (sequencerControls, or one of the subcommand's own extra).
+func (o gitOpts) controls(extra ...string) bool {
+	for _, c := range sequencerControls {
+		if o.has("--" + c) {
+			return true
+		}
+	}
+	return o.has(extra...)
+}
+
+// Why merge-family rewrites are denied outright.
+const (
+	interactiveUnchecked = "replays commits from a todo list that can be edited (--interactive), so the files it writes cannot be checked"
+	rootUnchecked        = "replays every commit from the root (--root), so the files it writes cannot be checked"
+	execUnchecked        = "runs commands between the commits it replays (--exec), which cannot be checked"
+	stdinCommitUnchecked = "reads the commits to replay from standard input (--stdin), so the files it writes cannot be checked"
+	revOptionUnchecked   = "selects the commits to replay by revision option, so the files it writes cannot be checked"
+	stdinPatchUnchecked  = "reads the patch from standard input, so the files it writes cannot be checked; save the patch to a file and apply that file"
+)
+
+// parseMerge returns what `git merge [<rev>...]` writes: what each revision
+// changed since its merge base with HEAD (an octopus merges several). With
+// no revision it merges the upstream.
+func parseMerge(o gitOpts) (worktreeRewrite, bool) {
+	if o.controls() {
+		return worktreeRewrite{}, false
+	}
+	revs := o.revisions()
+	previousBranch(revs)
+	return worktreeRewrite{source: mergeBase, revs: orDefault(revs, "@{upstream}")}, true
+}
+
+// parsePull returns what `git pull <repo> <ref>...` writes when it pulls from
+// the repository itself: from remote "." it merges or rebases onto the refs,
+// which writes the same paths. A remote given as a filesystem path (`./`,
+// `/abs`, a file:// URL, or a word the scan cannot render) is judged the same
+// way, in askGit, when it names this repository (remote). A pull from
+// another remote fetches first, so what it writes is not known before it
+// runs; it is left to the documented residual (`git fetch` and then a
+// judged `git merge FETCH_HEAD`).
+func parsePull(o gitOpts) (worktreeRewrite, bool) {
+	ops := o.revisions()
+	if len(ops) == 0 || ops[0] != "." && !isPathRemote(ops[0]) {
+		return worktreeRewrite{}, false
+	}
+	if v := o.value("--rebase"); v == "interactive" || v == "i" {
+		return worktreeRewrite{unchecked: interactiveUnchecked}, true
+	}
+	var refs []string
+	for _, spec := range ops[1:] {
+		// A refspec "+src:dst" merges src.
+		if src, _, _ := strings.Cut(strings.TrimPrefix(spec, "+"), ":"); src != "" {
+			refs = append(refs, src)
+		}
+	}
+	rw := worktreeRewrite{source: mergeBase, revs: orDefault(refs, "@{upstream}")}
+	if ops[0] != "." {
+		rw.remote = ops[0]
+	}
+	return rw, true
+}
+
+// isPathRemote reports whether a pull's repository operand may be a
+// filesystem path, which can name the repository itself: an absolute,
+// dot-relative or home path, a file:// URL, or a word the scan rendered empty
+// (an expansion, which checkRewrite denies). A remote's name or a URL of
+// another scheme is not one.
+func isPathRemote(remote string) bool {
+	switch {
+	case remote == "", remote == "..", strings.HasPrefix(remote, "file://"):
+		return true
+	}
+	return slices.ContainsFunc([]string{"/", "./", "../", "~"}, func(p string) bool {
+		return strings.HasPrefix(filepath.ToSlash(remote), p)
+	}) || isRooted(remote)
+}
+
+// remoteIsRepo reports whether a pull's path remote names the repository
+// whose top level is top, run from dir: the top level itself or its .git
+// directory.
+func remoteIsRepo(remote, dir, top string) bool {
+	p := expandTilde(strings.TrimPrefix(remote, "file://"))
+	if !isRooted(p) {
+		p = filepath.Join(dir, p)
+	}
+	p = filepath.Clean(p)
+	return p == top || p == filepath.Join(top, ".git")
+}
+
+// parseRebase returns what `git rebase [--onto <newbase>] [<upstream>
+// [<branch>]]` writes. Replaying HEAD's commits onto upstream writes what
+// upstream changed since their merge base; onto a newbase, what differs
+// between HEAD and the newbase. A branch operand is switched to first, so
+// the paths between HEAD and it are written too, and the replay starts from
+// it.
+func parseRebase(o gitOpts) (worktreeRewrite, bool) {
+	switch {
+	case o.controls("--edit-todo", "--show-current-patch"):
+		return worktreeRewrite{}, false
+	case o.has("-i", "--interactive"):
+		return worktreeRewrite{unchecked: interactiveUnchecked}, true
+	case o.has("--root"):
+		return worktreeRewrite{unchecked: rootUnchecked}, true
+	case o.has("-x", "--exec"):
+		return worktreeRewrite{unchecked: execUnchecked}, true
+	}
+	revs := o.revisions()
+	previousBranch(revs)
+	rw := worktreeRewrite{source: mergeBase, revs: []string{firstOr(revs, "@{upstream}")}}
+	if o.has("--onto") {
+		rw = worktreeRewrite{source: betweenRevs, rev: o.value("--onto")}
+	}
+	if len(revs) > 1 {
+		rw.base = revs[1]
+		rw.also = []worktreeRewrite{{source: betweenRevs, rev: rw.base}}
+	}
+	return rw, true
+}
+
+// parsePick returns what `git cherry-pick|revert <commit>...` writes: the
+// paths the commits change.
+func parsePick(o gitOpts) (worktreeRewrite, bool) {
+	switch {
+	case o.controls():
+		return worktreeRewrite{}, false
+	case o.has("--stdin"):
+		return worktreeRewrite{unchecked: stdinCommitUnchecked}, true
+	case unknownLongOption(o, pickSpec):
+		// A rev-list option (--all, --branches=) selects the commits.
+		return worktreeRewrite{unchecked: revOptionUnchecked}, true
+	}
+	revs := o.revisions()
+	if len(revs) == 0 {
+		return worktreeRewrite{}, false // git refuses to pick nothing
+	}
+	previousBranch(revs)
+	return worktreeRewrite{source: fromCommits, revs: revs}, true
+}
+
+// parsePatches returns what `git apply|am <patch>...` writes: the paths the
+// patch files name. With no file, or "-", the patch comes from standard
+// input and cannot be read in advance.
+func parsePatches(o gitOpts) (worktreeRewrite, bool) {
+	files := o.revisions()
+	if len(files) == 0 || slices.Contains(files, "-") {
+		return worktreeRewrite{source: fromPatches, unchecked: stdinPatchUnchecked}, true
+	}
+	return worktreeRewrite{source: fromPatches, patches: files, strip: o.value("-p"), directory: o.value("--directory")}, true
+}
+
+// patchListing reports whether git apply's options only list or check the
+// patch: those modes apply nothing unless --apply asks for both.
+func patchListing(o gitOpts) bool {
+	return o.has("--check", "--stat", "--numstat", "--summary") && !o.has("--apply")
+}
+
+// unknownLongOption reports whether o holds a long option spec does not
+// know.
+func unknownLongOption(o gitOpts, spec gitOptSpec) bool {
+	for opt := range o.set {
+		if name, ok := strings.CutPrefix(opt, "--"); ok && !slices.Contains(spec.long, name) {
+			return true
+		}
+	}
+	return false
+}
+
+// orDefault returns s, or def alone when s is empty.
+func orDefault(s []string, def string) []string {
+	if len(s) == 0 {
+		return []string{def}
+	}
+	return s
 }
 
 // prefixUnchecked is why a rewrite under an output prefix is denied.
@@ -422,14 +740,16 @@ func parseStash(rest []string) (worktreeRewrite, bool) {
 // is written (after a `git reset --soft` moved HEAD, the protected file). With
 // --keep-index, --staged or --patch (which keeps the index) the work tree is
 // then set to the index, so the paths where it differs from the index are
-// written too (alsoIndex). withPaths reports whether the operands are a
+// written too (also). withPaths reports whether the operands are a
 // pathspec (push) rather than a message (save).
 func parseStashPush(o gitOpts, withPaths bool) (worktreeRewrite, bool) {
 	rw := worktreeRewrite{source: fromRev, rev: "HEAD"}
 	if withPaths && !o.has("--pathspec-from-file") {
 		rw.paths = append(slices.Clone(o.operands), o.paths...)
 	}
-	rw.alsoIndex = o.has("-k", "--keep-index", "-S", "--staged", "-p", "--patch") && !o.has("--no-keep-index")
+	if o.has("-k", "--keep-index", "-S", "--staged", "-p", "--patch") && !o.has("--no-keep-index") {
+		rw.also = []worktreeRewrite{{source: fromIndex, paths: rw.paths}}
+	}
 	return rw, true
 }
 
@@ -445,6 +765,13 @@ func firstOr(s []string, def string) string {
 var gitReadOnlySubcommands = map[string]bool{
 	"status": true, "log": true, "show": true, "diff": true, "rev-parse": true, "ls-files": true,
 	"ls-tree": true, "cat-file": true, "describe": true, "blame": true, "grep": true, "shortlog": true,
+}
+
+// gitReadOnly reports whether the git command only reads the repository: a
+// read-only subcommand, or git apply checking or listing a patch (`git apply
+// --check fix.patch && git apply fix.patch`).
+func gitReadOnly(target gitArgs) bool {
+	return gitReadOnlySubcommands[target.sub] || target.sub == "apply" && patchListing(parseGitOpts(target.rest, applySpec))
 }
 
 // isLocationChange reports whether a scanned command only changes the
@@ -513,13 +840,16 @@ func (ctx *EvalContext) rewriteWalk(scs []scannedCommand, line rewriteLine) stri
 		}
 		args, ok := gitInvocation(words)
 		if !ok {
+			if reason := unknownProgramRewrite(sc); reason != "" {
+				return reason
+			}
 			line.preceded = line.preceded || !isLocationChange(sc.Name)
 			continue
 		}
 		target := splitGitArgs(args)
 		rw, ok := parseWorktreeRewrite(target.sub, target.rest)
 		if !ok {
-			line.preceded = line.preceded || !gitReadOnlySubcommands[target.sub]
+			line.preceded = line.preceded || !gitReadOnly(target)
 			continue
 		}
 		if reason := ctx.checkRewrite(sc, target, rw, line); reason != "" {
@@ -530,23 +860,47 @@ func (ctx *EvalContext) rewriteWalk(scs []scannedCommand, line rewriteLine) stri
 	return ""
 }
 
+// unknownProgramRewrite returns why a command whose program word is an
+// expansion the scan cannot render (`g=$(command -v git); $g reset --hard
+// evil`) is denied when its arguments, read as git's, rewrite working-tree
+// files: the program may be git, and what it would write cannot be checked.
+// A program word the scan renders is judged as that program instead.
+func unknownProgramRewrite(sc scannedCommand) string {
+	if !sc.NameHasExpansion || sc.Name != "" {
+		return ""
+	}
+	target := splitGitArgs(sc.Args)
+	if _, ok := parseWorktreeRewrite(target.sub, target.rest); !ok {
+		return ""
+	}
+	return "a program named through a shell expansion, run as git " + target.sub + ", rewrites working-tree files, which cannot be checked"
+}
+
 // scriptRewriteReason walks the script a shell command runs, from the
 // directory that shell starts in, as part of line. A shell that reads startup
 // files first may start anywhere.
 func (ctx *EvalContext) scriptRewriteReason(sc scannedCommand, run cmdscan.ScriptRun, line rewriteLine) string {
-	if line.depth >= maxGitScriptDepth {
+	if line.depth >= maxScriptDepth {
 		return "" // GIT-001 denies git nested this deep
 	}
-	sub := &EvalContext{ToolName: "Bash", Command: run.Script, Ctx: ctx.Ctx, gitRunner: ctx.gitRunner}
-	if !sc.cwdUnknown && !run.ReadsStartup {
-		sub.CWD = sc.cwd
-	}
+	sub := ctx.scriptContext(sc, run)
 	scs, err := sub.scannedCommands()
 	if err != nil {
 		return ""
 	}
 	line.depth++
 	return sub.rewriteWalk(scs, line)
+}
+
+// scriptContext returns the context of the script run the shell command sc
+// runs: a Bash line in the directory that shell starts in, or in an unknown
+// one when the shell reads startup files first (which may change directory).
+func (ctx *EvalContext) scriptContext(sc scannedCommand, run cmdscan.ScriptRun) *EvalContext {
+	sub := &EvalContext{ToolName: "Bash", Command: run.Script, Ctx: ctx.Ctx, gitRunner: ctx.gitRunner}
+	if !sc.cwdUnknown && !run.ReadsStartup {
+		sub.CWD = sc.cwd
+	}
+	return sub
 }
 
 // checkRewrite judges one rewriting git command.
@@ -569,6 +923,11 @@ func (ctx *EvalContext) checkRewrite(sc scannedCommand, target gitArgs, rw workt
 	if !ok {
 		return what + " rewrites working-tree files in a directory that is not known, so they cannot be checked"
 	}
+	if line.preceded && rw.source == fromPatches {
+		// The patch may name any path, tracked or not, so tracking tells
+		// nothing about a patch an earlier command may have written.
+		return what + " applies a patch after another command on the same line, which may change the patch; run it in its own call so the files it writes can be checked"
+	}
 	if ctx.Ctx == nil {
 		return what + " rewrites working-tree files, and this check has no deadline to ask git which"
 	}
@@ -576,6 +935,8 @@ func (ctx *EvalContext) checkRewrite(sc scannedCommand, target gitArgs, rw workt
 	switch {
 	case errors.Is(err, gitrepo.ErrTimeout):
 		return what + " rewrites working-tree files, and git did not answer in time to tell which"
+	case errors.Is(err, errPatchUnread):
+		return what + " applies a patch that git apply cannot read in advance (am also takes a Maildir), so the files it writes cannot be checked; save the patch as a file and apply that file"
 	case err != nil:
 		return "" // not a repository or an unknown revision: git itself fails
 	case verdict.tracked != "":
@@ -602,8 +963,14 @@ type gitVerdict struct {
 func (ctx *EvalContext) askGit(dir string, rw worktreeRewrite, preceded bool) (gitVerdict, error) {
 	client := gitrepo.Client{Runner: ctx.gitRunner}
 	top, err := client.Toplevel(ctx.Ctx, dir)
+	if errors.Is(err, gitrepo.ErrNotRepo) && rw.source == fromPatches {
+		top, err = dir, nil // git apply patches files outside a repository too
+	}
 	if err != nil {
 		return gitVerdict{}, err
+	}
+	if rw.remote != "" && !remoteIsRepo(rw.remote, dir, top) {
+		return gitVerdict{}, nil // a pull from another repository: the residual
 	}
 	if preceded {
 		tracked, err := client.TrackedPaths(ctx.Ctx, top)
@@ -648,23 +1015,96 @@ func rewriteDir(sc scannedCommand, chdirs []string) (string, bool) {
 // rewrittenPaths asks git which paths, relative to the toplevel, the rewrite
 // would write.
 func rewrittenPaths(ctx context.Context, client gitrepo.Client, dir string, rw worktreeRewrite) ([]string, error) {
-	if rw.alsoIndex {
-		fromHead, err := rewrittenPaths(ctx, client, dir, worktreeRewrite{source: rw.source, rev: rw.rev, paths: rw.paths})
+	paths, err := sourcePaths(ctx, client, dir, rw)
+	if err != nil {
+		return nil, err
+	}
+	for _, more := range rw.also {
+		p, err := rewrittenPaths(ctx, client, dir, more)
 		if err != nil {
 			return nil, err
 		}
-		fromIdx, err := client.ChangedPaths(ctx, dir, "", "", rw.paths)
-		return append(fromHead, fromIdx...), err
+		paths = append(paths, p...)
 	}
+	return paths, nil
+}
+
+// sourcePaths asks git which paths rw's own comparison writes.
+func sourcePaths(ctx context.Context, client gitrepo.Client, dir string, rw worktreeRewrite) ([]string, error) {
+	base := cmp.Or(rw.base, "HEAD")
 	switch rw.source {
 	case fromIndex:
 		return client.ChangedPaths(ctx, dir, "", "", rw.paths)
 	case fromRev:
 		return client.ChangedPaths(ctx, dir, rw.rev, "", rw.paths)
 	case betweenRevs:
-		return client.ChangedPaths(ctx, dir, "HEAD", rw.rev, rw.paths)
+		return client.ChangedPaths(ctx, dir, base, rw.rev, rw.paths)
 	case fromStash:
 		return client.StashPaths(ctx, dir, rw.rev)
+	case mergeBase:
+		revs, err := mergeHeads(ctx, client, dir, rw.revs)
+		if err != nil {
+			return nil, err
+		}
+		var paths []string
+		for _, rev := range revs {
+			p, err := mergedPaths(ctx, client, dir, base, rev)
+			if err != nil {
+				return nil, err
+			}
+			paths = append(paths, p...)
+		}
+		return paths, nil
+	case fromCommits:
+		return client.CommitPaths(ctx, dir, rw.revs)
+	case fromPatches:
+		paths, err := client.PatchPaths(ctx, dir, rw.patches, rw.strip, rw.directory)
+		if err != nil && !errors.Is(err, gitrepo.ErrTimeout) {
+			// git am also takes a Maildir, which git apply cannot read.
+			return nil, fmt.Errorf("%w: %w", errPatchUnread, err)
+		}
+		return paths, err
 	}
 	return nil, nil
 }
+
+// mergeHeads returns the revisions a merge-family command takes in: revs,
+// with FETCH_HEAD standing for every head the last fetch recorded for
+// merging (`git fetch . a evil && git merge FETCH_HEAD` merges both, while a
+// revision lookup of FETCH_HEAD resolves only the first).
+func mergeHeads(ctx context.Context, client gitrepo.Client, dir string, revs []string) ([]string, error) {
+	if !slices.Contains(revs, "FETCH_HEAD") {
+		return revs, nil
+	}
+	heads, err := client.FetchHeadMerges(ctx, dir)
+	if err != nil {
+		return nil, err
+	}
+	var out []string
+	for _, rev := range revs {
+		if rev == "FETCH_HEAD" {
+			out = append(out, heads...)
+		} else {
+			out = append(out, rev)
+		}
+	}
+	return out, nil
+}
+
+// mergedPaths asks git which paths merging rev into base, or rebasing base
+// onto rev, writes: what rev changed since their merge base (`git diff
+// base...rev`). A rev that shares no history with base has no merge base,
+// and git still merges it (--allow-unrelated-histories) or rebases onto it,
+// writing any path where the two trees differ; the two-dot diff names those.
+// An error of that diff too means git cannot resolve rev and itself fails.
+func mergedPaths(ctx context.Context, client gitrepo.Client, dir, base, rev string) ([]string, error) {
+	paths, err := client.ChangedPaths(ctx, dir, base+"..."+rev, "", nil)
+	if errors.Is(err, gitrepo.ErrGit) {
+		return client.ChangedPaths(ctx, dir, base, rev, nil)
+	}
+	return paths, err
+}
+
+// errPatchUnread is a patch git apply --numstat could not read: what applying
+// it writes cannot be checked.
+var errPatchUnread = errors.New("patch cannot be read")

@@ -1,10 +1,13 @@
 // Package gitrepo answers read-only questions about a git repository: where
 // its top level and hooks directory are, which paths differ between two
-// trees, which paths a stash holds and which paths the index tracks. Every query runs git with an argv
-// array, in the caller's directory, with repository-pinning variables
-// scrubbed and a short timeout, and none of them writes to the repository
-// (--no-optional-locks, no fsmonitor, no external diff or textconv). Each
-// argv is one of the procexec local-probe shapes.
+// trees, which paths a stash, a commit or a patch file changes, which
+// paths the index tracks and which heads FETCH_HEAD records for merging. Every query runs git with an argv array, in the
+// caller's directory, with repository-pinning variables scrubbed and a short
+// timeout, and none of them writes to the repository (--no-optional-locks,
+// no fsmonitor, no external diff or textconv). A rename is listed as both
+// its source and its destination (--no-renames), so a path a change removes
+// is never hidden behind the name it moves to. Each argv is one of the
+// procexec local-probe shapes.
 package gitrepo
 
 import (
@@ -15,6 +18,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 	"time"
 
@@ -135,16 +139,65 @@ func (c Client) HooksDir(ctx context.Context, dir string) (string, error) {
 	return absGitPath(out)
 }
 
+// FetchHeadMerges returns the object names of the heads the last fetch in
+// the repository at dir recorded for merging: the FETCH_HEAD lines not marked
+// not-for-merge. `git merge FETCH_HEAD` merges every one of them (an octopus
+// when there are several), not only the first, which is all a revision
+// lookup of FETCH_HEAD resolves. A repository without a FETCH_HEAD, or one
+// holding a line git could not merge, is an ErrGit: git merge fails on it
+// too.
+func (c Client) FetchHeadMerges(ctx context.Context, dir string) ([]string, error) {
+	out, err := c.run(ctx, c.revParseTimeoutOrDefault(), Call{
+		Dir: dir, Args: []string{"rev-parse", "--path-format=absolute", "--git-path", "FETCH_HEAD"},
+	})
+	if err != nil {
+		return nil, err
+	}
+	file, err := absGitPath(out)
+	if err != nil {
+		return nil, err
+	}
+	data, err := os.ReadFile(file)
+	if err != nil {
+		return nil, fmt.Errorf("%w: reading %s: %w", ErrGit, file, err)
+	}
+	return fetchHeadMerges(string(data))
+}
+
+// fetchHeadMerges parses FETCH_HEAD, whose lines are
+// "<object>\t[not-for-merge]\t<description>", into the objects of the lines
+// recorded for merging.
+func fetchHeadMerges(data string) ([]string, error) {
+	var heads []string
+	for line := range strings.Lines(data) {
+		line = strings.TrimRight(line, "\r\n")
+		if line == "" {
+			continue
+		}
+		oid, rest, ok := strings.Cut(line, "\t")
+		if !ok || oid == "" || strings.Trim(oid, "0123456789abcdef") != "" {
+			return nil, fmt.Errorf("%w: malformed FETCH_HEAD line %q", ErrGit, line)
+		}
+		if marker, _, _ := strings.Cut(rest, "\t"); marker == "" {
+			heads = append(heads, oid)
+		}
+	}
+	return heads, nil
+}
+
 // ChangedPaths lists the paths, relative to the top level, that differ
 // between from and to, limited to pathspec. An empty to compares from with
 // the working tree; empty from and to compare the index with the working
-// tree. Outside a work tree git diff would compare filesystem paths instead
-// (no-index mode); the explicit "--" makes that form a usage error, so a
-// caller outside a repository gets an error, never a list.
+// tree. from may instead be a range with an empty to: "A..B" compares the
+// two trees, and "A...B" compares B with the merge base of A and B, which is
+// what merging B into A writes. Outside a work tree git diff would compare
+// filesystem paths instead (no-index mode); the explicit "--" makes that form
+// a usage error, so a caller outside a repository gets an error, never a
+// list.
 func (c Client) ChangedPaths(ctx context.Context, dir, from, to string, pathspec []string) ([]string, error) {
 	args := []string{
 		"--no-optional-locks", "-c", "core.fsmonitor=false", "diff",
-		"--name-only", "-z", "--no-relative", "--no-ext-diff", "--no-textconv", "--end-of-options",
+		"--name-only", "-z", "--no-relative", "--no-renames", "--no-ext-diff", "--no-textconv", "--end-of-options",
 	}
 	switch {
 	case from != "" && to != "":
@@ -169,13 +222,67 @@ func (c Client) StashPaths(ctx context.Context, dir, stash string) ([]string, er
 		return nil, fmt.Errorf("gitrepo: invalid stash reference %q", stash)
 	}
 	out, err := c.run(ctx, c.queryTimeoutOrDefault(), Call{Dir: dir, Args: []string{
-		"--no-optional-locks", "stash", "show", "--name-only", "-z", "--include-untracked",
+		"--no-optional-locks", "stash", "show", "--name-only", "-z", "--no-renames", "--include-untracked",
 		"--end-of-options", stash,
 	}})
 	if err != nil {
 		return nil, err
 	}
 	return splitNUL(out), nil
+}
+
+// CommitPaths lists the paths, relative to the top level, that the commits
+// revs name change against their parents (against each parent of a merge),
+// which is what cherry-pick and revert replay. A single revision names one
+// commit; a range ("a..b", "^a b") names the commits it walks, as
+// cherry-pick's own revision walk does (--no-walk has no effect on a range).
+func (c Client) CommitPaths(ctx context.Context, dir string, revs []string) ([]string, error) {
+	if len(revs) == 0 {
+		return nil, fmt.Errorf("gitrepo: no commits to list")
+	}
+	args := slices.Concat([]string{
+		"--no-optional-locks", "log", "--format=", "--name-only", "-z", "--no-relative", "--no-renames",
+		"--no-show-signature", "--no-walk", "--diff-merges=separate", "--end-of-options",
+	}, revs, []string{"--"})
+	out, err := c.run(ctx, c.queryTimeoutOrDefault(), Call{Dir: dir, Args: args})
+	if err != nil {
+		return nil, err
+	}
+	return splitNUL(out), nil
+}
+
+// PatchPaths lists the paths the patch files would change if git apply (or
+// git am, which applies each mail through it) applied them in dir. git apply
+// reads a mailbox as am writes it. strip is the -p count ("" for git's
+// default of 1) and directory the --directory prefix ("" for none). In a
+// repository the paths are relative to the top level, outside one to dir.
+// git apply --numstat applies nothing; it names a rename or copy by its
+// destination only, so the patches are read a second time in reverse (-R),
+// which names the source.
+func (c Client) PatchPaths(ctx context.Context, dir string, files []string, strip, directory string) ([]string, error) {
+	if len(files) == 0 {
+		return nil, fmt.Errorf("gitrepo: no patch files to read")
+	}
+	if strings.Trim(strip, "0123456789") != "" {
+		return nil, fmt.Errorf("gitrepo: invalid strip count %q", strip)
+	}
+	var opts []string
+	if strip != "" {
+		opts = append(opts, "-p"+strip)
+	}
+	if directory != "" {
+		opts = append(opts, "--directory="+directory)
+	}
+	var paths []string
+	for _, reverse := range [][]string{nil, {"-R"}} {
+		args := slices.Concat([]string{"--no-optional-locks", "apply", "--numstat", "-z"}, reverse, opts, []string{"--"}, files)
+		out, err := c.run(ctx, c.queryTimeoutOrDefault(), Call{Dir: dir, Args: args})
+		if err != nil {
+			return nil, err
+		}
+		paths = append(paths, numstatPaths(out)...)
+	}
+	return paths, nil
 }
 
 // TrackedPaths lists the paths the index tracks under dir, relative to dir;
@@ -245,6 +352,23 @@ func absGitPath(out []byte) (string, error) {
 		return "", fmt.Errorf("%w: unusable path %q", ErrGit, p)
 	}
 	return filepath.Clean(p), nil
+}
+
+// numstatPaths returns the paths of git's -z --numstat output, whose entries
+// are "added<TAB>deleted<TAB>path". An entry with an empty path is followed
+// by a rename's source and destination as entries of their own.
+func numstatPaths(out []byte) []string {
+	var paths []string
+	for _, entry := range splitNUL(out) {
+		_, rest, _ := strings.Cut(entry, "\t")
+		if _, path, ok := strings.Cut(rest, "\t"); ok {
+			entry = path
+		}
+		if entry != "" {
+			paths = append(paths, entry)
+		}
+	}
+	return paths
 }
 
 // splitNUL splits git's -z output into its non-empty entries.

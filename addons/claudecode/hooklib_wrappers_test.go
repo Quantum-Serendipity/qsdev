@@ -14,15 +14,17 @@ import (
 
 // pythonOnlyWrappers are the exec wrappers the Python hooks' shared table
 // (_qsdev_hooklib.WRAPPERS) follows but selfprotect's cmdscan does not yet.
-// cmdscan has no grammar for a positional before the command (flock FILE,
-// chroot DIR), a script option (script -c, flock -c), joined operands
-// (watch) or subcommands (tmux new), so adding them there needs its own
-// work (XS-WS4 / U18-WS6). Shrink this list as cmdscan gains them; never
-// add a name here to hide a wrapper cmdscan dropped.
+// cmdscan follows positionals before the command (flock FILE, chroot
+// NEWROOT, script FILE), command-string options (flock -c, script -c) and
+// joined operands (watch), but has no grammar for subcommands (tmux new),
+// session commands (screen -X) or the remaining tracers, sandboxes and
+// launchers, so adding them there needs its own work. Shrink this list as
+// cmdscan gains them; never add a name here to hide a wrapper cmdscan
+// dropped.
 var pythonOnlyWrappers = []string{
-	"busybox", "catchsegv", "chroot", "firejail", "ltrace", "mono",
-	"nsenter", "proot", "screen", "script", "setpriv", "strace",
-	"systemd-run", "tmux", "unshare",
+	"busybox", "catchsegv", "firejail", "ltrace", "mono",
+	"nsenter", "proot", "screen", "setpriv", "strace",
+	"systemd-run", "tmux",
 }
 
 // hookLibEval loads the shared hook library by path, as the hooks do, runs

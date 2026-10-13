@@ -584,17 +584,26 @@ func posixMentionsProtected(ctx *EvalContext) bool {
 	// names through a variable (`d=.git; rm $d/hooks/pre-commit`). PowerShell
 	// judges any write on a mentioning line, so there the name only counts on
 	// a line that expands a variable; otherwise its commands' operands decide
-	// (`Remove-Item .git\index.lock` stays allowed).
-	if (!isPowerShell(ctx) || strings.Contains(ctx.Command, "$")) &&
-		(canon.MentionsGitDir(ctx.Command) || canon.MentionsGitDir(looseText(ctx.Command))) {
+	// (`Remove-Item .git\index.lock` stays allowed). The name may also be the
+	// rendered output of a substitution the line assigns
+	// (`d=$(git rev-parse --git-dir)`) or reads into a variable (`read d
+	// <<< "$(git rev-parse --git-dir)"`), or the output of a git directory
+	// query that another command consumes (gitDirConsumed). The commands of
+	// a script the line runs (`sh -c 'rm "$(git rev-parse
+	// --git-dir)/hooks/pre-commit"'`) are scanned as the line's own, as its
+	// raw text holds only their unrendered words.
+	gitDirCounts := !isPowerShell(ctx) || strings.Contains(ctx.Command, "$")
+	if gitDirCounts && (canon.MentionsGitDir(ctx.Command) || canon.MentionsGitDir(looseText(ctx.Command))) {
 		return true
 	}
 	scs, err := ctx.scannedCommands()
 	if err != nil {
 		return false
 	}
-	for _, sc := range scs {
-		if sc.inProtectedDir ||
+	for _, sc := range ctx.withScriptCommands(scs, 0) {
+		if (gitDirCounts && (slices.ContainsFunc(sc.AssignTexts, canon.MentionsGitDir) || gitDirConsumed(sc) ||
+			len(sc.Assigns) > 0 && slices.ContainsFunc(sc.ReadRedirects, canon.MentionsGitDir))) ||
+			sc.inProtectedDir ||
 			anyArgRefersProtected(sc, sc.Args) ||
 			anyGitControlHolder(sc, sc.Args) ||
 			anyRefersProtected(sc, sc.WriteRedirects) ||
@@ -606,6 +615,38 @@ func posixMentionsProtected(ctx *EvalContext) bool {
 		}
 	}
 	return false
+}
+
+// gitDirConsumed reports whether sc prints a git directory path (printsGitDir)
+// that another command of the line consumes in a form the scan cannot
+// render: in a command or process substitution, or a pipeline stage, whose
+// output is not rendered into the word holding it (Command.OutputRendered).
+// `"$(git rev-parse --git-dir | cat)/hooks/pre-commit"`, `d=$(cd . && git
+// rev-parse --git-dir)` and `read d < <(git rev-parse --git-dir)` may build a
+// git-control path from it, as a line naming .git through a variable may.
+// A rendered query (`rm -f "$(git rev-parse --git-dir)/index.lock"`) is
+// judged by the path its word renders.
+func gitDirConsumed(sc scannedCommand) bool {
+	return sc.Subshell && !sc.OutputRendered && printsGitDir(append([]string{sc.Name}, sc.Args...))
+}
+
+// gitDirQueryOptions are the git rev-parse options that print a path in the
+// git directory.
+var gitDirQueryOptions = []string{"--git-dir", "--absolute-git-dir", "--git-common-dir", "--git-path"}
+
+// printsGitDir reports whether the command words run git rev-parse with an
+// option that prints a path in the git directory, directly or through a
+// wrapper.
+func printsGitDir(words []string) bool {
+	args, ok := gitInvocation(words)
+	if !ok {
+		return false
+	}
+	target := splitGitArgs(args)
+	return target.sub == "rev-parse" && slices.ContainsFunc(target.rest, func(a string) bool {
+		name, _, _ := strings.Cut(a, "=")
+		return slices.Contains(gitDirQueryOptions, name)
+	})
 }
 
 // shellMutatesProtected is the shared protected-mutation predicate behind the
@@ -628,14 +669,41 @@ func shellMutatesProtected(ctx *EvalContext) bool {
 	case err != nil:
 		ctx.mutates = lineMentionsProtected(ctx) || anchoredMutation(ctx, scs, err)
 	default:
-		ctx.mutates = (lineMentionsProtected(ctx) && protectedMutation(scs)) || anchoredMutation(ctx, scs, err)
+		ctx.mutates = (lineMentionsProtected(ctx) && ctx.scriptsMutateProtected(scs, 0)) || anchoredMutation(ctx, scs, err)
 	}
 	return ctx.mutates
 }
 
+// scriptsMutateProtected is protectedMutation over scs and the commands of
+// each script a shell, eval or wrapper of scs runs (`sh -c 'd=.git; rm
+// $d/hooks/pre-commit'`), from the directory that shell starts in, to
+// maxScriptDepth: on a line that mentions a protected path, a script's
+// commands are judged as they would be written on the line itself.
+func (ctx *EvalContext) scriptsMutateProtected(scs []scannedCommand, depth int) bool {
+	if protectedMutation(scs) {
+		return true
+	}
+	if depth >= maxScriptDepth {
+		return false
+	}
+	for _, sc := range scs {
+		run, ok := cmdscan.Script(append([]string{sc.Name}, sc.Args...))
+		if !ok {
+			continue
+		}
+		sub := ctx.scriptContext(sc, run)
+		if inner, err := sub.scannedCommands(); err != nil || sub.scriptsMutateProtected(inner, depth+1) {
+			return true
+		}
+	}
+	return false
+}
+
 // anchoredMutation is the part of the POSIX mutation analysis that needs no
 // named protected path: a command replacing a protected location's ancestor
-// or relocating one through the environment, or, for a line that cannot be
+// or clearing its owner permission bits (modeClearsProtectedAncestor),
+// through wrappers and nested shell scripts too (ancestorCommands), or
+// relocating one through the environment, or, for a line that cannot be
 // parsed, the CLI run with a home variable. For PowerShell it can only add
 // denies to the dialect's own analysis, which also runs the ancestor check
 // over its own delete, move and rename cmdlets (psScanned), since the POSIX
@@ -644,7 +712,8 @@ func anchoredMutation(ctx *EvalContext, scs []scannedCommand, err error) bool {
 	if err != nil {
 		return unparsedRelocatesHome(ctx.Command)
 	}
-	return replacesProtectedAncestor(scs) || relocatesProtected(ctx.Command, scs)
+	programs := ctx.ancestorCommands(scs)
+	return replacesProtectedAncestor(programs) || modeClearsProtectedAncestor(programs) || relocatesProtected(ctx.Command, scs)
 }
 
 // hasVerb reports whether the command invokes one of verbs, judged from the

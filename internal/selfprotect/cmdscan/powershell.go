@@ -151,6 +151,9 @@ func IsPSParamPrefix(word, param string) bool {
 // accepts as the same, backtick escapes and line continuations, and
 // comments. The `&` and `.` call operators are dropped from the command word.
 //
+// Words end at every rune PowerShell reads as whitespace (IsPowerShellSpace),
+// not only at an ASCII blank.
+//
 // It is a tokenizer, not a parser: it errs toward reporting more commands
 // than PowerShell runs, never fewer, so a caller that treats any non-read
 // command as a mutation fails closed.
@@ -235,6 +238,9 @@ func (p *psParser) step() {
 		case isPSDoubleQuote(r):
 			p.i += size
 			p.doubleQuoted()
+		case IsPowerShellSpace(r): // \v, \f, NEL, NBSP, Unicode separators
+			p.endWord()
+			p.i += size
 		default:
 			p.buf = append(p.buf, p.text[p.i:p.i+size]...)
 			p.inWord = true
@@ -524,6 +530,33 @@ func PSCommandName(word string) string {
 	return strings.TrimSuffix(word, ".exe")
 }
 
+// IsPowerShellSpace reports whether PowerShell's tokenizer reads r as
+// whitespace between words (CharExtensions.IsWhitespace): space, tab,
+// vertical tab, form feed, NEL, NBSP and the Unicode space, line and
+// paragraph separators. A newline ends a statement instead, so it is not one.
+// package-guard's _PS_SPACES lists the same runes (TestPSSpacesMatchCmdscan).
+func IsPowerShellSpace(r rune) bool {
+	switch r {
+	case ' ', '\t', '\v', '\f', 0x85, 0xa0: // NEL, NBSP
+		return true
+	}
+	return r >= utf8.RuneSelf && unicode.In(r, unicode.Zs, unicode.Zl, unicode.Zp)
+}
+
+// PowerShellSpaced returns s with every rune PowerShell reads as whitespace
+// (IsPowerShellSpace) mapped to an ASCII space, so a POSIX reading of a
+// PowerShell line (ParseWithVars) splits its words where PowerShell does:
+// `claude<NBSP>--add-dir /` passes --add-dir as an argument of its own.
+// A rune inside a quoted string stays in that string's word.
+func PowerShellSpaced(s string) string {
+	return strings.Map(func(r rune) rune {
+		if IsPowerShellSpace(r) {
+			return ' '
+		}
+		return r
+	}, s)
+}
+
 // isPSSingleQuote reports whether r opens or closes a single-quoted
 // PowerShell string: the ASCII quote or a typographic single quote.
 func isPSSingleQuote(r rune) bool {
@@ -538,13 +571,19 @@ func isPSDoubleQuote(r rune) bool {
 
 // PowerShellText returns s in the forms protected paths are searched for in a
 // PowerShell line: norm is lower-cased (PowerShell paths are case-insensitive)
-// with `\` mapped to `/`; loose is norm without quotes, backticks and `+`
-// (with the spaces around it), so a name split across a concatenation
-// (`'.cl' + 'aude'`) or an escape (".cl`aude") reads whole again.
+// with `\` mapped to `/` and every rune PowerShell reads as whitespace
+// (IsPowerShellSpace) mapped to an ASCII space, so a pattern matching the
+// text sees `$env:X<NBSP>=` as PowerShell does; loose is norm without quotes,
+// backticks and `+` (with the spaces around it), so a name split across a
+// concatenation (`'.cl' + 'aude'`) or an escape (".cl`aude") reads whole
+// again.
 func PowerShellText(s string) (norm, loose string) {
 	norm = strings.Map(func(r rune) rune {
-		if r == '\\' {
+		switch {
+		case r == '\\':
 			return '/'
+		case IsPowerShellSpace(r):
+			return ' '
 		}
 		return unicode.ToLower(r)
 	}, s)

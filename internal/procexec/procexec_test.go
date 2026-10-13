@@ -117,15 +117,19 @@ func TestForbidExec(t *testing.T) {
 	}
 }
 
-// TestLocalProbes_GitDiffShapes pins the exact read-only diff and stash-show
-// argv prefixes internal/gitrepo runs. A diff that writes a file (--output),
-// carries caller config (-c before the subcommand) or drops the hardening
-// flags is not a probe.
+// TestLocalProbes_GitDiffShapes pins the exact read-only diff, stash-show,
+// log and apply --numstat argv prefixes internal/gitrepo runs. A diff that
+// writes a file (--output), carries caller config (-c before the subcommand)
+// or drops the hardening flags is not a probe, nor is an apply or am that
+// applies.
 func TestLocalProbes_GitDiffShapes(t *testing.T) {
 	diff := []string{"git", "--no-optional-locks", "-c", "core.fsmonitor=false", "diff",
-		"--name-only", "-z", "--no-relative", "--no-ext-diff", "--no-textconv", "--end-of-options"}
+		"--name-only", "-z", "--no-relative", "--no-renames", "--no-ext-diff", "--no-textconv", "--end-of-options"}
 	stash := []string{"git", "--no-optional-locks", "stash", "show",
-		"--name-only", "-z", "--include-untracked", "--end-of-options"}
+		"--name-only", "-z", "--no-renames", "--include-untracked", "--end-of-options"}
+	log := []string{"git", "--no-optional-locks", "log", "--format=", "--name-only", "-z", "--no-relative",
+		"--no-renames", "--no-show-signature", "--no-walk", "--diff-merges=separate", "--end-of-options"}
+	numstat := []string{"git", "--no-optional-locks", "apply", "--numstat", "-z"}
 	tests := []struct {
 		name   string
 		argv   []string
@@ -144,6 +148,15 @@ func TestLocalProbes_GitDiffShapes(t *testing.T) {
 		{"ls-files without hardening forbidden", []string{"git", "ls-files", "-z"}, true},
 		{"stash pop forbidden", []string{"git", "--no-optional-locks", "stash", "pop"}, true},
 		{"stash show without end-of-options forbidden", []string{"git", "--no-optional-locks", "stash", "show", "--name-only", "-z", "--include-untracked", "--output=x"}, true},
+		{"diff hiding renames forbidden", []string{"git", "--no-optional-locks", "-c", "core.fsmonitor=false", "diff",
+			"--name-only", "-z", "--no-relative", "--no-ext-diff", "--no-textconv", "--end-of-options"}, true},
+		{"log of commits", append(slices.Clone(log), "main..evil", "--"), false},
+		{"log without hardening forbidden", []string{"git", "log", "--name-only", "evil"}, true},
+		{"log -p forbidden", []string{"git", "--no-optional-locks", "log", "-p", "evil"}, true},
+		{"apply --numstat", append(slices.Clone(numstat), "-R", "-p1", "--directory=sub", "--", "x.patch"), false},
+		{"apply forbidden", []string{"git", "--no-optional-locks", "apply", "x.patch"}, true},
+		{"apply --index forbidden", []string{"git", "apply", "--index", "--numstat", "-z", "x.patch"}, true},
+		{"am forbidden", []string{"git", "--no-optional-locks", "am", "x.mbox"}, true},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

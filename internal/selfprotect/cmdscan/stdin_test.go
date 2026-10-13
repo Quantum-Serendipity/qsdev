@@ -128,7 +128,10 @@ func TestReadsProgramFromStdin(t *testing.T) {
 		// A sourcing builtin given standard input as its file.
 		{". /dev/stdin", true},
 		{"source /dev/fd/0", true},
+		{". -- /dev/stdin", true},
+		{"source -- /dev/stdin", true},
 		{". ./env.sh", false},
+		{". -- ./env.sh", false},
 		{"source venv/bin/activate", false},
 		{"eval x", false},
 		// env -S splits its string into the words it runs; flock runs the
@@ -141,6 +144,26 @@ func TestReadsProgramFromStdin(t *testing.T) {
 		{"flock -w 5 /tmp/l python3", true},
 		{"flock /tmp/l make", false},
 		{"flock /tmp/l -c sh", false},
+		// chroot, unshare and script run their command, or given none the
+		// user's shell, which reads standard input.
+		{"chroot / sh", true},
+		{"chroot --userspec=u:g /r sh", true},
+		{"unshare sh", true},
+		{"unshare -r sh", true},
+		{"script -q /dev/null sh", true},
+		{"chroot /", true},
+		{"unshare", true},
+		{"unshare -r -m", true},
+		{"script -q /dev/null", true},
+		{"script -q -o 100000 /dev/null", true},
+		{"script --output-limit 100000 /dev/null", true},
+		{"script -qo 100000 /dev/null", true},
+		{"script", true},
+		{"chroot /srv/root ls", false},
+		{"unshare -r id", false},
+		{"script -qc sh /dev/null", false},
+		{"script -qc 'make test' /dev/null", false},
+		{"script -o 100000 -c 'make test' /dev/null", false},
 		// Under xargs, or parallel without --pipe, the program's standard
 		// input is not the line's.
 		{"xargs sh", false},
@@ -498,6 +521,66 @@ func TestInterpreterCode(t *testing.T) {
 			c := lastCommand(t, tt.line)
 			if got := InterpreterCode(c.Name, c.Args); !slices.Equal(got, tt.want) {
 				t.Errorf("InterpreterCode(%q) = %q, want %q", tt.line, got, tt.want)
+			}
+		})
+	}
+}
+
+// TestScriptComputed pins Command.ScriptComputed: a shell, interpreter or
+// sourcing builtin whose script operand is a process substitution running
+// anything but a literal producer reads a program computed at run time.
+func TestScriptComputed(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		line string
+		want bool
+	}{
+		{`bash <(curl x)`, true},
+		{`sh -e <(curl x)`, true},
+		{`. <(curl x)`, true},
+		{`source <(curl x)`, true},
+		{`source <(kubectl completion bash)`, true},
+		{`source -- <(curl x)`, true},
+		{`. -- <(curl x)`, true},
+		{`bash --init-file <(curl x) -i`, true},
+		{`bash --rcfile <(curl x) -i`, true},
+		{`bash --rcfile <(echo 'PS1=x') -i`, false},
+		{`source -- ./env.sh`, false},
+		{`python3 <(curl x)`, true},
+		{`python3 -u -- <(curl x)`, true},
+		{`sudo bash <(curl x)`, true},
+		{`chroot / sh <(curl x)`, true},
+		{`busybox sh <(curl x)`, true},
+		{`bash <(echo a; curl x)`, true},
+		{`bash <(curl x | cat)`, true},
+		{`. <(cat ./env.sh)`, false},
+		{`bash <(echo 'echo hi')`, false},
+		{`diff <(sort a) <(sort b)`, false},
+		{`bash run.sh <(curl x)`, false},
+		{`python3 x.py <(curl x)`, false},
+		{`bash -c 'echo hi' <(curl x)`, false},
+		{`source ./env.sh`, false},
+		{`.`, false},
+		{`bash`, false},
+		{`cat <(curl x)`, false},
+		{`bash >(curl x)`, false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.line, func(t *testing.T) {
+			t.Parallel()
+			cmds, err := Parse(tt.line)
+			if err != nil {
+				t.Fatalf("Parse(%q): %v", tt.line, err)
+			}
+			// The process substitution's own statements are emitted too;
+			// the verdict is the outer command's, which comes first.
+			if got := cmds[0].ScriptComputed; got != tt.want {
+				t.Errorf("Parse(%q)[0].ScriptComputed = %v, want %v", tt.line, got, tt.want)
+			}
+			for _, c := range cmds[1:] {
+				if c.ScriptComputed {
+					t.Errorf("Parse(%q): inner command %q has ScriptComputed", tt.line, c.Name)
+				}
 			}
 		})
 	}

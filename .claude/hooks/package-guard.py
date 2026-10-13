@@ -3002,6 +3002,19 @@ _PS_QUOTE_MAP: dict = str.maketrans({
     "“": '"', "”": '"', "„": '"',
 })
 _PS_DASHES: frozenset = frozenset("–—―")
+# A parameter's leading dash as a regex class: `-` or a typographic dash,
+# which pwsh's own command line (CommandLineParameterParser) accepts too.
+_PS_DASH = "[-" + "".join(sorted(_PS_DASHES)) + "]"
+_PS_SWITCH_PREFIXES: tuple = ("-", "/", *sorted(_PS_DASHES))
+# The characters PowerShell's tokenizer reads as whitespace between words
+# (CharExtensions.IsWhitespace): tab, vertical tab, form feed, space, NEL,
+# NBSP and the Unicode space (Zs), line (Zl) and paragraph (Zp) separators.
+# cmdscan.IsPowerShellSpace is the same set (TestPSSpacesMatchCmdscan).
+_PS_SPACES: str = "".join(map(chr, (
+    0x09, 0x0B, 0x0C, 0x20, 0x85, 0xA0, 0x1680, *range(0x2000, 0x200B),
+    0x2028, 0x2029, 0x202F, 0x205F, 0x3000,
+)))
+_PS_SPACE_MAP: dict = str.maketrans(dict.fromkeys(_PS_SPACES, " "))
 # A method invocation's `(`: right after a member name of an expression
 # (`$x.Replace(`, `[IO.Path]::Combine(`, `(Get-Date).ToString(`). A bare
 # command name followed by `(` (`npm(...)`, `npm.cmd(...)`) is not one.
@@ -3010,16 +3023,17 @@ _PS_INSTALL_RE = re.compile(
     r"(?<![\w-])(" + "|".join(map(re.escape, _PS_INSTALLER_CMDLETS)) + r")(?![\w-])",
     re.IGNORECASE,
 )
-# PowerShell parameter names are case-insensitive, accept a `/` prefix on
-# Windows PowerShell and may be abbreviated: -c/-com.../-Command take the rest
-# of the line as a script, -e/-ec/-enc.../-EncodedCommand a base64 UTF-16LE
-# script, -f/-File a script file.
-_PS_COMMAND_FLAG_RE = re.compile(
-    r"^(?:--?|/)(c|com|comm|comma|comman|command|cwa|commandwithargs)$", re.IGNORECASE)
-_PS_ENCODED_FLAG_RE = re.compile(r"^(?:--?|/)(e|ec|en|enc|enco|encod|encode|encoded[a-z]*)$", re.IGNORECASE)
-_PS_FILE_FLAG_RE = re.compile(r"^(?:--?|/)(f|fi|fil|file)$", re.IGNORECASE)
 # PowerShell parameters as (full name, shortest accepted prefix): a host or
-# cmdlet accepts any abbreviation down to that prefix, in any case.
+# cmdlet accepts any abbreviation down to that prefix, in any case, after a
+# dash (or a typographic one, _PS_DASH) or, on the host, a `/`, with a value
+# bound by a colon (`-ep:Bypass`) or given as the next word.
+# The pwsh/powershell host parameters that run a script: -Command (any
+# prefix, `-c`, `-co`, ..., or -CommandWithArgs/-cwa) takes the rest of the
+# line as a script, -EncodedCommand (`-e`, `-ec`, `-enc`, ...) a base64
+# UTF-16LE script, and -File (`-f`, ...) a script file.
+_PS_HOST_COMMAND_PARAMS: tuple = (("command", "c"), ("commandwithargs", "commandw"), ("cwa", "cwa"))
+_PS_HOST_ENCODED_PARAMS: tuple = (("encodedcommand", "e"), ("ec", "ec"))
+_PS_HOST_FILE_PARAMS: tuple = (("file", "f"),)
 # The pwsh/powershell host parameters that take a value (`-ExecutionPolicy
 # Bypass`, `-ep:Bypass`), so the value is not read as the first positional.
 _PS_HOST_VALUE_PARAMS: tuple = (
@@ -3027,7 +3041,7 @@ _PS_HOST_VALUE_PARAMS: tuple = (
     ("windowstyle", "w"), ("outputformat", "o"), ("of", "of"), ("inputformat", "inp"), ("if", "if"),
     ("configurationname", "config"), ("configurationfile", "configurationf"),
     ("settingsfile", "settings"), ("version", "v"), ("psconsolefile", "psconsolefile"),
-    ("custompipename", "custompipename"),
+    ("custompipename", "custompipename"), ("encodedarguments", "encodeda"), ("ea", "ea"),
 )
 # Invoke-Expression's only parameter, and Start-Process's program, argument
 # list and switches (every other Start-Process parameter takes a value).
@@ -3036,7 +3050,7 @@ _PS_START_FILE_PARAMS: tuple = (("filepath", "f"), ("path", "path"), ("pspath", 
 _PS_START_ARG_PARAMS: tuple = (("argumentlist", "a"), ("args", "args"))
 _PS_START_SWITCHES: tuple = tuple((s, s) for s in (
     "wait", "nonewwindow", "passthru", "usenewenvironment", "loaduserprofile", "whatif", "confirm"))
-_PS_PARAM_RE = re.compile(r"(?:--?|(/))([A-Za-z]+)(?:(:)(.*))?", re.DOTALL)
+_PS_PARAM_RE = re.compile(rf"(?:{_PS_DASH}{_PS_DASH}?|(/))([A-Za-z]+)(?:(:)(.*))?", re.DOTALL)
 # The PowerShell commands that run a string as code, and that start a program.
 _PS_INVOKE_EXPRESSION: frozenset = frozenset({"iex", "invoke-expression"})
 _PS_START_PROCESS: frozenset = frozenset({"start-process", "saps", "start"})
@@ -3124,19 +3138,22 @@ def _pwsh_script(args: list, exe: str = "pwsh") -> Optional[str]:
     i = 0
     while i < len(args):
         a = args[i]
-        if _PS_COMMAND_FLAG_RE.match(a):
-            return " ".join(args[i + 1:])
-        if _PS_ENCODED_FLAG_RE.match(a):
-            if i + 1 >= len(args):
+        command = _ps_parameter(a, _PS_HOST_COMMAND_PARAMS, slash=True)
+        if command is not None:
+            return " ".join(([command[1]] if command[1] else []) + args[i + 1:])
+        encoded = _ps_parameter(a, _PS_HOST_ENCODED_PARAMS, slash=True)
+        if encoded is not None:
+            text = encoded[1] if encoded[1] is not None else (args[i + 1] if i + 1 < len(args) else None)
+            if text is None:
                 return None
             try:
-                return base64.b64decode(args[i + 1], validate=True).decode("utf-16-le")
+                return base64.b64decode(text, validate=True).decode("utf-16-le")
             except (binascii.Error, UnicodeDecodeError) as exc:
                 raise ValueError(f"undecodable -EncodedCommand: {exc}") from exc
-        if _PS_FILE_FLAG_RE.match(a):
+        if _ps_parameter(a, _PS_HOST_FILE_PARAMS, slash=True) is not None:
             return None
         param = _ps_parameter(a, _PS_HOST_VALUE_PARAMS, slash=True)
-        if param is None and not a.startswith(("-", "/")):
+        if param is None and not a.startswith(_PS_SWITCH_PREFIXES):
             return " ".join(args[i:]) if exe == "powershell" else None
         i += 2 if param is not None and param[1] is None else 1  # skip a parameter's value
     return None
@@ -3790,12 +3807,13 @@ def _ps_prepass(text: str) -> tuple:
     the expression is not read as a computed command name, and returned both
     to be scanned and as call text. Typographic quotes are quotes and a
     typographic dash that starts a parameter is `-`, as PowerShell reads
-    them. Outside single quotes a backtick escape becomes a backslash escape
-    (`In`stall-Module` is Install-Module), and a backslash, a plain character
-    in PowerShell, becomes `/`. Returns (text, group scripts, method call
-    arguments, ok); ok is False for an unterminated block comment, which the
-    caller fails closed on."""
-    text = text.translate(_PS_QUOTE_MAP)
+    them, and every PowerShell whitespace character (_PS_SPACES: NBSP, NEL,
+    the Unicode separators) is a space. Outside single quotes a backtick
+    escape becomes a backslash escape (`In`stall-Module` is Install-Module),
+    and a backslash, a plain character in PowerShell, becomes `/`. Returns
+    (text, group scripts, method call arguments, ok); ok is False for an
+    unterminated block comment, which the caller fails closed on."""
+    text = text.translate(_PS_QUOTE_MAP).translate(_PS_SPACE_MAP)
     out: list = []
     scripts: list = []
     calls: list = []

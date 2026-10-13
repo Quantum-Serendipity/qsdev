@@ -28,7 +28,7 @@ func TestParseWithVars(t *testing.T) {
 		{"length", "sed -i x ${#HOME}", "", "", true},
 		{"longer name", "sed -i x $HOMEDIR/a", "/a", "", true},
 		{"command substitution", "sed -i x $(cat /h)/a", "/a", "", true},
-		// A plain echo of literal words prints them (see echoOutput).
+		// A plain echo of literal words prints them (see knownOutput).
 		{"echo substitution", "sed -i x $(echo /h)/a", "/h/a", "", true},
 		{"quoted echo substitution", `rm -rf "$(echo ~/.co)nfig"`, "~/.config", "", true},
 		{"echo substitution of a variable", "sed -i x $(echo $HOME)/a", "/a", "", true},

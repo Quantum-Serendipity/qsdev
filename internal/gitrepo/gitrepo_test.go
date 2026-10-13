@@ -6,7 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
-	"sync/atomic"
+	"strings"
 	"testing"
 	"time"
 
@@ -234,6 +234,17 @@ func TestStashPaths(t *testing.T) {
 	if _, err := c.StashPaths(ctx, t.TempDir(), "stash@{0}"); !errors.Is(err, ErrNotRepo) {
 		t.Errorf("StashPaths(non-repo) error = %v, want ErrNotRepo", err)
 	}
+
+	// A stashed rename names the path it removes, not only its destination.
+	runGit(t, repo, "mv", ".claude/settings.json", "moved.json")
+	runGit(t, repo, "stash", "push", "-q")
+	got, err = c.StashPaths(ctx, repo, "stash@{0}")
+	if err != nil {
+		t.Fatalf("StashPaths(rename): %v", err)
+	}
+	if want := []string{".claude/settings.json", "moved.json"}; !slices.Equal(got, want) {
+		t.Errorf("StashPaths(rename) = %q, want %q", got, want)
+	}
 }
 
 // TestTrackedPaths proves the index listing: tracked paths only (not an
@@ -259,6 +270,157 @@ func TestTrackedPaths(t *testing.T) {
 	}
 }
 
+// branchRepo is newRepo after main moved on: main changes the settings file
+// and branch feature, forked before that, changes only src/x.go. Branch
+// moved renames the settings file away.
+func branchRepo(t *testing.T) string {
+	t.Helper()
+	repo := newRepo(t)
+	runGit(t, repo, "checkout", "-q", "-b", "feature")
+	writeFile(t, repo, "src/x.go", "package x // feature\n")
+	runGit(t, repo, "commit", "-q", "-am", "feature")
+	runGit(t, repo, "checkout", "-q", "-b", "moved", "main")
+	runGit(t, repo, "mv", ".claude/settings.json", "moved.json")
+	runGit(t, repo, "commit", "-q", "-m", "moved")
+	runGit(t, repo, "checkout", "-q", "main")
+	writeFile(t, repo, ".claude/settings.json", "{\"main\":1}\n")
+	runGit(t, repo, "commit", "-q", "-am", "main")
+	return repo
+}
+
+// TestChangedPaths_MergeBaseRange proves the range form: "HEAD...rev" lists
+// only what rev changed since it forked, which is what merging or rebasing
+// onto it writes, while the two-dot form also lists what HEAD changed since.
+// A rename lists its source as well as its destination.
+func TestChangedPaths_MergeBaseRange(t *testing.T) {
+	requireGit(t)
+	t.Parallel()
+	repo := branchRepo(t)
+	c := client(t)
+	ctx := context.Background()
+	tests := []struct {
+		from string
+		want []string
+	}{
+		{"HEAD...feature", []string{"src/x.go"}},
+		{"HEAD..feature", []string{".claude/settings.json", "src/x.go"}},
+		{"HEAD...evil", []string{".claude/settings.json"}},
+		{"feature...HEAD", []string{".claude/settings.json"}},
+		{"HEAD...moved", []string{".claude/settings.json", "moved.json"}},
+	}
+	for _, tt := range tests {
+		got, err := c.ChangedPaths(ctx, repo, tt.from, "", nil)
+		if err != nil {
+			t.Fatalf("ChangedPaths(%s): %v", tt.from, err)
+		}
+		if !slices.Equal(got, tt.want) {
+			t.Errorf("ChangedPaths(%s) = %q, want %q", tt.from, got, tt.want)
+		}
+	}
+	if _, err := c.ChangedPaths(ctx, repo, "HEAD...nosuch", "", nil); !errors.Is(err, ErrGit) {
+		t.Errorf("ChangedPaths(unknown range end) error = %v, want ErrGit", err)
+	}
+}
+
+// TestCommitPaths proves the commit listing: one commit's paths, a range's
+// commits, a rename's two names, every commit of several, and errors for an
+// unknown or option-shaped revision and outside a repository.
+func TestCommitPaths(t *testing.T) {
+	requireGit(t)
+	t.Parallel()
+	repo := branchRepo(t)
+	c := client(t)
+	ctx := context.Background()
+	tests := []struct {
+		revs []string
+		want []string
+	}{
+		{[]string{"evil"}, []string{".claude/settings.json"}},
+		{[]string{"feature"}, []string{"src/x.go"}},
+		{[]string{"evil~1..evil"}, []string{".claude/settings.json"}},
+		{[]string{"moved"}, []string{".claude/settings.json", "moved.json"}},
+		{[]string{"feature", "evil"}, []string{"src/x.go", ".claude/settings.json"}},
+	}
+	for _, tt := range tests {
+		got, err := c.CommitPaths(ctx, repo, tt.revs)
+		if err != nil {
+			t.Fatalf("CommitPaths(%q): %v", tt.revs, err)
+		}
+		slices.Sort(got)
+		want := slices.Sorted(slices.Values(tt.want))
+		if !slices.Equal(got, want) {
+			t.Errorf("CommitPaths(%q) = %q, want %q", tt.revs, got, want)
+		}
+	}
+	for _, revs := range [][]string{{"nosuch"}, {"--output=" + filepath.Join(t.TempDir(), "o")}} {
+		if _, err := c.CommitPaths(ctx, repo, revs); !errors.Is(err, ErrGit) {
+			t.Errorf("CommitPaths(%q) error = %v, want ErrGit", revs, err)
+		}
+	}
+	if _, err := c.CommitPaths(ctx, t.TempDir(), []string{"HEAD"}); !errors.Is(err, ErrNotRepo) {
+		t.Errorf("CommitPaths(non-repo) error = %v, want ErrNotRepo", err)
+	}
+}
+
+// TestPatchPaths proves the patch listing: a mailbox from format-patch, a
+// rename's source and destination, a plain diff read from a subdirectory
+// (named from the top level), -p and --directory, a file named like an
+// option, outside a repository, and an error for a Maildir (a directory) and
+// a missing file. Nothing is applied.
+func TestPatchPaths(t *testing.T) {
+	requireGit(t)
+	t.Parallel()
+	repo := branchRepo(t)
+	patches := t.TempDir()
+	runGit(t, repo, "format-patch", "-q", "-o", filepath.Join(patches, "evil"), "-1", "evil")
+	runGit(t, repo, "format-patch", "-q", "-o", filepath.Join(patches, "moved"), "-1", "moved")
+	mbox := func(name string) string {
+		t.Helper()
+		files, err := filepath.Glob(filepath.Join(patches, name, "*.patch"))
+		if err != nil || len(files) != 1 {
+			t.Fatalf("format-patch %s wrote %q (%v)", name, files, err)
+		}
+		return files[0]
+	}
+	plain := filepath.Join(patches, "-plain.patch")
+	writeFile(t, patches, "-plain.patch", "--- a/y.txt\n+++ b/y.txt\n@@ -0,0 +1 @@\n+hi\n")
+	c := client(t)
+	ctx := context.Background()
+
+	tests := []struct {
+		name             string
+		dir              string
+		files            []string
+		strip, directory string
+		want             []string
+	}{
+		{"mailbox", repo, []string{mbox("evil")}, "", "", []string{".claude/settings.json"}},
+		{"rename", repo, []string{mbox("moved")}, "", "", []string{".claude/settings.json", "moved.json"}},
+		{"plain diff from a subdirectory", filepath.Join(repo, "src"), []string{plain}, "", "", []string{"src/y.txt"}},
+		{"strip and directory", repo, []string{plain}, "0", "sub", []string{"sub/b/y.txt"}},
+		{"outside a repository", t.TempDir(), []string{mbox("evil")}, "", "", []string{".claude/settings.json"}},
+	}
+	for _, tt := range tests {
+		got, err := c.PatchPaths(ctx, tt.dir, tt.files, tt.strip, tt.directory)
+		if err != nil {
+			t.Fatalf("%s: PatchPaths: %v", tt.name, err)
+		}
+		got = slices.Compact(slices.Sorted(slices.Values(got)))
+		if !slices.Equal(got, tt.want) {
+			t.Errorf("%s: PatchPaths = %q, want %q", tt.name, got, tt.want)
+		}
+	}
+	for _, files := range [][]string{{patches}, {filepath.Join(patches, "missing.patch")}} {
+		if _, err := c.PatchPaths(ctx, repo, files, "", ""); !errors.Is(err, ErrGit) {
+			t.Errorf("PatchPaths(%q) error = %v, want ErrGit", files, err)
+		}
+	}
+	// Nothing was applied.
+	if b, err := os.ReadFile(filepath.Join(repo, ".claude", "settings.json")); err != nil || string(b) != "{\"main\":1}\n" {
+		t.Errorf("settings.json = %q (%v) after PatchPaths, want it untouched", b, err)
+	}
+}
+
 // TestQueryTimeout proves a runner that outlives a query's timeout yields
 // ErrTimeout, through the injected runner (no git needed).
 func TestQueryTimeout(t *testing.T) {
@@ -279,6 +441,8 @@ func TestQueryTimeout(t *testing.T) {
 		"ChangedPaths": func() error { _, err := c.ChangedPaths(ctx, "/r", "HEAD", "", nil); return err },
 		"StashPaths":   func() error { _, err := c.StashPaths(ctx, "/r", "stash@{0}"); return err },
 		"TrackedPaths": func() error { _, err := c.TrackedPaths(ctx, "/r"); return err },
+		"CommitPaths":  func() error { _, err := c.CommitPaths(ctx, "/r", []string{"evil"}); return err },
+		"PatchPaths":   func() error { _, err := c.PatchPaths(ctx, "/r", []string{"x.patch"}, "", ""); return err },
 	}
 	for name, q := range queries {
 		if err := q(); !errors.Is(err, ErrTimeout) {
@@ -305,47 +469,156 @@ func TestDefaultTimeouts(t *testing.T) {
 // procexec local-probe shape.
 func TestCallShapes(t *testing.T) {
 	t.Parallel()
-	var calls atomic.Int32
-	var last Call
+	var calls []Call // the queries run one at a time, on this goroutine
 	c := Client{Runner: func(_ context.Context, call Call) ([]byte, error) {
-		calls.Add(1)
-		last = call
+		calls = append(calls, call)
 		return []byte("/r\n"), nil
 	}}
 	ctx := context.Background()
 	dir := filepath.Join(string(filepath.Separator)+"r", "sub")
+	diff := []string{"--no-optional-locks", "-c", "core.fsmonitor=false", "diff", "--name-only", "-z",
+		"--no-relative", "--no-renames", "--no-ext-diff", "--no-textconv", "--end-of-options"}
+	log := []string{"--no-optional-locks", "log", "--format=", "--name-only", "-z", "--no-relative", "--no-renames",
+		"--no-show-signature", "--no-walk", "--diff-merges=separate", "--end-of-options"}
+	numstat := []string{"--no-optional-locks", "apply", "--numstat", "-z"}
 
 	tests := []struct {
 		name string
 		run  func()
-		want []string
+		want [][]string // the argv of each git spawned, in order
 	}{
-		{"Toplevel", func() { _, _ = c.Toplevel(ctx, dir) }, []string{"rev-parse", "--show-toplevel"}},
+		{"Toplevel", func() { _, _ = c.Toplevel(ctx, dir) }, [][]string{{"rev-parse", "--show-toplevel"}}},
+		{"FetchHeadMerges", func() { _, _ = c.FetchHeadMerges(ctx, dir) },
+			[][]string{{"rev-parse", "--path-format=absolute", "--git-path", "FETCH_HEAD"}}},
 		{"ChangedPaths", func() { _, _ = c.ChangedPaths(ctx, dir, "evil", "", []string{"."}) },
-			[]string{"--no-optional-locks", "-c", "core.fsmonitor=false", "diff", "--name-only", "-z",
-				"--no-relative", "--no-ext-diff", "--no-textconv", "--end-of-options", "evil", "--", "."}},
+			[][]string{slices.Concat(diff, []string{"evil", "--", "."})}},
+		// A range is one revision argument, after --end-of-options.
+		{"ChangedPaths merge-base range", func() { _, _ = c.ChangedPaths(ctx, dir, "HEAD...-evil", "", nil) },
+			[][]string{slices.Concat(diff, []string{"HEAD...-evil", "--"})}},
 		{"StashPaths", func() { _, _ = c.StashPaths(ctx, dir, "stash@{1}") },
-			[]string{"--no-optional-locks", "stash", "show", "--name-only", "-z", "--include-untracked",
-				"--end-of-options", "stash@{1}"}},
+			[][]string{{"--no-optional-locks", "stash", "show", "--name-only", "-z", "--no-renames", "--include-untracked",
+				"--end-of-options", "stash@{1}"}}},
 		{"TrackedPaths", func() { _, _ = c.TrackedPaths(ctx, dir) },
-			[]string{"--no-optional-locks", "-c", "core.fsmonitor=false", "ls-files", "-z"}},
+			[][]string{{"--no-optional-locks", "-c", "core.fsmonitor=false", "ls-files", "-z"}}},
+		// A revision that starts with "-" stays a revision.
+		{"CommitPaths", func() { _, _ = c.CommitPaths(ctx, dir, []string{"main..evil", "--all"}) },
+			[][]string{slices.Concat(log, []string{"main..evil", "--all", "--"})}},
+		// The patch files follow "--", so one named like an option is a file;
+		// the second read is in reverse.
+		{"PatchPaths", func() { _, _ = c.PatchPaths(ctx, dir, []string{"-x.patch", "b.mbox"}, "", "") },
+			[][]string{
+				slices.Concat(numstat, []string{"--", "-x.patch", "b.mbox"}),
+				slices.Concat(numstat, []string{"-R", "--", "-x.patch", "b.mbox"}),
+			}},
+		{"PatchPaths strip and directory", func() { _, _ = c.PatchPaths(ctx, dir, []string{"x.patch"}, "2", "sub") },
+			[][]string{
+				slices.Concat(numstat, []string{"-p2", "--directory=sub", "--", "x.patch"}),
+				slices.Concat(numstat, []string{"-R", "-p2", "--directory=sub", "--", "x.patch"}),
+			}},
 	}
 	for _, tt := range tests {
-		before := calls.Load()
+		calls = nil
 		tt.run()
-		if n := calls.Load() - before; n != 1 {
-			t.Errorf("%s spawned %d git processes, want 1", tt.name, n)
+		if len(calls) != len(tt.want) {
+			t.Errorf("%s spawned %d git processes, want %d", tt.name, len(calls), len(tt.want))
+			continue
 		}
-		if last.Dir != dir {
-			t.Errorf("%s ran in %q, want %q", tt.name, last.Dir, dir)
-		}
-		if !slices.Equal(last.Args, tt.want) {
-			t.Errorf("%s argv = %q, want %q", tt.name, last.Args, tt.want)
+		for i, call := range calls {
+			if call.Dir != dir {
+				t.Errorf("%s ran in %q, want %q", tt.name, call.Dir, dir)
+			}
+			if !slices.Equal(call.Args, tt.want[i]) {
+				t.Errorf("%s argv = %q, want %q", tt.name, call.Args, tt.want[i])
+			}
 		}
 	}
 
-	if _, err := c.StashPaths(ctx, dir, "--output=x"); err == nil || calls.Load() != int32(len(tests)) {
-		t.Errorf("StashPaths(option-shaped stash) = %v after %d calls, want a refusal without spawning", err, calls.Load())
+	// Refused before spawning anything.
+	calls = nil
+	refusals := map[string]func() error{
+		"StashPaths(option-shaped stash)": func() error { _, err := c.StashPaths(ctx, dir, "--output=x"); return err },
+		"CommitPaths(no revisions)":       func() error { _, err := c.CommitPaths(ctx, dir, nil); return err },
+		"PatchPaths(no files)":            func() error { _, err := c.PatchPaths(ctx, dir, nil, "", ""); return err },
+		"PatchPaths(option in strip)":     func() error { _, err := c.PatchPaths(ctx, dir, []string{"x"}, "1 --apply", ""); return err },
+	}
+	for name, q := range refusals {
+		if err := q(); err == nil {
+			t.Errorf("%s succeeded, want a refusal", name)
+		}
+	}
+	if len(calls) != 0 {
+		t.Errorf("refused queries spawned git: %v", calls)
+	}
+}
+
+// TestFetchHeadMerges proves the FETCH_HEAD reading against git: after a
+// fetch of two branches both heads are recorded for merging (git merge
+// FETCH_HEAD merges both), after a fetch of a branch from a remote with a
+// default refspec the others are not-for-merge, and a repository that never
+// fetched has no FETCH_HEAD, which git merge fails on too.
+func TestFetchHeadMerges(t *testing.T) {
+	requireGit(t)
+	t.Parallel()
+	repo := branchRepo(t)
+	c := client(t)
+	ctx := context.Background()
+	if _, err := c.FetchHeadMerges(ctx, repo); !errors.Is(err, ErrGit) {
+		t.Fatalf("FetchHeadMerges(no fetch) error = %v, want ErrGit", err)
+	}
+	runGit(t, repo, "fetch", "-q", ".", "feature", "evil")
+	got, err := c.FetchHeadMerges(ctx, filepath.Join(repo, "src"))
+	if err != nil {
+		t.Fatalf("FetchHeadMerges: %v", err)
+	}
+	want := []string{revParse(t, repo, "feature"), revParse(t, repo, "evil")}
+	if !slices.Equal(got, want) {
+		t.Errorf("FetchHeadMerges = %q, want %q (feature, evil)", got, want)
+	}
+}
+
+// revParse returns the object name rev resolves to in repo.
+func revParse(t *testing.T, repo, rev string) string {
+	t.Helper()
+	cmd := procexec.Command("git", "rev-parse", "--verify", rev)
+	cmd.Dir = repo
+	cmd.Env = isolatedEnv(t)
+	out, err := cmd.Output()
+	if err != nil {
+		t.Fatalf("git rev-parse %s: %v", rev, err)
+	}
+	return strings.TrimSpace(string(out))
+}
+
+// TestFetchHeadMergesParse pins the FETCH_HEAD parse: the heads recorded for
+// merging in order, not-for-merge lines skipped, and a line git could not
+// merge refused.
+func TestFetchHeadMergesParse(t *testing.T) {
+	t.Parallel()
+	a, b, c := strings.Repeat("a", 40), strings.Repeat("b", 64), strings.Repeat("c", 40)
+	data := a + "\t\tbranch 'x' of ../r\n" + b + "\tnot-for-merge\tbranch 'y' of ../r\r\n\n" + c + "\t\t'z'\n"
+	got, err := fetchHeadMerges(data)
+	if err != nil || !slices.Equal(got, []string{a, c}) {
+		t.Errorf("fetchHeadMerges = %q, %v; want %q", got, err, []string{a, c})
+	}
+	for _, bad := range []string{"no tab\n", "\t\tdesc\n", "XYZ\t\tdesc\n", "--output=x\t\tdesc\n"} {
+		if _, err := fetchHeadMerges(bad); !errors.Is(err, ErrGit) {
+			t.Errorf("fetchHeadMerges(%q) error = %v, want ErrGit", bad, err)
+		}
+	}
+	if got, err := fetchHeadMerges(""); err != nil || len(got) != 0 {
+		t.Errorf("fetchHeadMerges(empty) = %q, %v; want none", got, err)
+	}
+}
+
+// TestNumstatPaths pins the parse of apply's -z --numstat output: the path
+// after two tab-separated counts (a binary file's are "-"), a path holding a
+// tab, and a rename's source and destination after an empty path.
+func TestNumstatPaths(t *testing.T) {
+	t.Parallel()
+	out := "1\t2\tsrc/x.go\x00-\t-\tbin/a.png\x003\t0\tweird\tname\x000\t0\t\x00old.json\x00new.json\x00"
+	want := []string{"src/x.go", "bin/a.png", "weird\tname", "old.json", "new.json"}
+	if got := numstatPaths([]byte(out)); !slices.Equal(got, want) {
+		t.Errorf("numstatPaths = %q, want %q", got, want)
 	}
 }
 

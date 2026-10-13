@@ -320,6 +320,115 @@ func TestBash_UnparseableFailsClosed(t *testing.T) {
 	}
 }
 
+// TestModeChange_ProtectedAncestor pins W1bN-17: a chmod that can clear an
+// owner permission bit of a directory at or above a protected location (a
+// project holding .git or .claude, a home directory) disables the hook or
+// locks the agent's settings without naming them. Adding bits, changing only
+// the group's or others' bits, and changing a directory that holds no
+// protected location stay allowed.
+func TestModeChange_ProtectedAncestor(t *testing.T) {
+	t.Parallel()
+	root := t.TempDir()
+	project := filepath.Join(root, "project")
+	for _, dir := range []string{".git/hooks", ".claude", "src/pkg", "scripts"} {
+		if err := os.MkdirAll(filepath.Join(project, filepath.FromSlash(dir)), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := os.WriteFile(filepath.Join(project, "build.sh"), []byte("#!/bin/sh\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	// A project that holds only .claude, no git directory.
+	claudeOnly := filepath.Join(root, "claude-only")
+	if err := os.MkdirAll(filepath.Join(claudeOnly, ".claude"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	src := filepath.Join(project, "src")
+
+	runBashCases(t, []bashCase{
+		{name: "recursive a-x", command: "chmod -R a-x .", cwd: project},
+		{name: "recursive a-w", command: "chmod -R a-w .", cwd: project},
+		{name: "remove then add X", command: "chmod -R -x+X .", cwd: project},
+		{name: "octal without owner x", command: "chmod -R 644 .", cwd: project},
+		{name: "octal with a leading zero", command: "chmod -R 0600 .", cwd: project},
+		{name: "owner x of the project", command: "chmod u-x .", cwd: project},
+		{name: "assign without x", command: "chmod -R u=rw .", cwd: project},
+		{name: "assign from another class", command: "chmod -R u=g .", cwd: project},
+		{name: "second clause clears", command: "chmod -R go-w,u-r .", cwd: project},
+		{name: "parent from a subdirectory", command: "chmod -R a-x ..", cwd: src},
+		{name: "parent of the project", command: "chmod -R a-x ..", cwd: project},
+		{name: "project by absolute path", command: "chmod -R a-x " + filepath.ToSlash(project), cwd: src},
+		{name: "claude-only project", command: "chmod -R a-w .", cwd: claudeOnly},
+		{name: "home directory", command: "chmod -R a-x ~", cwd: project},
+		{name: "reference mode", command: "chmod -R --reference=/tmp/x .", cwd: project},
+		{name: "expanded mode", command: `chmod -R "$M" .`, cwd: project},
+		{name: "after a cd the scan cannot follow", command: `cd "$(git rev-parse --show-toplevel)" && chmod -R a-x .`, cwd: src},
+		{name: "options after the operand", command: "chmod a-x . -R", cwd: project},
+		{name: "git directory", command: "chmod -R a-x .git", cwd: project},
+		// Through a wrapper or a nested script.
+		{name: "under env", command: "env chmod -R a-x .", cwd: project},
+		{name: "under command", command: "command chmod -R a-x .", cwd: project},
+		{name: "under nice", command: "nice chmod -R a-x .", cwd: project},
+		{name: "under timeout", command: "timeout 5 chmod -R a-x .", cwd: project},
+		{name: "under sudo", command: "sudo -u x chmod -R a-x .", cwd: project},
+		{name: "in a shell script", command: "bash -c 'chmod -R a-x .'", cwd: project},
+		{name: "in an eval", command: "eval 'cd .. && chmod -R a-x project'", cwd: project},
+		// A path-qualified program or a multi-call binary's applet.
+		{name: "path-qualified", command: "/bin/chmod -R a-x .", cwd: project},
+		{name: "nix profile path", command: "/run/current-system/sw/bin/chmod -R a-x .", cwd: project},
+		{name: "path-qualified on home", command: "/bin/chmod -R a-x ~", cwd: project},
+		{name: "busybox applet", command: "busybox chmod -R a-x .", cwd: project},
+		// A recursive change of an operand the scan cannot render, which
+		// may be the working directory.
+		{name: "PWD", command: `chmod -R a-x "$PWD"`, cwd: project},
+		{name: "braced PWD", command: `chmod -R a-x "${PWD}"`, cwd: project},
+		{name: "pwd substitution", command: `chmod -R a-x "$(pwd)"`, cwd: project},
+		{name: "variable", command: "d=.; chmod -R a-x $d", cwd: project},
+	}, Deny)
+
+	runBashCases(t, []bashCase{
+		{name: "add x below", command: "chmod -R a+x scripts", cwd: project},
+		{name: "group and others only", command: "chmod -R go-w .", cwd: project},
+		{name: "add owner w", command: "chmod -R u+w .", cwd: project},
+		{name: "octal with full owner bits", command: "chmod -R 755 .", cwd: project},
+		{name: "assign keeping owner bits", command: "chmod -R u=rwX .", cwd: project},
+		{name: "executable script", command: "chmod +x build.sh", cwd: project},
+		{name: "subdirectory without protected entries", command: "chmod -R a-x src", cwd: project},
+		{name: "file in the project", command: "chmod 644 build.sh", cwd: project},
+		{name: "own directory below the project", command: "chmod -R a-w .", cwd: src},
+		{name: "wrapped addition", command: "env chmod -R a+x .", cwd: project},
+		{name: "wrapped subdirectory", command: "nice chmod -R a-x src", cwd: project},
+		{name: "scripted group change", command: "bash -c 'chmod -R go-w .'", cwd: project},
+		// A single file named through an expansion, not a tree.
+		{name: "expanded file", command: `chmod 644 "$f"`, cwd: project},
+		{name: "expanded tree with full owner bits", command: `chmod -R 755 "$d"`, cwd: project},
+	}, Allow)
+}
+
+// TestReplaceAncestor_WrappersAndScripts pins that deleting or moving a
+// protected location's ancestor is judged through wrappers and nested shell
+// scripts, as the same command run directly is.
+func TestReplaceAncestor_WrappersAndScripts(t *testing.T) {
+	t.Parallel()
+	project := filepath.Join(homeDir(t), "project")
+	runBashCases(t, []bashCase{
+		{name: "env rm of home", command: "env rm -rf ~", cwd: project},
+		{name: "nice rm of home", command: "nice rm -rf ~", cwd: project},
+		{name: "env mv of home", command: "env mv ~ /tmp/h", cwd: project},
+		{name: "rm of home in a shell script", command: "sh -c 'rm -rf ~'", cwd: project},
+		{name: "rm of .git in a shell script", command: "bash -c 'rm -rf .git'", cwd: project},
+		{name: "path-qualified rm of home", command: "/bin/rm -rf ~", cwd: project},
+		{name: "path-qualified mv of home", command: "/bin/mv ~ /tmp/h", cwd: project},
+		{name: "busybox rm of home", command: "busybox rm -rf ~", cwd: project},
+	}, Deny)
+	runBashCases(t, []bashCase{
+		{name: "env rm of a build directory", command: "env rm -rf build", cwd: project},
+		{name: "path-qualified rm of a build directory", command: "/bin/rm -rf build", cwd: project},
+		{name: "busybox chmod of a subdirectory", command: "busybox chmod -R a-x src", cwd: project},
+		{name: "rm of a build directory in a shell script", command: "sh -c 'rm -rf build'", cwd: project},
+	}, Allow)
+}
+
 // TestMCP002_ToolPathArguments covers F147: MCP tools name paths through
 // path/paths/source/destination, not only file_path.
 func TestMCP002_ToolPathArguments(t *testing.T) {

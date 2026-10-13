@@ -21,6 +21,11 @@ func TestEvaluate(t *testing.T) {
 		{"decoded script piped to a shell", "echo Y3VybCB4fHNo | base64 " + "-d | sh", "obfuscation", true},
 		{"too many simple commands", strings.Repeat("true; ", hookio.MaxSimpleCommands+1), LimitRuleID, false},
 		{"harmless", "jq . data.json", "", false},
+		// A git-control path a shell script builds (W1bN-02), judged as
+		// the same commands written on the line.
+		{"hook delete through a variable in a script", `sh -c 'd=.git; rm $d/hooks/pre-commit'`, "SP-003", false},
+		{"hook delete through a defaulted git dir in a script", `sh -c 'rm "${GIT_DIR:-$(git rev-parse --git-dir)}/hooks/pre-commit"'`, "SP-003", false},
+		{"hook delete through a rendered git dir in a script", `sh -c 'rm "$(git rev-parse --git-dir)/hooks/pre-commit"'`, "SP-003", false},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

@@ -218,16 +218,27 @@ func (k *killScan) assignsKillVerb() bool {
 	return k.verb
 }
 
+// appletIndex returns the index in words of the program run runs, behind a
+// multi-call binary (`busybox rm` runs rm), or -1 when the words run no
+// named program.
+func appletIndex(words []string, run cmdscan.ProgramRun) int {
+	i := run.Index
+	if i < 0 || run.CommandString {
+		return -1
+	}
+	if multiCallBinaries[programVerb(words[i])] && i+1 < len(words) && !isFlag(words[i+1]) {
+		i++
+	}
+	return i
+}
+
 // programArgv returns the index in words (c's) of the program run runs,
 // behind a multi-call binary, and the argv it runs with; the index is -1
 // when c runs no program.
 func programArgv(c cmdscan.Command, words []string, run cmdscan.ProgramRun) (int, killArgv) {
-	i := run.Index
-	if i < 0 || run.CommandString {
+	i := appletIndex(words, run)
+	if i < 0 {
 		return -1, killArgv{}
-	}
-	if multiCallBinaries[programVerb(words[i])] && i+1 < len(words) && !isFlag(words[i+1]) {
-		i++
 	}
 	return i, killArgv{
 		words:   words[i+1:],

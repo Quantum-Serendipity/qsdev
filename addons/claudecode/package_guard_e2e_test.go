@@ -614,6 +614,14 @@ func TestPackageGuard_ArchiveFIFO(t *testing.T) {
 	}
 }
 
+// The typographic dashes PowerShell and pwsh's command line accept as a
+// parameter's dash.
+const (
+	enDash        = string(rune(0x2013))
+	emDash        = string(rune(0x2014))
+	horizontalBar = string(rune(0x2015))
+)
+
 // psVerdict is one shell-tool command and the verdict the package guard must
 // give it with PG_VULN=evil ("allow" means the hook stays silent; "a|b"
 // accepts either).
@@ -779,6 +787,39 @@ func TestPackageGuard_PowerShellTool(t *testing.T) {
 		{tool: "Bash", command: "pwsh -File build.ps1", want: "allow"},
 		{tool: "Bash", command: "pwsh -ExecutionPolicy Bypass build.ps1", want: "allow"},
 		{tool: "Bash", command: "powershell -File build.ps1", want: "allow"},
+
+		// pwsh's own command line reads an en dash, em dash or horizontal
+		// bar as a switch's dash, as its scripts do (W1bN-15).
+		{tool: "Bash", command: "pwsh " + enDash + "c 'npm install evil'", want: "deny", reasonHas: ghsa},
+		{tool: "Bash", command: "pwsh " + emDash + "Command 'npm install evil'", want: "deny", reasonHas: ghsa},
+		{tool: "Bash", command: "pwsh " + horizontalBar + "c 'npm install evil'", want: "deny", reasonHas: ghsa},
+		{tool: "Bash", command: "pwsh " + enDash + "EncodedCommand " + utf16LEBase64("npm install evil"), want: "deny", reasonHas: ghsa},
+		{tool: "Bash", command: "pwsh " + enDash + "e " + utf16LEBase64("npm install evil"), want: "deny", reasonHas: ghsa},
+		{tool: "Bash", command: "pwsh " + enDash + "NoProfile " + enDash + "c 'npm install evil'", want: "deny", reasonHas: ghsa},
+		{tool: "Bash", command: "pwsh " + enDash + "ExecutionPolicy Bypass " + enDash + "c 'npm install evil'", want: "deny", reasonHas: ghsa},
+		{tool: "Bash", command: "powershell " + enDash + "NoProfile npm install evil", want: "deny", reasonHas: ghsa},
+		ps("Start-Process pwsh -ArgumentList '"+enDash+"c','npm install evil'", "deny", ghsa),
+		ps("Start-Process pwsh -ArgumentList '"+emDash+"Command','npm install evil'", "deny", ghsa),
+		{tool: "Bash", command: "pwsh " + enDash + "File ./build.ps1", want: "allow"},
+		{tool: "Bash", command: "pwsh " + enDash + "ExecutionPolicy Bypass ./build.ps1", want: "allow"},
+		{tool: "Bash", command: "pwsh -c 'Get-ChildItem'", want: "allow"},
+		{tool: "Bash", command: "pwsh " + enDash + "c 'Get-ChildItem'", want: "allow"},
+
+		// Every abbreviation of a host switch down to its shortest prefix
+		// counts (-co is -Command: -Configuration* needs "config"), and a
+		// colon binds its value.
+		{tool: "Bash", command: "pwsh -co 'npm install evil'", want: "deny", reasonHas: ghsa},
+		{tool: "Bash", command: "pwsh " + enDash + "co 'npm install evil'", want: "deny", reasonHas: ghsa},
+		{tool: "Bash", command: "pwsh -comm 'npm install evil'", want: "deny", reasonHas: ghsa},
+		{tool: "Bash", command: "pwsh -Command:'npm install evil'", want: "deny", reasonHas: ghsa},
+		{tool: "Bash", command: "pwsh -c: 'npm install evil'", want: "deny", reasonHas: ghsa},
+		{tool: "Bash", command: "pwsh /co 'npm install evil'", want: "deny", reasonHas: ghsa},
+		{tool: "Bash", command: "pwsh -EncodedCommand:" + utf16LEBase64("npm install evil"), want: "deny", reasonHas: ghsa},
+		{tool: "Bash", command: "pwsh -enco " + utf16LEBase64("npm install evil"), want: "deny", reasonHas: ghsa},
+		ps("Start-Process pwsh -ArgumentList '-co','npm install evil'", "deny", ghsa),
+		{tool: "Bash", command: "pwsh -fi ./build.ps1", want: "allow"},
+		{tool: "Bash", command: "pwsh -config x ./build.ps1", want: "allow"},
+		{tool: "Bash", command: "pwsh -co 'Get-ChildItem'", want: "allow"},
 	})
 }
 

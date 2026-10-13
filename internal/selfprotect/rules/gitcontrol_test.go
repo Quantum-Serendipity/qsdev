@@ -2,6 +2,7 @@ package rules
 
 import (
 	"path/filepath"
+	"slices"
 	"testing"
 
 	"github.com/Quantum-Serendipity/qsdev/internal/selfprotect/cmdscan"
@@ -205,5 +206,159 @@ func TestGitOutputIntoGitConfigStillMatchesGIT001(t *testing.T) {
 				t.Errorf("GitCodeExecution(%q) = (%q, false), want %s to still deny it", command, reason, GitCodeExecutionRuleID)
 			}
 		})
+	}
+}
+
+// TestGitControl_CommandSubstitution pins W1bN-02: a git-control path built
+// from the git directory rev-parse prints is the path it names, so removing
+// or changing the hook through it is denied, while reading through it, and
+// writing a file of the git directory that controls nothing, stays allowed.
+func TestGitControl_CommandSubstitution(t *testing.T) {
+	t.Parallel()
+	project := filepath.Join(homeDir(t), "project")
+
+	denied := []string{
+		`rm "$(git rev-parse --git-dir)/hooks/pre-commit"`,
+		`git rm --cached -q nothing; rm -- "$(git rev-parse --git-path hooks)/pre-commit"`,
+		"cat /dev/null > `git rev-parse --git-path hooks/pre-commit`",
+		`rm "$(git -C . rev-parse --absolute-git-dir)/hooks/pre-commit"`,
+		`rm "$(git rev-parse --git-common-dir)/hooks/pre-commit"`,
+		`chmod -x "$(git rev-parse --git-path hooks/pre-commit)"`,
+		`echo '[core]' >> "$(git rev-parse --git-dir)/config"`,
+		`d=$(git rev-parse --git-dir); rm "$d/hooks/pre-commit"`,
+		`rm -rf "$(git rev-parse --git-dir)"`,
+		// Options and a discarded stream that leave the path printed.
+		`rm "$(git rev-parse --git-dir 2>/dev/null)/hooks/pre-commit"`,
+		`rm "$(git rev-parse --path-format=absolute --git-dir)/hooks/pre-commit"`,
+		`rm "$(git rev-parse -q --git-dir)/hooks/pre-commit"`,
+		`rm "$(git rev-parse --git-path hooks/pre-commit 2>/dev/null)"`,
+		// A query whose output another command consumes unrendered.
+		`rm "$(git rev-parse --git-dir | cat)/hooks/pre-commit"`,
+		`rm "$(cd . && git rev-parse --git-dir)/hooks/pre-commit"`,
+		`cat /dev/null > "$(git rev-parse --git-dir | head -1)/hooks/pre-commit"`,
+		`read d < <(git rev-parse --git-dir); rm $d/hooks/pre-commit`,
+		`d=$(git rev-parse --git-dir | cat); rm $d/hooks/pre-commit`,
+		// The rendered path carried by a declaration or a here-string.
+		`export d=$(git rev-parse --git-dir); rm $d/hooks/pre-commit`,
+		`declare d=$(git rev-parse --git-dir); rm "$d/config"`,
+		`read d <<< "$(git rev-parse --git-dir)"; rm $d/hooks/pre-commit`,
+		// A query no rendered word holds: a parameter-expansion operand,
+		// a loop word list or an array element (each deleted the hook
+		// in a real repository).
+		`rm "${GIT_DIR:-$(git rev-parse --git-dir)}/hooks/pre-commit"`,
+		`rm "${GIT_DIR-$(git rev-parse --git-dir)}/hooks/pre-commit"`,
+		`rm "${GIT_DIR:-"$(git rev-parse --git-dir)"}/hooks/pre-commit"`,
+		`sh -c 'rm "${GIT_DIR:-$(git rev-parse --git-dir)}/hooks/pre-commit"'`,
+		`sh -c 'rm "$(git rev-parse --git-dir | cat)/hooks/pre-commit"'`,
+		`sh -c 'd=.git; rm $d/hooks/pre-commit'`,
+		`sh -c 'rm "$(git rev-parse --git-dir)/hooks/pre-commit"'`,
+		`for d in $(git rev-parse --git-dir); do rm "$d/hooks/pre-commit"; done`,
+		`a=($(git rev-parse --git-dir)); rm "${a[0]}/hooks/pre-commit"`,
+		`rm "${d:=$(git rev-parse --git-dir)}/hooks/pre-commit"`,
+		`: ${d:=$(git rev-parse --git-dir)}; rm "$d/hooks/pre-commit"`,
+		// Known false positives (docs: Git-directory false positives): a
+		// variable assigned the query is judged as `d=.git` is.
+		`d=$(git rev-parse --git-dir); cat "$d/HEAD"`,
+		`GD=$(git rev-parse --git-dir); test -f "$GD/MERGE_HEAD" && echo merging`,
+	}
+	psDenied := []string{
+		`Remove-Item "$(git rev-parse --git-dir)/hooks/pre-commit"`,
+		`ri (git rev-parse --git-path hooks/pre-commit)`,
+		`Remove-Item -Path (git rev-parse --git-path hooks/pre-commit)`,
+		`git rev-parse --git-path hooks/pre-commit | Remove-Item`,
+		`$d = git rev-parse --git-dir; Remove-Item $d/hooks/pre-commit`,
+		// Known false positives (docs: Git-directory false positives): on
+		// a line with any `$`, a git-directory query counts.
+		`git rev-parse --git-dir; Write-Output $PWD`,
+		`$x = 1; git rev-parse --git-dir`,
+		`Get-Content "$(git rev-parse --git-dir)/HEAD"`,
+	}
+	for _, tool := range cmdscan.ShellTools {
+		commands := denied
+		if tool == "PowerShell" {
+			commands = psDenied
+		}
+		for _, command := range commands {
+			t.Run(tool+" deny "+command, func(t *testing.T) {
+				t.Parallel()
+				ctx := EvalContext{ToolName: tool, Command: command, CWD: project, Ctx: t.Context(), gitRunner: rewriteRepo(project, false).run}
+				if got, matches := Tier1Rules.EvaluateAll(&ctx); got != Deny {
+					t.Errorf("EvaluateAll(%q) = %v (first: %s), want Deny", command, got, firstRuleID(matches))
+				}
+			})
+		}
+	}
+
+	allowed := []string{
+		`echo "$(git rev-parse --git-dir)/hooks/pre-commit"`,
+		`ls "$(git rev-parse --git-dir)/hooks"`,
+		`cat "$(git rev-parse --git-path hooks)/pre-commit"`,
+		`cp "$(git rev-parse --git-dir)/HEAD" /tmp/x`,
+		`rm -f "$(git rev-parse --git-dir)/index.lock"`,
+		`test -d "$(git rev-parse --git-dir)/rebase-merge" && echo rebasing`,
+		`rm "$(git rev-parse --show-toplevel)/build/out.o"`,
+		`rm -rf "$(go env GOCACHE)/x"`,
+		`rm -f "$(git rev-parse -q --git-dir)/index.lock"`,
+		`rm -f "$(git rev-parse --git-dir 2>/dev/null)/index.lock"`,
+		`ls "$(git rev-parse --git-dir | cat)/hooks"`,
+		`echo "$(git rev-parse --git-dir | cat)/hooks/pre-commit"`,
+		`sh -c 'rm -f "$(git rev-parse --git-dir)/index.lock"'`,
+		`sh -c 'ls "${GIT_DIR:-$(git rev-parse --git-dir)}/hooks"'`,
+		// A query that only prints does not name the git directory to the
+		// rest of the line.
+		`git rev-parse --git-dir && rm -rf "$TMPDIR/build"`,
+	}
+	for _, tool := range []string{"Bash", "Monitor"} {
+		for _, command := range allowed {
+			t.Run(tool+" allow "+command, func(t *testing.T) {
+				t.Parallel()
+				ctx := EvalContext{ToolName: tool, Command: command, CWD: project, Ctx: t.Context(), gitRunner: rewriteRepo(project, false).run}
+				if got, matches := Tier1Rules.EvaluateAll(&ctx); got != Allow {
+					t.Errorf("EvaluateAll(%q) = %v (first: %s), want Allow", command, got, firstRuleID(matches))
+				}
+			})
+		}
+	}
+	// A PowerShell query whose output nothing takes only prints.
+	for _, command := range []string{"git rev-parse --git-dir", "git rev-parse --git-path hooks; Remove-Item build/out.o"} {
+		t.Run("PowerShell allow "+command, func(t *testing.T) {
+			t.Parallel()
+			ctx := EvalContext{ToolName: "PowerShell", Command: command, CWD: project, Ctx: t.Context(), gitRunner: rewriteRepo(project, false).run}
+			if got, matches := Tier1Rules.EvaluateAll(&ctx); got != Allow {
+				t.Errorf("EvaluateAll(%q) = %v (first: %s), want Allow", command, got, firstRuleID(matches))
+			}
+		})
+	}
+}
+
+// TestDynamicProgramWord pins that a command word printed by command -v,
+// which or type -P is judged as the program it names (W1bN-07): a rewrite,
+// a delete or a git code-execution option through it is denied, while a
+// read-only use stays allowed.
+func TestDynamicProgramWord(t *testing.T) {
+	t.Parallel()
+	top := filepath.Join(homeDir(t), "project")
+
+	got, reason, matches := rewriteVerdict(t, "Bash", "$(command -v git) reset --hard evil", top, rewriteRepo(top, true))
+	if got != Deny || reason == "" {
+		t.Errorf("$(command -v git) reset --hard evil = %v (matches %v), want an SP-007 Deny", got, matchIDs(matches))
+	}
+	if got, _, matches := rewriteVerdict(t, "Bash", "$(command -v git) status", top, rewriteRepo(top, true)); got != Allow {
+		t.Errorf("$(command -v git) status = %v (matches %v), want Allow", got, matchIDs(matches))
+	}
+	for _, command := range []string{"$(which rm) .claude/settings.json", "$(type -P rm) -f .claude/settings.json"} {
+		if got, _, matches := rewriteVerdict(t, "Bash", command, top, rewriteRepo(top, false)); got != Deny {
+			t.Errorf("%s = %v (matches %v), want Deny", command, got, matchIDs(matches))
+		}
+	}
+
+	hooksPath := EvalContext{ToolName: "Bash", Command: "$(command -v git) -c core.hooksPath=/tmp/h commit -m x", CWD: top}
+	if reason, deny := GitCodeExecution(&hooksPath); !deny {
+		t.Errorf("GitCodeExecution(%q) = (%q, false), want %s", hooksPath.Command, reason, GitCodeExecutionRuleID)
+	}
+
+	teardown := EvalContext{ToolName: "Bash", Command: "$(command -v qsdev) teardown", CWD: top, SensitiveCommands: sensitiveFixture}
+	if got, matches := Tier1Rules.EvaluateAll(&teardown); got != Deny || !slices.Contains(matchIDs(matches), "SP-014") {
+		t.Errorf("$(command -v qsdev) teardown = %v (matches %v), want an SP-014 Deny", got, matchIDs(matches))
 	}
 }

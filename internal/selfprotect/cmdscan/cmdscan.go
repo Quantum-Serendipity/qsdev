@@ -8,6 +8,7 @@
 package cmdscan
 
 import (
+	"path"
 	"slices"
 	"strings"
 
@@ -74,6 +75,19 @@ type Command struct {
 	// whose name comes from an expansion (`export $X=v`, `read "$V"`,
 	// `(( $X = 1 ))`), which Assigns cannot name: it may be any variable.
 	AssignsDynamic bool
+	// AssignTexts holds the assignments of the statement as rendered
+	// (`NAME=value`, see wordText): the prefix or bare assignments of a
+	// simple command and the operands of a declaration builtin, so a value
+	// whose text a later `$NAME` carries can be judged:
+	// `d=$(git rev-parse --git-dir)` and `export d=$(git rev-parse
+	// --git-dir)` are "d=.git".
+	AssignTexts []string
+	// OutputRendered is set when the statement is the whole of a command
+	// substitution whose output the scan renders into the word holding it
+	// (see substOutput): `git rev-parse --git-dir` in
+	// `rm "$(git rev-parse --git-dir)/x"`, whose word reads ".git/x". A
+	// rule keying on what a command prints can read it there instead.
+	OutputRendered bool
 	// Pipeline groups commands joined by `|`/`|&`: all stages of one pipeline
 	// share the same non-zero id, in left-to-right order. Standalone commands
 	// have Pipeline == 0. Rules use this to reason about dataflow across a pipe
@@ -114,6 +128,15 @@ type Command struct {
 	// its own inherits that of its enclosing one, so `... | { sh; }`
 	// counts. ReadsProgramFromStdin says whether the command runs that text.
 	StdinComputed bool
+	// ScriptComputed is set when the command runs a shell, an interpreter
+	// or `.`/`source`, directly or through wrappers, whose script operand
+	// is a process substitution `<(...)` running anything but a single
+	// literal producer (see StdinComputed): `bash <(curl …)`, `. <(curl
+	// …)`, `source -- <(curl …)`, or a script shell's startup file given
+	// so (`bash --init-file <(curl …) -i`). The program is then computed
+	// at run time, as on a computed standard input; `. <(cat ./env.sh)`
+	// stays literal.
+	ScriptComputed bool
 	// Defines names the shell function the statement defines
 	// (`f() { ...; }`), emitted as a nameless Command before its body. A
 	// later call of that name runs the function, not a program.
@@ -345,6 +368,7 @@ func parse(command string, vars map[string]string, stdinComputed bool) ([]Comman
 	guards := assignGuards(file, vars)
 	subshells := assignSubshells(file, pipelineIDs)
 	handled := assignFailureHandled(file)
+	rendered := renderedStmts(file)
 
 	var cmds []Command
 	syntax.Walk(file, func(node syntax.Node) bool {
@@ -363,15 +387,19 @@ func parse(command string, vars map[string]string, stdinComputed bool) ([]Comman
 		case *syntax.CallExpr:
 			c = callCommand(cmd, vars)
 			hasWord = len(cmd.Args) > 0
+			c.ScriptComputed = hasWord && stdin.scriptComputed(cmd, append([]string{c.Name}, c.Args...))
 		case *syntax.DeclClause:
 			// export/declare/local/readonly/typeset/nameref: a builtin that
 			// sets (and may export) variables for later commands.
 			hasWord = true
 			c.Name = cmd.Variant.Value
 			for _, a := range cmd.Args {
-				_, text, exp := assignText(a, vars)
+				name, text, exp := assignText(a, vars)
 				c.Args = append(c.Args, text)
 				c.HasExpansion = c.HasExpansion || exp
+				if name != "" {
+					c.AssignTexts = append(c.AssignTexts, text)
+				}
 			}
 		case *syntax.FuncDecl:
 			hasWord = true
@@ -383,6 +411,7 @@ func parse(command string, vars map[string]string, stdinComputed bool) ([]Comman
 		c.Subshell = subshells[stmt]
 		c.FailureHandled = handled[stmt]
 		c.StdinComputed = stdin.computed(stmt)
+		c.OutputRendered = rendered[stmt]
 
 		other := stmtAssigns(stmt, vars)
 		c.Assigns = append(c.Assigns, other.names...)
@@ -417,13 +446,69 @@ func parse(command string, vars map[string]string, stdinComputed bool) ([]Comman
 	return cmds, nil
 }
 
+// renderedStmts returns the statements whose output a Command field holds:
+// the single statement of each command substitution substOutput knows the
+// output of that wordText writes into a word Parse renders, a command word
+// or argument, an assignment value or a redirect word (see
+// Command.OutputRendered). A substitution anywhere else, in the operand of
+// a parameter expansion (`${D:-$(…)}`), a for-loop word list or an array
+// element, reaches no rendered word, so its output stays unrendered.
+func renderedStmts(root syntax.Node) map[*syntax.Stmt]bool {
+	rendered := make(map[*syntax.Stmt]bool)
+	mark := func(w *syntax.Word) {
+		if w == nil {
+			return
+		}
+		for _, part := range w.Parts {
+			parts := []syntax.WordPart{part}
+			if dq, ok := part.(*syntax.DblQuoted); ok {
+				parts = dq.Parts
+			}
+			for _, p := range parts {
+				if cs, ok := p.(*syntax.CmdSubst); ok && substOutput(cs) != "" {
+					rendered[cs.Stmts[0]] = true
+				}
+			}
+		}
+	}
+	markAssigns := func(assigns []*syntax.Assign) {
+		for _, a := range assigns {
+			if a.Index == nil && a.Array == nil {
+				mark(a.Value)
+			}
+		}
+	}
+	syntax.Walk(root, func(n syntax.Node) bool {
+		stmt, ok := n.(*syntax.Stmt)
+		if !ok {
+			return true
+		}
+		switch cmd := stmt.Cmd.(type) {
+		case *syntax.CallExpr:
+			markAssigns(cmd.Assigns)
+			for _, w := range cmd.Args {
+				mark(w)
+			}
+		case *syntax.DeclClause:
+			markAssigns(cmd.Args)
+		}
+		for _, r := range stmt.Redirs {
+			mark(r.Word)
+			mark(r.Hdoc)
+		}
+		return true
+	})
+	return rendered
+}
+
 // callCommand renders the simple command call: its prefix assignments,
 // command word and arguments (see Command).
 func callCommand(call *syntax.CallExpr, vars map[string]string) Command {
 	var c Command
 	for _, a := range call.Assigns {
-		name, _, exp := assignText(a, vars)
+		name, text, exp := assignText(a, vars)
 		c.Assigns = append(c.Assigns, name)
+		c.AssignTexts = append(c.AssignTexts, text)
 		c.HasExpansion = c.HasExpansion || exp
 	}
 	if len(call.Args) == 0 {
@@ -667,7 +752,7 @@ func wordText(w *syntax.Word, vars map[string]string) (string, bool) {
 					b.WriteString(knownParam(dp, vars))
 					hasExpansion = true
 				case *syntax.CmdSubst:
-					b.WriteString(echoOutput(dp))
+					b.WriteString(substOutput(dp))
 					hasExpansion = true
 				default:
 					hasExpansion = true
@@ -677,7 +762,7 @@ func wordText(w *syntax.Word, vars map[string]string) (string, bool) {
 			b.WriteString(knownParam(p, vars))
 			hasExpansion = true
 		case *syntax.CmdSubst:
-			b.WriteString(echoOutput(p))
+			b.WriteString(substOutput(p))
 			hasExpansion = true
 		case *syntax.ArithmExp:
 			hasExpansion = true
@@ -698,13 +783,13 @@ func leadingTilde(w *syntax.Word) bool {
 	return ok && strings.HasPrefix(lit.Value, "~")
 }
 
-// echoOutput returns what the command substitution cs prints when it is a
-// plain echo of unquoted literal words (`$(echo ~/.config)`), with the words
-// as written: a leading ~ is left for the caller to expand, as the shell
-// would have. It returns "" for any other substitution, whose output is
-// unknown.
-func echoOutput(cs *syntax.CmdSubst) string {
-	if len(cs.Stmts) != 1 || len(cs.Stmts[0].Redirs) > 0 {
+// substOutput returns what the command substitution cs prints when its
+// output is fixed by its words, all unquoted literals in a single statement
+// with no assignment and no redirect but one discarding another stream than
+// the output (`2>/dev/null`), see knownOutput. It returns "" for any other
+// substitution, whose output is unknown.
+func substOutput(cs *syntax.CmdSubst) string {
+	if len(cs.Stmts) != 1 || slices.ContainsFunc(cs.Stmts[0].Redirs, func(r *syntax.Redirect) bool { return !discardsOtherStream(r) }) {
 		return ""
 	}
 	call, ok := cs.Stmts[0].Cmd.(*syntax.CallExpr)
@@ -722,10 +807,96 @@ func echoOutput(cs *syntax.CmdSubst) string {
 		}
 		words = append(words, unescapeUnquoted(lit.Value))
 	}
-	if words[0] != "echo" || len(words) == 1 || strings.HasPrefix(words[1], "-") {
-		return "" // not echo, or an option that changes its output
+	return knownOutput(words)
+}
+
+// discardsOtherStream reports whether the redirect r sends a numbered stream
+// other than standard output to /dev/null (`2>/dev/null`), which leaves what
+// the command prints unchanged.
+func discardsOtherStream(r *syntax.Redirect) bool {
+	if r.N == nil || r.N.Value == "1" || r.Word == nil || len(r.Word.Parts) != 1 {
+		return false
 	}
-	return strings.Join(words[1:], " ")
+	if r.Op != syntax.RdrOut && r.Op != syntax.AppOut && r.Op != syntax.RdrClob {
+		return false
+	}
+	lit, ok := r.Word.Parts[0].(*syntax.Lit)
+	return ok && lit.Value == "/dev/null"
+}
+
+// knownOutput returns what the command words print when that is fixed by
+// the words alone, with any path as written (a leading ~ is left for the
+// caller to expand, as the shell would have):
+//
+//   - echo of words without an option prints them;
+//   - `git [-C dir]... rev-parse` with exactly one of --git-dir,
+//     --absolute-git-dir or --git-common-dir prints the git directory,
+//     rendered [dir/].git, and with `--git-path X` prints [dir/].git/X;
+//     -q, --quiet and --path-format= change neither which path it prints
+//     nor, for these checks, how (a relative path is resolved where the
+//     command runs);
+//   - `command -v NAME`, `which NAME` and `type -P|-p NAME`, with or without
+//     a "--" before NAME, print the program NAME runs, rendered NAME.
+//
+// It returns "" for anything else.
+func knownOutput(words []string) string {
+	switch words[0] {
+	case "echo":
+		if len(words) == 1 || strings.HasPrefix(words[1], "-") {
+			return "" // an option changes the output
+		}
+		return strings.Join(words[1:], " ")
+	case "git":
+		return gitDirOutput(words[1:])
+	}
+	return lookupOutput(words)
+}
+
+// lookupOutput renders the program `command -v`, `which` or `type -P|-p`
+// prints for NAME (see knownOutput), or "".
+func lookupOutput(words []string) string {
+	if len(words) < 2 {
+		return ""
+	}
+	name := words[len(words)-1]
+	opts := words[1 : len(words)-1]
+	if n := len(opts); n > 0 && opts[n-1] == "--" {
+		opts = opts[:n-1]
+	} else if strings.HasPrefix(name, "-") {
+		return ""
+	}
+	switch {
+	case words[0] == "command" && slices.Equal(opts, []string{"-v"}),
+		words[0] == "which" && len(opts) == 0,
+		words[0] == "type" && (slices.Equal(opts, []string{"-P"}) || slices.Equal(opts, []string{"-p"})):
+		return name
+	}
+	return ""
+}
+
+// gitDirOutput renders the git directory `git <args>` prints (see
+// knownOutput), or "" when args are anything else.
+func gitDirOutput(args []string) string {
+	dir := ""
+	for len(args) >= 2 && args[0] == "-C" {
+		if path.IsAbs(args[1]) {
+			dir = args[1]
+		} else {
+			dir = path.Join(dir, args[1])
+		}
+		args = args[2:]
+	}
+	args = slices.DeleteFunc(slices.Clone(args), func(a string) bool {
+		return a == "-q" || a == "--quiet" || strings.HasPrefix(a, "--path-format=")
+	})
+	switch {
+	case len(args) == 2 && args[0] == "rev-parse" &&
+		(args[1] == "--git-dir" || args[1] == "--absolute-git-dir" || args[1] == "--git-common-dir"):
+		return path.Join(dir, ".git")
+	case len(args) == 3 && args[0] == "rev-parse" && args[1] == "--git-path" && !strings.HasPrefix(args[2], "-"):
+		return path.Join(dir, ".git", args[2])
+	}
+	return ""
 }
 
 // knownParam returns the value vars gives a plain parameter expansion ($NAME or

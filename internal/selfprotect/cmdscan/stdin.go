@@ -96,8 +96,9 @@ type programSource struct {
 // it is given no inline program (-c, -e, --eval, ...) and no script operand,
 // is told to read standard input (`bash -s`, `python3 -`), or is given a
 // script operand naming it (`sh /dev/stdin`). A busybox applet counts as the
-// shell or interpreter it names; `sudo -s`, `sudo -i`, `doas -s` and su
-// without -c start a shell that reads it, and PowerShell reads it given no
+// shell or interpreter it names; `sudo -s`, `sudo -i`, `doas -s`, su
+// without -c, and chroot, unshare and script given no command (see
+// ProgramRun.UserShell) start a shell that reads it, and PowerShell reads it given no
 // arguments, or only switches (`pwsh -NoProfile`), or `-Command -`/`-File
 // -`. A `.` or `source` of a standard-input path runs it in the shell
 // itself, and `env -S 'sh -s'` runs the words its string splits into.
@@ -118,7 +119,7 @@ func readsProgramFromStdin(words []string) bool {
 		// string run through a shell is a script (see Script).
 		return readsProgramFromStdin(append(strings.Fields(run.StringHead), words[run.StringRest:]...))
 	case run.Index < 0:
-		return !run.CommandString && !run.LookupOnly && startsLoginShell(words)
+		return run.UserShell || !run.CommandString && !run.LookupOnly && startsLoginShell(words)
 	}
 	if argInputWrapper(words[:run.Index]) >= 0 {
 		return false
@@ -310,11 +311,16 @@ func sourceOf(name string, args []string) (programSource, bool) {
 	switch fold := wrapperName(name); {
 	case name != "eval" && SourcesCode(name):
 		// `. FILE`, `source FILE`: the shell itself runs FILE, which reads
-		// standard input when it names it (`. /dev/stdin`).
-		if len(args) > 0 && isStdinPath(args[0]) {
+		// standard input when it names it (`. /dev/stdin`). A "--" before
+		// FILE ends the options (`source -- FILE`).
+		k := 0
+		if len(args) > 0 && args[0] == "--" {
+			k = 1
+		}
+		if len(args) > k && isStdinPath(args[k]) {
 			return programSource{kind: fromStdin}, true
 		}
-		return programSource{kind: fromScript}, true
+		return programSource{kind: fromScript, word: k}, true
 	case IsScriptShell(name):
 		return shellSource(args), true
 	case fold == "su":
@@ -747,6 +753,44 @@ func (s *stdinState) literalProducer(stmt *syntax.Stmt) bool {
 		return !s.computed(stmt)
 	}
 	return false
+}
+
+// scriptComputed reports whether call, whose words are rendered as words,
+// runs a shell, interpreter or sourcing builtin whose script operand, or a
+// script shell's startup file (--rcfile, --init-file), is a process
+// substitution `<(...)` that does not run a single literal producer (see
+// Command.ScriptComputed).
+func (s *stdinState) scriptComputed(call *syntax.CallExpr, words []string) bool {
+	run := Program(words)
+	if run.Index < 0 {
+		return false
+	}
+	src, ok := sourceOf(words[run.Index], words[run.Index+1:])
+	if ok && src.kind == fromScript && s.procSubstComputed(call, run.Index+1+src.word) {
+		return true
+	}
+	if !IsScriptShell(words[run.Index]) {
+		return false
+	}
+	for i := run.Index + 1; i+1 < len(words); i++ {
+		if slices.Contains(shellOptionLongArgs, words[i]) && s.procSubstComputed(call, i+1) {
+			return true
+		}
+	}
+	return false
+}
+
+// procSubstComputed reports whether the argument k of call is a process
+// substitution `<(...)` that does not run a single literal producer.
+func (s *stdinState) procSubstComputed(call *syntax.CallExpr, k int) bool {
+	if k >= len(call.Args) || len(call.Args[k].Parts) != 1 {
+		return false // `.` alone names no file
+	}
+	ps, ok := call.Args[k].Parts[0].(*syntax.ProcSubst)
+	if !ok || ps.Op != syntax.CmdIn {
+		return false
+	}
+	return len(ps.Stmts) != 1 || !s.literalProducer(ps.Stmts[0])
 }
 
 // hasEscapeOtherThanNewline reports whether the printf argument a holds a

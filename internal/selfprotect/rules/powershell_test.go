@@ -1,12 +1,14 @@
 package rules
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
 
+	"github.com/Quantum-Serendipity/qsdev/internal/selfprotect/cmdscan"
 	"github.com/Quantum-Serendipity/qsdev/pkg/branding"
 )
 
@@ -105,6 +107,77 @@ func TestPowerShellNative(t *testing.T) {
 				t.Errorf("matches = %v, want %s among them", matchIDs(matches), tc.rule)
 			}
 		})
+	}
+}
+
+// TestPowerShell_UnicodeWhitespace pins W1bN-16 in the PowerShell tool: a
+// word separated by NEL, NBSP or a Unicode space separator is judged as if
+// it were separated by an ASCII space, as PowerShell's tokenizer splits it.
+func TestPowerShell_UnicodeWhitespace(t *testing.T) {
+	t.Parallel()
+	top := filepath.Join(homeDir(t), "project")
+	const overwrite = "would overwrite protected .claude/settings.json in the working tree"
+	for _, r := range []rune{' ', 0x85, 0xa0, 0x1680, 0x2003, 0x2028, 0x2029, 0x202f, 0x3000} {
+		sep := string(r)
+		reset := strings.Join([]string{"git", "reset", "--hard", "evil"}, sep)
+		t.Run(fmt.Sprintf("%U/reset evil", r), func(t *testing.T) {
+			t.Parallel()
+			if got, reason, matches := rewriteVerdict(t, "PowerShell", reset, top, rewriteRepo(top, true)); got != Deny || !strings.Contains(reason, overwrite) {
+				t.Errorf("%q: verdict = %v, SP-007 reason %q (matches %v), want Deny with %q", reset, got, reason, matchIDs(matches), overwrite)
+			}
+		})
+		t.Run(fmt.Sprintf("%U/reset clean", r), func(t *testing.T) {
+			t.Parallel()
+			if got, reason, matches := rewriteVerdict(t, "PowerShell", reset, top, rewriteRepo(top, false)); got != Allow {
+				t.Errorf("%q: verdict = %v (matches %v, SP-007 %q), want Allow", reset, got, matchIDs(matches), reason)
+			}
+		})
+		teardown := "qsdev" + sep + "teardown"
+		t.Run(fmt.Sprintf("%U/teardown", r), func(t *testing.T) {
+			t.Parallel()
+			ctx := EvalContext{ToolName: "PowerShell", Command: teardown, SensitiveCommands: sensitiveFixture}
+			if v, reason := sp014.Evaluate(&ctx); v != Deny {
+				t.Errorf("SP-014(%q) = %v (%s), want Deny", teardown, v, reason)
+			}
+		})
+	}
+}
+
+// TestPowerShell_EnvAssignUnicodeWhitespace pins the W1bN-16 class in the
+// raw-text checks: for every rune PowerShell reads as whitespace
+// (cmdscan.IsPowerShellSpace), an agent-marker assignment spaced with it is
+// the assignment SP-008 denies, while a zero-width space, which PowerShell
+// keeps in the variable's name, is not whitespace.
+func TestPowerShell_EnvAssignUnicodeWhitespace(t *testing.T) {
+	t.Parallel()
+	var spaces []rune
+	for r := rune(0); r <= 0xffff; r++ {
+		if cmdscan.IsPowerShellSpace(r) {
+			spaces = append(spaces, r)
+		}
+	}
+	for _, r := range spaces {
+		sep := string(r)
+		for _, command := range []string{
+			"$env:CLAUDECODE" + sep + "= $null",
+			"$env:CLAUDECODE" + sep + "=" + sep + "$null",
+			"${env:CLAUDECODE}" + sep + "+=" + sep + "'x'",
+		} {
+			t.Run(fmt.Sprintf("%U/%q", r, command), func(t *testing.T) {
+				t.Parallel()
+				ctx := EvalContext{ToolName: "PowerShell", Command: command}
+				if v, reason := sp008.Evaluate(&ctx); v != Deny {
+					t.Errorf("SP-008(%q) = %v (%s), want Deny", command, v, reason)
+				}
+			})
+		}
+	}
+	zeroWidth, nbsp := string(rune(0x200b)), string(rune(0xa0))
+	for _, command := range []string{"$env:CLAUDECODE" + zeroWidth + "= $null", "$env:CLAUDECODE" + nbsp + "-eq $null"} {
+		ctx := EvalContext{ToolName: "PowerShell", Command: command}
+		if v, reason := sp008.Evaluate(&ctx); v != Allow {
+			t.Errorf("SP-008(%q) = %v (%s), want Allow", command, v, reason)
+		}
 	}
 }
 

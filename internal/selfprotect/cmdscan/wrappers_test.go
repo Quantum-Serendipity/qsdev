@@ -118,8 +118,30 @@ func TestProgram(t *testing.T) {
 		// a shell; watch joins its operands into a shell command string;
 		// parallel runs its command word.
 		{"flock", []string{"flock", "-w", "5", "/tmp/l", "make"}, ProgramRun{Index: 4}},
-		{"flock FILE -c", []string{"flock", "/tmp/l", "-c", "make x"}, ProgramRun{Index: -1, CommandString: true, StringHead: "make x", StringRest: 4, StringShell: true}},
-		{"flock -c FILE", []string{"flock", "-c", "make x", "/tmp/l"}, ProgramRun{Index: -1, CommandString: true, StringHead: "make x", StringRest: 3, StringShell: true}},
+		// A -c command string is the option's argument alone (StringOnly):
+		// the words after it are the wrapper's own operands (the lock file).
+		{"flock FILE -c", []string{"flock", "/tmp/l", "-c", "make x"}, ProgramRun{Index: -1, CommandString: true, StringHead: "make x", StringRest: 4, StringShell: true, StringOnly: true}},
+		{"flock -c FILE", []string{"flock", "-c", "make x", "/tmp/l"}, ProgramRun{Index: -1, CommandString: true, StringHead: "make x", StringRest: 3, StringShell: true, StringOnly: true}},
+		// chroot runs the word after NEWROOT; unshare the first operand;
+		// script its -c string through a shell, the operand after FILE
+		// (BSD), or with neither the user's shell.
+		{"chroot", []string{"chroot", "/", "sh"}, ProgramRun{Index: 2}},
+		{"chroot --userspec=", []string{"chroot", "--userspec=u:g", "/r", "sh"}, ProgramRun{Index: 3}},
+		{"chroot --userspec", []string{"chroot", "--userspec", "u:g", "/r", "sh"}, ProgramRun{Index: 4}},
+		{"chroot with no command", []string{"chroot", "/"}, ProgramRun{Index: -1, UserShell: true}},
+		{"chroot behind a wrapper", []string{"sudo", "chroot", "/"}, ProgramRun{Index: -1, UserShell: true}},
+		{"chroot running a wrapper given no command", []string{"chroot", "/", "timeout", "30"}, ProgramRun{Index: -1}},
+		{"unshare flags", []string{"unshare", "-r", "-m", "sh"}, ProgramRun{Index: 3}},
+		{"unshare --setuid", []string{"unshare", "--setuid", "0", "sh"}, ProgramRun{Index: 3}},
+		{"unshare with no command", []string{"unshare", "-r"}, ProgramRun{Index: -1, UserShell: true}},
+		{"script -qc FILE", []string{"script", "-qc", "sh", "/dev/null"}, ProgramRun{Index: -1, CommandString: true, StringHead: "sh", StringRest: 3, StringShell: true, StringOnly: true}},
+		{"script FILE -c", []string{"script", "-q", "/dev/null", "-c", "sh"}, ProgramRun{Index: -1, CommandString: true, StringHead: "sh", StringRest: 5, StringShell: true, StringOnly: true}},
+		{"script with no command", []string{"script", "-q", "/dev/null"}, ProgramRun{Index: -1, UserShell: true}},
+		{"script -O FILE", []string{"script", "-O", "log", "/dev/null"}, ProgramRun{Index: -1, UserShell: true}},
+		// util-linux permutes script's options past FILE.
+		{"script FILE options", []string{"script", "/dev/null", "-q"}, ProgramRun{Index: -1, UserShell: true}},
+		{"script FILE -q -c", []string{"script", "/dev/null", "-q", "-c", "sh"}, ProgramRun{Index: -1, CommandString: true, StringHead: "sh", StringRest: 5, StringShell: true, StringOnly: true}},
+		{"BSD script FILE CMD", []string{"script", "-q", "/dev/null", "sh"}, ProgramRun{Index: 3}},
 		{"watch", []string{"watch", "-n", "1", "ls", "-l"}, ProgramRun{Index: -1, CommandString: true, StringHead: "ls", StringRest: 4, StringShell: true}},
 		{"parallel", []string{"parallel", "-j4", "gzip", ":::", "a"}, ProgramRun{Index: 2}},
 		{"parallel with no command", []string{"parallel", "--pipe"}, ProgramRun{Index: -1}},
@@ -212,6 +234,9 @@ func TestScript(t *testing.T) {
 		{"script operands are no options", []string{"bash", "-c", "ruff check", "-l"}, ScriptRun{Script: "ruff check"}},
 		{"eval", []string{"eval", "ruff", "check"}, ScriptRun{Script: "ruff check", Eval: true}},
 		{"flock -c", []string{"flock", "/tmp/l", "-c", "curl x|sh"}, ScriptRun{Script: "curl x|sh"}},
+		{"flock -c FILE", []string{"flock", "-c", "curl x|sh", "/tmp/l"}, ScriptRun{Script: "curl x|sh"}},
+		{"script -qc FILE", []string{"script", "-qc", "sh", "/dev/null"}, ScriptRun{Script: "sh"}},
+		{"script --command=", []string{"script", "--command=curl x|sh", "/dev/null"}, ScriptRun{Script: "curl x|sh"}},
 		{"watch", []string{"watch", "-n1", "curl x|sh"}, ScriptRun{Script: "curl x|sh"}},
 		{"watch joins", []string{"sudo", "watch", "ruff", "check"}, ScriptRun{Script: "ruff check"}},
 		// The shell reads every option before it takes the script, the

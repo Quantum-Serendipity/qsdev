@@ -124,7 +124,7 @@ func psPathWord(word string) (path string, expanded bool) {
 func psMentionsProtected(ctx *EvalContext) bool {
 	line := ctx.powerShell()
 	if canon.ContainsProtectedPathFold(line.norm) || canon.ContainsProtectedPathFold(line.loose) ||
-		(ctx.CWD != "" && isProtectedDir(ctx.CWD)) || posixMentionsProtected(ctx) {
+		(ctx.CWD != "" && isProtectedDir(ctx.CWD)) || posixMentionsProtected(ctx) || psGitDirConsumed(line) {
 		return true
 	}
 	// PowerShell paths are case-insensitive: a word is also tried
@@ -138,6 +138,24 @@ func psMentionsProtected(ctx *EvalContext) bool {
 		return sc.inProtectedDir || refers(sc, sc.Args, argRefersProtected) ||
 			refers(sc, sc.WriteRedirects, refersProtected)
 	})
+}
+
+// psGitDirConsumed is gitDirConsumed for a PowerShell line: a git directory
+// query (printsGitDir) whose output another command takes, as a group or
+// subexpression argument (`ri (git rev-parse --git-path hooks/pre-commit)`),
+// through the pipeline, or through a variable on a line that expands one. A
+// query run on its own only prints.
+func psGitDirConsumed(line *psLine) bool {
+	vars := strings.Contains(line.norm, "$")
+	for i, c := range line.cmds {
+		if !printsGitDir(append([]string{c.Name}, c.Args...)) {
+			continue
+		}
+		if vars || c.Nesting > 0 || i+1 < len(line.cmds) && line.cmds[i+1].Piped {
+			return true
+		}
+	}
+	return false
 }
 
 // psMutates reports whether any command of a PowerShell line may write: one

@@ -333,23 +333,45 @@ func TestLocalProbes_DeclaredOnce(t *testing.T) {
 	}
 }
 
-// TestLocalProbeNames: every allowlisted binary is named once, in order, and
-// the guard lets each run under its local-probe argv.
+// TestLocalProbeNames: with no kinds every allowlisted binary is named once,
+// in order; with kinds, exactly those whose every probe is of one of them.
+// Every probe declares its kind.
 func TestLocalProbeNames(t *testing.T) {
 	t.Parallel()
-	names := LocalProbeNames()
-	if !slices.IsSorted(names) || len(slices.Compact(slices.Clone(names))) != len(names) {
-		t.Errorf("LocalProbeNames = %q, want sorted names without repeats", names)
-	}
-	for _, p := range localProbes {
-		if !slices.Contains(names, p.Name) {
-			t.Errorf("LocalProbeNames lacks %q, which localProbes allows", p.Name)
+	for i, p := range localProbes {
+		if p.Kind < ProbeVersion || p.Kind > ProbeQuery {
+			t.Errorf("localProbes[%d] (%s %q) declares no kind", i, p.Name, p.Args)
 		}
 	}
-	for _, n := range names {
-		if !slices.ContainsFunc(localProbes, func(p localProbe) bool { return p.Name == n && isLocalProbe(n, p.Args) }) {
-			t.Errorf("LocalProbeNames names %q, which no local probe allows", n)
-		}
+	tests := []struct {
+		name  string
+		kinds []ProbeKind
+	}{
+		{name: "all"},
+		{name: "version and syntax", kinds: []ProbeKind{ProbeVersion, ProbeSyntax}},
+		{name: "query", kinds: []ProbeKind{ProbeQuery}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			var want []string
+			for _, p := range localProbes {
+				ofKinds := len(tt.kinds) == 0 || !slices.ContainsFunc(localProbes, func(q localProbe) bool {
+					return q.Name == p.Name && !slices.Contains(tt.kinds, q.Kind)
+				})
+				if ofKinds && !slices.Contains(want, p.Name) {
+					want = append(want, p.Name)
+				}
+			}
+			slices.Sort(want)
+			if got := LocalProbeNames(tt.kinds...); !slices.Equal(got, want) {
+				t.Errorf("LocalProbeNames(%v) = %q, want %q", tt.kinds, got, want)
+			}
+		})
+	}
+	// The binaries a hermetic test may stub: probed for nothing it parses.
+	if got, want := LocalProbeNames(ProbeVersion, ProbeSyntax), []string{"bash", "ghc", "nix-instantiate"}; !slices.Equal(got, want) {
+		t.Errorf("LocalProbeNames(version, syntax) = %q, want %q", got, want)
 	}
 }
 

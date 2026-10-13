@@ -57,7 +57,8 @@ var localProbes = []localProbe{
 	// A query, not only a version: container detection reads whether the
 	// answer names Podman, whose Docker alias it is.
 	{Name: "docker", Args: []string{"--version"}, Kind: ProbeQuery},
-	{Name: "docker", Args: []string{"compose", "version"}, Kind: ProbeVersion},
+	// A query too: its exit status decides whether Compose is available.
+	{Name: "docker", Args: []string{"compose", "version"}, Kind: ProbeQuery},
 	{Name: "podman", Args: []string{"info", "--format"}, Prefix: true, Kind: ProbeQuery},
 	{Name: "podman", Args: []string{"version", "--format"}, Prefix: true, Kind: ProbeQuery},
 	{Name: "git", Args: []string{"rev-parse"}, Prefix: true, Kind: ProbeQuery},

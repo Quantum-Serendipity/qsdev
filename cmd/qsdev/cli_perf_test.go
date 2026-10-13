@@ -112,7 +112,7 @@ func newCLIPerfSuite(t *testing.T) *cliPerfSuite {
 	// does not depend on what the host has installed. Before the project
 	// exists, its stubs are the tools doctor's registry lists.
 	setupPath := s.hermeticPath(t, filepath.Join(root, "path-setup"), probedIn(t, ""))
-	s.checkStubsInert(t, root, setupPath)
+	s.checkStubsInert(t, filepath.Join(root, "inert-setup"), setupPath)
 	s.calEnv = s.isolatedEnv(t, filepath.Join(root, "calibration"), setupPath)
 	env := s.isolatedEnv(t, filepath.Join(root, "user"), setupPath)
 
@@ -127,6 +127,9 @@ func newCLIPerfSuite(t *testing.T) *cliPerfSuite {
 	// The measured commands also find a stub for every program the
 	// project's hooks run, which doctor probes there.
 	measuredPath := s.hermeticPath(t, filepath.Join(root, "path"), probedIn(t, s.project))
+	// The create and join rows run init on this PATH, so its extra stubs
+	// must be inert too.
+	s.checkStubsInert(t, filepath.Join(root, "inert-measured"), measuredPath)
 	s.env = append(s.isolatedEnv(t, filepath.Join(root, "user"), measuredPath), procexec.ForbidExecEnv+"=1")
 	return s
 }
@@ -170,9 +173,13 @@ func (s *cliPerfSuite) hermeticPath(t *testing.T, dir string, probed []string) s
 // generates: creating a project with them and with no stub at all, every
 // probed tool absent, must write the same tree. So the fixture is a project
 // a real host could get, not one shaped by a stub's empty answer (an empty
-// `podman info` would read as rootful Podman and add its guide).
+// `podman info` would read as rootful Podman and add its guide). root is a
+// directory of its own for each call.
 func (s *cliPerfSuite) checkStubsInert(t *testing.T, root, stubbedPath string) {
 	t.Helper()
+	if err := os.MkdirAll(root, 0o755); err != nil {
+		t.Fatal(err)
+	}
 	barePath := s.hermeticPath(t, filepath.Join(root, "path-bare"), nil)
 	// Both run at the same path, which init records, and each moves aside
 	// after, so the trees differ only by what the stubs change and the run

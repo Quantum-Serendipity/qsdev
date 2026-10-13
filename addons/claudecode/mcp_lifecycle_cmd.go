@@ -63,10 +63,11 @@ next ` + "`qsdev init --update`" + ` points .mcp.json at the installed binary in
 fetch-on-run launcher.`,
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			projectRoot, err := cmdutil.ProjectRoot()
+			pc, err := cmdutil.Project(cmd)
 			if err != nil {
 				return err
 			}
+			projectRoot := pc.Root
 
 			return runMCPInstall(cmd.Context(), cmd.OutOrStdout(), newLifecycle(projectRoot), args[0])
 		},
@@ -85,10 +86,11 @@ func mcpUpdateCmd() *cobra.Command {
 to update all MCP servers recorded in the project state.`,
 		Args: cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			projectRoot, err := cmdutil.ProjectRoot()
+			pc, err := cmdutil.Project(cmd)
 			if err != nil {
 				return err
 			}
+			projectRoot := pc.Root
 
 			if !all && len(args) == 0 {
 				return fmt.Errorf("specify a server name or use --all")
@@ -113,10 +115,11 @@ func mcpRemoveCmd() *cobra.Command {
 		Long:  `Remove an MCP server binary and clean up its state entry.`,
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			projectRoot, err := cmdutil.ProjectRoot()
+			pc, err := cmdutil.Project(cmd)
 			if err != nil {
 				return err
 			}
+			projectRoot := pc.Root
 
 			return runMCPRemove(cmd.Context(), cmd.OutOrStdout(), newLifecycle(projectRoot), args[0])
 		},

@@ -7,6 +7,7 @@ import (
 	"slices"
 	"strings"
 
+	"github.com/Quantum-Serendipity/qsdev/internal/pathmatch"
 	"github.com/Quantum-Serendipity/qsdev/internal/selfprotect/canon"
 	"github.com/Quantum-Serendipity/qsdev/internal/selfprotect/cmdscan"
 )
@@ -242,7 +243,7 @@ func globProtected(p string) bool {
 	if !isRooted(cleaned) {
 		return false
 	}
-	key := strings.Split(canon.PathKey(cleaned), "/")
+	key := strings.Split(pathmatch.Key(cleaned), "/")
 	for _, loc := range canon.ProtectedLocationKeys() {
 		if globReaches(key, loc) {
 			return true

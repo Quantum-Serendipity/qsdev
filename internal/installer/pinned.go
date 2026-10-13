@@ -6,18 +6,20 @@ import (
 	"regexp"
 	"strings"
 	"time"
+
+	"github.com/Quantum-Serendipity/qsdev/pkg/ecosystem"
 )
 
 // Minimum release ages for packages qsdev installs itself, outside any
-// project. They mirror the policy qsdev generates for project dependencies
-// (min-release-age=3 in .npmrc, the package guard's default MIN_AGE_DAYS=3,
-// and --exclude-newer=7d for uv), which a global install would otherwise
-// bypass: npm does not read the project .npmrc in global mode, and the
-// package-guard hook only sees the agent's own commands, not qsdev's
+// project and so outside any compliance level. They are the release-age
+// policy qsdev generates for a baseline project's dependencies (the npm and
+// package-guard window, and uv's 7-day floor), which a global install would
+// otherwise bypass: npm does not read the project .npmrc in global mode, and
+// the package-guard hook only sees the agent's own commands, not qsdev's
 // subprocesses.
 const (
-	NpmMinReleaseAge = 3 * 24 * time.Hour
-	UvMinReleaseAge  = 7 * 24 * time.Hour
+	NpmMinReleaseAge = ecosystem.DefaultMinReleaseAge
+	UvMinReleaseAge  = ecosystem.WeekMinReleaseAgeFloor
 )
 
 // ErrUnpinned marks a package that names no exact release. Installing it

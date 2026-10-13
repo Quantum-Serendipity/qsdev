@@ -60,10 +60,11 @@ Use --archive to create a backup before removal.`,
 }
 
 func runTeardown(cmd *cobra.Command, quick, compliance, force, archive, dryRun bool) error {
-	projectRoot, err := cmdutil.ProjectRoot()
+	pc, err := cmdutil.Project(cmd)
 	if err != nil {
 		return err
 	}
+	projectRoot := pc.Root
 	if err := requireJoined(projectRoot); err != nil {
 		return err
 	}

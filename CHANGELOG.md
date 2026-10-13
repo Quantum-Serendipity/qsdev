@@ -8,6 +8,43 @@ All notable changes to qsdev are recorded in this file. The format is based on
 
 ### Changed
 
+- Infrastructure endpoints in `.qsdev.yaml` are now validated whether or not
+  an `infra_profile` is selected. A project whose `registry_proxy`,
+  `registry_proxy_overrides` entry, `build_cache_url` or `nix_cache` uses plain
+  `http` to a non-local host, embeds credentials (`user:pass@`) or names a
+  documentation placeholder host, or whose `registry_proxy_paths` entry does
+  not start with `/`, now fails `qsdev init` (including `--mode join` and
+  `--update`) before writing anything, and `qsdev check` reports a
+  `config_validation` failure. The error names the exact field (for example
+  `infrastructure.registry_proxy_paths.npm`) and the fix: use `https`, supply
+  credentials through the environment (the profile's `AuthEnvVar` variable),
+  or write the path as an absolute path on the proxy host. Proxy paths are
+  now joined onto `registry_proxy` as URL paths, so they can no longer change
+  the proxy host.
+
+- The compliance level now sets the release-age window (U09-01). Its catalog
+  `age_gating_threshold_hours` (3 days for `baseline`, 7 for `enhanced`, 14 for
+  `strict`) drives npm `min-release-age`, pnpm `minimumReleaseAge`, Yarn
+  `npmMinimalAgeGate`, bun `minimumReleaseAge`, uv `UV_EXCLUDE_NEWER` and the
+  CI `--exclude-newer`, and the package guard through the new
+  `PACKAGE_GUARD_MIN_AGE_DAYS` entry in `.claude/settings.json` `env`. Each
+  manager keeps its historical minimum (npm, pnpm and the package guard 3
+  days; yarn, bun and uv 7 days), so no gate loosens, even under an
+  organization catalog overlay with a shorter window, and `baseline` output
+  is unchanged apart from that `env` entry.
+  Renovate `minimumReleaseAge` and Dependabot `cooldown` use the larger of the
+  infrastructure profile's delay (or an ecosystem override) and the level's
+  window; `startup-github`, which had no cooldown, now gets the level's.
+  `qsdev check` fails `security_config_javascript` when a JavaScript config's
+  gate is below the window. The JavaScript configs (`.npmrc`,
+  `pnpm-workspace.yaml`, `.yarnrc.yml`, `bunfig.toml`) are created only if
+  absent: `qsdev init --update` rewrites one only while it is unchanged since
+  qsdev generated it, so an existing `enhanced` or `strict` project with an
+  edited file fails that check until you raise the value in the file. A
+  `strict` project using uv gets `P14D`, which uv sees as a stale `uv.lock`:
+  run `uv lock` inside the devenv shell after `qsdev init --update` and
+  commit `uv.lock`, or the CI `uv sync --locked` fails.
+
 - Project-root detection now stops at the git repository toplevel. A submodule
   or nested repository is its own project boundary: a `.qsdev.yaml`, `.devinit/`
   or `.qsdev/` in a directory above a nested `.git` no longer resolves from
@@ -42,6 +79,23 @@ All notable changes to qsdev are recorded in this file. The format is based on
   non-zero with an error naming `--online`, so a CI step cannot pass while
   checking nothing. `qsdev outdated --online` behaves as `qsdev outdated` did.
   A CI job that runs `qsdev outdated` must add `--online`.
+
+### Fixed
+
+- The generated `devenv.nix` for an Elixir project failed to evaluate: qsdev
+  and devenv's Elixir module both defined the `mix-format` hook's package at
+  the same priority, which Nix rejects as "defined multiple times" (U10-01).
+  Custom hook packages now render at `lib.mkOverride 999`, so a devenv
+  language's own setting wins. Elixir users must run `qsdev init --update` to
+  regenerate `devenv.nix`.
+- Formatter hooks now run the shell's pinned toolchain. `mix-format`,
+  `zig-fmt`, `dart-format`, `dotnet-format` and `terraform-format` (Terraform
+  or OpenTofu, honouring a `languages.terraform.version` pin) call
+  `config.languages.<language>.package`, the toolchain the shell already
+  provides (for Zig, the release `build.zig.zon`'s
+  `minimum_zig_version` selects), instead of a separate unpinned `pkgs.<tool>`.
+  They no longer add a second copy of that toolchain to `packages` (U10-08,
+  U10-09). Run `qsdev init --update` to pick this up.
 
 ### Security
 

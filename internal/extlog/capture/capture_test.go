@@ -9,6 +9,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/Quantum-Serendipity/qsdev/pkg/branding"
 )
 
 func TestNew_TeesBothStreamsToOneCapture(t *testing.T) {
@@ -65,6 +67,7 @@ func TestNew_RejectsMissingDir(t *testing.T) {
 }
 
 func TestCaptureDir_NoTempFallback(t *testing.T) {
+	t.Setenv(branding.Get().EnvLogDirVar, "")
 	t.Setenv("HOME", "")
 	t.Setenv("USERPROFILE", "")
 	t.Setenv("home", "")
@@ -73,6 +76,23 @@ func TestCaptureDir_NoTempFallback(t *testing.T) {
 	}
 	if got := CaptureDir("/proj"); got != filepath.Join("/proj", ".qsdev", "logs", "capture") {
 		t.Errorf("CaptureDir(project) = %q", got)
+	}
+}
+
+// TestCaptureDir_FallbackUsesState pins that, outside a project, captures go
+// below the global log tier in the per-user state directory, not the legacy
+// ~/.<app>.
+func TestCaptureDir_FallbackUsesState(t *testing.T) {
+	b := branding.Get()
+	base := t.TempDir()
+	home := filepath.Join(base, "home")
+	state := filepath.Join(base, "xdg-state")
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
+	t.Setenv("XDG_STATE_HOME", state)
+	t.Setenv(b.EnvLogDirVar, "")
+	if got, want := CaptureDir(""), filepath.Join(state, b.AppName, "logs", "capture"); got != want {
+		t.Errorf("CaptureDir(\"\") = %q, want %q", got, want)
 	}
 }
 

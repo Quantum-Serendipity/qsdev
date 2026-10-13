@@ -3,6 +3,7 @@ package zig_test
 import (
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -119,6 +120,52 @@ func TestDevenvNixFragment(t *testing.T) {
 	}
 	if !strings.Contains(frag, "zig") {
 		t.Errorf("fragment missing zig reference:\n%s", frag)
+	}
+}
+
+// --- PreCommitHooks tests ---
+
+// TestHookBinaryMatchesLanguagePin guards U10-09: zig fmt must run the Zig
+// the shell pins from build.zig.zon's minimum_zig_version
+// (languages.zig.package), not a second, unpinned pkgs.zig whose formatter
+// output differs across releases.
+func TestHookBinaryMatchesLanguagePin(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	zon := ".{\n    .name = .app,\n    .minimum_zig_version = \"0.13.0\",\n}\n"
+	if err := os.WriteFile(filepath.Join(dir, "build.zig.zon"), []byte(zon), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	m := newModule()
+	cfg := m.Detect(dir).SuggestedConfig
+	if cfg.Version != "0.13.0" {
+		t.Fatalf("Detect version = %q, want 0.13.0", cfg.Version)
+	}
+	frag, err := m.DevenvNixFragment(cfg)
+	if err != nil {
+		t.Fatalf("DevenvNixFragment: %v", err)
+	}
+	if !strings.Contains(frag, "languages.zig.package = (let r = builtins.tryEval (pkgs.zig_0_13 or null);") {
+		t.Errorf("fragment does not pin Zig 0.13:\n%s", frag)
+	}
+
+	hooks := m.PreCommitHooks(cfg)
+	if len(hooks) != 1 {
+		t.Fatalf("PreCommitHooks() returned %d hooks, want 1", len(hooks))
+	}
+	want := ecosystem.HookConfig{
+		ID:              "zig-fmt",
+		Name:            "zig-fmt",
+		Description:     "Check Zig source formatting with zig fmt",
+		Entry:           "zig fmt --check",
+		Language:        "system",
+		Types:           []string{"zig"},
+		Stages:          []string{"pre-commit"},
+		PassFilenames:   true,
+		LanguagePackage: "zig",
+	}
+	if !reflect.DeepEqual(hooks[0], want) {
+		t.Errorf("PreCommitHooks()[0] = %+v, want %+v", hooks[0], want)
 	}
 }
 

@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"maps"
 
+	"github.com/Quantum-Serendipity/qsdev/internal/catalog"
 	"github.com/Quantum-Serendipity/qsdev/internal/profile"
 	"github.com/Quantum-Serendipity/qsdev/internal/tier"
 	"github.com/Quantum-Serendipity/qsdev/pkg/ecosystem"
@@ -91,7 +92,7 @@ func (g *DevenvGenerator) Generate(answers types.WizardAnswers) ([]types.Generat
 			if !ok {
 				return nil, fmt.Errorf("unknown language module: %q", lang.Name)
 			}
-			cfg := ecosystem.ToGenerationConfig(lang, answers)
+			cfg := generationConfig(lang, answers)
 			secFiles := mod.SecurityConfigs(cfg)
 			files = append(files, secFiles...)
 		}
@@ -137,9 +138,17 @@ func (g *DevenvGenerator) Generate(answers types.WizardAnswers) ([]types.Generat
 	return files, nil
 }
 
+// generationConfig is the ModuleConfig generation passes to lang's module
+// (ecosystem.ToGenerationConfig), with the release-age window of the
+// answers' compliance level resolved from the catalog.
+func generationConfig(lang types.LanguageChoice, answers types.WizardAnswers) ecosystem.ModuleConfig {
+	return ecosystem.ToGenerationConfig(lang, answers, catalog.EffectiveAgeGate(answers.ComplianceLevel))
+}
+
 // ciCommands groups the CI commands of every selected language's module by
 // phase, each module configured as for its security configs (package
-// manager, extras and the effective infrastructure). Settings the language
+// manager, extras, the effective infrastructure and the compliance level's
+// release-age window, which the uv cooldown must match in CI and the shell). Settings the language
 // entry leaves unset are completed from detection (WithSuggested), as a
 // create does: answers saved by an older qsdev lack settings some commands
 // are gated on (the renv or luarocks package manager, the Nix flake extra),
@@ -159,7 +168,7 @@ func (g *DevenvGenerator) ciCommands(answers types.WizardAnswers) ([]ecosystem.C
 		if _, dup := configs[mod.Name()]; !dup {
 			modules = append(modules, mod)
 		}
-		configs[mod.Name()] = ecosystem.ToModuleConfigWithInfra(answers.Detected.WithSuggested(lang), answers.Infrastructure)
+		configs[mod.Name()] = generationConfig(answers.Detected.WithSuggested(lang), answers)
 	}
 	groups, err := ecosystem.AggregateCICommands(modules, func(mod ecosystem.EcosystemModule) ecosystem.ModuleConfig {
 		return configs[mod.Name()]
@@ -181,20 +190,21 @@ const defaultInfraProfile = "consulting-default"
 // environment is added under the user's own env vars; a missing or
 // placeholder endpoint is an error. The implicit default only contributes
 // its config files (ConfigOnly), so projects that never chose an
-// infrastructure keep exactly the endpoints they configured; a Nix cache they
-// configured is still checked (profile.ResolveProjectInfrastructure). The returned profile is nil when
-// the generator has no profile registry.
+// infrastructure keep exactly the endpoints they configured, after the same
+// endpoint checks (profile.ResolveProjectInfrastructure). Those checks run
+// for every generator, so no configuration writes an unvalidated endpoint.
+// The returned profile is nil when the generator has no profile registry.
 func (g *DevenvGenerator) applyInfraProfile(answers types.WizardAnswers) (types.WizardAnswers, *profile.InfraProfile, error) {
-	if g.profileRegistry == nil {
-		return answers, nil, nil
-	}
 	name := answers.ProfileName
-	if name == "" {
+	if name == "" || g.profileRegistry == nil {
 		infra, err := profile.ResolveProjectInfrastructure(answers.Infrastructure)
 		if err != nil {
 			return answers, nil, err
 		}
 		answers.Infrastructure = infra
+		if g.profileRegistry == nil {
+			return answers, nil, nil
+		}
 		p, ok := g.profileRegistry.Get(defaultInfraProfile)
 		if !ok {
 			return answers, nil, nil

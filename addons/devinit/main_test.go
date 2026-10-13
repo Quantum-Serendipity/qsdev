@@ -10,12 +10,18 @@ import (
 	"github.com/Quantum-Serendipity/qsdev/internal/container"
 	"github.com/Quantum-Serendipity/qsdev/internal/detect"
 	"github.com/Quantum-Serendipity/qsdev/internal/doctor"
+	"github.com/Quantum-Serendipity/qsdev/internal/sandbox/shim"
 	"github.com/Quantum-Serendipity/qsdev/internal/sysinfo"
 )
 
 // TestMain installs the fake host prober for every test, then removes the
-// shared lifecycle project template once every test has run.
+// shared lifecycle project template once every test has run. A sandboxed
+// hook runs the host executable (here, this test binary) as the in-sandbox
+// shim, so that dispatch comes first, as in instance.Main.
 func TestMain(m *testing.M) {
+	if shim.Invoked(os.Args) {
+		os.Exit(shim.Main(os.Args, os.Stderr))
+	}
 	host = fakeHostProber()
 	code := m.Run()
 	removeLifecycleTemplate()

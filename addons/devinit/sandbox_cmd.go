@@ -7,6 +7,7 @@ import (
 	"io"
 	"log/slog"
 	"os"
+	"path"
 	"path/filepath"
 	"strings"
 
@@ -14,6 +15,7 @@ import (
 
 	"github.com/Quantum-Serendipity/qsdev/internal/cmdutil"
 	"github.com/Quantum-Serendipity/qsdev/internal/exitcode"
+	"github.com/Quantum-Serendipity/qsdev/internal/projectctx"
 	"github.com/Quantum-Serendipity/qsdev/internal/sandbox"
 	"github.com/Quantum-Serendipity/qsdev/internal/sandbox/backendselect"
 	"github.com/Quantum-Serendipity/qsdev/internal/sandbox/bwrap"
@@ -76,7 +78,7 @@ wrapped Claude Code hook fails closed.`,
 				ctx = context.Background()
 			}
 
-			projectDir, err := sandboxProjectDir()
+			projectDir, err := sandboxProjectDir(cmd)
 			if err != nil {
 				return sandboxSetupFailure(err)
 			}
@@ -128,15 +130,18 @@ wrapped Claude Code hook fails closed.`,
 	cmd.Flags().StringVar(&hookName, "hook-name", "",
 		"Name used to look up the policy's hookOverrides (default: the command's base name without extension)")
 
-	return cmd
+	return cmdutil.MarkProfile(cmd, cmdutil.ProfileAutomatedHook)
 }
 
-// defaultPolicyPath is the project-relative location of the sandbox policy.
-const defaultPolicyPath = ".qsdev/policy.nix"
+// defaultPolicyPath returns the project-relative location of the sandbox
+// policy, policy.nix in the project data directory.
+func defaultPolicyPath() string {
+	return path.Join(projectctx.DataDirName(), "policy.nix")
+}
 
 // addPolicyFlag registers the --policy flag shared by exec and approve.
 func addPolicyFlag(cmd *cobra.Command, policyPath *string) {
-	cmd.Flags().StringVar(policyPath, "policy", defaultPolicyPath,
+	cmd.Flags().StringVar(policyPath, "policy", defaultPolicyPath(),
 		"Path to sandbox policy file (the default is relative to the project directory)")
 }
 
@@ -159,10 +164,14 @@ func sandboxSetupFailure(err error) error {
 // sandboxProjectDir returns the project directory to expose inside the
 // sandbox. Claude Code exports CLAUDE_PROJECT_DIR to every hook; outside a hook
 // the current directory is used.
-func sandboxProjectDir() (string, error) {
+func sandboxProjectDir(cmd *cobra.Command) (string, error) {
 	dir := os.Getenv("CLAUDE_PROJECT_DIR")
 	if dir == "" {
-		return cmdutil.ProjectRoot()
+		pc, err := cmdutil.Project(cmd)
+		if err != nil {
+			return "", err
+		}
+		return pc.Root, nil
 	}
 	if !filepath.IsAbs(dir) {
 		return "", fmt.Errorf("CLAUDE_PROJECT_DIR must be an absolute path, got %q", dir)

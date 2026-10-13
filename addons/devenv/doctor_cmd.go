@@ -60,7 +60,10 @@ func runDoctor(cmd *cobra.Command, jsonOutput, checkMode bool) error {
 
 	// An unknown working directory only disables the project-scoped checks
 	// (NFS, MCP servers, cloud credential isolation, ecosystem module checks).
-	projectRoot, _ := cmdutil.ProjectRoot()
+	var projectRoot string
+	if pc, err := cmdutil.Project(cmd); err == nil {
+		projectRoot = pc.Root
+	}
 
 	var containerSection *doctor.ContainerSection
 	var sandboxSection *doctor.SandboxSection

@@ -18,8 +18,10 @@ import (
 
 // Compile-time interface compliance checks.
 var _ ecosystem.EcosystemModule = (*Module)(nil)
+var _ ecosystem.PackageProvider = (*Module)(nil)
 var _ ecosystem.DenyRuleProvider = (*Module)(nil)
 var _ ecosystem.ManifestFileProvider = (*Module)(nil)
+var _ ecosystem.SetupWarner = (*Module)(nil)
 
 func init() {
 	ecosystem.MustRegisterModule(&Module{})
@@ -102,6 +104,13 @@ func (m *Module) DevenvNixFragment(_ ecosystem.ModuleConfig) (string, error) {
 	return "  languages.perl.enable = true;\n", nil
 }
 
+// DevenvPackages provisions the CI tools devenv's Perl language does not
+// ship: carton, which installs from (and creates) cpanfile.snapshot, and
+// cpan-audit. Both are Perl-package attributes in nixpkgs, like perltidy.
+func (m *Module) DevenvPackages(_ ecosystem.ModuleConfig) []string {
+	return []string{"perlPackages.Carton", "perlPackages.CPANAudit"}
+}
+
 // SecurityConfigs returns generated security configuration files.
 // CPAN has no signing mechanism, so no security configuration files are generated.
 func (m *Module) SecurityConfigs(_ ecosystem.ModuleConfig) []types.GeneratedFile {
@@ -157,8 +166,15 @@ func (m *Module) DenyRules(_ ecosystem.ModuleConfig) []string {
 	}
 }
 
-// CICommands returns CI pipeline commands for the Perl ecosystem.
-func (m *Module) CICommands(_ ecosystem.ModuleConfig) []ecosystem.CICommand {
+// CICommands returns CI pipeline commands for the Perl ecosystem. Only a
+// Carton project (a committed cpanfile.snapshot) gets them: the deployment
+// install restores the snapshot and fails without one, and cpan-audit then
+// checks the project's own declared dependencies (`installed` would audit
+// whatever is on @INC instead).
+func (m *Module) CICommands(config ecosystem.ModuleConfig) []ecosystem.CICommand {
+	if config.PM("") != "carton" {
+		return nil
+	}
 	return []ecosystem.CICommand{
 		{
 			Name:        "carton-install",
@@ -168,11 +184,21 @@ func (m *Module) CICommands(_ ecosystem.ModuleConfig) []ecosystem.CICommand {
 		},
 		{
 			Name:        "cpan-audit",
-			Command:     "cpan-audit installed",
-			Description: "Audit installed Perl modules for known vulnerabilities",
+			Command:     "cpan-audit deps .",
+			Description: "Audit the project's Perl dependencies for known vulnerabilities",
 			Phase:       ecosystem.CIPhaseScan,
 		},
 	}
+}
+
+// SetupWarnings reports a cpanfile project without a committed
+// cpanfile.snapshot: CICommands then has nothing to install from, so no
+// dependency audit runs.
+func (m *Module) SetupWarnings(projectRoot string, _ ecosystem.ModuleConfig) []string {
+	if !fileutil.FileExists(projectRoot, "cpanfile") || fileutil.FileExists(projectRoot, "cpanfile.snapshot") {
+		return nil
+	}
+	return []string{"Perl dependency security scan not run: run `carton install` and commit cpanfile.snapshot"}
 }
 
 // PackageManagers returns metadata about the Perl Carton package manager.

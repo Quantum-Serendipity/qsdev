@@ -158,3 +158,44 @@ func TestProjectInputsFromAnswers(t *testing.T) {
 		})
 	}
 }
+
+// TestDependabot_CooldownByComplianceLevel pins the Dependabot cooldown to
+// the larger of the profile's days and the compliance level's window, so
+// startup-github (no profile cooldown) gains the tier's and a longer profile
+// cooldown is kept.
+func TestDependabot_CooldownByComplianceLevel(t *testing.T) {
+	t.Parallel()
+	long := *StartupGitHub
+	long.Updates.AgeGatingDays = 10
+	tests := []struct {
+		name  string
+		p     *InfraProfile
+		level string
+		want  int
+	}{
+		{"startup-github baseline", StartupGitHub, "baseline", 3},
+		{"startup-github enhanced", StartupGitHub, "enhanced", 7},
+		{"startup-github strict", StartupGitHub, "strict", 14},
+		{"unknown level falls back to baseline", StartupGitHub, "no-such-level", 3},
+		{"longer profile cooldown kept", &long, "enhanced", 10},
+		{"tier above profile cooldown", &long, "strict", 14},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			in := ProjectInputsFromAnswers(types.WizardAnswers{
+				ComplianceLevel: tt.level,
+				Detected:        types.DetectedProject{HasGoMod: true, HasPackageJSON: true},
+			})
+			cfg := parseDependabot(t, mustFile(t, tt.p, in, ".github/dependabot.yml"))
+			if len(cfg.Updates) == 0 {
+				t.Fatal("dependabot.yml has no update entries")
+			}
+			for _, u := range cfg.Updates {
+				if u.Cooldown == nil || u.Cooldown.DefaultDays != tt.want {
+					t.Errorf("%s: cooldown = %+v, want default-days %d", u.PackageEcosystem, u.Cooldown, tt.want)
+				}
+			}
+		})
+	}
+}

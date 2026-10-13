@@ -1,0 +1,20 @@
+// Fixture for TestGradleProxyScriptKeepsProxy: settings-level repositories
+// the qsdev proxy init script must replace with the proxy.
+pluginManagement {
+    repositories {
+        gradlePluginPortal()
+        mavenCentral()
+    }
+}
+
+dependencyResolutionManagement {
+    repositories {
+        mavenCentral()
+        maven { url = 'https://jitpack.io' }
+    }
+}
+
+rootProject.name = 'gradleit'
+
+pluginManagement.repositories.each { println "QSDEV_REPO plugins ${it.url}" }
+dependencyResolutionManagement.repositories.each { println "QSDEV_REPO settings ${it.url}" }

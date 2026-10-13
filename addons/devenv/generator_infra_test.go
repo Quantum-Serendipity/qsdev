@@ -190,3 +190,39 @@ func TestGenerate_ProjectNixCacheWithoutProfile(t *testing.T) {
 		t.Errorf("placeholder Nix cache without a profile: err = %v, want %v", err, profile.ErrPlaceholderEndpoint)
 	}
 }
+
+// TestGenerate_InvalidProjectInfrastructureWithoutProfile is the regression
+// test for a credentialed plain-http registry proxy, or a registry path that
+// moves the proxy URL to another host, reaching .npmrc and the security
+// overview when no infra profile is selected: generation now fails, with or
+// without a profile registry, before any file is produced.
+func TestGenerate_InvalidProjectInfrastructureWithoutProfile(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name      string
+		infra     types.InfraConfig
+		wantField string
+	}{
+		{"credentialed http proxy", types.InfraConfig{RegistryProxy: "http://alice:s3cret@proxy.corp.lan:8081"},
+			"infrastructure.registry_proxy"},
+		{"path rewrites the proxy host", types.InfraConfig{
+			RegistryProxy:      "https://artifactory.corp.io",
+			RegistryProxyPaths: map[string]string{"npm": "@attacker.io/npm/"},
+		}, "infrastructure.registry_proxy_paths.npm"},
+	}
+	gens := map[string]*devenv.DevenvGenerator{
+		"with profile registry":    devenv.NewDevenvGenerator(ecosystem.DefaultRegistry(), devenv.WithProfileRegistry(profile.DefaultProfileRegistry())),
+		"without profile registry": devenv.NewDevenvGenerator(ecosystem.DefaultRegistry()),
+	}
+	for genName, gen := range gens {
+		for _, tt := range tests {
+			t.Run(genName+"/"+tt.name, func(t *testing.T) {
+				t.Parallel()
+				files, err := gen.Generate(infraAnswers("", tt.infra, types.LanguageChoice{Name: "javascript", PackageManager: "npm"}))
+				if !errors.Is(err, profile.ErrInvalidEndpoint) || !strings.Contains(err.Error(), tt.wantField) {
+					t.Fatalf("Generate() = %d files, error %v; want %v naming %s", len(files), err, profile.ErrInvalidEndpoint, tt.wantField)
+				}
+			})
+		}
+	}
+}

@@ -341,3 +341,18 @@ func TestUpdateAndJoin_ApplyLocalOverridesWithoutPersisting(t *testing.T) {
 		assertLocalOnly(t, dst)
 	})
 }
+
+// TestCloneAnswers_ClaudePermissions checks the copy shares no permission
+// list with the original.
+func TestCloneAnswers_ClaudePermissions(t *testing.T) {
+	t.Parallel()
+	a := types.WizardAnswers{ClaudePermissions: types.ClaudePermissionsConfig{
+		Allow: []string{"Bash(make *)"}, Deny: []string{"Bash(x *)"},
+	}}
+	c := cloneAnswers(a)
+	c.ClaudePermissions.Allow[0] = "Bash(*)"
+	c.ClaudePermissions.Deny[0] = "Bash(y *)"
+	if a.ClaudePermissions.Allow[0] != "Bash(make *)" || a.ClaudePermissions.Deny[0] != "Bash(x *)" {
+		t.Errorf("cloneAnswers aliased the permission lists: %+v", a.ClaudePermissions)
+	}
+}

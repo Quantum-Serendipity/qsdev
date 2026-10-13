@@ -543,3 +543,45 @@ func containsBindRW(args []string, path string) bool {
 	}
 	return false
 }
+
+// TestBuildArgs_RejectsInternalMountCollision: RunHook mounts qsdev itself at
+// /.qsdev/bin/qsdev, so no project or mount may land on or under /.qsdev,
+// where it would replace or shadow that trusted mount.
+func TestBuildArgs_RejectsInternalMountCollision(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name    string
+		cfg     sandbox.SandboxConfig
+		wantErr bool
+	}{
+		{name: "project dir is the internal root", cfg: sandbox.SandboxConfig{ProjectDir: "/.qsdev"}, wantErr: true},
+		{name: "project dir under the internal root", cfg: sandbox.SandboxConfig{ProjectDir: "/.qsdev/bin"}, wantErr: true},
+		{
+			name:    "mount target replaces the shim",
+			cfg:     sandbox.SandboxConfig{Mounts: []sandbox.MountSpec{{Source: "/opt/tool", Target: "/.qsdev/bin/qsdev", ReadOnly: true}}},
+			wantErr: true,
+		},
+		{
+			name:    "mount target with a trailing slash",
+			cfg:     sandbox.SandboxConfig{Mounts: []sandbox.MountSpec{{Source: "/opt/tool", Target: "/.qsdev/", ReadOnly: true}}},
+			wantErr: true,
+		},
+		{name: "sibling name is not a collision", cfg: sandbox.SandboxConfig{ProjectDir: "/.qsdevx"}, wantErr: false},
+		{
+			name:    "ordinary mount",
+			cfg:     sandbox.SandboxConfig{Mounts: []sandbox.MountSpec{{Source: "/opt/tool", Target: "/opt/tool", ReadOnly: true}}},
+			wantErr: false,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			tt.cfg.HookCategory = sandbox.CategoryLinter
+			_, err := BuildArgs(&tt.cfg, sandbox.TierBwrapOnly)
+			if (err != nil) != tt.wantErr {
+				t.Errorf("BuildArgs error = %v, wantErr %v", err, tt.wantErr)
+			}
+		})
+	}
+}

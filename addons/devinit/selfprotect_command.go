@@ -5,13 +5,13 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"os"
 	"path/filepath"
 	"time"
 
 	"github.com/spf13/cobra"
 
 	"github.com/Quantum-Serendipity/qsdev/internal/cmdutil"
+	"github.com/Quantum-Serendipity/qsdev/internal/projectctx"
 	"github.com/Quantum-Serendipity/qsdev/internal/selfprotect/canon"
 	"github.com/Quantum-Serendipity/qsdev/internal/selfprotect/cmdscan"
 	"github.com/Quantum-Serendipity/qsdev/internal/selfprotect/evasion"
@@ -31,7 +31,7 @@ func selfprotectCmd() *cobra.Command {
 	}
 	cmd.SilenceErrors = true
 	cmd.SilenceUsage = true
-	return cmd
+	return cmdutil.MarkProfile(cmd, cmdutil.ProfileAutomatedHook)
 }
 
 // errSelfprotectDeny is returned after the deny reason has been written to
@@ -167,7 +167,7 @@ func buildSelfprotectContext(toolName string, input *hookio.ToolInput) *rules.Ev
 		Edits:    textEdits(toolName, input),
 	}
 
-	if cwd, err := os.Getwd(); err == nil {
+	if cwd, err := projectctx.WorkingDir(); err == nil {
 		ctx.CWD = cwd
 	}
 

@@ -235,10 +235,17 @@ func (m *Module) DenyRules(_ ecosystem.ModuleConfig) []string {
 	}
 }
 
+// cabalInstall is the Cabal CI install step. cabal.project.freeze is Cabal's
+// only pin, so the step fails without it; `cabal update` fetches the package
+// index the freeze file's index-state selects (a clean runner has none), and
+// only the dependencies are built, leaving the project to the test phase.
+const cabalInstall = `test -f cabal.project.freeze || { echo "cabal.project.freeze missing: run cabal freeze" >&2; exit 1; }` +
+	" && cabal update && cabal build --only-dependencies"
+
 // CICommands returns CI pipeline commands for the Haskell ecosystem.
 // Commands vary based on the configured build tool. Stack's lock-file mode
 // error-on-write fails the build when stack.yaml.lock is missing or would
-// change (Stack has no --locked flag).
+// change (Stack has no --locked flag); Cabal requires cabal.project.freeze.
 func (m *Module) CICommands(config ecosystem.ModuleConfig) []ecosystem.CICommand {
 	buildTool := config.Extra("build_tool", "cabal")
 
@@ -255,9 +262,9 @@ func (m *Module) CICommands(config ecosystem.ModuleConfig) []ecosystem.CICommand
 
 	return []ecosystem.CICommand{
 		{
-			Name:        "cabal-build",
-			Command:     "cabal build",
-			Description: "Build Haskell project with Cabal",
+			Name:        "cabal-build-deps",
+			Command:     cabalInstall,
+			Description: "Build the Haskell project's dependencies as pinned by cabal.project.freeze",
 			Phase:       ecosystem.CIPhaseInstall,
 		},
 	}

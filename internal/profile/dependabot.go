@@ -16,7 +16,8 @@ import (
 // p.Registry.Ecosystems: that list names what the organization's package
 // proxy serves, and entries for manifests the repository does not have make
 // Dependabot fail while the project's real ecosystems go unwatched. The
-// profile's age gate is emitted as Dependabot's cooldown.
+// profile's age gate, raised to the project's compliance window, is emitted
+// as Dependabot's cooldown.
 func (p *InfraProfile) generateDependabotYML(in ProjectInputs) (types.GeneratedFile, error) {
 	type schedule struct {
 		Interval string `yaml:"interval"`
@@ -40,8 +41,8 @@ func (p *InfraProfile) generateDependabotYML(in ProjectInputs) (types.GeneratedF
 	}
 
 	var cd *cooldown
-	if p.Updates.AgeGatingDays > 0 {
-		cd = &cooldown{DefaultDays: p.Updates.AgeGatingDays}
+	if days := in.updateAgeDays(p.Updates.AgeGatingDays); days > 0 {
+		cd = &cooldown{DefaultDays: days}
 	}
 
 	var depEcos []string

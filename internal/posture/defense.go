@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"maps"
 	"os"
+	"path"
 	"path/filepath"
 	"regexp"
 	"runtime"
@@ -104,6 +105,9 @@ type assessmentInput struct {
 	// packageGuard is the generator's package-guard.py (see
 	// AssessOptions.PackageGuard).
 	packageGuard []byte
+	// guardSupport is what the files package-guard.py loads must hold (see
+	// AssessOptions.GuardSupport).
+	guardSupport map[string][]byte
 }
 
 // guardState is whether the package guard is in force, and why.
@@ -212,10 +216,11 @@ func (in assessmentInput) guardUnrunnable() string {
 }
 
 // guardModified returns why package-guard.py on disk cannot be credited as the
-// generated version, or "" when it is the content the generator writes (see
-// AssessOptions.PackageGuard), line endings aside, with its recorded mode.
-// The local state and the committed manifest are not consulted for the
-// content: either can be re-hashed along with an edited guard.
+// generated version, or "" when it and every support file it loads are the
+// content the generator writes (see AssessOptions.PackageGuard and
+// GuardSupport), line endings aside, with their recorded modes. The local
+// state and the committed manifest are not consulted for the content: either
+// can be re-hashed along with an edited guard.
 func (in assessmentInput) guardModified() string {
 	switch {
 	case in.ProjectPath == "":
@@ -223,17 +228,33 @@ func (in assessmentInput) guardModified() string {
 	case in.packageGuard == nil:
 		return "package-guard.py content not verified: no generated version to compare it with"
 	}
-	fs := state.CheckContent(in.ProjectPath, packageGuardPath, in.packageGuard, in.GenState.Files[packageGuardPath].Mode)
+	if reason := in.generatedContentDiffers(packageGuardPath, in.packageGuard); reason != "" {
+		return reason
+	}
+	for _, rel := range slices.Sorted(maps.Keys(in.guardSupport)) {
+		if reason := in.generatedContentDiffers(rel, in.guardSupport[rel]); reason != "" {
+			return reason + " (package-guard.py loads it)"
+		}
+	}
+	return ""
+}
+
+// generatedContentDiffers returns why the file at rel is not want, the content
+// the generator writes there, or "" when it is (line endings aside, with its
+// recorded mode).
+func (in assessmentInput) generatedContentDiffers(rel string, want []byte) string {
+	name := path.Base(rel)
+	fs := state.CheckContent(in.ProjectPath, rel, want, in.GenState.Files[rel].Mode)
 	switch fs.Status {
 	case types.Unmodified:
 		return ""
 	case types.Deleted:
-		return "package-guard.py not present"
+		return name + " not present"
 	case types.Modified:
-		return "package-guard.py modified from the generated version this qsdev writes; run " +
-			"'qsdev update --configs-only --overwrite-modified' to restore " + packageGuardPath
+		return name + " modified from the generated version this qsdev writes; run " +
+			"'qsdev update --configs-only --overwrite-modified' to restore " + rel
 	default:
-		return fmt.Sprintf("package-guard.py unreadable: %v", fs.Error)
+		return fmt.Sprintf("%s unreadable: %v", name, fs.Error)
 	}
 }
 
@@ -555,6 +576,7 @@ func AssessDefenseLayers(projectPath string, opts AssessOptions, enabledTools ma
 		}),
 		userSettingsRead: settingsOpts.UserDir != "",
 		packageGuard:     opts.PackageGuard,
+		guardSupport:     opts.GuardSupport,
 	}
 	input.guardOnce = sync.OnceValue(input.judgeGuard)
 

@@ -22,6 +22,7 @@ import (
 
 // Compile-time interface compliance checks.
 var _ ecosystem.EcosystemModule = (*Module)(nil)
+var _ ecosystem.ProxyKeyProvider = (*Module)(nil)
 var _ ecosystem.WizardFieldProvider = (*Module)(nil)
 var _ ecosystem.ManifestFileProvider = (*Module)(nil)
 var _ ecosystem.SASTModule = (*Module)(nil)
@@ -293,6 +294,10 @@ func (m *Module) CICommands(_ ecosystem.ModuleConfig) []ecosystem.CICommand {
 		},
 	}
 }
+
+// ProxyKey returns "cargo": the generated .cargo/config.toml replaces
+// crates.io with the registry proxy.
+func (m *Module) ProxyKey(_ ecosystem.ModuleConfig) string { return "cargo" }
 
 // PackageManagers returns metadata about Cargo.
 func (m *Module) PackageManagers() []ecosystem.PackageManagerInfo {

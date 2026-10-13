@@ -41,6 +41,40 @@ func TestBuildManifest_MachineOwnedOnly(t *testing.T) {
 	}
 }
 
+// TestBuildManifest_SkipsLocalOnlyPaths pins that the committed manifest
+// lists only files a fresh clone has: every path qsdev itself gitignores
+// (LocalOnlyEntries) is left out, while look-alike tracked paths are kept.
+func TestBuildManifest_SkipsLocalOnlyPaths(t *testing.T) {
+	t.Parallel()
+	b := branding.Get()
+	tests := []struct {
+		path string
+		want bool // true: listed in the manifest
+	}{
+		{b.LocalConfig, false},
+		{"." + b.AppName + "/composer/config.json", false},
+		{b.StateDir + "/x", false},
+		{".devenv/x", false},
+		{".direnv/x", false},
+		{b.ConfigFile, true},
+		{ManifestFile(), true},
+		// U09-WS3 moves Composer config to a tracked sibling directory; the
+		// ".qsdev/" prefix must not swallow it.
+		{"." + b.AppName + "-composer/config.json", true},
+		{"." + b.AppName + "x/y", true},
+		{".envrc", true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.path, func(t *testing.T) {
+			t.Parallel()
+			st := RecordFiles([]types.GeneratedFile{{Path: tt.path, Content: []byte("x"), Strategy: types.Overwrite}})
+			if _, got := BuildManifest(st)[tt.path]; got != tt.want {
+				t.Errorf("BuildManifest() lists %s = %v, want %v", tt.path, got, tt.want)
+			}
+		})
+	}
+}
+
 func TestManifest_MarshalRoundTrip(t *testing.T) {
 	t.Parallel()
 
@@ -238,6 +272,9 @@ func TestLoadManifest_DropsLocalOnlyEntry(t *testing.T) {
 	m := Manifest{
 		".envrc":                   ComputeHash([]byte("use devenv")),
 		branding.Get().LocalConfig: ComputeHash([]byte("# local")),
+		// A PHP join at an earlier release recorded the gitignored Composer
+		// config under the project dot-directory.
+		"." + branding.Get().AppName + "/composer/config.json": ComputeHash([]byte("{}")),
 	}
 	data, err := m.Marshal()
 	if err != nil {

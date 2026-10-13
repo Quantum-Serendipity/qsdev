@@ -15,10 +15,25 @@ func unexpectedDenyConflicts(t *testing.T, denyRules []string, skills []SkillDef
 	t.Helper()
 	ctx := check.CheckContext{DenyRules: denyRules, ExpectedConflictKeys: ExpectedConflicts()}
 	for _, s := range skills {
-		ctx.SkillOps = append(ctx.SkillOps, check.SkillOps{Name: s.Name, AllowedTools: s.AllowedTools})
+		ctx.SkillOps = append(ctx.SkillOps, check.SkillOps{Name: s.Name, AllowedTools: s.AllowedTools, PreApproved: s.PreApproved})
 	}
+	return failedResults(check.CheckDenyRuleConflicts(ctx))
+}
+
+// askBypasses runs the production pre-approval check (internal/check) over
+// askRules and skills, returning the failing results.
+func askBypasses(t *testing.T, askRules []string, skills []SkillDefinition) []check.CheckResult {
+	t.Helper()
+	ctx := check.CheckContext{AskRules: askRules}
+	for _, s := range skills {
+		ctx.SkillOps = append(ctx.SkillOps, check.SkillOps{Name: s.Name, AllowedTools: s.AllowedTools, PreApproved: s.PreApproved})
+	}
+	return failedResults(check.CheckSkillPreApprovals(ctx))
+}
+
+func failedResults(results []check.CheckResult) []check.CheckResult {
 	var failed []check.CheckResult
-	for _, r := range check.CheckDenyRuleConflicts(ctx) {
+	for _, r := range results {
 		if r.Status == check.StatusFail {
 			failed = append(failed, r)
 		}
@@ -95,9 +110,9 @@ func TestBuiltinSkillDefinitions_MatchTemplates(t *testing.T) {
 		skill string
 		want  []string
 	}{
-		{"qsdev-add-dep", []string{"Bash(qsdev *)", "Bash(npm *)", "Bash(pip *)", "Read"}},
+		{"qsdev-add-dep", []string{"Bash(qsdev *)", "Bash(npm view *)", "Bash(pip index *)", "Read"}},
 		{"qsdev-init", []string{"Bash(qsdev *)", "Read", "Grep", "Glob"}},
-		{"upgrade-dep", []string{"Bash(*)", "Write", "Edit"}},
+		{"upgrade-dep", []string{"Bash(git diff *)", "Write", "Edit"}},
 		{"write-adr", []string{"Write", "Edit", "Bash(git log *)"}},
 		{"lookup-docs", []string{"Bash(qsdev *)", "mcp__local-docs-devdocs(*)", "mcp__context7(*)"}},
 		{"security-reviewer", []string{"Read", "Grep", "Glob", "Bash"}},
@@ -158,6 +173,87 @@ func TestBuiltinSkillDefinitions_NoUnexpectedConflicts(t *testing.T) {
 	t.Parallel()
 	for _, c := range unexpectedDenyConflicts(t, AllBaseDenyRules(), BuiltinSkillDefinitions()) {
 		t.Errorf("unexpected conflict: %s", c.Message)
+	}
+}
+
+// TestNoSkillGrantsBareWildcard pins U15-10: no skill's allowed-tools
+// pre-approves a command the catalog gates behind ask (package installs,
+// code execution), so a model-invoked skill cannot skip the prompt and the
+// package-guard review it leads to.
+func TestNoSkillGrantsBareWildcard(t *testing.T) {
+	t.Parallel()
+	askRules := AllBaseAskRules()
+	if len(askRules) == 0 {
+		t.Fatal("AllBaseAskRules() is empty")
+	}
+	for _, c := range askBypasses(t, askRules, BuiltinSkillDefinitions()) {
+		t.Errorf("skill pre-approves an ask-gated command: %s", c.Message)
+	}
+
+	// The guard must catch every shape that would bypass ask.
+	for _, rule := range []string{"Bash(*)", "Bash", "Bash(npm *)", "Bash(go *)", "Bash(npm i*)", "Bash(cargo *)", "Bash(* install *)"} {
+		t.Run(rule, func(t *testing.T) {
+			t.Parallel()
+			skill := SkillDefinition{Name: "probe", AllowedTools: []string{rule}, PreApproved: []string{rule}}
+			if len(askBypasses(t, askRules, []SkillDefinition{skill})) == 0 {
+				t.Errorf("allowed-tools %s not flagged as bypassing a catalog ask rule", rule)
+			}
+		})
+	}
+}
+
+// TestSkillPreApproved_AllowedToolsOnly pins that only a skill's
+// allowed-tools are pre-approvals: a subagent's tools list is an
+// availability allowlist, so its bare Bash grants nothing.
+func TestSkillPreApproved_AllowedToolsOnly(t *testing.T) {
+	t.Parallel()
+	byName := make(map[string]SkillDefinition)
+	for _, d := range BuiltinSkillDefinitions() {
+		byName[d.Name] = d
+	}
+	if d := byName["security-reviewer"]; !slices.Contains(d.AllowedTools, "Bash") || len(d.PreApproved) != 0 {
+		t.Errorf("security-reviewer agent: AllowedTools %v, PreApproved %v; want Bash available and nothing pre-approved", d.AllowedTools, d.PreApproved)
+	}
+	if d := byName["qsdev-add-dep"]; !slices.Equal(d.PreApproved, d.AllowedTools) || len(d.PreApproved) == 0 {
+		t.Errorf("qsdev-add-dep skill: PreApproved %v, want its allowed-tools %v", d.PreApproved, d.AllowedTools)
+	}
+}
+
+// TestNarrowedSkillTools pins the least-privilege allowed-tools of the
+// skills that used to pre-approve wildcards.
+func TestNarrowedSkillTools(t *testing.T) {
+	t.Parallel()
+	byName := make(map[string][]string)
+	for _, d := range BuiltinSkillDefinitions() {
+		byName[d.Name] = d.PreApproved
+	}
+	readOnlyGit := []string{"Bash(git log *)", "Bash(git diff *)", "Bash(git show *)", "Bash(git status *)", "Bash(git blame *)"}
+
+	want := []string{"Bash(qsdev *)", "Bash(npm view *)", "Bash(npm ls *)", "Bash(pnpm why *)", "Bash(cargo search *)", "Bash(cargo tree *)", "Bash(go list *)", "Bash(pip index *)", "Read", "Grep", "Glob"}
+	if got := byName["qsdev-add-dep"]; !slices.Equal(got, want) {
+		t.Errorf("qsdev-add-dep allowed-tools = %v, want %v", got, want)
+	}
+	for _, skill := range []string{"add-tests", "upgrade-dep", "incident-debug"} {
+		for _, tool := range byName[skill] {
+			if strings.HasPrefix(tool, "Bash") && !slices.Contains(readOnlyGit, tool) {
+				t.Errorf("%s allowed-tools grants %s; want only read-only git shapes", skill, tool)
+			}
+		}
+	}
+	banned := map[string][]string{
+		"review-pr":      {"Bash(gh *)"},
+		"write-adr":      {"Bash(find *)", "Bash(ls *)"},
+		"migration-plan": {"Bash(find *)", "Bash(ls *)"},
+	}
+	for skill, tools := range banned {
+		if len(byName[skill]) == 0 {
+			t.Errorf("skill %q missing", skill)
+		}
+		for _, tool := range tools {
+			if slices.Contains(byName[skill], tool) {
+				t.Errorf("%s allowed-tools still grants %s", skill, tool)
+			}
+		}
 	}
 }
 

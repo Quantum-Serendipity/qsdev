@@ -77,10 +77,11 @@ func initCmd() *cobra.Command {
 				return fmt.Errorf("unknown permission preset %q; valid presets: %v", preset, validation.PermissionPresets())
 			}
 
-			projectRoot, err := cmdutil.JoinedProjectRoot()
+			pc, err := cmdutil.JoinedProject(cmd)
 			if err != nil {
 				return err
 			}
+			projectRoot := pc.Root
 
 			// Check for existing settings.json unless --force is set.
 			if !force {
@@ -218,10 +219,11 @@ func updateCmd() *cobra.Command {
 		Short: "Regenerate Claude Code files from saved answers",
 		Long:  "Re-run generation using previously saved wizard answers, incorporating any detection changes.",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			projectRoot, err := cmdutil.JoinedProjectRoot()
+			pc, err := cmdutil.JoinedProject(cmd)
 			if err != nil {
 				return err
 			}
+			projectRoot := pc.Root
 
 			// Load saved answers.
 			answers, err := loadAnswers(projectRoot)
@@ -338,10 +340,11 @@ func makeAddItemCmd(spec addItemSpec) *cobra.Command {
 				}
 			}
 
-			projectRoot, err := cmdutil.JoinedProjectRoot()
+			pc, err := cmdutil.JoinedProject(cmd)
 			if err != nil {
 				return err
 			}
+			projectRoot := pc.Root
 
 			answers, err := loadReconciledAnswers(cmd.ErrOrStderr(), projectRoot)
 			if err != nil {
@@ -538,10 +541,11 @@ func listSkillsCmd() *cobra.Command {
 				return fmt.Errorf("loading skill manifest: %w", err)
 			}
 
-			projectRoot, err := cmdutil.ProjectRoot()
+			pc, err := cmdutil.Project(cmd)
 			if err != nil {
 				return err
 			}
+			projectRoot := pc.Root
 
 			// Load answers, tolerating missing file.
 			answers, loadErr := loadAnswers(projectRoot)

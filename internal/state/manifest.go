@@ -33,7 +33,7 @@ type Manifest map[string]string
 // strategy is machine-owned. Human-edited files (see
 // MergeStrategy.IsHumanEdited) are left out, because their divergence from the
 // generated content is expected rather than drift, and so are local-only
-// files (isLocalOnly), which no other checkout has.
+// files (isLocalOnly), which qsdev gitignores and so no other checkout has.
 func BuildManifest(st types.GeneratedState) Manifest {
 	m := make(Manifest, len(st.Files))
 	for relPath, fs := range st.Files {
@@ -97,9 +97,10 @@ func ParseManifest(data []byte) (Manifest, error) {
 
 // LoadManifest reads and parses the manifest at path. A missing file is
 // returned as an error wrapping os.ErrNotExist. An entry for a local-only
-// file, which earlier releases recorded, is dropped: no other checkout has
-// that file, so verifying it would fail everywhere but the machine that
-// wrote it.
+// file (the local config, or a file under a gitignored directory such as
+// .qsdev/composer/config.json), which earlier releases recorded, is dropped:
+// no other checkout has that file, so verifying it would fail everywhere but
+// the machine that wrote it.
 func LoadManifest(path string) (Manifest, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
@@ -113,10 +114,31 @@ func LoadManifest(path string) (Manifest, error) {
 	return m, nil
 }
 
-// isLocalOnly reports whether relPath is a file each checkout keeps for
-// itself and gitignores: the developer's local config overrides.
+// LocalOnlyEntries returns the paths each checkout keeps for itself, in
+// .gitignore syntax: qsdev's state directory, the project dot-directory, the
+// developer's local config overrides, and the devenv/direnv caches. Every
+// initialized project gitignores them, so a fresh clone has none of them, and
+// the committed manifest must not list them. An entry ending in "/" names a
+// directory; any other entry names a single file.
+func LocalOnlyEntries() []string {
+	b := branding.Get()
+	return []string{b.StateDir + "/", "." + b.AppName + "/", b.LocalConfig, ".direnv/", ".devenv/"}
+}
+
+// isLocalOnly reports whether relPath, a slash-separated project-relative
+// path, is covered by LocalOnlyEntries: it lies under one of the directory
+// entries or equals one of the file entries.
 func isLocalOnly(relPath string) bool {
-	return relPath == branding.Get().LocalConfig
+	for _, entry := range LocalOnlyEntries() {
+		if strings.HasSuffix(entry, "/") {
+			if strings.HasPrefix(relPath, entry) {
+				return true
+			}
+		} else if relPath == entry {
+			return true
+		}
+	}
+	return false
 }
 
 // ExpectedState overlays the committed manifest on the local state: a

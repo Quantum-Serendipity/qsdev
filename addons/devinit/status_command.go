@@ -155,10 +155,11 @@ type postureStatusOptions struct {
 }
 
 func runPostureStatus(cmd *cobra.Command, args []string, opts postureStatusOptions) error {
-	projectDir, err := cmdutil.ProjectRoot()
+	pc, err := cmdutil.Project(cmd)
 	if err != nil {
 		return err
 	}
+	projectDir := pc.Root
 
 	// Perform assessment.
 	report, err := posture.Assess(projectDir, postureOptions(posture.AssessOptions{FreshScan: opts.scan, ClaudeUserDir: claudeUserDir()}))
@@ -284,12 +285,13 @@ func exitForAudit(report *posture.PostureReport, auditLevel string) error {
 	return nil
 }
 
-// postureOptions returns opts with the generator's package guard as the
-// content the guard on disk is judged against, so every posture assessment
-// credits the guard only when it is what this qsdev writes, and with the
-// host prober's detection probes.
+// postureOptions returns opts with the generator's package guard and the
+// support files it loads as the content those on disk are judged against, so
+// every posture assessment credits the guard only when it is what this qsdev
+// writes, and with the host prober's detection probes.
 func postureOptions(opts posture.AssessOptions) posture.AssessOptions {
 	opts.PackageGuard = claudecode.PackageGuardContent()
+	opts.GuardSupport = claudecode.PackageGuardSupportContents()
 	opts.DetectOptions = host.detectOptions
 	return opts
 }

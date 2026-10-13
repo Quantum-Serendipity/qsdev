@@ -2,6 +2,7 @@ skills:
   - name: deploy
     description: "Deploy to staging/production via CI pipeline"
     tags: [ops, ci, deployment]
+    user_only: true
   - name: review-pr
     description: "Structured pull request review with checklist"
     tags: [review, quality]
@@ -17,3 +18,4 @@ skills:
   - name: db-migration
     description: "Create safe, reversible database schema migrations"
     tags: [database, ops]
+    user_only: true

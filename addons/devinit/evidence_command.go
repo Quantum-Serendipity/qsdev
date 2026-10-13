@@ -95,10 +95,11 @@ func runEvidence(cmd *cobra.Command, frameworkID, format string) error {
 	// a control is only reported as "Addressed" when its defense layer is
 	// actually enforced, and keeps the evidence report consistent with
 	// `qsdev status` (no evidence-vs-status divergence).
-	projectRoot, err := cmdutil.ProjectRoot()
+	pc, err := cmdutil.Project(cmd)
 	if err != nil {
 		return err
 	}
+	projectRoot := pc.Root
 	projectName := filepath.Base(projectRoot)
 
 	report, err := posture.Assess(projectRoot, postureOptions(posture.AssessOptions{}))

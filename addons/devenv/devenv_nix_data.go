@@ -12,6 +12,7 @@ import (
 	"strings"
 
 	"github.com/Quantum-Serendipity/qsdev/internal/catalog"
+	"github.com/Quantum-Serendipity/qsdev/internal/sliceutil"
 	"github.com/Quantum-Serendipity/qsdev/internal/toolreg"
 	"github.com/Quantum-Serendipity/qsdev/internal/version"
 	"github.com/Quantum-Serendipity/qsdev/pkg/branding"
@@ -89,9 +90,9 @@ type HookSetting struct {
 	Value string
 }
 
-// hookSettingKeyRe restricts setting keys to plain Nix attribute names, since
-// keys are rendered unquoted.
-var hookSettingKeyRe = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_-]*$`)
+// nixIdentRe matches a single plain Nix identifier. Hook setting keys and
+// hook LanguagePackage names are rendered unquoted, so both must match it.
+var nixIdentRe = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_-]*$`)
 
 // CustomHookData holds all fields needed to render a custom pre-commit hook
 // as a full Nix attribute set in devenv.nix.
@@ -110,11 +111,12 @@ type CustomHookData struct {
 	Files         string
 	Excludes      []string
 	PassFilenames bool
-	// Package is the nixpkgs attribute rendered as the hook's `package`. A
-	// custom hook whose ID matches a git-hooks.nix built-in merges with that
-	// definition, whose default package would otherwise be evaluated (and may
-	// no longer exist in nixpkgs) even though Entry names another binary.
-	Package string
+	// PackageExpr is the Nix expression rendered as the hook's `package`
+	// (see hookPackageExpr). A custom hook whose ID matches a git-hooks.nix
+	// built-in merges with that definition, whose default package would
+	// otherwise be evaluated (and may no longer exist in nixpkgs) even though
+	// Entry names another binary.
+	PackageExpr string
 }
 
 // HookOverrideData scopes an enabled git-hooks.nix built-in hook: the listed
@@ -211,6 +213,10 @@ func BuildDevenvNixData(answers types.WizardAnswers, registry *ecosystem.Registr
 	// enable/disable lines for every detected ecosystem (plus always-on nixd).
 	// Analyzer config lives in the generated .lsp.json, not devenv.
 	collectLSPSection(answers, data)
+
+	// A program both a hook and its module provision (a CI tool such as
+	// cppcheck, which the module adds whatever the hook tier) is listed once.
+	data.Packages = sliceutil.Dedup(data.Packages)
 
 	// 4f. Sections enabled tools contribute to devenv.nix (e.g. the starship
 	// env var, commit-ticket/branch-naming hooks). Rendering them here makes
@@ -368,7 +374,7 @@ func collectLanguageFragmentsAndHooks(answers types.WizardAnswers, registry *eco
 			return result, fmt.Errorf("unknown language module: %q", lang.Name)
 		}
 
-		cfg := ecosystem.ToGenerationConfig(lang, answers)
+		cfg := generationConfig(lang, answers)
 		fragment, err := mod.DevenvNixFragment(cfg)
 		if err != nil {
 			return result, fmt.Errorf("generating Nix fragment for %s: %w", lang.Name, err)
@@ -394,45 +400,14 @@ func collectLanguageFragmentsAndHooks(answers types.WizardAnswers, registry *eco
 				}
 				result.BuiltInHooks = append(result.BuiltInHooks, builtIn)
 			} else {
-				entry := hook.Entry
-				rawEntry, needsToString := false, false
-
-				switch {
-				case hook.Script != "":
-					entry = scriptHookEntry(hook)
-					rawEntry, needsToString = true, true
-					if hook.NixPackage != "" {
-						result.ExtraPackages = append(result.ExtraPackages, hook.NixPackage)
-					}
-				case hook.NixPackage != "":
-					parts := strings.SplitN(hook.Entry, " ", 2)
-					binary := parts[0]
-					args := ""
-					if len(parts) > 1 {
-						args = " " + parts[1]
-					}
-					entry = fmt.Sprintf(`"${pkgs.%s}/bin/%s%s"`, hook.NixPackage, binary, args)
-					rawEntry = true
+				custom, err := customHookData(hook)
+				if err != nil {
+					return result, fmt.Errorf("pre-commit hook for %s: %w", lang.Name, err)
+				}
+				result.CustomHooks = append(result.CustomHooks, custom)
+				if hook.NixPackage != "" {
 					result.ExtraPackages = append(result.ExtraPackages, hook.NixPackage)
 				}
-
-				result.CustomHooks = append(result.CustomHooks, CustomHookData{
-					ID:            hook.ID,
-					Name:          hook.Name,
-					Description:   hook.Description,
-					Entry:         entry,
-					RawEntry:      rawEntry,
-					NeedsToString: needsToString,
-					Language:      hook.Language,
-					Types:         hook.Types,
-					TypesOr:       hook.TypesOr,
-					ExcludeTypes:  hook.ExcludeTypes,
-					Stages:        hook.Stages,
-					Files:         hook.Files,
-					Excludes:      hook.Excludes,
-					PassFilenames: hook.PassFilenames,
-					Package:       hook.NixPackage,
-				})
 			}
 		}
 	}
@@ -440,10 +415,68 @@ func collectLanguageFragmentsAndHooks(answers types.WizardAnswers, registry *eco
 	return result, nil
 }
 
+// customHookData converts a custom (non-BuiltIn) ecosystem hook into template
+// data. A hook with a package runs that package's binary: a Script gets its
+// bin directory first on PATH, and an Entry's binary is rewritten to
+// "${<package>}/bin/<binary>".
+func customHookData(hook ecosystem.HookConfig) (CustomHookData, error) {
+	if hook.NixPackage != "" && hook.LanguagePackage != "" {
+		return CustomHookData{}, fmt.Errorf("hook %q sets both NixPackage %q and LanguagePackage %q; set one",
+			hook.ID, hook.NixPackage, hook.LanguagePackage)
+	}
+	if hook.LanguagePackage != "" && !nixIdentRe.MatchString(hook.LanguagePackage) {
+		return CustomHookData{}, fmt.Errorf("hook %q: invalid language package %q: want a single Nix identifier",
+			hook.ID, hook.LanguagePackage)
+	}
+
+	data := CustomHookData{
+		ID:            hook.ID,
+		Name:          hook.Name,
+		Description:   hook.Description,
+		Entry:         hook.Entry,
+		Language:      hook.Language,
+		Types:         hook.Types,
+		TypesOr:       hook.TypesOr,
+		ExcludeTypes:  hook.ExcludeTypes,
+		Stages:        hook.Stages,
+		Files:         hook.Files,
+		Excludes:      hook.Excludes,
+		PassFilenames: hook.PassFilenames,
+		PackageExpr:   hookPackageExpr(hook),
+	}
+	switch {
+	case hook.Script != "":
+		data.Entry = scriptHookEntry(hook)
+		data.RawEntry, data.NeedsToString = true, true
+	case data.PackageExpr != "":
+		binary, args, _ := strings.Cut(hook.Entry, " ")
+		if args != "" {
+			args = " " + args
+		}
+		data.Entry = fmt.Sprintf(`"${%s}/bin/%s%s"`, data.PackageExpr, binary, args)
+		data.RawEntry = true
+	}
+	return data, nil
+}
+
+// hookPackageExpr returns the Nix expression for the package that provides a
+// custom hook's binary: the nixpkgs attribute NixPackage, the pinned package
+// of the devenv language LanguagePackage, or "" when the hook names neither.
+func hookPackageExpr(hook ecosystem.HookConfig) string {
+	switch {
+	case hook.NixPackage != "":
+		return "pkgs." + hook.NixPackage
+	case hook.LanguagePackage != "":
+		return "config.languages." + hook.LanguagePackage + ".package"
+	}
+	return ""
+}
+
 // scriptHookEntry renders a module hook's Script as a pkgs.writeShellScript
 // derivation. The script is plain bash: it is escaped for the Nix indented
-// string, so shell antiquotes and quote pairs reach bash unchanged. NixPackage's bin
-// directory is prepended to PATH so the script runs the pinned tool.
+// string, so shell antiquotes and quote pairs reach bash unchanged. The bin
+// directory of the hook's package (hookPackageExpr) is prepended to PATH so
+// the script runs the pinned tool.
 func scriptHookEntry(hook ecosystem.HookConfig) string {
 	body := strings.TrimSpace(hook.Script)
 	body = strings.ReplaceAll(body, "''", "'''")
@@ -451,8 +484,8 @@ func scriptHookEntry(hook ecosystem.HookConfig) string {
 
 	var b strings.Builder
 	fmt.Fprintf(&b, "pkgs.writeShellScript %s ''\n", nixStr(hook.ID))
-	if hook.NixPackage != "" {
-		fmt.Fprintf(&b, "        export PATH=${pkgs.%s}/bin:$PATH\n", hook.NixPackage)
+	if pkg := hookPackageExpr(hook); pkg != "" {
+		fmt.Fprintf(&b, "        export PATH=${%s}/bin:$PATH\n", pkg)
 	}
 	b.WriteString(indentBlock(body, "        "))
 	b.WriteString("\n      ''")
@@ -598,7 +631,7 @@ func collectModulePackages(answers types.WizardAnswers, registry *ecosystem.Regi
 		if !ok {
 			continue
 		}
-		cfg := ecosystem.ToGenerationConfig(lang, answers)
+		cfg := generationConfig(lang, answers)
 		if pp, ok := mod.(ecosystem.PackageProvider); ok {
 			pkgs = append(pkgs, pp.DevenvPackages(cfg)...)
 		}
@@ -689,7 +722,7 @@ func collectTaskDefinitions(answers types.WizardAnswers, registry *ecosystem.Reg
 	configForFunc := func(mod ecosystem.EcosystemModule) ecosystem.ModuleConfig {
 		for _, lang := range answers.Languages {
 			if lang.Name == mod.Name() {
-				return ecosystem.ToGenerationConfig(lang, answers)
+				return generationConfig(lang, answers)
 			}
 		}
 		return ecosystem.ModuleConfig{}
@@ -806,11 +839,18 @@ func countEnabledTools(answers types.WizardAnswers) int {
 }
 
 // builtInHookData converts a BuiltIn ecosystem hook into template data,
-// carrying the options git-hooks.nix exposes for its built-in hooks.
+// carrying the options git-hooks.nix exposes for its built-in hooks. A
+// built-in hook runs git-hooks.nix's own package, so a NixPackage or
+// LanguagePackage on it would be silently ignored; that is an error (make the
+// hook custom to choose its package).
 func builtInHookData(hook ecosystem.HookConfig) (BuiltInHookData, error) {
+	if hook.NixPackage != "" || hook.LanguagePackage != "" {
+		return BuiltInHookData{}, fmt.Errorf("built-in hook %q sets NixPackage %q / LanguagePackage %q, "+
+			"which a git-hooks.nix built-in ignores; set BuiltIn: false to run that package", hook.ID, hook.NixPackage, hook.LanguagePackage)
+	}
 	data := BuiltInHookData{ID: hook.ID, TypesOr: hook.TypesOr, ExcludeTypes: hook.ExcludeTypes, Excludes: hook.Excludes}
 	for _, key := range slices.Sorted(maps.Keys(hook.Settings)) {
-		if !hookSettingKeyRe.MatchString(key) {
+		if !nixIdentRe.MatchString(key) {
 			return BuiltInHookData{}, fmt.Errorf("hook %q: invalid setting name %q", hook.ID, key)
 		}
 		data.Settings = append(data.Settings, HookSetting{Key: key, Value: hook.Settings[key]})

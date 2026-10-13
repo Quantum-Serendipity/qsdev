@@ -23,6 +23,7 @@ import (
 
 // Compile-time interface compliance checks.
 var _ ecosystem.EcosystemModule = (*Module)(nil)
+var _ ecosystem.ProxyKeyProvider = (*Module)(nil)
 var _ ecosystem.PackageProvider = (*Module)(nil)
 var _ ecosystem.WizardFieldProvider = (*Module)(nil)
 var _ ecosystem.ManifestFileProvider = (*Module)(nil)
@@ -250,6 +251,10 @@ func (m *Module) CICommands(_ ecosystem.ModuleConfig) []ecosystem.CICommand {
 	}
 }
 
+// ProxyKey returns "go": the generated devenv.nix points GOPROXY at the
+// registry proxy.
+func (m *Module) ProxyKey(_ ecosystem.ModuleConfig) string { return "go" }
+
 // PackageManagers returns metadata about Go's module system.
 func (m *Module) PackageManagers() []ecosystem.PackageManagerInfo {
 	return []ecosystem.PackageManagerInfo{
@@ -312,9 +317,10 @@ func (m *Module) DeclaresDependencies(projectRoot string) (bool, error) {
 	return len(mf.Require) > 0, nil
 }
 
-// DevenvPackages returns standard Go development tool packages.
+// DevenvPackages returns standard Go development tool packages, and
+// govulncheck, which the CI scan runs whatever the hook tier.
 func (m *Module) DevenvPackages(_ ecosystem.ModuleConfig) []string {
-	return []string{"gopls", "golangci-lint", "delve", "goreleaser"}
+	return []string{"gopls", "golangci-lint", "delve", "goreleaser", "govulncheck"}
 }
 
 // requiredGoRelease returns the minimum Go release the project needs, as a

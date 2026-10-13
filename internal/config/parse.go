@@ -288,7 +288,14 @@ func ValidateQsdevConfig(cfg *types.QsdevConfig, opts ValidateOptions) []Validat
 	errs = append(errs, validateMCPDisabledTools(cfg, opts)...)
 	errs = append(errs, validateCredentialVend(cfg.Security.CredentialVend)...)
 	errs = append(errs, validateProfiles(cfg, opts)...)
-	errs = append(errs, validateHooks(cfg.Hooks)...)
+	errs = append(errs, policyEntryErrors(validation.CheckHookPolicy(cfg.Hooks))...)
+	errs = append(errs, policyEntryErrors(validation.CheckClaudePermissions(cfg.ClaudeCode.Permissions))...)
+
+	// Infrastructure endpoints are validated whether or not an infra profile
+	// is selected; each message names its exact infrastructure.* key.
+	for _, err := range profile.ValidateInfra(cfg.Infrastructure) {
+		errs = append(errs, ValidationError{Field: "infrastructure", Message: err.Error()})
+	}
 
 	// git.branch_pattern is spliced into the branch-naming pre-push hook.
 	if err := validation.CheckBranchPattern(cfg.Git.BranchPattern); err != nil {
@@ -385,12 +392,13 @@ func validateProfiles(cfg *types.QsdevConfig, opts ValidateOptions) []Validation
 	return errs
 }
 
-// validateHooks checks the hooks block: each file-boundary extra read path
-// must be one the hook can resolve and must not lift the read boundary, and
-// each tool-gates entry must be a tool name pattern.
-func validateHooks(h types.HooksConfig) []ValidationError {
+// policyEntryErrors converts the invalid entries of a policy block (the hooks
+// block: file-boundary extra read paths the hook can resolve that do not lift
+// the read boundary, and tool name patterns; claude_code.permissions:
+// permission rules) to validation errors.
+func policyEntryErrors(entries []validation.PolicyEntryError) []ValidationError {
 	var errs []ValidationError
-	for _, e := range validation.CheckHookPolicy(h) {
+	for _, e := range entries {
 		errs = append(errs, ValidationError{
 			Field:   fmt.Sprintf("%s[%d]", e.Field, e.Index),
 			Value:   e.Value,

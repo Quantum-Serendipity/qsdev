@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
@@ -603,6 +604,40 @@ func writeProjectFile(t *testing.T, root, rel, content string) {
 	}
 }
 
+// TestVerifyGeneratedFiles_ModifiedSkipFileRemediation checks an edited
+// skip-if-exists file is not sent to 'qsdev repair' or 'qsdev init --force',
+// which keep it, while other machine-owned files still are.
+func TestVerifyGeneratedFiles_ModifiedSkipFileRemediation(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name       string
+		strategy   types.MergeStrategy
+		wantRepair bool
+	}{
+		{"skip", types.Skip, false},
+		{"overwrite", types.Overwrite, true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			dir := t.TempDir()
+			const rel = ".npmrc"
+			writeProjectFile(t, dir, rel, "min-release-age=3\n")
+			expected := state.RecordFiles([]types.GeneratedFile{{Path: rel, Content: []byte("min-release-age=14\n"), Mode: 0o644, Strategy: tt.strategy}})
+			r := findResult(verifyGeneratedFiles(dir, expected, nil, nil, nil), "file_unmodified_"+rel)
+			if r == nil {
+				t.Fatal("modified file not reported")
+			}
+			if got := strings.Contains(r.Remediation, "to regenerate it; machine-owned"); got != tt.wantRepair {
+				t.Errorf("Remediation = %q, want repair advice %v", r.Remediation, tt.wantRepair)
+			}
+			if !tt.wantRepair && r.Remediation != skipModifiedRemediation(rel) {
+				t.Errorf("Remediation = %q, want %q", r.Remediation, skipModifiedRemediation(rel))
+			}
+		})
+	}
+}
+
 // TestVerifyGeneratedFiles_UnjoinedCheckoutJoinsFirst pins the remediation in
 // a checkout with a committed config but no local init state: repair, update
 // and auto-fix all refuse or fail there, so the advice is to join first and
@@ -621,7 +656,7 @@ func TestVerifyGeneratedFiles_UnjoinedCheckoutJoinsFirst(t *testing.T) {
 		}
 		expected := state.RecordFiles([]types.GeneratedFile{{Path: "deleted.txt", Content: []byte("x"), Mode: 0o644}})
 		var r *CheckResult
-		for _, res := range verifyGeneratedFiles(dir, expected, nil, nil) {
+		for _, res := range verifyGeneratedFiles(dir, expected, nil, nil, nil) {
 			if res.Name == "file_exists_deleted.txt" {
 				r = &res
 			}
@@ -632,6 +667,107 @@ func TestVerifyGeneratedFiles_UnjoinedCheckoutJoinsFirst(t *testing.T) {
 		joinsFirst := strings.HasPrefix(r.Remediation, joinFirstRemediation)
 		if joinsFirst == joined || r.AutoFixable == !joined {
 			t.Errorf("joined=%v: remediation %q, auto-fixable %v", joined, r.Remediation, r.AutoFixable)
+		}
+	}
+}
+
+// Guard support file fixtures: a library every Python guard loads, judged like
+// a guard whenever a registered guard is a .py script.
+const (
+	supportGuard   = ".claude/hooks/package-guard.py"
+	supportLib     = ".claude/hooks/_qsdev_hooklib.py"
+	supportGuardPy = "#!/usr/bin/env python3\nprint('guard')\n"
+	supportLibPy   = "MIN_PYTHON = (3, 9)\n"
+	// shellGuardSettings registers only a shell script as a PreToolUse guard.
+	shellGuardSettings = `{"hooks": {"PreToolUse": [{"matcher": "Bash", "hooks": [{"type": "command",
+    "command": "\"${CLAUDE_PROJECT_DIR}\"/.claude/hooks/lsp-first-guard.sh"}]}]}}`
+)
+
+// supportCheckContext returns a context whose generator writes the Python
+// guard and its support library with the fixture content, and with settings
+// registering expectedSettings' guards.
+func supportCheckContext(dir, stateFile, expectedSettings string) CheckContext {
+	return CheckContext{
+		ProjectRoot:            dir,
+		StateFile:              stateFile,
+		ExpectedClaudeSettings: []byte(expectedSettings),
+		GeneratedContent: map[string][]byte{
+			supportGuard: []byte(supportGuardPy),
+			supportLib:   []byte(supportLibPy),
+		},
+		GuardSupportFiles: []string{supportLib},
+	}
+}
+
+// TestCheck_GuardSupportFileModifiedFails checks that a tampered support
+// library fails like a tampered guard: it runs inside every Python guard, so
+// a recorded hash that was re-hashed along with it is no defence either.
+func TestCheck_GuardSupportFileModifiedFails(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	tampered := supportLibPy + "def audit_log(entry): pass\n"
+	writeProjectFile(t, dir, supportGuard, supportGuardPy)
+	writeProjectFile(t, dir, supportLib, tampered)
+	stateFile := filepath.Join(dir, ".qsdev", "state.yaml")
+	// The state records the tampered content, as a re-hash would.
+	if err := state.SaveStateToFile(stateFile, state.RecordFiles([]types.GeneratedFile{
+		{Path: supportGuard, Content: []byte(supportGuardPy), Mode: 0o644},
+		{Path: supportLib, Content: []byte(tampered), Mode: 0o644},
+	})); err != nil {
+		t.Fatal(err)
+	}
+
+	results := checkGeneratedFiles(supportCheckContext(dir, stateFile, guardHooksSettings))
+
+	r := findResult(results, "file_unmodified_"+supportLib)
+	if r == nil {
+		t.Fatalf("modified %s not reported: %+v", supportLib, results)
+	}
+	if r.Status != StatusFail || r.Severity != SeverityCritical {
+		t.Errorf("%s = %s/%s, want fail/critical", r.Name, r.Status, r.Severity)
+	}
+	if !strings.Contains(r.Message, "support") || !strings.Contains(r.Remediation, supportLib) {
+		t.Errorf("result does not name the support file: %+v", *r)
+	}
+}
+
+// TestCheck_GuardSupportFileDeletedFails_NoState checks that a deleted support
+// library fails on a checkout with no state file and no manifest, where only
+// the generator's content says it should exist (a clean CI checkout).
+func TestCheck_GuardSupportFileDeletedFails_NoState(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	writeProjectFile(t, dir, supportGuard, supportGuardPy)
+
+	results := checkGeneratedFiles(supportCheckContext(dir, "", guardHooksSettings))
+
+	r := findResult(results, "file_exists_"+supportLib)
+	if r == nil {
+		t.Fatalf("deleted %s not reported: %+v", supportLib, results)
+	}
+	if r.Status != StatusFail || r.Severity != SeverityCritical {
+		t.Errorf("%s = %s/%s, want fail/critical", r.Name, r.Status, r.Severity)
+	}
+	if !ShouldFail(results, AuditLevelCritical) {
+		t.Error("ShouldFail(critical) = false for a deleted guard support file")
+	}
+}
+
+// TestCheck_NoSupportWhenNoPythonGuard checks that the support library is not
+// judged as a guard when no registered guard is a Python script: nothing
+// loads it then.
+func TestCheck_NoSupportWhenNoPythonGuard(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	writeProjectFile(t, dir, supportLib, "tampered\n")
+
+	ctx := supportCheckContext(dir, "", shellGuardSettings)
+	if got := guardScripts(ctx); slices.Contains(got, supportLib) {
+		t.Errorf("guardScripts = %v, want no support file without a Python guard", got)
+	}
+	for _, r := range checkGeneratedFiles(ctx) {
+		if r.FilePath == supportLib && r.Status == StatusFail {
+			t.Errorf("support file judged without a Python guard: %+v", r)
 		}
 	}
 }

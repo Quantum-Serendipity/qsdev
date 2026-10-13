@@ -23,6 +23,7 @@ import (
 
 // Compile-time interface compliance checks.
 var _ ecosystem.EcosystemModule = (*Module)(nil)
+var _ ecosystem.PackageProvider = (*Module)(nil)
 var _ ecosystem.SecretDeclarer = (*Module)(nil)
 var _ ecosystem.DenyRuleProvider = (*Module)(nil)
 var _ ecosystem.ReadDenyRuleProvider = (*Module)(nil)
@@ -196,6 +197,13 @@ func (m *Module) DevenvNixFragment(config ecosystem.ModuleConfig) (string, error
 	return b.String(), nil
 }
 
+// DevenvPackages provisions tflint and tfsec, which the CI scan runs for
+// both variants: the matching pre-commit hooks add them only at the tiers
+// those hooks run at.
+func (m *Module) DevenvPackages(_ ecosystem.ModuleConfig) []string {
+	return []string{"tflint", "tfsec"}
+}
+
 // DevenvYamlInputs contributes the nixpkgs-terraform flake input when the
 // fragment pins languages.terraform.version; devenv refuses to evaluate the
 // version option without it. The input and the version line are an
@@ -264,7 +272,6 @@ func (m *Module) SecurityConfigs(config ecosystem.ModuleConfig) []types.Generate
 func (m *Module) PreCommitHooks(config ecosystem.ModuleConfig) []ecosystem.HookConfig {
 	variant := config.Extra("variant", "terraform")
 	binary := binaryName(variant)
-	nixPkg := nixPackageName(variant)
 	dirs := configDirs(config)
 	tflintEntry := "tflint"
 	if len(dirs) > 0 {
@@ -276,8 +283,10 @@ func (m *Module) PreCommitHooks(config ecosystem.ModuleConfig) []ecosystem.HookC
 	// These are custom hooks (BuiltIn:false), not git-hooks.nix built-ins: the
 	// built-in `terraform-format` runs plain `terraform fmt`, which would discard
 	// this module's binary selection (tofu for OpenTofu) and the `-check`/
-	// `-recursive` flags. NixPackage puts the right binary on PATH so the custom
-	// Entry resolves.
+	// `-recursive` flags. terraform-format runs the variant's devenv language
+	// package (LanguagePackage), the same terraform/tofu build that
+	// languages.<variant>.version pins and that devenv's language module binds
+	// to the hook; the linters bring their own NixPackage.
 	return []ecosystem.HookConfig{
 		{
 			ID:            "terraform-format",
@@ -289,7 +298,8 @@ func (m *Module) PreCommitHooks(config ecosystem.ModuleConfig) []ecosystem.HookC
 			Stages:        []string{"pre-commit"},
 			PassFilenames: false,
 			BuiltIn:       false,
-			NixPackage:    nixPkg,
+			// DevenvNixFragment always enables languages.<variant>.
+			LanguagePackage: variant,
 		},
 		validateHook(variant, dirs),
 		{
@@ -334,8 +344,7 @@ const configFilesPattern = `\.(tf|tofu|tfvars)(\.json)?$`
 // configured). The two steps need a shell, so the entry runs through `sh -c`
 // with NixPackage "bash" (entry rewriting turns `sh` into
 // ${pkgs.bash}/bin/sh); the Terraform binary itself resolves from the devenv
-// environment, where languages.<variant>.enable and the sibling hooks'
-// NixPackage install it.
+// environment, where languages.<variant>.enable installs it.
 //
 // When the configuration lives below the root (dirs, see ExtraConfigDirs)
 // each directory is initialized and validated through -chdir; validating the
@@ -362,15 +371,6 @@ func validateHook(variant string, dirs []string) ecosystem.HookConfig {
 		BuiltIn:       false,
 		NixPackage:    "bash",
 	}
-}
-
-// nixPackageName returns the nixpkgs package providing the CLI binary for the
-// given Terraform variant: opentofu (tofu) or terraform.
-func nixPackageName(variant string) string {
-	if variant == "opentofu" {
-		return "opentofu"
-	}
-	return "terraform"
 }
 
 // deniedSubcommands are the Terraform/OpenTofu subcommands the agent must not

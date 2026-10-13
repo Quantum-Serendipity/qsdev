@@ -34,8 +34,7 @@ func runLoggingHook(t *testing.T, interpreter, script string, payload any, env [
 	}
 	cmd := exec.Command(interpreter, append([]string{path}, args...)...)
 	cmd.Stdin = strings.NewReader(string(in))
-	cmd.Env = append(os.Environ(), "PYTHONDONTWRITEBYTECODE=1")
-	cmd.Env = append(cmd.Env, env...)
+	cmd.Env = hookEnv(t, env...)
 	out, err := cmd.Output()
 	if err != nil {
 		t.Fatalf("%s failed: %v (stdout %q)", script, err, out)

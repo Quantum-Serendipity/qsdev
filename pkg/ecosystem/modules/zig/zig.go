@@ -136,19 +136,21 @@ func (m *Module) SecurityConfigs(_ ecosystem.ModuleConfig) []types.GeneratedFile
 }
 
 // PreCommitHooks returns pre-commit hook definitions for the Zig ecosystem.
+// zig fmt runs the Zig languages.zig pins (minimum_zig_version), since its
+// output changes between releases.
 func (m *Module) PreCommitHooks(_ ecosystem.ModuleConfig) []ecosystem.HookConfig {
 	return []ecosystem.HookConfig{
 		{
-			ID:            "zig-fmt",
-			Name:          "zig-fmt",
-			Description:   "Check Zig source formatting with zig fmt",
-			Entry:         "zig fmt --check",
-			Language:      "system",
-			Types:         []string{"zig"},
-			Stages:        []string{"pre-commit"},
-			PassFilenames: true, // the formatter needs file operands
-			BuiltIn:       false,
-			NixPackage:    "zig",
+			ID:              "zig-fmt",
+			Name:            "zig-fmt",
+			Description:     "Check Zig source formatting with zig fmt",
+			Entry:           "zig fmt --check",
+			Language:        "system",
+			Types:           []string{"zig"},
+			Stages:          []string{"pre-commit"},
+			PassFilenames:   true, // the formatter needs file operands
+			BuiltIn:         false,
+			LanguagePackage: "zig",
 		},
 	}
 }

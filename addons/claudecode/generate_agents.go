@@ -18,7 +18,14 @@ type AgentEntry struct {
 	Name        string   `yaml:"name"`
 	Description string   `yaml:"description"`
 	Tags        []string `yaml:"tags"`
-	ReadOnly    bool     `yaml:"read_only"`
+	// ReadOnly means the agent cannot edit files: its template's tools
+	// allowlist names none of Write, Edit, MultiEdit or NotebookEdit, and its
+	// disallowedTools blocks Write and Edit. It does not mean Bash cannot
+	// write. Claude Code honors a parenthesised specifier in an agent's tools
+	// only for Agent(...), so Bash(git log *) there cannot scope Bash to
+	// commands. Bash therefore stays and is governed by the project's
+	// permission rules and hooks.
+	ReadOnly bool `yaml:"read_only"`
 }
 
 // loadAgentManifest reads and parses the agent manifest from the embedded filesystem.

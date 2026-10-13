@@ -5,18 +5,21 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+
+	"github.com/Quantum-Serendipity/qsdev/internal/projectctx"
 )
 
 // MarkerFreeTempDir returns a fresh, symlink-resolved temporary directory
-// whose ancestors contain nothing isMarker accepts. Tests of upward project
-// discovery need this: on Windows the default temp directory lives inside the
-// real user profile (C:\Users\<name>\AppData\Local\Temp), so a walk up from
-// t.TempDir() reaches the profile and any qsdev data directory in it, which a
-// test that points HOME/USERPROFILE elsewhere cannot exclude. When the default
+// with no trusted project marker above it, as projectctx.Resolve sees one.
+// Tests of upward project discovery need this: on Windows the default temp
+// directory lives inside the real user profile
+// (C:\Users\<name>\AppData\Local\Temp), so a walk up from t.TempDir() reaches
+// the profile and any project marker in it, which a test that points
+// HOME/USERPROFILE elsewhere cannot exclude. When the default
 // temp directory is unsuitable it tries RUNNER_TEMP (outside the profile on
 // hosted CI runners); if no candidate works the test is skipped, naming the
 // ancestor that got in the way.
-func MarkerFreeTempDir(t testing.TB, isMarker func(dir string) bool) string {
+func MarkerFreeTempDir(t testing.TB) string {
 	t.Helper()
 	candidates := []string{""} // "" is the default temp directory
 	if rt := os.Getenv("RUNNER_TEMP"); rt != "" {
@@ -25,7 +28,7 @@ func MarkerFreeTempDir(t testing.TB, isMarker func(dir string) bool) string {
 	var blocked string
 	for _, base := range candidates {
 		dir := tempDirIn(t, base)
-		if a := markedAncestor(dir, isMarker); a != "" {
+		if a := markedAncestor(dir); a != "" {
 			blocked = a
 			continue
 		}
@@ -55,15 +58,16 @@ func tempDirIn(t testing.TB, base string) string {
 	return resolved
 }
 
-// markedAncestor returns the nearest strict ancestor of dir that isMarker
-// accepts, or "" when there is none.
-func markedAncestor(dir string, isMarker func(dir string) bool) string {
-	for d := filepath.Dir(dir); ; d = filepath.Dir(d) {
-		if isMarker(d) {
-			return d
-		}
-		if parent := filepath.Dir(d); parent == d {
-			return ""
-		}
+// markedAncestor returns the project root projectctx.Resolve finds strictly
+// above dir, or "" when there is none.
+func markedAncestor(dir string) string {
+	parent := filepath.Dir(dir)
+	if parent == dir {
+		return ""
 	}
+	pc, err := projectctx.Resolve(parent, projectctx.Enclosing)
+	if err != nil || !pc.Found {
+		return ""
+	}
+	return pc.Root
 }

@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/Quantum-Serendipity/qsdev/addons/devenv"
+	"github.com/Quantum-Serendipity/qsdev/internal/catalog"
 	"github.com/Quantum-Serendipity/qsdev/internal/profile"
 	"github.com/Quantum-Serendipity/qsdev/pkg/ecosystem"
 	"github.com/Quantum-Serendipity/qsdev/pkg/types"
@@ -243,4 +244,62 @@ func pathKeys(files []types.GeneratedFile) []string {
 		paths[i] = f.Path
 	}
 	return paths
+}
+
+// TestGenerate_StrictTierAgeGates checks the release-age gates follow the
+// compliance level the tier resolves to through the catalog: tier full is
+// strict, whose 14-day window must reach every package manager config, the
+// devenv shell and CI without any caller hardcoding it.
+func TestGenerate_StrictTierAgeGates(t *testing.T) {
+	t.Parallel()
+	level := catalog.MustDefault().TierCompliance("full")
+	if level != "strict" {
+		t.Fatalf("catalog maps tier full to %q, want strict", level)
+	}
+	tests := []struct {
+		name string
+		lang types.LanguageChoice
+		want map[string]string // path -> required substring ("*" = any file)
+	}{
+		{"npm", types.LanguageChoice{Name: "javascript", Version: "22", PackageManager: "npm"},
+			map[string]string{".npmrc": "\nmin-release-age=14\n"}},
+		{"pnpm", types.LanguageChoice{Name: "javascript", Version: "22", PackageManager: "pnpm"},
+			map[string]string{"pnpm-workspace.yaml": "\nminimumReleaseAge: 20160 "}},
+		{"uv", types.LanguageChoice{Name: "python", Version: "3.12", PackageManager: "uv"},
+			map[string]string{"devenv.nix": `UV_EXCLUDE_NEWER = "P14D"`, "*": "uv sync --locked --exclude-newer P14D"}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			files, err := generateInfra(t, types.WizardAnswers{
+				ProjectName:     "strict",
+				Languages:       []types.LanguageChoice{tt.lang},
+				Tier:            "full",
+				ComplianceLevel: level,
+			})
+			if err != nil {
+				t.Fatalf("Generate: %v", err)
+			}
+			for path, want := range tt.want {
+				if path == "*" {
+					if !anyFileContains(files, want) {
+						t.Errorf("no generated file contains %q", want)
+					}
+					continue
+				}
+				if got, ok := files[path]; !ok || !strings.Contains(got, want) {
+					t.Errorf("%s lacks %q:\n%s", path, want, got)
+				}
+			}
+		})
+	}
+}
+
+func anyFileContains(files map[string]string, want string) bool {
+	for _, content := range files {
+		if strings.Contains(content, want) {
+			return true
+		}
+	}
+	return false
 }

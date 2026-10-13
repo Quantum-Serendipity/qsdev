@@ -100,7 +100,7 @@ func ResolveProjectPolicy(project *types.QsdevConfig, local *LocalConfig) (*Proj
 // `hooks` block) and the java and cloud blocks, which replace any earlier
 // ones because .qsdev.yaml is authoritative for them.
 func (p *ProjectPolicy) Apply(a *types.WizardAnswers) {
-	level := effectiveSecurityLevel(p.Effective.Config)
+	level := EffectiveSecurityLevel(p.Effective.Config)
 	if CompareComplianceLevels(level, a.ComplianceLevel) > 0 {
 		a.ComplianceLevel = level
 	}
@@ -128,6 +128,7 @@ func (p *ProjectPolicy) Apply(a *types.WizardAnswers) {
 	AdoptClientMCPPolicy(a, p.Committed)
 	a.BranchPattern = p.Committed.Git.BranchPattern
 	a.HookPolicy = p.Committed.Hooks.Clone()
+	a.ClaudePermissions = p.Committed.ClaudeCode.Permissions.Clone()
 	// The java and cloud blocks have no wizard or flag equivalent: the committed file is
 	// its only source, so a hand edit reaches the next update.
 	a.Java = cloneJava(p.Committed.Java)

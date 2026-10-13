@@ -148,17 +148,48 @@ func isMavenCentral(r pomRepository) bool {
 // that is neither Maven Central nor in java.repository_allowlist): artifacts
 // only such a repository hosts then fail to resolve, with an error naming
 // the mirror rather than the repository. It also reports an existing
-// .mvn/settings.xml whose qsdev mirror no longer matches the allowlist,
-// since qsdev never overwrites that file.
+// .mvn/settings.xml whose qsdev mirrors no longer match what qsdev generates,
+// since qsdev never overwrites that file, and a Maven wrapper too old to
+// load it (see mavenWrapperVersionWarning). For a Gradle project it reports
+// missing verification metadata and, with a registry proxy, that the proxy
+// replaces the Gradle Plugin Portal (see gradleWarnings).
 func (m *Module) SetupWarnings(projectRoot string, config ecosystem.ModuleConfig) []string {
-	if !usesMaven(buildTool(config)) {
-		return nil
-	}
+	bt := buildTool(config)
 	var warnings []string
-	if w := redirectedRepositoryWarning(projectRoot, config); w != "" {
-		warnings = append(warnings, w)
+	if usesMaven(bt) {
+		for _, w := range []string{redirectedRepositoryWarning(projectRoot, config), mavenWrapperVersionWarning(projectRoot)} {
+			if w != "" {
+				warnings = append(warnings, w)
+			}
+		}
+		warnings = append(warnings, staleMirrorWarnings(projectRoot, config)...)
 	}
-	return append(warnings, staleMirrorWarnings(projectRoot, config)...)
+	if usesGradle(bt) {
+		warnings = append(warnings, gradleWarnings(projectRoot, config)...)
+	}
+	return warnings
+}
+
+// gradleWarnings reports a Gradle project without
+// gradle/verification-metadata.xml, whose strict CI build then fails (Gradle
+// itself would verify nothing), and, when a registry proxy is set, that the
+// proxy init script removes the Gradle Plugin Portal along with every other
+// Maven repository.
+func gradleWarnings(projectRoot string, config ecosystem.ModuleConfig) []string {
+	var warnings []string
+	if _, err := os.Stat(filepath.Join(projectRoot, filepath.FromSlash(gradleVerificationMetadataPath))); errors.Is(err, fs.ErrNotExist) {
+		warnings = append(warnings, fmt.Sprintf("%s is missing, so Gradle's strict dependency verification "+
+			"checks nothing and the generated gradle-build CI step fails; run '%s', review the file and commit it",
+			gradleVerificationMetadataPath, gradleVerificationBootstrap))
+	}
+	if config.RegistryProxy != "" {
+		warnings = append(warnings, fmt.Sprintf("%s routes every Gradle Maven repository to the registry proxy %s, "+
+			"the Gradle Plugin Portal (plugins.gradle.org) included, so the proxy must also serve Gradle plugin "+
+			"markers (proxy https://plugins.gradle.org/m2/). The qsdev tasks and CI load it; a gradle run by hand "+
+			"needs -I %s",
+			gradleProxyScriptPath, config.RegistryProxy, gradleProxyScriptPath))
+	}
+	return warnings
 }
 
 // redirectedRepositoryWarning returns the warning listing the declared
@@ -187,15 +218,18 @@ func redirectedRepositoryWarning(projectRoot string, config ecosystem.ModuleConf
 		target = "the registry proxy " + config.RegistryProxy
 	}
 	return fmt.Sprintf("the project's POMs declare repositories that the %s mirror redirects to %s "+
-		"whenever Maven uses that file (mvn -s %s): %s. Artifacts only they host will fail to resolve; "+
+		"(the devenv shell loads that file for every mvn run through MAVEN_ARGS): %s. "+
+		"Artifacts only they host will fail to resolve; "+
 		"to resolve them from their own URL, add their ids to java.repository_allowlist in %s",
-		settingsXMLPath, target, settingsXMLPath, strings.Join(redirected, ", "), branding.Get().ConfigFile)
+		settingsXMLPath, target, strings.Join(redirected, ", "), branding.Get().ConfigFile)
 }
 
 // staleMirrorWarnings reports each qsdev mirror in an existing
 // .mvn/settings.xml whose mirrorOf differs from the one qsdev now generates
-// for the allowlist. A file that is absent or not parseable is left to
-// generation (which creates it) and the settings check.
+// for the allowlist, and a qsdev file without the HTTP blocker (generated
+// before .mvn/settings.xml replaced Maven's own global settings). A file that
+// is absent or not parseable is left to generation (which creates it) and
+// the settings check.
 func staleMirrorWarnings(projectRoot string, config ecosystem.ModuleConfig) []string {
 	data, err := os.ReadFile(filepath.Join(projectRoot, filepath.FromSlash(settingsXMLPath)))
 	if err != nil {
@@ -207,16 +241,31 @@ func staleMirrorWarnings(projectRoot string, config ecosystem.ModuleConfig) []st
 	}
 	want := mirrorOfExcept(config.RepositoryAllowlist)
 	var warnings []string
+	qsdevFile, hasBlocker := false, false
 	for _, mir := range existing.Mirrors.Mirror {
+		if mir.ID == httpBlockerMirrorID {
+			hasBlocker = true
+			continue
+		}
 		if mir.ID != centralMirrorID && mir.ID != proxyMirrorID {
 			continue
 		}
+		qsdevFile = true
 		if strings.TrimSpace(mir.MirrorOf) == want {
 			continue
 		}
 		warnings = append(warnings, fmt.Sprintf("%s mirror %q has mirrorOf %q but java.repository_allowlist needs %q; "+
 			"%s never overwrites an existing %s, so set <mirrorOf>%s</mirrorOf> in it by hand",
 			settingsXMLPath, mir.ID, mir.MirrorOf, want, branding.Get().AppName, settingsXMLPath, want))
+	}
+	if qsdevFile && !hasBlocker {
+		b := httpBlockerMirror()
+		warnings = append(warnings, fmt.Sprintf("%s has no %q mirror; it replaces Maven's global settings, "+
+			"where that mirror is defined, so plain-http repositories are no longer blocked. %s never "+
+			"overwrites an existing %s, so add <mirror><id>%s</id><url>%s</url><mirrorOf>%s</mirrorOf>"+
+			"<blocked>true</blocked></mirror> after its %s or %s mirror by hand",
+			settingsXMLPath, b.ID, branding.Get().AppName, settingsXMLPath, b.ID, b.URL, b.MirrorOf,
+			centralMirrorID, proxyMirrorID))
 	}
 	return warnings
 }

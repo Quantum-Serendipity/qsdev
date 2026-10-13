@@ -16,6 +16,7 @@ const (
 	reasonLocalServiceOption = "a local override can add service options but not change committed ones"
 	reasonLocalPermission    = "a local override can only tighten the permission level"
 	reasonLocalCredVend      = "credential vending can only be configured in the committed config"
+	reasonLocalPermissions   = "claude_code.permissions is team policy and can only be set in the committed config"
 )
 
 // sanitizeLocal returns the part of the developer's local layer that only
@@ -29,8 +30,8 @@ const (
 //     committed package manager and a service's committed options may not;
 //   - claude_code.permission_level is kept only when it is at least as strict
 //     as base's effective level (see ComparePermissionLevels);
-//   - tools.disabled, tools.config and a claude_code.enabled that differs from
-//     base are dropped;
+//   - tools.disabled, tools.config, claude_code.permissions and a
+//     claude_code.enabled that differs from base are dropped;
 //   - security settings are kept: enforceSecurityFloor floors them after the
 //     merge, so they can only raise the project's floor. The exception is
 //     security.credential_vend, an opt-in to hand out cloud credentials,
@@ -69,6 +70,14 @@ func sanitizeLocal(base *types.QsdevConfig, local *LocalConfig) (*types.QsdevCon
 			Field:     "security.credential_vend",
 			Attempted: local.Security.CredentialVend,
 			Reason:    reasonLocalCredVend,
+		})
+	}
+
+	if !local.ClaudeCode.Permissions.IsZero() {
+		violations = append(violations, FloorViolation{
+			Field:     "claude_code.permissions",
+			Attempted: slices.Concat(local.ClaudeCode.Permissions.Allow, local.ClaudeCode.Permissions.Deny),
+			Reason:    reasonLocalPermissions,
 		})
 	}
 

@@ -145,6 +145,16 @@ func (c *Catalog) AllPackageInstallAskRules() []string {
 	return sliceutil.Dedup(rules)
 }
 
+// AllPermissionAskRules returns the rules of every ask set, in set-name
+// order and deduplicated: every command the catalog gates behind a prompt.
+func (c *Catalog) AllPermissionAskRules() []string {
+	var rules []string
+	for _, setName := range slices.Sorted(maps.Keys(c.permissionRules.AskRules)) {
+		rules = append(rules, c.permissionRules.AskRules[setName]...)
+	}
+	return sliceutil.Dedup(rules)
+}
+
 // PermissionPreset returns the preset definition for a named preset.
 func (c *Catalog) PermissionPreset(name string) (PermissionPresetDef, bool) {
 	d, ok := c.permissionRules.PresetDefs[name]

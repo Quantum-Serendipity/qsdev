@@ -71,7 +71,7 @@ func TestAWSDenyRules_CoverCredentialExfilCommands(t *testing.T) {
 
 	anyRuleMatches := func(op string) bool {
 		for _, r := range rules {
-			if denyutil.MatchesDenyRule(r, op) {
+			if denyutil.MatchesBashRule(r, op) {
 				return true
 			}
 		}
@@ -79,14 +79,14 @@ func TestAWSDenyRules_CoverCredentialExfilCommands(t *testing.T) {
 	}
 
 	denied := []string{
-		"Bash(aws sts get-session-token)",
-		"Bash(aws sts get-session-token --duration-seconds 3600)",
-		"Bash(aws sts assume-role --role-arn arn:aws:iam::1:role/x --role-session-name s)",
-		"Bash(aws sts assume-role-with-web-identity --role-arn arn:aws:iam::1:role/x --web-identity-token t)",
-		"Bash(aws sts assume-role-with-saml --role-arn arn:aws:iam::1:role/x --principal-arn arn:aws:iam::1:saml/y)",
-		"Bash(aws sts get-federation-token --name temp)",
-		"Bash(aws configure export-credentials)",
-		"Bash(aws configure export-credentials --format env)",
+		"aws sts get-session-token",
+		"aws sts get-session-token --duration-seconds 3600",
+		"aws sts assume-role --role-arn arn:aws:iam::1:role/x --role-session-name s",
+		"aws sts assume-role-with-web-identity --role-arn arn:aws:iam::1:role/x --web-identity-token t",
+		"aws sts assume-role-with-saml --role-arn arn:aws:iam::1:role/x --principal-arn arn:aws:iam::1:saml/y",
+		"aws sts get-federation-token --name temp",
+		"aws configure export-credentials",
+		"aws configure export-credentials --format env",
 	}
 	for _, op := range denied {
 		if !anyRuleMatches(op) {
@@ -95,9 +95,9 @@ func TestAWSDenyRules_CoverCredentialExfilCommands(t *testing.T) {
 	}
 
 	allowed := []string{
-		"Bash(aws sts decode-authorization-message --encoded-message m)",
-		"Bash(aws s3 ls)",
-		"Bash(aws configure list)",
+		"aws sts decode-authorization-message --encoded-message m",
+		"aws s3 ls",
+		"aws configure list",
 	}
 	for _, op := range allowed {
 		if anyRuleMatches(op) {

@@ -253,3 +253,105 @@ func withPackages(a types.WizardAnswers, packages ...string) types.WizardAnswers
 	a.ExtraPackages = packages
 	return a
 }
+
+// TestSyncProjectConfig_KeepsCommittedClaudePermissions checks that a day-2
+// sync (init --update, enable, ...) keeps the committed
+// claude_code.permissions block: it is team policy, so answers that lack or
+// change it (the answers file is local and agent-writable) never rewrite it.
+func TestSyncProjectConfig_KeepsCommittedClaudePermissions(t *testing.T) {
+	t.Parallel()
+	const committed = `version: 2
+claude_code:
+  enabled: true
+  permission_level: standard
+  permissions:
+    allow: ["Bash(make *)"]
+    deny: ["Bash(terraform apply *)"]
+`
+	tests := []struct {
+		name  string
+		perms types.ClaudePermissionsConfig
+	}{
+		{name: "answers without permissions"},
+		{name: "answers with other permissions", perms: types.ClaudePermissionsConfig{Allow: []string{"Bash(*)"}}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			dir := t.TempDir()
+			path := filepath.Join(dir, branding.Get().ConfigFile)
+			if err := os.WriteFile(path, []byte(committed), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			answers := types.WizardAnswers{
+				ClaudeCode:        true,
+				PermissionLevel:   "standard",
+				ExtraPackages:     []string{"jq"},
+				ClaudePermissions: tt.perms,
+			}
+			if err := SyncProjectConfig(dir, answers); err != nil {
+				t.Fatalf("SyncProjectConfig: %v", err)
+			}
+			cfg, err := ParseQsdevConfig(path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			want := types.ClaudePermissionsConfig{Allow: []string{"Bash(make *)"}, Deny: []string{"Bash(terraform apply *)"}}
+			if !slices.Equal(cfg.ClaudeCode.Permissions.Allow, want.Allow) || !slices.Equal(cfg.ClaudeCode.Permissions.Deny, want.Deny) {
+				t.Errorf("claude_code.permissions = %+v, want the committed %+v", cfg.ClaudeCode.Permissions, want)
+			}
+			if !slices.Equal(cfg.Packages, []string{"jq"}) {
+				t.Errorf("packages = %v, want the synced [jq]", cfg.Packages)
+			}
+		})
+	}
+}
+
+// TestPreserveCommittedPolicy_ClaudePermissions checks that re-creating a
+// project keeps the committed claude_code.permissions block.
+func TestPreserveCommittedPolicy_ClaudePermissions(t *testing.T) {
+	t.Parallel()
+	committed := &types.QsdevConfig{ClaudeCode: types.ClaudeCodeConfig{
+		Permissions: types.ClaudePermissionsConfig{Deny: []string{"Bash(terraform apply *)"}},
+	}}
+	fresh := types.QsdevConfig{}
+	PreserveCommittedPolicy(&fresh, committed)
+	if !slices.Equal(fresh.ClaudeCode.Permissions.Deny, []string{"Bash(terraform apply *)"}) {
+		t.Errorf("claude_code.permissions = %+v, want the committed block", fresh.ClaudeCode.Permissions)
+	}
+}
+
+// TestValidateQsdevConfig_ClaudePermissions checks a malformed committed
+// claude_code.permissions entry fails parse validation.
+func TestValidateQsdevConfig_ClaudePermissions(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name       string
+		yaml       string
+		wantFields []string
+	}{
+		{name: "valid entries", yaml: `{allow: ["Bash(make *)", Read], deny: ["Read(/secrets/**)"]}`},
+		{
+			name:       "malformed entries rejected",
+			yaml:       `{allow: ["Bash(make *"], deny: ["Read(x)", "(x)", "Bash()"]}`,
+			wantFields: []string{"claude_code.permissions.allow[0]", "claude_code.permissions.deny[1]", "claude_code.permissions.deny[2]"},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			data := "version: 2\nclaude_code:\n  permissions: " + tt.yaml + "\n"
+			cfg, err := ParseQsdevConfigBytes([]byte(data))
+			if err != nil {
+				t.Fatalf("ParseQsdevConfigBytes: %v", err)
+			}
+			var fields []string
+			for _, e := range ValidateQsdevConfig(cfg, ValidateOptions{}) {
+				fields = append(fields, e.Field)
+			}
+			if strings.Join(fields, " ") != strings.Join(tt.wantFields, " ") {
+				t.Errorf("validation error fields = %v, want %v", fields, tt.wantFields)
+			}
+		})
+	}
+}

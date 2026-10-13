@@ -109,10 +109,11 @@ type updateOutcome struct {
 }
 
 func runUpdate(cmd *cobra.Command, opts UpdateOptions) error {
-	projectRoot, err := cmdutil.ProjectRoot()
+	pc, err := cmdutil.Project(cmd)
 	if err != nil {
 		return err
 	}
+	projectRoot := pc.Root
 	if err := requireJoined(projectRoot); err != nil {
 		return err
 	}
@@ -508,7 +509,7 @@ func planOrphans(
 	var plans []FileUpdatePlan
 	for _, path := range state.OrphanedFiles(storedState, newFiles) {
 		stored := storedState.Files[path]
-		if !updateOwnsOrphan(path, stored, answers, generatedOwners) {
+		if !updateOwnsOrphan(stored, answers, generatedOwners) {
 			continue
 		}
 
@@ -556,13 +557,9 @@ func planOrphans(
 // this update (generatedOwners): its output is then authoritative, so a file it
 // used to produce and no longer does was retired and is cleaned up here. When
 // the tool generated nothing (its addon is out of the generation scope, or it
-// yields no files at this tier) its tracked files are left alone. The
-// per-developer local config is created once by join and never regenerated.
-func updateOwnsOrphan(path string, stored types.FileState, answers types.WizardAnswers, generatedOwners map[string]bool) bool {
-	if stored.Owner != "" && answers.EnabledTools[stored.Owner] && !generatedOwners[stored.Owner] {
-		return false
-	}
-	return path != branding.Get().LocalConfig
+// yields no files at this tier) its tracked files are left alone.
+func updateOwnsOrphan(stored types.FileState, answers types.WizardAnswers, generatedOwners map[string]bool) bool {
+	return stored.Owner == "" || !answers.EnabledTools[stored.Owner] || generatedOwners[stored.Owner]
 }
 
 // readFileForMerge returns the base content for three-way merge from stored state.

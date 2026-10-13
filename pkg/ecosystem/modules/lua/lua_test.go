@@ -119,3 +119,23 @@ func TestDevenvNixFragment(t *testing.T) {
 		t.Errorf("fragment missing lua reference:\n%s", frag)
 	}
 }
+
+// TestDevenvPackages verifies luarocks, which a LuaRocks project's CI runs,
+// is provisioned from the package set of devenv's Lua interpreter, and only
+// for LuaRocks projects.
+func TestDevenvPackages(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		pm   string
+		want []string
+	}{
+		{pm: "luarocks", want: []string{"luaPackages.luarocks"}},
+		{pm: "lux"},
+		{pm: ""},
+	}
+	for _, tt := range tests {
+		if got := (&lua.Module{}).DevenvPackages(ecosystem.ModuleConfig{PackageManager: tt.pm}); !slices.Equal(got, tt.want) {
+			t.Errorf("DevenvPackages(pm=%q) = %q, want %q", tt.pm, got, tt.want)
+		}
+	}
+}

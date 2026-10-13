@@ -3,6 +3,8 @@ package haskell
 import (
 	"context"
 	"errors"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -91,12 +93,68 @@ func TestSetupWarnings(t *testing.T) {
 			name: "version unset in an older .qsdev.yaml", stack: "resolver: lts-22.44\n", config: stackConfig,
 			want: []string{"version in .qsdev.yaml is not set", "GHC 9.6.7", "haskell.compiler.ghc967", "qsdev init --update"},
 		},
-		{name: "cabal project", stack: "resolver: nightly-2025-01-01\n", config: ecosystem.ModuleConfig{}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 			got := (&Module{}).SetupWarnings(writeStackYAML(t, tt.stack), tt.config)
+			if tt.want == nil {
+				if len(got) != 0 {
+					t.Fatalf("SetupWarnings() = %q, want none", got)
+				}
+				return
+			}
+			if len(got) != 1 {
+				t.Fatalf("SetupWarnings() = %q, want one warning", got)
+			}
+			for _, sub := range tt.want {
+				if !strings.Contains(got[0], sub) {
+					t.Errorf("warning %q does not contain %q", got[0], sub)
+				}
+			}
+		})
+	}
+}
+
+// TestSetupWarnings_Cabal checks a Cabal project is warned when its
+// dependencies are not pinned: no cabal.project.freeze (the CI install step
+// then fails), or a freeze file without an index-state line, so `cabal
+// update` lets the Hackage index, and with it revisions, drift (U10-11).
+func TestSetupWarnings_Cabal(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name   string
+		files  map[string]string
+		config ecosystem.ModuleConfig
+		want   []string
+	}{
+		{
+			name: "freeze file missing", files: map[string]string{"x.cabal": ""},
+			want: []string{"cabal.project.freeze", "cabal freeze"},
+		},
+		{
+			name: "freeze file without index-state", files: map[string]string{"x.cabal": "", "cabal.project.freeze": "constraints: any.base ==4.19.1.0\n"},
+			want: []string{"index-state"},
+		},
+		{
+			name: "freeze file with index-state", config: ecosystem.ModuleConfig{Extras: map[string]string{"build_tool": "cabal"}},
+			files: map[string]string{"x.cabal": "", "cabal.project.freeze": "active-repositories: hackage.haskell.org\r\nindex-state: hackage.haskell.org 2026-01-01T00:00:00Z\r\n"},
+		},
+		{
+			name: "stack project", config: ecosystem.ModuleConfig{Version: "9.6.7", Extras: stackConfig.Extras},
+			files: map[string]string{"stack.yaml": "resolver: lts-22.44\n"},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			dir := t.TempDir()
+			for name, content := range tt.files {
+				if err := os.WriteFile(filepath.Join(dir, name), []byte(content), 0o644); err != nil {
+					t.Fatal(err)
+				}
+			}
+			got := (&Module{}).SetupWarnings(dir, tt.config)
 			if tt.want == nil {
 				if len(got) != 0 {
 					t.Fatalf("SetupWarnings() = %q, want none", got)

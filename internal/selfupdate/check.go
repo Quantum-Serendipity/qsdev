@@ -313,8 +313,15 @@ func recordAttempt(cfg Config, cached *cachedCheck) {
 	_ = saveCache(cfg, &c)
 }
 
+// errNoCacheDir reports that the configuration names no cache directory, so
+// nothing is cached.
+var errNoCacheDir = errors.New("no update-check cache directory")
+
 // loadCache reads the cached update check result.
 func loadCache(cfg Config) (*cachedCheck, error) {
+	if cfg.CacheDir == "" {
+		return nil, errNoCacheDir
+	}
 	data, err := os.ReadFile(cacheFile(cfg))
 	if err != nil {
 		return nil, err
@@ -328,6 +335,9 @@ func loadCache(cfg Config) (*cachedCheck, error) {
 
 // saveCache writes the update check result to the cache file.
 func saveCache(cfg Config, c *cachedCheck) error {
+	if cfg.CacheDir == "" {
+		return errNoCacheDir
+	}
 	if err := os.MkdirAll(cfg.CacheDir, fileutil.ModeDirDefault); err != nil {
 		return err
 	}

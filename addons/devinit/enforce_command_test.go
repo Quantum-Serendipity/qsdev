@@ -10,8 +10,12 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/Quantum-Serendipity/qsdev/internal/contentsign"
 	"github.com/Quantum-Serendipity/qsdev/internal/exitcode"
-	"github.com/Quantum-Serendipity/qsdev/internal/logging"
+	"github.com/Quantum-Serendipity/qsdev/internal/projectctx"
+	sandboxpolicy "github.com/Quantum-Serendipity/qsdev/internal/sandbox/policy"
+	"github.com/Quantum-Serendipity/qsdev/internal/selfprotect/canon"
+	"github.com/Quantum-Serendipity/qsdev/internal/testutil"
 	"github.com/Quantum-Serendipity/qsdev/pkg/branding"
 )
 
@@ -56,13 +60,13 @@ const ruleWithoutID = `  - category: self-protection
 `
 
 type enforceEnv struct {
-	project string // project root containing .qsdev/policy.yaml
+	project string // project root: holds the config file and .qsdev/policy.yaml
 	sub     string // a subdirectory of project
 	home    string
 }
 
-// newEnforceEnv isolates HOME and CLAUDE_PROJECT_DIR and creates a project
-// with a subdirectory. It does not write a policy.
+// newEnforceEnv isolates HOME and CLAUDE_PROJECT_DIR and creates a project,
+// marked by its config file, with a subdirectory. It does not write a policy.
 func newEnforceEnv(t *testing.T) enforceEnv {
 	t.Helper()
 	home := t.TempDir()
@@ -72,17 +76,20 @@ func newEnforceEnv(t *testing.T) enforceEnv {
 
 	project := t.TempDir()
 	sub := filepath.Join(project, "internal", "pkg")
-	for _, dir := range []string{filepath.Join(project, policyDirName), sub} {
+	for _, dir := range []string{filepath.Join(project, projectctx.DataDirName()), sub} {
 		if err := os.MkdirAll(dir, 0o755); err != nil {
 			t.Fatalf("mkdir %s: %v", dir, err)
 		}
+	}
+	if err := os.WriteFile(filepath.Join(project, branding.Get().ConfigFile), []byte("version: 1\n"), 0o644); err != nil {
+		t.Fatalf("writing config: %v", err)
 	}
 	return enforceEnv{project: project, sub: sub, home: home}
 }
 
 func (e enforceEnv) writePolicy(t *testing.T, content string) {
 	t.Helper()
-	path := filepath.Join(e.project, policyDirName, "policy.yaml")
+	path := filepath.Join(e.project, projectctx.DataDirName(), "policy.yaml")
 	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
 		t.Fatalf("writing policy: %v", err)
 	}
@@ -471,10 +478,10 @@ func TestPolicyFailOpen(t *testing.T) {
 
 func TestPolicyFilesForDeduplicatesHomeProject(t *testing.T) {
 	e := newEnforceEnv(t)
-	if err := os.MkdirAll(filepath.Join(e.home, policyDirName), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Join(e.home, projectctx.DataDirName()), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	userPolicy := filepath.Join(e.home, policyDirName, "policy.yaml")
+	userPolicy := filepath.Join(e.home, projectctx.DataDirName(), "policy.yaml")
 	if err := os.WriteFile(userPolicy, []byte(fmt.Sprintf(enforceTestPolicy, "fail_closed")), 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -485,15 +492,8 @@ func TestPolicyFilesForDeduplicatesHomeProject(t *testing.T) {
 	if err := os.MkdirAll(start, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	want := start
-	if outer, ok := markerAbove(e.home); ok {
-		// On Windows the temp dir sits inside the real user profile, whose own
-		// ~/.qsdev is an ordinary ancestor here because the test points the
-		// home directory elsewhere; the walk rightly stops there, above home.
-		want = outer
-	}
-	if root := policyProjectRoot(start); root != want {
-		t.Errorf("policyProjectRoot(%q) = %q, want %q (the start directory unless a project marker lies above the test home)", start, root, want)
+	if root := policyProjectRoot(start); root != start {
+		t.Errorf("policyProjectRoot(%q) = %q, want the start directory", start, root)
 	}
 	if files := policyFilesFor(start); len(files) != 1 || files[0] != userPolicy {
 		t.Errorf("policyFilesFor(%q) = %v, want only %s", start, files, userPolicy)
@@ -513,30 +513,18 @@ func TestPolicyFilesForDeduplicatesHomeProject(t *testing.T) {
 	}
 }
 
-// markerAbove reports the nearest ancestor of dir (dir excluded) carrying a
-// project marker — a directory outside the test's control, such as the real
-// user profile that contains the Windows temp dir.
-func markerAbove(dir string) (string, bool) {
-	return logging.WalkUp(filepath.Dir(filepath.Clean(dir)), func(d string) bool {
-		if _, err := os.Stat(filepath.Join(d, branding.Get().ConfigFile)); err == nil {
-			return true
-		}
-		info, err := os.Stat(filepath.Join(d, policyDirName))
-		return err == nil && info.IsDir()
-	})
-}
-
 // TestPolicyProjectRoot_HomeMatchedByIdentity is the regression for comparing
 // the walk's directories with $HOME by spelling: a home reached through a
-// symlink (or, on Windows, an 8.3 short name or another case) must still be
-// recognised, so its user-level .qsdev/ is not taken for a project marker.
+// symlink (or, on Windows, an 8.3 short name or another case) must not make
+// its user-level .qsdev/ a project marker. The bare data directory is no
+// marker anywhere, so no home matching is needed at all.
 func TestPolicyProjectRoot_HomeMatchedByIdentity(t *testing.T) {
 	realHome, err := filepath.EvalSymlinks(t.TempDir())
 	if err != nil {
 		t.Fatal(err)
 	}
 	start := filepath.Join(realHome, "scratch")
-	for _, dir := range []string{filepath.Join(realHome, policyDirName), start} {
+	for _, dir := range []string{filepath.Join(realHome, projectctx.DataDirName()), start} {
 		if err := os.MkdirAll(dir, 0o755); err != nil {
 			t.Fatal(err)
 		}
@@ -549,12 +537,8 @@ func TestPolicyProjectRoot_HomeMatchedByIdentity(t *testing.T) {
 	t.Setenv("USERPROFILE", link) // os.UserHomeDir reads USERPROFILE on Windows
 	t.Setenv(envClaudeProjectDir, "")
 
-	want := start
-	if outer, ok := markerAbove(realHome); ok {
-		want = outer
-	}
-	if root := policyProjectRoot(start); root != want {
-		t.Errorf("policyProjectRoot(%q) = %q, want %q: the symlinked home's .qsdev/ is not a project marker", start, root, want)
+	if root := policyProjectRoot(start); root != start {
+		t.Errorf("policyProjectRoot(%q) = %q, want %q: the symlinked home's .qsdev/ is not a project marker", start, root, start)
 	}
 }
 
@@ -568,5 +552,123 @@ func TestPolicyProjectRoot_WalksUpFromClaudeProjectDir(t *testing.T) {
 
 	if root := policyProjectRoot(""); root != e.project {
 		t.Errorf("policyProjectRoot = %q, want %q", root, e.project)
+	}
+}
+
+// TestPolicyProjectRoot_Bounded covers the shared resolver's marker set and
+// ceiling as the enforce hook sees them.
+func TestPolicyProjectRoot_Bounded(t *testing.T) {
+	b := branding.Get()
+	tests := []struct {
+		name  string
+		paths []string // slash-separated; a trailing "/" makes a directory
+		start string
+		want  string
+	}{
+		{
+			name:  "bounded at the git toplevel",
+			paths: []string{b.ConfigFile, "child/.git/", "child/src/"},
+			start: "child/src", want: "child/src",
+		},
+		{
+			name:  "state dir alone resolves",
+			paths: []string{b.StateDir + "/", "sub/dir/"},
+			start: "sub/dir", want: ".",
+		},
+		{
+			name:  "bare .qsdev is no longer a marker",
+			paths: []string{projectctx.DataDirName() + "/policy.yaml", "sub/"},
+			start: "sub", want: "sub",
+		},
+		{
+			name:  "marker at the git toplevel resolves from below",
+			paths: []string{".git/", b.ConfigFile, "a/b/"},
+			start: "a/b", want: ".",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			root := testutil.MarkerFreeTempDir(t)
+			plantPaths(t, root, tt.paths...)
+			t.Setenv(envClaudeProjectDir, "")
+			start := filepath.Join(root, filepath.FromSlash(tt.start))
+			if got, want := policyProjectRoot(start), filepath.Join(root, filepath.FromSlash(tt.want)); got != want {
+				t.Errorf("policyProjectRoot(%q) = %q, want %q", start, got, want)
+			}
+		})
+	}
+}
+
+// plantPaths creates each slash-separated path below root: a trailing "/"
+// makes a directory, anything else a small regular file.
+func plantPaths(t *testing.T, root string, paths ...string) {
+	t.Helper()
+	for _, p := range paths {
+		full := filepath.Join(root, filepath.FromSlash(p))
+		if strings.HasSuffix(p, "/") {
+			if err := os.MkdirAll(full, 0o755); err != nil {
+				t.Fatal(err)
+			}
+			continue
+		}
+		if err := os.MkdirAll(filepath.Dir(full), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(full, []byte("version: 1\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+}
+
+// TestLegacySecurityStatePathsUnchanged pins that the user's security state
+// (trusted content keys, sandbox policy approvals, policy.yaml, trust.yaml and
+// session-state.json) stays in the legacy ~/.<app> even with the XDG state and
+// cache directories set, so the self-protection canon, which guards it by the
+// .<app>/ path element, still covers every file. Moving it is XA-WS8's job.
+func TestLegacySecurityStatePathsUnchanged(t *testing.T) {
+	base := t.TempDir()
+	home := filepath.Join(base, "home")
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
+	t.Setenv("XDG_STATE_HOME", filepath.Join(base, "state"))
+	t.Setenv("XDG_CACHE_HOME", filepath.Join(base, "cache"))
+	legacy := filepath.Join(home, "."+branding.Get().AppName)
+
+	userPolicy := filepath.Join(legacy, "policy.yaml")
+	if err := os.MkdirAll(legacy, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(userPolicy, []byte(fmt.Sprintf(enforceTestPolicy, "fail_closed")), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if files := policyFilesFor(""); len(files) != 1 || files[0] != userPolicy {
+		t.Errorf("policyFilesFor(\"\") = %v, want only %s", files, userPolicy)
+	}
+
+	sessionState, err := sessionStatePath()
+	if err != nil {
+		t.Fatalf("sessionStatePath: %v", err)
+	}
+	keysDir, err := contentsign.DefaultTrustedKeysDir()
+	if err != nil {
+		t.Fatalf("DefaultTrustedKeysDir: %v", err)
+	}
+	approvals, err := sandboxpolicy.DefaultApprovalStore()
+	if err != nil {
+		t.Fatalf("DefaultApprovalStore: %v", err)
+	}
+	for _, tt := range []struct{ name, got, want string }{
+		{"policy.yaml", userPolicy, filepath.Join(legacy, "policy.yaml")},
+		{"session-state.json", sessionState, filepath.Join(legacy, "session-state.json")},
+		{"trust.yaml", trustConfigPath(), filepath.Join(legacy, "trust.yaml")},
+		{"keys", keysDir, filepath.Join(legacy, "keys")},
+		{"approvals", approvals.Path(), filepath.Join(legacy, "sandbox-policy-approvals.json")},
+	} {
+		if tt.got != tt.want {
+			t.Errorf("%s = %q, want %q", tt.name, tt.got, tt.want)
+		}
+		if protected, _ := canon.IsProtected(tt.got); !protected {
+			t.Errorf("%s at %q is not covered by the self-protection canon", tt.name, tt.got)
+		}
 	}
 }

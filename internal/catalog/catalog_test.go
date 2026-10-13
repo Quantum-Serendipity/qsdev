@@ -1330,3 +1330,27 @@ func TestValidate_Tools(t *testing.T) {
 		})
 	}
 }
+
+func TestAllPermissionAskRules(t *testing.T) {
+	t.Parallel()
+	cat := loadTestCatalog(t)
+	got := cat.AllPermissionAskRules()
+
+	for _, want := range append(cat.AllPackageInstallAskRules(), cat.PermissionAskRules("code_execution")...) {
+		if !slices.Contains(got, want) {
+			t.Errorf("AllPermissionAskRules() missing %q", want)
+		}
+	}
+	seen := make(map[string]bool, len(got))
+	for _, r := range got {
+		if seen[r] {
+			t.Errorf("AllPermissionAskRules() contains %q more than once", r)
+		}
+		seen[r] = true
+	}
+	for range 5 {
+		if again := cat.AllPermissionAskRules(); !slices.Equal(again, got) {
+			t.Fatal("AllPermissionAskRules() order is not deterministic")
+		}
+	}
+}

@@ -3,6 +3,9 @@ package cmdutil
 import (
 	"fmt"
 
+	"github.com/spf13/cobra"
+
+	"github.com/Quantum-Serendipity/qsdev/internal/projectctx"
 	"github.com/Quantum-Serendipity/qsdev/internal/state"
 	"github.com/Quantum-Serendipity/qsdev/pkg/branding"
 )
@@ -39,15 +42,15 @@ func RequireJoined(projectRoot string) error {
 	return nil
 }
 
-// JoinedProjectRoot is ProjectRoot for a command that writes the project's
+// JoinedProject is Project for a command that writes the project's
 // generated files: it refuses an un-joined clone (RequireJoined).
-func JoinedProjectRoot() (string, error) {
-	root, err := ProjectRoot()
+func JoinedProject(cmd *cobra.Command) (projectctx.Context, error) {
+	pc, err := Project(cmd)
 	if err != nil {
-		return "", err
+		return projectctx.Context{}, err
 	}
-	if err := RequireJoined(root); err != nil {
-		return "", err
+	if err := RequireJoined(pc.Root); err != nil {
+		return projectctx.Context{}, err
 	}
-	return root, nil
+	return pc, nil
 }

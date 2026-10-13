@@ -1,0 +1,32 @@
+package fixture
+
+// ActionRef mirrors the catalog type.
+type ActionRef struct {
+	Owner string
+	Repo  string
+	SHA   string
+	Tag   string
+}
+
+var (
+	ActionCheckout = ActionRef{
+		Owner: "actions",
+		Repo:  "checkout",
+		SHA:   "1111111111111111111111111111111111111111",
+		Tag:   "v6.1.0",
+	}
+	ActionHardenRunner = ActionRef{
+		Owner: "step-security",
+		Repo:  "harden-runner",
+		SHA:   "9af89fc71515a100421586dfdb3dc9c984fbf411",
+		Tag:   "v2.19.4",
+	}
+	// Emitted only into generated projects; the workflows do not use it.
+	ActionGrype = ActionRef{
+		Owner: "anchore",
+		Repo:  "scan-action",
+		SHA:   "1638637db639e0ade3258b51db49a9a137574c3e",
+		Tag:   "v6",
+	}
+	ActionOSVScanner = ActionRef{Owner: "google", Repo: "osv-scanner-action/osv-scanner-action", SHA: "2222222222222222222222222222222222222222", Tag: "v2.6.0"}
+)

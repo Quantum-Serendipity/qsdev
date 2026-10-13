@@ -68,10 +68,11 @@ func validateBranchName(name string) error {
 }
 
 func runTrial(cmd *cobra.Command, opts TrialOptions) error {
-	projectRoot, err := cmdutil.ProjectRoot()
+	pc, err := cmdutil.Project(cmd)
 	if err != nil {
 		return err
 	}
+	projectRoot := pc.Root
 
 	if !isGitRepo(projectRoot) {
 		return fmt.Errorf("not a git repository; %s trial requires git", branding.Get().AppName)

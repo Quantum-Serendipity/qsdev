@@ -36,17 +36,24 @@ const cliHelperEnv = "QSDEV_GUARDRAIL_CLI_HELPER"
 // qsdev setting, with HOME, TMPDIR and the user config directories (XDG and
 // the Windows APPDATA/LOCALAPPDATA) pointed at
 // fresh temp dirs and system setup skipped, so the commands see no state
-// from the machine running the tests. The commands run as a human at a
-// terminal (humanHelperEnv), as the documented commands are; agentEnv turns
-// that off.
+// from the machine running the tests. PATH starts with guardrailBinDir, so
+// qsdev resolves to the build under test and no container runtime probe
+// reaches the host's. The commands run as a human at a terminal
+// (humanHelperEnv), as the documented commands are; agentEnv turns that off.
 func guardrailEnv(t *testing.T) []string {
 	t.Helper()
 	b := branding.Get()
 	var env []string
+	path := guardrailBinDir(t)
 	for _, kv := range os.Environ() {
-		name, _, _ := strings.Cut(kv, "=")
+		name, value, _ := strings.Cut(kv, "=")
 		switch {
 		case name == "GORACE": // replaced by raceOptions below
+			continue
+		case strings.EqualFold(name, "PATH"): // Windows spells it Path
+			if value != "" {
+				path += string(os.PathListSeparator) + value
+			}
 			continue
 		case name == "HOME", name == "TMPDIR", name == "TMP", name == "TEMP", name == "USERPROFILE",
 			strings.EqualFold(name, "APPDATA"), strings.EqualFold(name, "LOCALAPPDATA"),
@@ -58,6 +65,7 @@ func guardrailEnv(t *testing.T) []string {
 	}
 	home, tmp := t.TempDir(), t.TempDir()
 	return append(env,
+		"PATH="+path,
 		"HOME="+home,
 		"USERPROFILE="+home,
 		"XDG_CONFIG_HOME="+filepath.Join(home, ".config"),

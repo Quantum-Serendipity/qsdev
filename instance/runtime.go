@@ -19,9 +19,9 @@ import (
 	// explicitly by RegisterFrameworkAdapters rather than self-registering from
 	// init(), so registration order is visible.
 	"github.com/Quantum-Serendipity/qsdev/internal/catalog"
-	"github.com/Quantum-Serendipity/qsdev/internal/cmdutil"
 	"github.com/Quantum-Serendipity/qsdev/internal/mcpserve/adapters"
 	"github.com/Quantum-Serendipity/qsdev/internal/mcpserve/spi"
+	"github.com/Quantum-Serendipity/qsdev/internal/projectctx"
 	"github.com/Quantum-Serendipity/qsdev/internal/version"
 )
 
@@ -84,6 +84,11 @@ func buildVersionOverride(vi version.BuildInfo, overridden bool) (ver, commit st
 // command with an error. Call it after SetBranding (the file's location
 // follows the app name) and before the command runs.
 //
+// It runs before the command line is parsed, so it resolves in Enclosing mode
+// for every command, including the Here-mode init commands, and separately
+// from the context Runtime.initCommand stores. Applying the layer from that
+// context needs the lazy catalog of U01-WS2 and is the U01-WS1 follow-up.
+//
 // It also pins the org overlay (catalog.UseOrgConfigPin) to the one a human
 // approved with the sensitive 'defaults pin' command, or without a pin to the
 // account's home overlay, for every run: whether a human runs the CLI cannot
@@ -91,11 +96,10 @@ func buildVersionOverride(vi version.BuildInfo, overridden bool) (ver, commit st
 // so an agent's command, or a file it wrote that sets <EnvPrefix>ORG_CONFIG,
 // cannot point a regeneration at an overlay of its own.
 func UseProjectDefaults() {
-	root, err := cmdutil.ProjectRoot()
-	if err == nil {
+	root := ""
+	if pc, err := projectctx.ResolveWorkingDir(projectctx.Enclosing); err == nil {
+		root = pc.Root
 		catalog.SetProjectRoot(root)
-	} else {
-		root = ""
 	}
 	pin, err := catalog.LoadOrgConfigPin(root)
 	if err != nil {

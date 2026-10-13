@@ -1,7 +1,11 @@
 package selfupdate
 
 import (
+	"path/filepath"
 	"testing"
+
+	"github.com/Quantum-Serendipity/qsdev/internal/projectctx"
+	"github.com/Quantum-Serendipity/qsdev/pkg/branding"
 )
 
 func TestDefaultConfig(t *testing.T) {
@@ -145,4 +149,48 @@ func TestArchMapping(t *testing.T) {
 			t.Errorf("archMapping[%q] = %q, want %q", k, archMapping[k], v)
 		}
 	}
+}
+
+// TestDefaultConfig_CacheDirUsesXDGCache pins that the update-check cache
+// lives in the per-user cache directory, not the legacy ~/.<app>.
+func TestDefaultConfig_CacheDirUsesXDGCache(t *testing.T) {
+	base := t.TempDir()
+	home := filepath.Join(base, "home")
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
+
+	t.Run("xdg-set", func(t *testing.T) {
+		cache := filepath.Join(base, "xdg-cache")
+		t.Setenv("XDG_CACHE_HOME", cache)
+		if got, want := DefaultConfig().CacheDir, filepath.Join(cache, branding.Get().AppName); got != want {
+			t.Errorf("CacheDir = %q, want %q", got, want)
+		}
+	})
+	t.Run("xdg-unset", func(t *testing.T) {
+		t.Setenv("XDG_CACHE_HOME", "")
+		dirs, err := projectctx.UserDirs()
+		if err != nil {
+			t.Fatalf("UserDirs: %v", err)
+		}
+		if got := DefaultConfig().CacheDir; got != dirs.Cache {
+			t.Errorf("CacheDir = %q, want %q", got, dirs.Cache)
+		}
+	})
+	t.Run("no-home-no-cache", func(t *testing.T) {
+		t.Setenv("HOME", "")
+		t.Setenv("USERPROFILE", "")
+		t.Setenv("home", "")
+		cfg := DefaultConfig()
+		if cfg.CacheDir != "" {
+			t.Fatalf("CacheDir = %q without a home directory, want empty (no shared-temp fallback)", cfg.CacheDir)
+		}
+		// Without a cache directory nothing is cached, rather than written
+		// relative to the working directory.
+		if err := saveCache(cfg, &cachedCheck{}); err == nil {
+			t.Error("saveCache succeeded without a cache directory")
+		}
+		if c, err := loadCache(cfg); err == nil || c != nil {
+			t.Errorf("loadCache = (%v, %v), want an error without a cache directory", c, err)
+		}
+	})
 }

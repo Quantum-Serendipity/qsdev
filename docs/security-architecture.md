@@ -40,17 +40,19 @@ qsdev's defense model spans supply chain, environment, and agent security. Layer
 
 ### Layer 1: Age-Gating
 
-New package versions are blocked for a configurable period after publication. This provides a window for the community to discover and report compromised releases before they enter your project.
+New package versions are blocked for a period after publication. This provides a window for the community to discover and report compromised releases before they enter your project. The period is the compliance level's release-age window (3 days for `baseline`, 7 for `enhanced`, 14 for `strict`); yarn, bun and uv keep their 7-day minimum. See [Release-age window](configuration-reference.md#release-age-window) for each package manager's setting.
 
-| Infrastructure Profile | Minimum Release Age | Update Tool |
-|------------------------|--------------------:|-------------|
-| `consulting-default` | 3 days (4320 min) | Renovate |
-| `startup-github` | None (0 days) | Dependabot |
-| `enterprise` | 7 days | Renovate |
+Update tools delay PRs by the larger of the infrastructure profile's delay and the level's window:
 
-For pnpm workspaces, age-gating is additionally enforced at install time via `minimumReleaseAge: 4320` in `pnpm-workspace.yaml`.
+| Infrastructure Profile | Profile delay | At `baseline` / `enhanced` / `strict` | Update Tool |
+|------------------------|--------------:|--------------------:|-------------|
+| `consulting-default` | 3 days | 3 / 7 / 14 days | Renovate |
+| `startup-github` | none | 3 / 7 / 14 days | Dependabot |
+| `enterprise` | 7 days | 7 / 7 / 14 days | Renovate |
 
-For npm projects, the generated `.npmrc` sets `min-release-age=3` (days). npm only honours that setting from 11.10.0 on; older npm, such as the npm 10 bundled with Node.js 22, reads it as an unknown key and ignores it. The generated `devenv.nix` therefore sets `languages.javascript.npm.package` to an npm that is at least 11.10 (the npm output of `nodejs-slim_24`, or of the project's Node.js when that is newer), whatever Node.js major the project uses, and takes Node.js itself from the matching `nodejs-slim` package so its bundled npm is not also on `PATH`. The `npm` output of `nodejs-slim` needs nixpkgs 26.05 or later, and the npm it carries only reaches 11.10 from Node.js 24.14.1 on, so an existing project whose `devenv.lock` pins an older nixpkgs should run `qsdev init --update`, which regenerates `devenv.nix` and refreshes the lock. `qsdev check` probes the `npm` on `PATH` and fails (high severity) when it is older than 11.10.0; run it inside the devenv shell. When `npm` is not on `PATH` the probe is skipped.
+For pnpm workspaces, age-gating is additionally enforced at install time via `minimumReleaseAge` in `pnpm-workspace.yaml` (4320 minutes at `baseline`).
+
+For npm projects, the generated `.npmrc` sets `min-release-age` to the window in days (3 at `baseline`). npm only honours that setting from 11.10.0 on; older npm, such as the npm 10 bundled with Node.js 22, reads it as an unknown key and ignores it. The generated `devenv.nix` therefore sets `languages.javascript.npm.package` to an npm that is at least 11.10 (the npm output of `nodejs-slim_24`, or of the project's Node.js when that is newer), whatever Node.js major the project uses, and takes Node.js itself from the matching `nodejs-slim` package so its bundled npm is not also on `PATH`. The `npm` output of `nodejs-slim` needs nixpkgs 26.05 or later, and the npm it carries only reaches 11.10 from Node.js 24.14.1 on, so an existing project whose `devenv.lock` pins an older nixpkgs should run `qsdev init --update`, which regenerates `devenv.nix` and refreshes the lock. `qsdev check` probes the `npm` on `PATH` and fails (high severity) when it is older than 11.10.0; run it inside the devenv shell. When `npm` is not on `PATH` the probe is skipped.
 
 ### Layer 2: Install Script Blocking
 
@@ -642,7 +644,7 @@ vulnerability scanner or CI runner protection. It has two jobs:
   and `npm install` never fail on audit results — so the `npm audit` step is
   what makes moderate-or-higher advisories fail CI for npm projects.
   The modules add these audit tools (`cargo-audit`, `pip-audit`,
-  `bundler-audit`, `syft`, `grype`, `govulncheck`) to the
+  `bundler-audit`, `syft`, `grype`, `govulncheck`, `osv-scanner`) to the
   `devenv.nix` packages, so they are on the shell's PATH locally and in CI.
   A drifted or missing lock entry therefore fails CI before anything builds.
   Other lock-enforcing installs include `stack build --lock-file=error-on-write`,
@@ -654,9 +656,11 @@ vulnerability scanner or CI runner protection. It has two jobs:
   `pipefail` (`helm template | kubeconform`), loops fail when any item fails
   (`bash -n` on each `*.sh` file, `luarocks install --only-deps` on each
   rockspec), and scanners that only report are made to fail (PSScriptAnalyzer
-  error findings and parse errors; sbt-dependency-check at CVSS 7 and above).
-  Tools that are not nixpkgs packages are provisioned by the job itself: the sbt security
-  plugins through `sbt --addPluginSbtFile`, and a pinned PSScriptAnalyzer from
+  error findings and parse errors). sbt projects are scanned by
+  osv-scanner over their `build.sbt.lock` files, converted with `jq` to
+  osv-scanner's custom lockfile format, which fails on any known vulnerability.
+  Tools that are not nixpkgs packages are provisioned by the job itself: the
+  sbt-dependency-lock plugin through `sbt --addPluginSbtFile`, and a pinned PSScriptAnalyzer from
   PSGallery. Commands that only apply to one package manager or project shape
   are emitted only for it: the sbt tasks for sbt builds (not Mill), the renv
   steps for renv projects (`renv.lock`), the LuaRocks install for rockspec

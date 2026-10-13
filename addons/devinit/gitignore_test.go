@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/Quantum-Serendipity/qsdev/internal/state"
 	"github.com/Quantum-Serendipity/qsdev/pkg/branding"
 	"github.com/Quantum-Serendipity/qsdev/pkg/fileutil"
 	"github.com/Quantum-Serendipity/qsdev/pkg/types"
@@ -163,5 +164,18 @@ func TestEnsureProjectGitignore_IgnoresLocalConfig(t *testing.T) {
 	}
 	if string(after) != string(data) {
 		t.Errorf("join changed .gitignore after init:\n--- init\n%s\n--- join\n%s", data, after)
+	}
+}
+
+// TestProjectGitignoreEntries_IncludeLocalOnlyEntries pins that the
+// .gitignore writer and the committed-manifest filter share one source: every
+// path the manifest leaves out as local-only is one init ignores.
+func TestProjectGitignoreEntries_IncludeLocalOnlyEntries(t *testing.T) {
+	t.Parallel()
+	got := projectGitignoreEntries()
+	for _, entry := range state.LocalOnlyEntries() {
+		if !slices.Contains(got, entry) {
+			t.Errorf("projectGitignoreEntries() = %q, missing local-only entry %q", got, entry)
+		}
 	}
 }

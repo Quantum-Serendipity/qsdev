@@ -1,12 +1,23 @@
 package claudecode
 
 import (
+	"bytes"
+	"path"
+	"slices"
+
 	"github.com/Quantum-Serendipity/qsdev/pkg/fileutil"
 	"github.com/Quantum-Serendipity/qsdev/pkg/types"
 )
 
 // PackageGuardPath is the project-relative path of the package guard.
 const PackageGuardPath = ".claude/hooks/package-guard.py"
+
+// HookLibPath is the project-relative path of the library the Python security
+// hooks load by explicit path (audit log, deadline watchdog, interpreter floor,
+// exec wrappers). soc2-audit-log.py writes its own trail and does not load it,
+// so the library is generated only alongside a hook that does. It is not a
+// registered hook: the leading underscore says so.
+const HookLibPath = ".claude/hooks/_qsdev_hooklib.py"
 
 // packageGuardTemplate is the embedded template written to PackageGuardPath.
 const packageGuardTemplate = "templates/hooks/package-guard.py"
@@ -16,6 +27,39 @@ const packageGuardTemplate = "templates/hooks/package-guard.py"
 // disk is judged against it (posture.AssessOptions.PackageGuard).
 func PackageGuardContent() []byte {
 	return HookScriptContents()[PackageGuardPath]
+}
+
+// PackageGuardSupportContents maps the project-relative path of each file
+// package-guard.py loads at run time (the shared hook library) to the content
+// the generator writes there. The guard is credited only when these are
+// intact too (posture.AssessOptions.GuardSupport).
+func PackageGuardSupportContents() map[string][]byte {
+	contents := HookScriptContents()
+	support := make(map[string][]byte)
+	for _, p := range HookSupportPaths(PackageGuardPath) {
+		support[p] = contents[p]
+	}
+	return support
+}
+
+// HookSupportPaths returns the project-relative paths of the files the hook
+// script at p loads at run time: the shared hook library, for each hook whose
+// template loads it. Whatever writes such a hook must also write these, or the
+// hook blocks every call (it fails closed without its library).
+func HookSupportPaths(p string) []string {
+	for _, spec := range hookScriptSpecs(types.WizardAnswers{}) {
+		if spec.outputPath == p && loadsHookLib(spec) {
+			return []string{HookLibPath}
+		}
+	}
+	return nil
+}
+
+// loadsHookLib reports whether the hook spec writes loads the shared hook
+// library: its template names the library file.
+func loadsHookLib(spec hookFileSpec) bool {
+	content, err := templateFS.ReadFile(spec.templatePath)
+	return err == nil && bytes.Contains(content, []byte(path.Base(HookLibPath)))
 }
 
 // HookScriptContents maps the project-relative path of every hook script the
@@ -54,8 +98,25 @@ func GenerateHookFiles(answers types.WizardAnswers) ([]types.GeneratedFile, erro
 }
 
 // hookFileSpecs lists every hook script the generator can write, each enabled
-// as answers decide.
+// as answers decide, followed by the shared Python hook library, which is
+// written whenever a hook that loads it is.
 func hookFileSpecs(answers types.WizardAnswers) []hookFileSpec {
+	specs := hookScriptSpecs(answers)
+	return append(specs, hookFileSpec{
+		enabled: slices.ContainsFunc(specs, func(s hookFileSpec) bool {
+			return s.enabled && loadsHookLib(s)
+		}),
+		templatePath: "templates/hooks/_qsdev_hooklib.py",
+		outputPath:   HookLibPath,
+		mode:         fileutil.ModeReadWrite,
+		strategy:     types.Overwrite,
+		owner:        "hooks-lib",
+	})
+}
+
+// hookScriptSpecs lists the hook scripts themselves, each enabled as answers
+// decide.
+func hookScriptSpecs(answers types.WizardAnswers) []hookFileSpec {
 	return []hookFileSpec{
 		{
 			enabled:      packageGuardEnabled(answers),

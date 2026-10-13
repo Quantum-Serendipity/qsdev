@@ -150,8 +150,10 @@ func TestTildeUserAncestorVerdicts(t *testing.T) {
 		{"cd unknown account config then remove", bash("cd " + unknown + "/.config && rm -rf " + b.AppName), Deny},
 		{"find delete unknown account config", bash("find " + unknown + "/.config -delete"), Deny},
 		{"dirstack overlay parent", bash("rm -rf ~+/.config"), Deny},
-		{"unknown account other dir", bash("rm -rf " + unknown + "/.cache"), Allow},
-		{"cd unknown account other dir", bash("cd " + unknown + "/.cache && rm -rf x"), Allow},
+		// Not .cache: the per-user cache directory (~/.cache/<app> without
+		// XDG_CACHE_HOME) is protected, so ~/.cache is an ancestor too.
+		{"unknown account other dir", bash("rm -rf " + unknown + "/.npm"), Allow},
+		{"cd unknown account other dir", bash("cd " + unknown + "/.npm && rm -rf x"), Allow},
 	}
 	// The account running the tests: its home directory is where the CLI
 	// reads the overlay, and is protected even though TestMain points HOME

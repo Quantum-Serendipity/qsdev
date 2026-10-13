@@ -1,3 +1,18 @@
+# Agent manifest. Each entry names a template in this directory
+# (<name>.md) and is deployed to .claude/agents/<name>.md.
+#
+# Schema:
+#   name:        agent name; must match the template file name.
+#   description: one-line summary shown in listings.
+#   tags:        free-form labels for filtering.
+#   read_only:   true when the agent cannot edit files. The template's
+#                `tools:` allowlist must name none of Write, Edit, MultiEdit
+#                or NotebookEdit, and its `disallowedTools:` must block Write
+#                and Edit (both pinned by tests). read_only does NOT mean Bash
+#                cannot write: Claude Code honors a parenthesised specifier in
+#                an agent's `tools:` only for Agent(...), so Bash cannot be
+#                scoped to commands there. Bash stays and is governed by the
+#                project's permission rules and hooks.
 agents:
   - name: security-reviewer
     description: "Security-focused code review with OWASP methodology"

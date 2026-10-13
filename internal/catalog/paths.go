@@ -8,6 +8,7 @@ import (
 	"sync"
 	"testing"
 
+	"github.com/Quantum-Serendipity/qsdev/internal/projectctx"
 	"github.com/Quantum-Serendipity/qsdev/internal/userhome"
 	"github.com/Quantum-Serendipity/qsdev/pkg/branding"
 )
@@ -81,7 +82,7 @@ func homeOrgConfigPath() string {
 // USERPROFILE on Windows), which the agent can change; only a warning and the
 // test-binary pins location (pinsHome) use it.
 func envHomeDir() (string, error) {
-	return os.UserHomeDir()
+	return projectctx.HomeDir()
 }
 
 // HomeOrgConfigPath returns the user-level defaults file below home,

@@ -8,29 +8,22 @@ import (
 	"strings"
 
 	"github.com/Quantum-Serendipity/qsdev/internal/catalog"
+	"github.com/Quantum-Serendipity/qsdev/internal/mcpconfig"
 	"github.com/Quantum-Serendipity/qsdev/internal/mcpregistry"
 	"github.com/Quantum-Serendipity/qsdev/internal/merge"
 	"github.com/Quantum-Serendipity/qsdev/pkg/fileutil"
 	"github.com/Quantum-Serendipity/qsdev/pkg/types"
 )
 
-// McpJSON is the top-level structure that marshals to .mcp.json.
-type McpJSON struct {
-	MCPServers map[string]MCPServerEntry `json:"mcpServers"`
-}
+// McpJSON is the top-level structure that marshals to .mcp.json. It is the
+// shared mcpconfig schema, so the generator, the merge and the registry's
+// reader cannot drift apart on the entry fields.
+type McpJSON = mcpconfig.File
 
 // MCPServerEntry represents a single MCP server entry in .mcp.json.
 // HTTP-transport servers use Type+URL (plus optional Headers); stdio servers
 // use Command+Args.
-type MCPServerEntry struct {
-	Type        string            `json:"type,omitempty"`
-	URL         string            `json:"url,omitempty"`
-	Headers     map[string]string `json:"headers,omitempty"`
-	Command     string            `json:"command,omitempty"`
-	Args        []string          `json:"args,omitempty"`
-	Env         map[string]string `json:"env,omitempty"`
-	RequiredEnv []string          `json:"-"`
-}
+type MCPServerEntry = mcpconfig.Server
 
 // GenerateMcpJson produces a .mcp.json file from the wizard answers and addon
 // configuration. Servers the client MCP policy (answers.MCPPolicy) does not

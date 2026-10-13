@@ -45,7 +45,7 @@ type Config struct {
 	ProjectRoot   string
 	ProjectScoped bool
 	// Automated routes the session to the AutomatedLogSubdir of its tier, for
-	// commands invoked by tooling rather than the user (see ClassAutomated).
+	// commands invoked by tooling rather than the user: hooks and MCP servers.
 	Automated bool
 	MaxFiles  int
 	StderrToo bool

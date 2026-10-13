@@ -64,9 +64,8 @@ func TestDestructiveOpsDenyVariants(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
 			for _, cmd := range destructiveCommands {
-				op := "Bash(" + cmd + ")"
 				if !slices.ContainsFunc(deny, func(rule string) bool {
-					return denyutil.MatchesDenyRule(rule, op)
+					return denyutil.MatchesBashRule(rule, cmd)
 				}) {
 					t.Errorf("preset %q does not deny %q", name, cmd)
 				}
@@ -117,9 +116,8 @@ func TestDestructiveOpsDoNotDenySafeCommands(t *testing.T) {
 	} {
 		t.Run(cmd, func(t *testing.T) {
 			t.Parallel()
-			op := "Bash(" + cmd + ")"
 			for _, rule := range rules {
-				if denyutil.MatchesDenyRule(rule, op) {
+				if denyutil.MatchesBashRule(rule, cmd) {
 					t.Errorf("rule %q unexpectedly denies safe command %q", rule, cmd)
 				}
 			}

@@ -87,10 +87,11 @@ func containerDetectCmd() *cobra.Command {
 }
 
 func runContainerMigrate(ctx context.Context, cmd *cobra.Command, apply, previewFixes, asJSON bool, outputPath string) error {
-	projectRoot, err := cmdutil.ProjectRoot()
+	pc, err := cmdutil.Project(cmd)
 	if err != nil {
 		return err
 	}
+	projectRoot := pc.Root
 
 	prober := &container.ExecProber{}
 	report, err := container.Analyze(ctx, projectRoot, prober)
@@ -230,10 +231,11 @@ func runContainerDetect(ctx context.Context, cmd *cobra.Command, asJSON bool) er
 		return fmt.Errorf("detecting container runtime: %w", err)
 	}
 
-	projectRoot, err := cmdutil.ProjectRoot()
+	pc, err := cmdutil.Project(cmd)
 	if err != nil {
 		return err
 	}
+	projectRoot := pc.Root
 	caps, err := container.DetectCapabilities(ctx, prober, info, projectRoot)
 	if err != nil {
 		return fmt.Errorf("detecting capabilities: %w", err)

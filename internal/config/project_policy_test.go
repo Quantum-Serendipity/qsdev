@@ -275,6 +275,22 @@ func TestProjectPolicy_Apply(t *testing.T) {
 			},
 		},
 		{
+			name: "committed claude_code.permissions replaces the answers' permissions",
+			project: types.QsdevConfig{Version: 2, ClaudeCode: types.ClaudeCodeConfig{
+				Permissions: types.ClaudePermissionsConfig{Deny: []string{"Bash(terraform apply *)"}},
+			}},
+			answers: types.WizardAnswers{ClaudePermissions: types.ClaudePermissionsConfig{
+				Allow: []string{"Bash(*)"},
+			}},
+			check: func(t *testing.T, a types.WizardAnswers) {
+				t.Helper()
+				want := types.ClaudePermissionsConfig{Deny: []string{"Bash(terraform apply *)"}}
+				if !reflect.DeepEqual(a.ClaudePermissions, want) {
+					t.Errorf("ClaudePermissions = %+v, want the committed %+v", a.ClaudePermissions, want)
+				}
+			},
+		},
+		{
 			name:    "removed branch pattern clears a stale one",
 			project: types.QsdevConfig{Version: 2},
 			answers: types.WizardAnswers{BranchPattern: `^old/.+$`},

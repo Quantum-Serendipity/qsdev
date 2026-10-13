@@ -20,6 +20,10 @@ type SkillEntry struct {
 	Name        string   `yaml:"name"`
 	Description string   `yaml:"description"`
 	Tags        []string `yaml:"tags"`
+	// UserOnly marks a side-effecting skill (deployments, schema changes) that
+	// only the user may invoke: its generated SKILL.md sets
+	// disable-model-invocation: true. Same vocabulary as qsdev-ops-manifest.yaml.
+	UserOnly bool `yaml:"user_only"`
 }
 
 // loadManifest reads and parses the skill manifest from the embedded filesystem.
@@ -103,9 +107,13 @@ func deploySkills(answers types.WizardAnswers) ([]types.GeneratedFile, error) {
 		}
 
 		// Claude Code loads skills only from <name>/SKILL.md with YAML
-		// front-matter. Synthesize name+description from the manifest (the
-		// single source of truth) and write the directory layout.
-		content, err := prependSkillFrontMatter(entry.Name, entry.Description, body)
+		// front-matter. Synthesize it from the manifest (the single source of
+		// truth) and write the directory layout.
+		content, err := prependSkillFrontMatter(skillHeader{
+			Name:                   entry.Name,
+			Description:            entry.Description,
+			DisableModelInvocation: entry.UserOnly,
+		}, body)
 		if err != nil {
 			return nil, err
 		}

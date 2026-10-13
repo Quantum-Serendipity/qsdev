@@ -11,9 +11,12 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"regexp"
 	"slices"
 	"strconv"
 	"strings"
+
+	"golang.org/x/mod/semver"
 
 	"github.com/Quantum-Serendipity/qsdev/pkg/branding"
 	"github.com/Quantum-Serendipity/qsdev/pkg/ecosystem"
@@ -23,11 +26,13 @@ import (
 
 // Compile-time interface compliance checks.
 var _ ecosystem.EcosystemModule = (*Module)(nil)
+var _ ecosystem.ProxyKeyProvider = (*Module)(nil)
 var _ ecosystem.DenyRuleProvider = (*Module)(nil)
 var _ ecosystem.WizardFieldProvider = (*Module)(nil)
 var _ ecosystem.ManifestFileProvider = (*Module)(nil)
 var _ ecosystem.SASTModule = (*Module)(nil)
 var _ ecosystem.SetupWarner = (*Module)(nil)
+var _ ecosystem.ToolchainRequirementProvider = (*Module)(nil)
 
 func init() {
 	ecosystem.MustRegisterModule(&Module{})
@@ -51,12 +56,56 @@ const (
 // gradle-wrapper.properties names, and neither is verified by anything.
 const gradleCmd = "gradle"
 
+// gradleVerificationBootstrap writes gradle/verification-metadata.xml, which
+// strict dependency verification checks against. gradle.properties, the CI
+// precondition and the setup warning all print this one command.
+const gradleVerificationBootstrap = gradleCmd + " --write-verification-metadata sha256,pgp help"
+
+// gradleVerificationMetadataPath is the committed metadata strict dependency
+// verification checks against; without it Gradle verifies nothing.
+const gradleVerificationMetadataPath = "gradle/verification-metadata.xml"
+
+// gradleProxyScriptPath is the Gradle init script that routes resolution
+// through the registry proxy. It is committed next to gradle/wrapper/ rather
+// than under .qsdev/, which is gitignored and so absent from CI checkouts.
+const gradleProxyScriptPath = "gradle/qsdev-proxy.init.gradle"
+
+// gradleInvocation returns the gradle command line for qsdev's tasks and CI
+// steps: with a registry proxy it loads the proxy init script, since Gradle
+// has no environment variable that adds one. It is resolved against
+// DEVENV_ROOT, which the devenv shell sets, so it also works from a
+// subproject directory.
+func gradleInvocation(config ecosystem.ModuleConfig) string {
+	if config.RegistryProxy == "" {
+		return gradleCmd
+	}
+	return gradleCmd + ` -I "$DEVENV_ROOT/` + gradleProxyScriptPath + `"`
+}
+
 // mavenConfigPath is the per-project Maven CLI options file (Maven >= 3.3.1),
 // and mavenConfigContent the options qsdev puts in it.
 const (
 	mavenConfigPath    = ".mvn/maven.config"
 	mavenConfigContent = "--strict-checksums\n"
 )
+
+// mavenArgsSetting names, for qsdev check, the generated setting that makes
+// Maven read .mvn/settings.xml, and mavenMinVersion the oldest Maven that
+// honours it: MAVEN_ARGS was added in Maven 3.9.0, and an older mvn ignores it
+// silently, resolving without the mirror, checksum policy and HTTP blocker.
+const (
+	mavenArgsSetting = "MAVEN_ARGS -gs " + settingsXMLPath
+	mavenMinVersion  = "3.9.0"
+)
+
+// mavenWrapperPropertiesPath is where the Maven wrapper (./mvnw) records the
+// Maven distribution it downloads and runs.
+const mavenWrapperPropertiesPath = ".mvn/wrapper/maven-wrapper.properties"
+
+// mavenDistributionVersionRe extracts the Maven version from a wrapper
+// distributionUrl (".../apache-maven-3.9.6-bin.zip"); a backslash-escaped
+// "https\:" in the properties file does not affect it.
+var mavenDistributionVersionRe = regexp.MustCompile(`apache-maven-(\d+\.\d+\.\d+)`)
 
 // mavenManifests and gradleManifests list the files that declare JVM
 // dependencies, plugins or their versions (path.Match patterns, see
@@ -236,6 +285,16 @@ func (m *Module) DevenvNixFragment(config ecosystem.ModuleConfig) (string, error
 	if usesGradle(bt) {
 		b.WriteString("  languages.java.gradle.enable = true;\n")
 	}
+	if usesMaven(bt) {
+		// Maven reads no settings file from the project, so every mvn run
+		// in the shell (and so in CI) is pointed at the generated one. -gs
+		// loads it as the global settings, under the user's
+		// ~/.m2/settings.xml, which keeps private-repository credentials
+		// working; it is resolved against the project root, so it also
+		// applies in module subdirectories. bin/mvn word-splits MAVEN_ARGS,
+		// so a project root containing a space is not supported.
+		fmt.Fprintf(&b, "  env.MAVEN_ARGS = \"-gs ${config.devenv.root}/%s\";\n", settingsXMLPath)
+	}
 
 	if kotlin {
 		b.WriteString("\n")
@@ -288,18 +347,61 @@ func (m *Module) SecurityConfigs(config ecosystem.ModuleConfig) []types.Generate
 			Strategy: types.Skip,
 		})
 
+		// qsdev owns the proxy script and rewrites it, so a changed proxy
+		// URL takes effect. A root init.gradle from an older qsdev is no
+		// longer generated, so update removes it when unmodified.
 		if config.RegistryProxy != "" {
-			initGradle := buildInitGradle(config.RegistryProxy)
 			files = append(files, types.GeneratedFile{
-				Path:     "init.gradle",
-				Content:  []byte(initGradle),
+				Path:     gradleProxyScriptPath,
+				Content:  []byte(buildGradleProxyScript(config.RegistryProxy)),
 				Mode:     fileutil.ModeReadWrite,
-				Strategy: types.Skip,
+				Strategy: types.Overwrite,
 			})
 		}
 	}
 
 	return files
+}
+
+// ToolchainRequirements returns the tool versions the generated hardening
+// needs to take effect: Maven older than mavenMinVersion ignores MAVEN_ARGS,
+// so it never loads .mvn/settings.xml.
+func (m *Module) ToolchainRequirements(config ecosystem.ModuleConfig) []ecosystem.ToolchainRequirement {
+	if !usesMaven(buildTool(config)) {
+		return nil
+	}
+	return []ecosystem.ToolchainRequirement{{
+		Binary:     "mvn",
+		VersionArg: "--version",
+		MinVersion: mavenMinVersion,
+		Setting:    mavenArgsSetting,
+	}}
+}
+
+// mavenWrapperVersionWarning reports a Maven wrapper whose distributionUrl
+// pins a Maven older than mavenMinVersion: ./mvnw then runs a Maven that
+// ignores MAVEN_ARGS, and so resolves without .mvn/settings.xml. A missing
+// or unparseable wrapper is not reported; qsdev check probes the mvn on PATH.
+func mavenWrapperVersionWarning(projectRoot string) string {
+	data, err := os.ReadFile(filepath.Join(projectRoot, filepath.FromSlash(mavenWrapperPropertiesPath)))
+	if err != nil {
+		return ""
+	}
+	for _, line := range strings.Split(string(data), "\n") {
+		key, value, ok := strings.Cut(strings.TrimSpace(line), "=")
+		if !ok || strings.TrimSpace(key) != "distributionUrl" {
+			continue
+		}
+		match := mavenDistributionVersionRe.FindStringSubmatch(value)
+		if match == nil || semver.Compare("v"+match[1], "v"+mavenMinVersion) >= 0 {
+			return ""
+		}
+		return fmt.Sprintf("%s pins Maven %s, which ignores MAVEN_ARGS (read by Maven >= %s), so ./mvnw "+
+			"runs without %s: its mirror, checksum policy and HTTP blocker do not apply. "+
+			"Set distributionUrl to Maven %s or later, or run the devenv shell's mvn",
+			mavenWrapperPropertiesPath, match[1], mavenMinVersion, settingsXMLPath, mavenMinVersion)
+	}
+	return ""
 }
 
 // PreCommitHooks returns pre-commit hook definitions for the JVM ecosystem.
@@ -412,16 +514,30 @@ func (m *Module) CICommands(config ecosystem.ModuleConfig) []ecosystem.CICommand
 	if usesGradle(bt) {
 		// CI verifies against the committed gradle/verification-metadata.xml.
 		// It must never (re)generate that file: --write-verification-metadata
-		// in CI would trust whatever the network serves on that run.
+		// in CI would trust whatever the network serves on that run. Without
+		// the file strict verification checks nothing and passes, so the
+		// step fails first and names the bootstrap command.
 		cmds = append(cmds, ecosystem.CICommand{
-			Name:        "gradle-build",
-			Command:     gradleCmd + " build --dependency-verification strict",
+			Name: "gradle-build",
+			Command: "test -f " + gradleVerificationMetadataPath + " || { echo \"" + gradleVerificationMetadataPath +
+				" is missing: run '" + gradleVerificationBootstrap + "', review the file and commit it\" >&2; exit 1; } && " +
+				gradleInvocation(config) + " build --dependency-verification strict",
 			Description: "Build Gradle project with strict dependency verification",
 			Phase:       ecosystem.CIPhaseTest,
 		})
 	}
 
 	return cmds
+}
+
+// ProxyKey returns the registry proxy key of the configured build tool:
+// "gradle" for Gradle, whose init script routes it, and "maven" for Maven and
+// for both, where .mvn/settings.xml mirrors Maven Central to the proxy.
+func (m *Module) ProxyKey(config ecosystem.ModuleConfig) string {
+	if buildTool(config) == buildToolGradle {
+		return "gradle"
+	}
+	return "maven"
 }
 
 // PackageManagers returns metadata about the JVM ecosystem's package managers.
@@ -481,16 +597,17 @@ func (m *Module) WizardFields() []ecosystem.WizardField {
 // VerificationCommands returns project verification commands for the JVM
 // ecosystem, switching on the configured build tool (maven, gradle, or both).
 func (m *Module) VerificationCommands(config ecosystem.ModuleConfig) ecosystem.VerificationCommands {
+	gradle := gradleInvocation(config)
 	switch buildTool(config) {
 	case buildToolGradle:
 		return ecosystem.VerificationCommands{
-			Build: []string{gradleCmd + " build"},
-			Test:  []string{gradleCmd + " test"},
+			Build: []string{gradle + " build"},
+			Test:  []string{gradle + " test"},
 		}
 	case buildToolBoth:
 		return ecosystem.VerificationCommands{
-			Build: []string{"mvn compile", gradleCmd + " build"},
-			Test:  []string{"mvn test", gradleCmd + " test"},
+			Build: []string{"mvn compile", gradle + " build"},
+			Test:  []string{"mvn test", gradle + " test"},
 		}
 	default:
 		return ecosystem.VerificationCommands{
@@ -529,9 +646,9 @@ func buildGradleProperties() string {
 	b.WriteString("# Requires: Gradle >= 6.1 (dependency locking), >= 6.2 (dependency verification).\n")
 	b.WriteString("\n")
 	b.WriteString("# Strict dependency verification (checksums + signatures). Gradle enforces it\n")
-	b.WriteString("# only once gradle/verification-metadata.xml exists. Bootstrap it once, review\n")
+	b.WriteString("# only once " + gradleVerificationMetadataPath + " exists. Bootstrap it once, review\n")
 	b.WriteString("# the result, and commit it (never regenerate it in CI):\n")
-	b.WriteString("#   gradle --write-verification-metadata sha256,pgp help\n")
+	b.WriteString("#   " + gradleVerificationBootstrap + "\n")
 	b.WriteString("org.gradle.dependency.verification=strict\n")
 	b.WriteString("\n")
 	b.WriteString("# Dependency locking cannot be enabled from gradle.properties. Add to your\n")
@@ -541,24 +658,57 @@ func buildGradleProperties() string {
 	return b.String()
 }
 
-// buildInitGradle returns the content of an init.gradle file that configures
-// a corporate registry proxy for all Gradle projects.
-func buildInitGradle(proxyURL string) string {
-	var b strings.Builder
-	b.WriteString("// " + branding.GeneratedBy() + " — corporate registry proxy.\n")
-	b.WriteString("allprojects {\n")
-	b.WriteString("    repositories {\n")
-	b.WriteString("        all { ArtifactRepository repo ->\n")
-	b.WriteString("            if (repo instanceof MavenArtifactRepository) {\n")
-	b.WriteString("                remove repo\n")
-	b.WriteString("            }\n")
-	b.WriteString("        }\n")
-	b.WriteString("        maven {\n")
-	fmt.Fprintf(&b, "            url '%s'\n", ecosystem.GradleEscapeString(proxyURL))
-	b.WriteString("        }\n")
-	b.WriteString("    }\n")
-	b.WriteString("}\n")
-	return b.String()
+// buildGradleProxyScript returns the Gradle init script that routes all
+// dependency and plugin resolution through proxyURL. It follows the Gradle
+// user guide's enterprise-repository init script: an all{} hook removes each
+// Maven repository whose URL is not the proxy (also those declared later),
+// then the proxy is added. Removing from inside all{} is the documented,
+// supported pattern. beforeSettings applies the same to the settings-level
+// pluginManagement and dependencyResolutionManagement repositories (Gradle
+// >= 6.8). Projects are left alone when settings forbid project repositories
+// (FAIL_ON_PROJECT_REPOS would fail the build) or ignore them
+// (PREFER_SETTINGS); the settings repositories are routed then.
+func buildGradleProxyScript(proxyURL string) string {
+	return "// " + branding.GeneratedBy() + " — registry proxy for Gradle. " + branding.Get().AppName +
+		" rewrites this file; do not edit it.\n" +
+		`//
+// The qsdev tasks and CI load it with -I "$DEVENV_ROOT/` + gradleProxyScriptPath + `";
+// pass the same -I to run gradle by hand through the proxy. Every Maven
+// repository the build declares is removed, including the Gradle Plugin
+// Portal (plugins.gradle.org), so the proxy must also serve Gradle plugin
+// markers (proxy https://plugins.gradle.org/m2/). Requires Gradle >= 6.8.
+
+def qsdevProxy = '` + ecosystem.GradleEscapeString(proxyURL) + `'
+def qsdevNorm = { Object url -> url.toString().replaceAll('/+$', '') }
+def qsdevRoute = { RepositoryHandler repos ->
+    repos.all { ArtifactRepository repo ->
+        if (repo instanceof MavenArtifactRepository && qsdevNorm(repo.url) != qsdevNorm(qsdevProxy)) {
+            repos.remove repo
+        }
+    }
+    repos.maven { url = qsdevProxy }
+}
+
+beforeSettings { settings ->
+    qsdevRoute(settings.pluginManagement.repositories)
+    qsdevRoute(settings.dependencyResolutionManagement.repositories)
+}
+
+def qsdevRouteProjects = true
+settingsEvaluated { settings ->
+    def mode = settings.dependencyResolutionManagement.repositoriesMode.getOrNull()
+    qsdevRouteProjects = !(mode in [
+        org.gradle.api.initialization.resolve.RepositoriesMode.FAIL_ON_PROJECT_REPOS,
+        org.gradle.api.initialization.resolve.RepositoriesMode.PREFER_SETTINGS
+    ])
+}
+
+allprojects {
+    if (qsdevRouteProjects) {
+        qsdevRoute(repositories)
+    }
+}
+`
 }
 
 // parseJavaVersion reads .java-version in projectRoot and returns the

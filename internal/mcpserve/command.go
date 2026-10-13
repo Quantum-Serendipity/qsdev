@@ -18,6 +18,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/Quantum-Serendipity/qsdev/internal/cmdutil"
 	qsdevconfig "github.com/Quantum-Serendipity/qsdev/internal/config"
 	"github.com/Quantum-Serendipity/qsdev/internal/logging"
 	"github.com/Quantum-Serendipity/qsdev/internal/mcpregistry"
@@ -145,7 +146,7 @@ func Command(cmdOpts ...CommandOption) *cobra.Command {
 		"gateway mode: mount qsdev_nix_run, which runs Nix packages on the gateway "+
 			"host and is off by default there; falls back to "+envGatewayNixRun)
 
-	return cmd
+	return cmdutil.MarkProfile(cmd, cmdutil.ProfileMCPServer)
 }
 
 // LegacyModuleCommands returns hidden `qsdev mcp <module>` subcommands for the
@@ -167,7 +168,7 @@ func LegacyModuleCommands() []*cobra.Command {
 // tests.
 func legacyModuleCommand(module string, run func(context.Context, serveOptions) error) *cobra.Command {
 	app := branding.Get().AppName
-	return &cobra.Command{
+	return cmdutil.MarkProfile(&cobra.Command{
 		Use:    module,
 		Short:  fmt.Sprintf("Deprecated alias of `%s mcp serve --module %s`", app, module),
 		Hidden: true,
@@ -183,7 +184,7 @@ func legacyModuleCommand(module string, run func(context.Context, serveOptions) 
 				modules:   []string{module},
 			})
 		},
-	}
+	}, cmdutil.ProfileMCPServer)
 }
 
 // runServe resolves the deployment mode and project root, initializes stderr

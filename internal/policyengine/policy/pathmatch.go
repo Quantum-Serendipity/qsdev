@@ -4,14 +4,14 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"os"
 	"path/filepath"
-	"runtime"
 	"slices"
 	"strings"
 
 	"github.com/gobwas/glob"
 
+	"github.com/Quantum-Serendipity/qsdev/internal/pathmatch"
+	"github.com/Quantum-Serendipity/qsdev/internal/projectctx"
 	"github.com/Quantum-Serendipity/qsdev/internal/selfprotect/canon"
 )
 
@@ -25,9 +25,13 @@ import (
 // returned by PathForms (raw, lexically cleaned absolute, symlink-resolved, and
 // CWD-relative), so dot-segments, doubled slashes, `..`, `~` and symlinked
 // aliases cannot slip a protected path past the pattern.
+//
+// Forms are compared as the host filesystem names files (pathmatch.Key): on
+// macOS and Windows case folds, and on Windows `.ssh.` and `id_rsa::$DATA`
+// name the same files as `.ssh` and `id_rsa`.
 type PathMatcher struct {
-	globs    []glob.Glob
-	foldCase bool
+	globs []glob.Glob
+	opts  pathmatch.Options
 }
 
 // CompilePathMatcher compiles pattern into a PathMatcher. Besides the pattern as
@@ -42,10 +46,15 @@ type PathMatcher struct {
 // keeps its glob-escape meaning; Windows file names cannot contain `*` or `?`,
 // so there is little to escape there.
 func CompilePathMatcher(pattern string) (*PathMatcher, error) {
+	return compilePathMatcher(pattern, pathmatch.Platform)
+}
+
+// compilePathMatcher is CompilePathMatcher for a filesystem with opts.
+func compilePathMatcher(pattern string, opts pathmatch.Options) (*PathMatcher, error) {
 	pattern = filepath.ToSlash(pattern)
-	m := &PathMatcher{foldCase: caseInsensitiveFS()}
+	m := &PathMatcher{opts: opts}
 	for _, p := range patternVariants(pattern) {
-		if m.foldCase {
+		if opts.FoldCase {
 			p = strings.ToLower(p)
 		}
 		g, err := glob.Compile(p)
@@ -67,9 +76,7 @@ func (m *PathMatcher) Match(path, cwd string) bool {
 // matching one path against many patterns compute PathForms once and use this.
 func (m *PathMatcher) MatchForms(forms []string) bool {
 	for _, f := range forms {
-		if m.foldCase {
-			f = strings.ToLower(f)
-		}
+		f = m.opts.Key(f)
 		for _, g := range m.globs {
 			if g.Match(f) {
 				return true
@@ -101,7 +108,7 @@ func PathForms(path, cwd string) []string {
 	}
 
 	if cwd == "" {
-		if wd, err := os.Getwd(); err == nil {
+		if wd, err := projectctx.WorkingDir(); err == nil {
 			cwd = wd
 		}
 	}
@@ -185,12 +192,6 @@ func patternVariants(pattern string) []string {
 		add(filepath.ToSlash(c) + tail)
 	}
 	return variants
-}
-
-// caseInsensitiveFS reports whether the host's default filesystem folds case,
-// in which case `.SSH/id_rsa` names the same file as `.ssh/id_rsa`.
-func caseInsensitiveFS() bool {
-	return runtime.GOOS == "darwin" || runtime.GOOS == "windows"
 }
 
 // pathArgKeys are the tool-input fields that carry a local file path: the

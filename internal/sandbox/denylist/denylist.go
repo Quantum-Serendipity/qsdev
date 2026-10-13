@@ -4,10 +4,17 @@
 package denylist
 
 import (
-	"os"
 	"path/filepath"
-	"strings"
+
+	"github.com/Quantum-Serendipity/qsdev/internal/pathmatch"
+	"github.com/Quantum-Serendipity/qsdev/internal/projectctx"
+	"github.com/Quantum-Serendipity/qsdev/internal/secrets"
 )
+
+// matchOptions is how Overlaps and IsStrictAncestor compare names: the host
+// filesystem's (a variable so tests can drive the macOS and Windows forms on
+// any OS).
+var matchOptions = pathmatch.Platform
 
 // SystemDenyPaths returns absolute paths that must never be bind-mounted into
 // a sandbox. These cover system credential stores and privilege-escalation
@@ -21,48 +28,23 @@ func SystemDenyPaths() []string {
 	}
 }
 
-// HomeDenyPaths returns home-relative paths that must never be bind-mounted
-// into a sandbox. Each HomeDenyRelPaths entry is joined with the current
-// user's home directory. If the home directory cannot be determined,
-// "/home/unknown" is used as a fallback so that the deny list is never empty.
+// HomeDenyPaths returns the per-user paths that must never be bind-mounted
+// into a sandbox: each credential store in secrets.CredentialPaths joined with
+// the current user's home directory. If the home directory cannot be
+// determined, "/home/unknown" is used as a fallback so that the deny list is
+// never empty.
 func HomeDenyPaths() []string {
-	home, err := os.UserHomeDir()
+	home, err := projectctx.HomeDir()
 	if err != nil {
 		home = "/home/unknown"
 	}
 
-	rels := HomeDenyRelPaths()
+	rels := secrets.CredentialPaths()
 	paths := make([]string, 0, len(rels))
 	for _, rel := range rels {
 		paths = append(paths, filepath.Join(home, filepath.FromSlash(rel)))
 	}
 	return paths
-}
-
-// HomeDenyRelPaths returns the home-relative deny paths, slash-separated,
-// without the home directory prefix. It is the single definition of the
-// per-user credential stores; HomeDenyPaths expands it.
-func HomeDenyRelPaths() []string {
-	return []string{
-		".ssh",
-		".gnupg",
-		".aws",
-		".azure",
-		".config/gcloud",
-		".kube",
-		".docker/config.json",
-		".netrc",
-		// Package-registry publish tokens and feed credentials.
-		".cargo/credentials.toml",
-		".cargo/credentials",
-		".nuget/NuGet/NuGet.Config",
-		".config/NuGet/NuGet.Config",
-		// Container registry, Terraform and Helm credential stores.
-		".config/containers/auth.json",
-		".terraform.d/credentials.tfrc.json",
-		".config/helm/registry",
-		".config/helm/repositories.yaml",
-	}
 }
 
 // AllDenyPaths returns the union of SystemDenyPaths and HomeDenyPaths.
@@ -131,24 +113,20 @@ func CandidatePaths(path string) []string {
 	return candidates
 }
 
-// Overlaps reports whether path equals deny or is a descendant of it. It is
-// the complement of IsStrictAncestor: together they cover every way a mount
-// path can conflict with a deny entry.
+// Overlaps reports whether path equals deny or is a descendant of it, as the
+// host filesystem compares names (pathmatch.Within): on macOS and Windows
+// ~/.SSH overlaps ~/.ssh. It is the complement of IsStrictAncestor: together
+// they cover every way a mount path can conflict with a deny entry.
 func Overlaps(path, deny string) bool {
-	return path == deny || strings.HasPrefix(path, deny+"/")
+	return matchOptions.Within(path, deny)
 }
 
 // IsStrictAncestor reports whether ancestor is a proper parent directory of
-// descendant (not equal to it). The filesystem root "/" is an ancestor of every
+// descendant (not equal to it), as the host filesystem compares names
+// (pathmatch.StrictlyWithin). The filesystem root "/" is an ancestor of every
 // absolute path. Both mount validators use it to reject binding an ancestor of
 // a deny path (e.g. $HOME, which contains ~/.ssh), which would re-expose the
 // sensitive descendant inside the sandbox.
 func IsStrictAncestor(ancestor, descendant string) bool {
-	if ancestor == descendant {
-		return false
-	}
-	if ancestor == "/" {
-		return true
-	}
-	return strings.HasPrefix(descendant, ancestor+"/")
+	return matchOptions.StrictlyWithin(descendant, ancestor)
 }

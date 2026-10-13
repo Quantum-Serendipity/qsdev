@@ -24,7 +24,6 @@ var _ ecosystem.SecretDeclarer = (*Module)(nil)
 var _ ecosystem.PackageProvider = (*Module)(nil)
 var _ ecosystem.WizardFieldProvider = (*Module)(nil)
 var _ ecosystem.DenyRuleProvider = (*Module)(nil)
-var _ ecosystem.ReadDenyRuleProvider = (*Module)(nil)
 var _ ecosystem.SASTModule = (*Module)(nil)
 
 func init() {
@@ -343,7 +342,9 @@ var hostRootMountArgs = []string{
 var containerPullSubcommands = []string{"pull", "image pull", "compose pull"}
 
 // registryAuthFiles are where the Docker and Podman CLIs store registry
-// credentials (base64-encoded passwords or tokens) after `login`.
+// credentials (base64-encoded passwords or tokens) after `login`. They feed
+// only the Bash(cat ...) denies below: the Read denies for them come from the
+// credential canon (internal/secrets), which every preset carries.
 var registryAuthFiles = []string{
 	"~/.docker/config.json",
 	"~/.config/containers/auth.json",
@@ -382,12 +383,6 @@ func (m *Module) DenyRules(_ ecosystem.ModuleConfig) []string {
 		rules = append(rules, "Bash(cat "+f+"*)")
 	}
 	return rules
-}
-
-// ReadDenyRules returns the registry credential files the agent's Read tool
-// must not open.
-func (m *Module) ReadDenyRules(_ ecosystem.ModuleConfig) []string {
-	return slices.Clone(registryAuthFiles)
 }
 
 // ciImageTag names the image the CI container build produces, so the SBOM

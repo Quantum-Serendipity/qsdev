@@ -428,16 +428,17 @@ func (m *Module) DenyRules(_ ecosystem.ModuleConfig) []string {
 	return rules
 }
 
-// ReadDenyRules returns the credential stores the agent's Read tool must not
-// open: state files (plaintext resource secrets and backend credentials,
-// including .terraform/terraform.tfstate), variable files, and the
-// HCP Terraform / registry token `terraform login` writes.
+// ReadDenyRules returns the files the agent's Read tool must not open: state
+// files (plaintext resource secrets and backend credentials, including
+// .terraform/terraform.tfstate) and variable files. The HCP Terraform /
+// registry token `terraform login` writes (~/.terraform.d/credentials.tfrc.json)
+// is a home credential store of the canon (internal/secrets), read-denied at
+// every preset.
 func (m *Module) ReadDenyRules(_ ecosystem.ModuleConfig) []string {
 	return []string{
 		"**/*.tfstate*",
 		"**/*.tfvars",
 		"**/*.tfvars.json",
-		"~/.terraform.d/credentials.tfrc.json",
 	}
 }
 

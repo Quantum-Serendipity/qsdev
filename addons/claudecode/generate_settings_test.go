@@ -18,6 +18,7 @@ import (
 	"github.com/Quantum-Serendipity/qsdev/addons/claudecode"
 	"github.com/Quantum-Serendipity/qsdev/internal/catalog"
 	"github.com/Quantum-Serendipity/qsdev/internal/claudesettings"
+	"github.com/Quantum-Serendipity/qsdev/internal/secrets"
 	"github.com/Quantum-Serendipity/qsdev/internal/validation"
 	"github.com/Quantum-Serendipity/qsdev/pkg/denyutil"
 	"github.com/Quantum-Serendipity/qsdev/pkg/ecosystem"
@@ -564,11 +565,17 @@ func TestGenerateSettings_SandboxSchema(t *testing.T) {
 	if err := json.Unmarshal(gf.Content, &raw); err != nil {
 		t.Fatalf("unmarshal: %v", err)
 	}
+	// denyRead is the credential canon's home stores, then the module's own.
+	var denyRead []any
+	for _, p := range secrets.CredentialHomePaths() {
+		denyRead = append(denyRead, p)
+	}
+	denyRead = append(denyRead, "~/.aws/credentials")
 	want := map[string]any{
 		"enabled": true,
 		"filesystem": map[string]any{
 			"denyWrite": []any{"/etc", "/usr"},
-			"denyRead":  []any{"~/.aws/credentials"},
+			"denyRead":  denyRead,
 		},
 		"network": map[string]any{
 			"allowedDomains": []any{"github.com"},
@@ -1380,7 +1387,10 @@ func TestGenerateSettings_FileBoundaryExtraReadPaths(t *testing.T) {
 	}{
 		{
 			name: "paths configured", boundary: true, policy: policy("/opt/sdk", "~/.m2/repository", "/opt/sdk"),
-			wantEnv: map[string]string{claudecode.FileBoundaryExtraReadPathsEnv: "/opt/sdk,~/.m2/repository"},
+			wantEnv: map[string]string{
+				claudecode.FileBoundaryExtraReadPathsEnv: "/opt/sdk,~/.m2/repository",
+				claudecode.FileBoundaryDenyPathsEnv:      strings.Join(secrets.CredentialHomePaths(), ","),
+			},
 		},
 		{name: "hook disabled", boundary: false, policy: policy("/opt/sdk")},
 		{name: "no paths", boundary: true},
@@ -1406,6 +1416,54 @@ func TestGenerateSettings_FileBoundaryExtraReadPaths(t *testing.T) {
 			settings := mustUnmarshalSettings(t, mustGenerateSettings(t, answers, nil))
 			if !reflect.DeepEqual(settings.Env, tt.wantEnv) {
 				t.Errorf("env = %#v, want %#v", settings.Env, tt.wantEnv)
+			}
+		})
+	}
+}
+
+// TestBuildHookEnv_FileBoundaryDenyPaths covers handing the home credential
+// canon to the file-boundary hook, which drops any extra read path that
+// overlaps it: the deny list is present exactly when extra read paths are, and
+// with no policy the env stays nil, as before.
+func TestBuildHookEnv_FileBoundaryDenyPaths(t *testing.T) {
+	t.Parallel()
+	canon := strings.Join(secrets.CredentialHomePaths(), ",")
+	tests := []struct {
+		name     string
+		boundary bool
+		extras   []string
+		gates    []string
+	}{
+		{name: "extra read paths", boundary: true, extras: []string{"/opt/sdk", "~/sdks/android"}},
+		{name: "no policy", boundary: true},
+		{name: "hook disabled", boundary: false, extras: []string{"/opt/sdk"}},
+		{name: "other hook policy only", boundary: true, gates: []string{"WebFetch"}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			answers := types.WizardAnswers{
+				Hooks: types.HookChoices{FileBoundary: tt.boundary, ToolGates: true, SafetyBlockOptOut: true},
+				HookPolicy: types.HooksConfig{
+					FileBoundary: types.FileBoundaryConfig{ExtraReadPaths: tt.extras},
+					ToolGates:    types.ToolGatesConfig{Denied: tt.gates},
+				},
+			}
+			env := mustUnmarshalSettings(t, mustGenerateSettings(t, answers, nil)).Env
+			_, hasExtras := env[claudecode.FileBoundaryExtraReadPathsEnv]
+			deny, hasDeny := env[claudecode.FileBoundaryDenyPathsEnv]
+			if hasDeny != hasExtras {
+				t.Fatalf("%s present = %v, %s present = %v; want both or neither (env %#v)",
+					claudecode.FileBoundaryDenyPathsEnv, hasDeny, claudecode.FileBoundaryExtraReadPathsEnv, hasExtras, env)
+			}
+			if hasExtras != (tt.boundary && len(tt.extras) > 0) {
+				t.Fatalf("%s present = %v for %+v", claudecode.FileBoundaryExtraReadPathsEnv, hasExtras, tt)
+			}
+			if hasDeny && deny != canon {
+				t.Errorf("%s = %q, want %q", claudecode.FileBoundaryDenyPathsEnv, deny, canon)
+			}
+			if len(tt.extras) == 0 && len(tt.gates) == 0 && env != nil {
+				t.Errorf("env = %#v, want nil with no policy", env)
 			}
 		})
 	}
@@ -1853,5 +1911,212 @@ func TestGenerateSettings_CommittedClaudePermissions(t *testing.T) {
 	answers.ClaudePermissions.Allow = []string{"Bash(make *"}
 	if _, err := claudecode.GenerateSettings(answers, ecosystem.NewRegistry(), claudecode.NewConfig()); err == nil {
 		t.Error("GenerateSettings accepted a malformed claude_code.permissions entry")
+	}
+}
+
+// countRule reports how many times rule appears in rules.
+func countRule(rules []string, rule string) int {
+	n := 0
+	for _, r := range rules {
+		if r == rule {
+			n++
+		}
+	}
+	return n
+}
+
+// langChoices turns module names into wizard language choices.
+func langChoices(names ...string) []types.LanguageChoice {
+	out := make([]types.LanguageChoice, 0, len(names))
+	for _, n := range names {
+		out = append(out, types.LanguageChoice{Name: n})
+	}
+	return out
+}
+
+// representativeLanguages selects every module that contributes credential
+// or secret-file denies of its own beside the home credential canon.
+var representativeLanguages = []string{
+	"aws", "gcp", "azure", "terraform", "ansible", "container", "helm", "php", "rust", "dotnet",
+}
+
+// TestBuildPermissions_HomeCredentialReadDenies pins U09-WS2: every preset
+// read-denies each home credential store of the canon exactly once, whether
+// or not a language is selected, so the registry tokens (~/.npmrc,
+// ~/.pypirc, ~/.gem/credentials, ~/.config/composer/auth.json,
+// ~/.cargo/credentials.toml) are out of the agent's Read tool's reach even in
+// a project that never declared the ecosystem.
+func TestBuildPermissions_HomeCredentialReadDenies(t *testing.T) {
+	t.Parallel()
+	cat, err := catalog.Default()
+	if err != nil {
+		t.Fatalf("catalog.Default: %v", err)
+	}
+	globs := claudecode.HomeCredentialReadGlobs()
+	if !slices.Equal(globs, secrets.CredentialReadGlobs()) {
+		t.Fatalf("HomeCredentialReadGlobs() = %v, want secrets.CredentialReadGlobs()", globs)
+	}
+	spot := []string{
+		"Read(~/.npmrc)", "Read(~/.pypirc)", "Read(~/.gem/credentials)",
+		"Read(~/.config/composer/auth.json)", "Read(~/.cargo/credentials.toml)", "Read(~/.ssh/**)",
+	}
+	langSets := map[string][]string{
+		"no-languages": nil,
+		"registries":   {"javascript", "python", "ruby", "php", "rust"},
+	}
+	for _, preset := range cat.PermissionPresets() {
+		for setName, langs := range langSets {
+			t.Run(preset+"/"+setName, func(t *testing.T) {
+				t.Parallel()
+				answers := types.WizardAnswers{PermissionLevel: preset, Languages: langChoices(langs...)}
+				deny := mustUnmarshalSettings(t, mustGenerateSettings(t, answers, ecosystem.DefaultRegistry())).Permissions.Deny
+				for _, g := range globs {
+					if n := countRule(deny, "Read("+g+")"); n != 1 {
+						t.Errorf("deny has Read(%s) %d times, want 1", g, n)
+					}
+				}
+				for _, want := range spot {
+					if !slices.Contains(deny, want) {
+						t.Errorf("deny lacks %s", want)
+					}
+				}
+			})
+		}
+	}
+}
+
+// TestAllBaseDenyRules_HomeCredentialReadDenies verifies the base deny list
+// qsdev check and the MCP server classify as base carries the canon's Read
+// denies, so they are conflict-checked like every other base rule.
+func TestAllBaseDenyRules_HomeCredentialReadDenies(t *testing.T) {
+	t.Parallel()
+	base := claudecode.AllBaseDenyRules()
+	for _, g := range secrets.CredentialReadGlobs() {
+		if !slices.Contains(base, "Read("+g+")") {
+			t.Errorf("AllBaseDenyRules lacks Read(%s)", g)
+		}
+	}
+}
+
+// TestBuildPermissions_BaseRulesPreserved pins that the canon's Read denies
+// only add to what each preset generated before: the catalog deny sets, the
+// nested secrets rules and every selected module's deny and read-deny rules
+// stay, and the allow and ask lists are exactly the preset's catalog sets.
+func TestBuildPermissions_BaseRulesPreserved(t *testing.T) {
+	t.Parallel()
+	cat, err := catalog.Default()
+	if err != nil {
+		t.Fatalf("catalog.Default: %v", err)
+	}
+	reg := ecosystem.DefaultRegistry()
+	for _, preset := range cat.PermissionPresets() {
+		t.Run(preset, func(t *testing.T) {
+			t.Parallel()
+			def, ok := cat.PermissionPreset(preset)
+			if !ok {
+				t.Fatalf("preset %q has no definition", preset)
+			}
+			answers := types.WizardAnswers{PermissionLevel: preset, Languages: langChoices(representativeLanguages...)}
+			perms := mustUnmarshalSettings(t, mustGenerateSettings(t, answers, reg)).Permissions
+
+			var wantDeny, wantAllow, wantAsk []string
+			for _, set := range def.DenySets {
+				wantDeny = append(wantDeny, cat.PermissionDenyRules(set)...)
+			}
+			if slices.Contains(wantDeny, "Read(/secrets/**)") {
+				for _, p := range secrets.SecretFilePatterns() {
+					wantDeny = append(wantDeny, "Read(/**/secrets/**/"+p+")")
+				}
+			}
+			for _, lang := range answers.Languages {
+				mod, ok := reg.ByName(lang.Name)
+				if !ok {
+					t.Fatalf("module %q not registered", lang.Name)
+				}
+				mc := ecosystem.ToModuleConfig(lang)
+				if drp, ok := mod.(ecosystem.DenyRuleProvider); ok {
+					wantDeny = append(wantDeny, drp.DenyRules(mc)...)
+				}
+				if rdp, ok := mod.(ecosystem.ReadDenyRuleProvider); ok {
+					for _, p := range rdp.ReadDenyRules(mc) {
+						if base, ok := strings.CutSuffix(p, "/*"); ok {
+							p = base + "/**"
+						}
+						wantDeny = append(wantDeny, "Read("+p+")")
+					}
+				}
+			}
+			for _, r := range wantDeny {
+				if !slices.Contains(perms.Deny, r) {
+					t.Errorf("deny lost base rule %s", r)
+				}
+			}
+
+			for _, set := range def.AllowSets {
+				wantAllow = append(wantAllow, cat.PermissionAllowRules(set)...)
+			}
+			for _, set := range def.AskSets {
+				wantAsk = append(wantAsk, cat.PermissionAskRules(set)...)
+			}
+			if !slices.Equal(perms.Allow, dedup(wantAllow)) {
+				t.Errorf("allow = %v, want the preset's catalog allow sets %v", perms.Allow, dedup(wantAllow))
+			}
+			if !slices.Equal(perms.Ask, dedup(wantAsk)) {
+				t.Errorf("ask = %v, want the preset's catalog ask sets %v", perms.Ask, dedup(wantAsk))
+			}
+		})
+	}
+}
+
+// dedup returns rules without repeats, first occurrence kept, or nil when
+// rules is empty (the ask list is omitted when empty).
+func dedup(rules []string) []string {
+	var out []string
+	for _, r := range rules {
+		if !slices.Contains(out, r) {
+			out = append(out, r)
+		}
+	}
+	return out
+}
+
+// TestBuildSandbox_HomeCredentialDenyRead pins that the opt-in Bash sandbox
+// read-denies each home credential store of the canon exactly once, beside
+// every selected module's own read-deny paths, and stays absent when off.
+func TestBuildSandbox_HomeCredentialDenyRead(t *testing.T) {
+	t.Parallel()
+	reg := ecosystem.DefaultRegistry()
+	answers := types.WizardAnswers{PermissionLevel: "standard", Languages: langChoices(representativeLanguages...)}
+
+	s := mustUnmarshalSettings(t, mustGenerateSettings(t, answers, reg, claudecode.WithSandbox(true)))
+	if s.Sandbox == nil || s.Sandbox.Filesystem == nil {
+		t.Fatal("sandbox.filesystem should be present when enabled")
+	}
+	denyRead := s.Sandbox.Filesystem.DenyRead
+	for _, p := range secrets.CredentialHomePaths() {
+		if n := countRule(denyRead, p); n != 1 {
+			t.Errorf("denyRead has %s %d times, want 1", p, n)
+		}
+	}
+	for _, want := range []string{"~/.cargo/credentials.toml", "~/.npmrc", "~/.docker/config.json"} {
+		if !slices.Contains(denyRead, want) {
+			t.Errorf("denyRead lacks %s", want)
+		}
+	}
+	for _, lang := range answers.Languages {
+		mod, _ := reg.ByName(lang.Name)
+		rdp, ok := mod.(ecosystem.ReadDenyRuleProvider)
+		if !ok {
+			continue
+		}
+		for _, p := range rdp.ReadDenyRules(ecosystem.ToModuleConfig(lang)) {
+			if n := countRule(denyRead, p); n != 1 {
+				t.Errorf("denyRead has module %s path %s %d times, want 1", lang.Name, p, n)
+			}
+		}
+	}
+
+	if off := mustUnmarshalSettings(t, mustGenerateSettings(t, answers, reg)); off.Sandbox != nil {
+		t.Errorf("sandbox should be nil when not enabled, got %+v", off.Sandbox)
 	}
 }

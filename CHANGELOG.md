@@ -26,6 +26,28 @@ All notable changes to qsdev are recorded in this file. The format is based on
 
 ### Changed
 
+- The generated `.claude/settings.json` now read-denies every per-user
+  credential store of the credential catalog at every preset, whatever the
+  selected languages (U09-WS2): `Read(~/.ssh/**)`, `Read(~/.aws/**)` and the
+  other credential directories with their contents, and the registry token
+  files by name, including `~/.npmrc`, `~/.yarnrc.yml`, `~/.pypirc`,
+  `~/.config/pip/pip.conf`, `~/.gem/credentials`, `~/.bundle/config`,
+  `~/.config/composer/auth.json`, `~/.local/share/pypoetry/auth.toml`,
+  `~/.cargo/credentials.toml`, `~/.m2/settings.xml`,
+  `~/.gradle/gradle.properties`, `~/.config/gh`, `~/.git-credentials`,
+  `~/.pgpass`, `~/.vault-token` and `~/.claude/.credentials.json`. Before,
+  only the modules of the selected languages added some of them. With the
+  opt-in `sandbox`, `sandbox.filesystem.denyRead` carries the same stores,
+  and Claude Code applies the Read denies to sandboxed Bash too, so `ssh`,
+  `gpg`, `npm`, `mvn` and `gh` run there without their user configuration.
+  The Rust, .NET, Helm and container modules no longer declare their own
+  copies, and Terraform keeps only its state and variable-file globs. The
+  framework adapter's credential exclusions come from the same catalog, so
+  the cloud stores are excluded whatever the credential scope names. A
+  `hooks.file_boundary.extra_read_paths` entry that names a newly catalogued
+  store or a directory containing it (`~/.m2`, `~/.config/gh`) now fails
+  `qsdev check`; name a sub-directory such as `~/.m2/repository` instead.
+  Run `qsdev init --update` to pick it up.
 - Self-protection now applies the shell gate-dodge check (GD-003, GD-004),
   the git code-execution check (GIT-001) and the shell-write half of SP-015
   to every tool that runs a shell command, not only Bash: under Monitor and

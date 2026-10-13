@@ -227,15 +227,14 @@ func TestDenyRules(t *testing.T) {
 	}
 }
 
-// TestReadDenyRules covers W132: kubeconfig and helm registry/repository
-// credentials are read-denied.
-func TestReadDenyRules(t *testing.T) {
+// TestNotReadDenyRuleProvider covers W132 after the credential canon took
+// it over: the kubeconfig directory and helm's registry and repository
+// credentials are owned by internal/secrets and read-denied at every preset
+// whatever the languages, so the module keeps no private copy.
+func TestNotReadDenyRuleProvider(t *testing.T) {
 	t.Parallel()
-	rules := (&helm.Module{}).ReadDenyRules(ecosystem.ModuleConfig{})
-	for _, want := range []string{"~/.kube/*", "~/.config/helm/registry/*", "~/.config/helm/repositories.yaml"} {
-		if !slices.Contains(rules, want) {
-			t.Errorf("ReadDenyRules missing %q: %v", want, rules)
-		}
+	if _, ok := any(&helm.Module{}).(ecosystem.ReadDenyRuleProvider); ok {
+		t.Error("helm module implements ReadDenyRuleProvider; its credential stores belong to the canon")
 	}
 }
 

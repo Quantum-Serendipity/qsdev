@@ -8,8 +8,10 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"strings"
 
+	"github.com/Quantum-Serendipity/qsdev/internal/pathmatch"
 	"github.com/Quantum-Serendipity/qsdev/internal/sandbox"
 	"github.com/Quantum-Serendipity/qsdev/internal/sandbox/bwrap"
 	"github.com/Quantum-Serendipity/qsdev/internal/sandbox/shim"
@@ -102,27 +104,13 @@ func sandboxVisibility(cfg *sandbox.SandboxConfig) func(string) bool {
 		deny = append(deny, filepath.Clean(d))
 	}
 	return func(p string) bool {
-		for _, d := range deny {
-			if pathWithin(p, d) {
-				return false // masked by a policy deny entry
-			}
+		p = filepath.Clean(p)
+		within := func(root string) bool { return pathmatch.Within(p, root) }
+		if slices.ContainsFunc(deny, within) {
+			return false // masked by a policy deny entry
 		}
-		for _, root := range roots {
-			if pathWithin(p, root) {
-				return true
-			}
-		}
-		return false
+		return slices.ContainsFunc(roots, within)
 	}
-}
-
-// pathWithin reports whether p is root or lies beneath it.
-func pathWithin(p, root string) bool {
-	rel, err := filepath.Rel(root, p)
-	if err != nil {
-		return false
-	}
-	return rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator))
 }
 
 // hostExecutable locates name the way a shell would (PATH lookup for a bare

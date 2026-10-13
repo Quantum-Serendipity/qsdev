@@ -35,6 +35,14 @@ type SettingsJSON struct {
 // comma-separated.
 const FileBoundaryExtraReadPathsEnv = "FILE_BOUNDARY_EXTRA_READ_PATHS"
 
+// FileBoundaryDenyPathsEnv is the variable through which the file-boundary
+// hook receives the home credential stores (secrets.CredentialHomePaths),
+// comma-separated. It is set exactly when FileBoundaryExtraReadPathsEnv is:
+// the hook drops any extra read path that overlaps one of these stores, and
+// grants no extra read path at all when the list is missing. System paths are
+// left out; validation rejects extra read paths overlapping them at check time.
+const FileBoundaryDenyPathsEnv = "FILE_BOUNDARY_DENY_PATHS"
+
 // ToolGatesAllowedEnv and ToolGatesDeniedEnv are the variables through which
 // the tool-gates hook receives .qsdev.yaml hooks.tool_gates.allowed and
 // hooks.tool_gates.denied, comma-separated.
@@ -98,7 +106,30 @@ func AllBaseDenyRules() []string {
 	if err != nil {
 		return nil
 	}
-	return withNestedSecretFileRules(cat.AllPermissionDenyRules())
+	return append(withNestedSecretFileRules(cat.AllPermissionDenyRules()), homeCredentialReadDenyRules()...)
+}
+
+// HomeCredentialReadGlobs returns the home credential stores of the
+// credential canon as read globs (secrets.CredentialReadGlobs), for the
+// public framework adapters, which may not import internal packages.
+func HomeCredentialReadGlobs() []string {
+	return secrets.CredentialReadGlobs()
+}
+
+// homeCredentialReadDenyRules returns a Read deny rule for each home
+// credential store of the canon (secrets.CredentialReadGlobs). Every preset
+// carries them whatever the languages, so a registry token such as ~/.npmrc
+// is out of the Read tool's reach in any project. Known limits:
+//   - Shell reads (Bash(cat ~/.npmrc)) are not covered; the Bash read policy
+//     belongs to the shell-read work (U15/XS-WS5).
+//   - Claude Code matches Read rules case-sensitively, so ~/.NPMRC on a
+//     case-insensitive filesystem slips past them; the file-boundary hook is
+//     the backstop.
+//   - With the opt-in Claude Code sandbox, Claude Code applies Read denies to
+//     sandboxed Bash too, so ssh, gpg, npm, mvn and gh lose their user
+//     config inside it.
+func homeCredentialReadDenyRules() []string {
+	return readDenyPermissionRules(secrets.CredentialReadGlobs())
 }
 
 // rootSecretsReadRule is the catalog rule that read-denies the project's
@@ -143,10 +174,12 @@ func buildPermissions(preset PermissionPreset, answers types.WizardAnswers, regi
 	if err != nil {
 		return Permissions{}, fmt.Errorf("loading catalog for permissions: %w", err)
 	}
-	// Ecosystem deny rules include Read(...) rules for the credential files
+	// The home credential stores of the canon come first, then the ecosystem
+	// deny rules, which include Read(...) rules for the credential files
 	// modules declare read-denied, so the agent's own Read tool is blocked from
 	// them whether or not the Bash sandbox is enabled.
-	ecosystemDeny := collectEcosystemDenyRules(answers, registry)
+	ecosystemDeny := homeCredentialReadDenyRules()
+	ecosystemDeny = append(ecosystemDeny, collectEcosystemDenyRules(answers, registry)...)
 	ecosystemDeny = append(ecosystemDeny, readDenyPermissionRules(collectEcosystemReadDenyRules(answers, registry))...)
 
 	// A malformed committed rule is an error rather than being dropped, so a
@@ -183,7 +216,7 @@ func buildPermissions(preset PermissionPreset, answers types.WizardAnswers, regi
 		ask = append(ask, cat.PermissionAskRules(setName)...)
 	}
 
-	// Always add ecosystem deny rules.
+	// Always add the home credential and ecosystem deny rules.
 	deny = append(deny, ecosystemDeny...)
 
 	switch preset {
@@ -323,16 +356,19 @@ func mcpToolDenyRules(deny []string, answers types.WizardAnswers, cfg Config) ([
 	return trust.GenerateDenyRuleProjections(deny, tierOf), nil
 }
 
-// buildSandbox returns a SandboxConfig when sandbox is enabled, or nil otherwise.
+// buildSandbox returns a SandboxConfig when sandbox is enabled, or nil
+// otherwise. Its denyRead is the canon's home credential stores, then the
+// selected modules' read-deny paths.
 func buildSandbox(cfg Config, answers types.WizardAnswers, registry *ecosystem.Registry) *SandboxConfig {
 	if !cfg.SandboxEnabled {
 		return nil
 	}
+	denyRead := append(secrets.CredentialHomePaths(), collectEcosystemReadDenyRules(answers, registry)...)
 	sandbox := &SandboxConfig{
 		Enabled: true,
 		Filesystem: &SandboxFilesystem{
 			DenyWrite: []string{"/etc", "/usr"},
-			DenyRead:  collectEcosystemReadDenyRules(answers, registry),
+			DenyRead:  sliceutil.Dedup(denyRead),
 		},
 	}
 	if len(cfg.AllowedDomains) > 0 {
@@ -350,8 +386,9 @@ func buildHookEnv(answers types.WizardAnswers) (map[string]string, error) {
 		return nil, errs[0]
 	}
 	env := make(map[string]string)
-	if answers.Hooks.FileBoundary {
-		setListEnv(env, FileBoundaryExtraReadPathsEnv, answers.HookPolicy.FileBoundary.ExtraReadPaths)
+	if extras := answers.HookPolicy.FileBoundary.ExtraReadPaths; answers.Hooks.FileBoundary && len(extras) > 0 {
+		setListEnv(env, FileBoundaryExtraReadPathsEnv, extras)
+		setListEnv(env, FileBoundaryDenyPathsEnv, secrets.CredentialHomePaths())
 	}
 	if answers.Hooks.ToolGates {
 		setListEnv(env, ToolGatesAllowedEnv, answers.HookPolicy.ToolGates.Allowed)

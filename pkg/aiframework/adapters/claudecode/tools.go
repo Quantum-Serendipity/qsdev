@@ -100,7 +100,7 @@ func (a *Adapter) InjectCredentials(ctx context.Context, scope *aiframework.Cred
 	}
 	return &aiframework.CredentialArtifacts{
 		EnvVars:      credentialEnvVars(scope.APIKeys),
-		ExcludePaths: credentialExcludePaths(scope),
+		ExcludePaths: credentialExcludePaths(),
 	}, nil
 }
 
@@ -220,21 +220,11 @@ func credentialEnvVars(keys []aiframework.APIKeyRequirement) map[string]string {
 }
 
 // credentialExcludePaths builds the set of credential file globs to exclude
-// from the agent sandbox: a baseline of well-known secret locations plus any
-// cloud-provider credential directories implied by the scope.
-func credentialExcludePaths(scope *aiframework.CredentialScope) []string {
-	paths := []string{
-		"**/.env", "**/.env.*", "**/*.pem", "**/*.key",
-		"**/secrets/**", "~/.ssh/**",
-	}
-	if scope.AWSProfile != "" {
-		paths = append(paths, "~/.aws/**")
-	}
-	if scope.GCPProject != "" {
-		paths = append(paths, "~/.config/gcloud/**")
-	}
-	if scope.AzureSubscription != "" {
-		paths = append(paths, "~/.azure/**")
-	}
-	return sliceutil.Dedup(paths)
+// from the agent sandbox: the project's secret files plus every home
+// credential store of the credential canon, whatever the scope names, so the
+// cloud stores (~/.aws/**, ~/.config/gcloud/**, ~/.azure/**) are always kept
+// out.
+func credentialExcludePaths() []string {
+	paths := []string{"**/.env", "**/.env.*", "**/*.pem", "**/*.key", "**/secrets/**"}
+	return sliceutil.Dedup(append(paths, ccaddon.HomeCredentialReadGlobs()...))
 }

@@ -731,14 +731,13 @@ func TestDevenvPackages_Sccache(t *testing.T) {
 	}
 }
 
-// TestReadDenyRules verifies the Cargo registry credential files are
-// read-denied to the agent.
-func TestReadDenyRules(t *testing.T) {
+// TestNotReadDenyRuleProvider verifies the module keeps no private copy of
+// the Cargo credential files: the credential canon (internal/secrets) owns
+// ~/.cargo/credentials.toml and ~/.cargo/credentials, and the generated
+// settings read-deny them at every preset whatever the languages.
+func TestNotReadDenyRuleProvider(t *testing.T) {
 	t.Parallel()
-	got := newModule().ReadDenyRules(ecosystem.ModuleConfig{})
-	for _, want := range []string{"~/.cargo/credentials.toml", "~/.cargo/credentials"} {
-		if !slices.Contains(got, want) {
-			t.Errorf("ReadDenyRules() = %v, missing %q", got, want)
-		}
+	if _, ok := any(newModule()).(ecosystem.ReadDenyRuleProvider); ok {
+		t.Error("rust module implements ReadDenyRuleProvider; its credential stores belong to the canon")
 	}
 }

@@ -346,6 +346,48 @@ func TestNestedSecretRules_FromCanon(t *testing.T) {
 	}
 }
 
+// TestHomeCredentialReadDenies_Oracle judges the generated Read denies with
+// denyutil.MatchesPathRule, which models Claude Code's path-rule semantics:
+// in every preset a file store of the canon and a file inside a directory
+// store are denied, while a project-local file of the same name (a
+// committed .npmrc, a vendored .cargo/credentials.toml) matches no home rule.
+func TestHomeCredentialReadDenies_Oracle(t *testing.T) {
+	t.Parallel()
+	const home, root = "/home/me", "/work/proj"
+	ctx := denyutil.PathRuleContext{Home: home, ProjectRoot: root, Cwd: root, Deny: true}
+	denied := func(rules []string, p string, homeOnly bool) (string, bool) {
+		for _, r := range rules {
+			if homeOnly && !strings.HasPrefix(r, "Read(~/") {
+				continue
+			}
+			if tool, _ := denyutil.ParseToolPattern(r); tool == "Read" && denyutil.MatchesPathRule(r, p, ctx) {
+				return r, true
+			}
+		}
+		return "", false
+	}
+	_, presets := generatedPresetPermissions(t)
+	for preset, p := range presets {
+		t.Run(preset, func(t *testing.T) {
+			t.Parallel()
+			for _, s := range secrets.CredentialStores() {
+				probe := home + "/" + s.Rel
+				if s.Dir {
+					probe += "/x"
+				}
+				if _, ok := denied(p.deny, probe, false); !ok {
+					t.Errorf("no deny Read rule blocks %s", probe)
+				}
+			}
+			for _, rel := range []string{".npmrc", ".cargo/credentials.toml"} {
+				if r, ok := denied(p.deny, root+"/"+rel, true); ok {
+					t.Errorf("home rule %s blocks the project-local %s", r, rel)
+				}
+			}
+		})
+	}
+}
+
 // firstPathMatch returns the first Read rule in rules (deny or ask rules)
 // that matches relPath, a path relative to the project root, with the session
 // started at the project root.

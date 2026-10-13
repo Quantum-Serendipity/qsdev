@@ -31,7 +31,15 @@ Configuration via environment variables:
                               generated into settings.json "env" from
                               .qsdev.yaml hooks.file_boundary.extra_read_paths.
                               Relative paths, the filesystem root and the home
-                              directory or an ancestor of it are ignored.
+                              directory or an ancestor of it are ignored, as
+                              is any path that equals, contains or lies inside
+                              an entry of FILE_BOUNDARY_DENY_PATHS (compared
+                              ignoring case on every OS).
+  FILE_BOUNDARY_DENY_PATHS  — comma-separated ~/ credential stores (~/.ssh,
+                              ~/.npmrc, ~/.config/gh, ...), generated into
+                              settings.json "env" beside the extra read paths.
+                              When it is unset or empty, no extra read path is
+                              granted (fail closed).
   FILE_BOUNDARY_STRICT_MODE — set to "true" to deny ALL out-of-project access
                               including safe paths, dependency caches and
                               extra read paths
@@ -111,9 +119,35 @@ _GLOB_SEP = re.compile(r"[\\/]" if os.sep == "\\" else "/")
 def _within(path: str, root: str) -> bool:
     """Whether the resolved path is root or lies inside it, compared as the
     filesystem compares them: with the platform separator (realpath returns
-    backslashes on Windows) and, on Windows, ignoring case."""
+    backslashes on Windows) and, on Windows and macOS, ignoring case."""
     path, root = os.path.normcase(path), os.path.normcase(root)
+    if sys.platform == "darwin":
+        path, root = path.casefold(), root.casefold()
     return path == root or path.startswith(root + os.sep)
+
+
+def _overlaps_folded(a: str, b: str) -> bool:
+    """Whether a equals, contains or lies inside b, ignoring case on every OS:
+    the committed .qsdev.yaml is shared across hosts, so a credential store is
+    matched however a host's filesystem folds case (qsdev's crossHostMatch)."""
+    a, b = os.path.normcase(a).casefold(), os.path.normcase(b).casefold()
+    return a == b or a.startswith(b + os.sep) or b.startswith(a + os.sep)
+
+
+def _credential_paths() -> list[str]:
+    """The home credential stores (FILE_BOUNDARY_DENY_PATHS, generated beside
+    the extra read paths), expanded and resolved. Entries that are not absolute
+    after ~ expansion are skipped."""
+    paths = []
+    for raw in os.environ.get("FILE_BOUNDARY_DENY_PATHS", "").split(","):
+        p = os.path.expanduser(raw.strip())
+        if not p or not os.path.isabs(p):
+            continue
+        try:
+            paths.append(os.path.realpath(p))
+        except (OSError, ValueError):
+            continue
+    return paths
 
 
 def _dependency_source_dirs() -> list[str]:
@@ -140,7 +174,12 @@ def _extra_read_paths() -> list[str]:
     """The configured extra read-only directories. An entry that is not
     absolute after ~ expansion, or that resolves to the filesystem root, the
     home directory or an ancestor of it (which would lift the read boundary),
-    grants nothing."""
+    or that equals, contains or lies inside a credential store, grants nothing.
+    Without a credential list no entry can be checked, so none is granted
+    (fail closed)."""
+    credentials = _credential_paths()
+    if not credentials:
+        return []
     home = os.path.realpath(os.path.expanduser("~"))
     paths = []
     for raw in os.environ.get("FILE_BOUNDARY_EXTRA_READ_PATHS", "").split(","):
@@ -152,6 +191,8 @@ def _extra_read_paths() -> list[str]:
         except (OSError, ValueError):
             continue
         if os.path.dirname(real) == real or _within(home, real):
+            continue
+        if any(_overlaps_folded(real, c) for c in credentials):
             continue
         paths.append(p)
     return paths

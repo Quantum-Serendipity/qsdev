@@ -588,14 +588,25 @@ hooks:
   still denied there. Each entry must be an absolute path or start with
   `~/`. The filesystem root, the home directory or a directory containing
   it, a path that is, contains or lies inside a credential store (`~/.ssh`,
-  `~/.aws`, `~/.config` with its `gcloud` and `helm` stores, `/etc` with
+  `~/.aws`, `~/.config` with its `gcloud`, `gh` and `helm` stores,
+  `~/.npmrc` and the other registry token files, `/etc` with
   `/etc/shadow`, and the rest of the sandbox deny list), `..` segments,
   commas and control characters are rejected by `qsdev check` and stop
-  init with an error. The hook itself also ignores an entry that resolves,
+  init with an error. When a store joins the credential catalog, an
+  existing entry that names it or a directory containing it starts failing
+  `qsdev check`: name a sub-directory outside the store instead, such as
+  `~/.m2/repository` rather than `~/.m2`. The hook itself also ignores an entry that resolves,
   through symlinks, to the root, the home directory or an ancestor of it.
   The paths reach the hook through the
   `FILE_BOUNDARY_EXTRA_READ_PATHS` variable in the `env` block of
-  `.claude/settings.json`. `FILE_BOUNDARY_STRICT_MODE=true` revokes every
+  `.claude/settings.json`, and beside them qsdev generates
+  `FILE_BOUNDARY_DENY_PATHS`, the home credential stores from the
+  credential catalog. The hook re-checks each entry against that list and
+  drops one that is, contains or lies inside a store, comparing without
+  regard to case on every OS, so a hand-edited `settings.json` cannot
+  reopen `~/.config/gh`. When `FILE_BOUNDARY_DENY_PATHS` is missing or
+  empty the hook grants no extra read path at all; regenerate with
+  `qsdev init --update`. `FILE_BOUNDARY_STRICT_MODE=true` revokes every
   out-of-project allowance, including these paths.
 - **`tool_gates.allowed`** and **`tool_gates.denied`** are the policy the
   `tool-gates` hook enforces on every tool call. Entries are Claude Code
@@ -1085,7 +1096,8 @@ Top-level structure:
 ```json
 {
   "env": {
-    "FILE_BOUNDARY_EXTRA_READ_PATHS": "/opt/android-sdk"
+    "FILE_BOUNDARY_EXTRA_READ_PATHS": "/opt/android-sdk",
+    "FILE_BOUNDARY_DENY_PATHS": "~/.ssh,~/.gnupg,~/.aws,..."
   },
   "permissions": {
     "defaultMode": "default",
@@ -1112,16 +1124,19 @@ Top-level structure:
 }
 ```
 
-The permission model uses approximately **90 deny rules** and **60 ask rules**:
+With no language selected, the `standard` preset generates more than **300 deny rules** and about **170 ask rules**; ecosystem modules add their own:
 
 - **Deny rules** block dangerous operations outright: npx, nix-env imperative installs, system package managers, pipe-to-shell, shell wrapping, env/command prefix bypass, sudo-prefixed installs, subprocess escapes, eval/xargs, and destructive operations.
+- **Home credential Read denies** keep the agent's Read tool out of every per-user credential store in the credential catalog (`internal/secrets`), at every preset and whatever the selected languages: `Read(~/.ssh/**)` and the other credential directories with their contents, and `Read(~/.npmrc)`, `Read(~/.pypirc)`, `Read(~/.cargo/credentials.toml)`, `Read(~/.m2/settings.xml)` and the other registry token files by name. A project-local file of the same name (`./.npmrc`) is not denied. With `sandbox` on, the same stores are in `sandbox.filesystem.denyRead`, and Claude Code applies the Read denies to sandboxed Bash too, so `ssh`, `gpg`, `npm`, `mvn` and `gh` run there without their user configuration. The rules match case-sensitively and do not cover shell reads such as `cat ~/.npmrc`.
 - **Ask rules** gate package install operations (npm, pip, cargo, go, gem, composer, dotnet) through the PreToolUse hook, which performs age-gating and vulnerability checks before allowing the install.
 - **MCP tool deny rules** deny, as whole tools, the file tools of MCP servers in the fallback (lowest) trust tier: every tool of the reference `filesystem` server and `mcp__github__create_or_update_file`. A permission rule cannot scope an MCP tool by its path argument, so a path rule such as `Read(./.env)` cannot be carried over to `mcp__filesystem__read_file`; the tool is denied outright instead. Servers are scored from their generated `.mcp.json` definition and the known-server database, and a server qsdev does not configure scores into the fallback tier. Manual overrides in `~/.qsdev/trust.yaml` apply only to the enforce hook, not to the committed `settings.json`. Tools of higher-tier servers stay available; the confused-deputy path check that would cover them runs inside the `qsdev enforce` hook, which no tier or preset enables yet. See [MCP trust scoring](security-architecture.md#layer-13-package-and-mcp-risk-scoring).
 
 The three-way merge during updates preserves any custom allow/deny rules you have added while incorporating new rules from template upgrades.
 
 `env` holds variables qsdev generates to configure its hooks
-(`FILE_BOUNDARY_EXTRA_READ_PATHS`, from `hooks.file_boundary.extra_read_paths`;
+(`FILE_BOUNDARY_EXTRA_READ_PATHS`, from `hooks.file_boundary.extra_read_paths`,
+with `FILE_BOUNDARY_DENY_PATHS`, the home credential stores the hook keeps
+out of those paths, set exactly when they are;
 `TOOL_GATES_ALLOWED` and `TOOL_GATES_DENIED`, from `hooks.tool_gates`;
 and, while the package guard is registered, `PACKAGE_GUARD_MIN_AGE_DAYS`,
 its release-age gate in days from the compliance level raised by

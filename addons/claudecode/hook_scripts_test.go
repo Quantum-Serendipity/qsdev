@@ -19,6 +19,7 @@ import (
 	"time"
 
 	claudecode "github.com/Quantum-Serendipity/qsdev/addons/claudecode"
+	"github.com/Quantum-Serendipity/qsdev/internal/secrets"
 	"github.com/Quantum-Serendipity/qsdev/pkg/types"
 )
 
@@ -663,8 +664,11 @@ func TestFileBoundaryHook_ExtraReadPaths(t *testing.T) {
 		"FILE_BOUNDARY_SAFE_PATHS=/tmp/qsdev-safe-path-test", "FILE_BOUNDARY_STRICT_MODE=",
 		"GOPATH=", "GOMODCACHE=", "GOROOT=", "CARGO_HOME=", "RUSTUP_HOME=",
 	}
-	extra := []string{"FILE_BOUNDARY_EXTRA_READ_PATHS=" + sdk + ", ~/sdks/android"}
-	only := func(v string) []string { return []string{"FILE_BOUNDARY_EXTRA_READ_PATHS=" + v} }
+	// The deny list settings.json carries beside the extra read paths
+	// (buildHookEnv); the unset and empty cases below leave it out.
+	denyPaths := claudecode.FileBoundaryDenyPathsEnv + "=" + strings.Join(secrets.CredentialHomePaths(), ",")
+	extra := []string{"FILE_BOUNDARY_EXTRA_READ_PATHS=" + sdk + ", ~/sdks/android", denyPaths}
+	only := func(v string) []string { return []string{"FILE_BOUNDARY_EXTRA_READ_PATHS=" + v, denyPaths} }
 	outside := "/etc/qsdev-file-boundary-test"
 	homeLink := filepath.Join(t.TempDir(), "home-link")
 	if err := os.Symlink(home, homeLink); err != nil {
@@ -700,6 +704,17 @@ func TestFileBoundaryHook_ExtraReadPaths(t *testing.T) {
 		// The hook runs in this package's directory, so "templates" would
 		// cover the target if a relative entry were resolved against it.
 		{"relative ignored", only("templates"), "Read", map[string]any{"file_path": relTarget}, "deny"},
+		// An extra that equals, contains or lies inside a credential store is
+		// dropped, compared case-insensitively on every OS.
+		{"credential store dropped", only("~/.config/gh"), "Read", map[string]any{"file_path": filepath.Join(home, ".config", "gh", "hosts.yml")}, "deny"},
+		{"credential store case variant dropped", only("~/.CONFIG/GH"), "Read", map[string]any{"file_path": filepath.Join(home, ".CONFIG", "GH", "hosts.yml")}, "deny"},
+		{"inside credential store dropped", only("~/.ssh/keys"), "Read", map[string]any{"file_path": filepath.Join(home, ".ssh", "keys", "id_ed25519")}, "deny"},
+		{"ancestor of credential store dropped", only("~/.config"), "Read", map[string]any{"file_path": filepath.Join(home, ".config", "gh", "hosts.yml")}, "deny"},
+		{"other extra kept beside dropped one", only("~/.config/gh, " + sdk), "Read", map[string]any{"file_path": filepath.Join(sdk, "x.h")}, "allow"},
+		{"credential name prefix kept", only("~/.sshfoo"), "Read", map[string]any{"file_path": filepath.Join(home, ".sshfoo", "x")}, "allow"},
+		// Without the deny list no extra can be checked, so none is granted.
+		{"deny list unset grants nothing", []string{"FILE_BOUNDARY_EXTRA_READ_PATHS=" + sdk}, "Read", map[string]any{"file_path": filepath.Join(sdk, "x.h")}, "deny"},
+		{"deny list empty grants nothing", []string{"FILE_BOUNDARY_EXTRA_READ_PATHS=" + sdk, claudecode.FileBoundaryDenyPathsEnv + "= , "}, "Read", map[string]any{"file_path": filepath.Join(sdk, "x.h")}, "deny"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

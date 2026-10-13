@@ -90,7 +90,10 @@ func TestCheckBoundaryReadPath_FilesystemAliases(t *testing.T) {
 		{"trailing-dot store", "~/.ssh./", windows, "credential store"},
 		{"stream-suffixed store", "~/.ssh::$DATA", windows, "credential store"},
 		{"windows home ancestor", `C:\USERS`, windows, "home directory"},
-		{"exact-name filesystem", "~/.SSH", pathmatch.Options{}, ""},
+		// Deliberately rejected even on an exact-name host: the committed
+		// .qsdev.yaml is shared across hosts, and on macOS or Windows "~/.SSH"
+		// is the credential store "~/.ssh". (Allowed before U19-WS5.)
+		{"exact-name filesystem", "~/.SSH", pathmatch.Options{}, "credential store"},
 		{"case-folded lookalike", "~/.SSHfoo", fold, ""},
 	}
 	for _, tc := range cases {
@@ -111,5 +114,106 @@ func TestCheckBoundaryReadPath_FilesystemAliases(t *testing.T) {
 				t.Fatalf("checkBoundaryReadPath(%q) = %v, want error containing %q", tc.path, err, tc.wantErr)
 			}
 		})
+	}
+}
+
+// matchOptionSets is every way a host filesystem may compare names. The
+// credential overlap check must not depend on it, since the committed
+// .qsdev.yaml is read on every host.
+var matchOptionSets = map[string]pathmatch.Options{
+	"exact":    {},
+	"platform": pathmatch.Platform,
+	"fold":     {FoldCase: true},
+	"windows":  {FoldCase: true, WindowsAliases: true},
+}
+
+// TestCheckBoundaryReadPath_RejectsCredentialVariants checks that every
+// spelling of a credential store, and every path that contains or lies inside
+// one, is rejected whatever the host's filesystem semantics.
+func TestCheckBoundaryReadPath_RejectsCredentialVariants(t *testing.T) {
+	t.Parallel()
+	paths := []string{
+		"~/.SSH",
+		"~/.ssh.",
+		"~/.ssh::$DATA",
+		"~/.npmrc",
+		"~/.config/gh",
+		"~/.config/gh/hosts.yml",
+		"~/.git-credentials",
+		"~/.claude",
+		"~/.m2",
+		"~/.pypirc",
+		"/home/u/.NPMRC",
+		"/home/u/.config/GH/hosts.yml",
+		"/ETC/shadow",
+	}
+	for optName, opts := range matchOptionSets {
+		for _, p := range paths {
+			t.Run(optName+"/"+p, func(t *testing.T) {
+				t.Parallel()
+				err := checkBoundaryReadPath(p, "/home/u", opts)
+				if err == nil || !strings.Contains(err.Error(), "credential store") {
+					t.Fatalf("checkBoundaryReadPath(%q) = %v, want a credential store error", p, err)
+				}
+			})
+		}
+	}
+}
+
+// TestCheckBoundaryReadPath_CredentialMessageUsesTilde checks that the error
+// names the store as the user wrote it: home-relative as "~/<rel>", absolute
+// under the home directory as "<home>/<rel>".
+func TestCheckBoundaryReadPath_CredentialMessageUsesTilde(t *testing.T) {
+	t.Parallel()
+	cases := []struct {
+		path string
+		want string
+	}{
+		{"~/.config/gh", "overlaps the credential store ~/.config/gh"},
+		{"~/.config/gh/hosts.yml", "overlaps the credential store ~/.config/gh"},
+		{"~/.npmrc", "overlaps the credential store ~/.npmrc"},
+		{"/home/u/.config/gh", "overlaps the credential store /home/u/.config/gh"},
+		{"/etc/sudoers.d/x", "overlaps the credential store /etc/sudoers.d"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.path, func(t *testing.T) {
+			t.Parallel()
+			err := checkBoundaryReadPath(tc.path, "/home/u", pathmatch.Options{})
+			if err == nil || err.Error() != "path "+tc.want {
+				t.Fatalf("checkBoundaryReadPath(%q) = %v, want %q", tc.path, err, tc.want)
+			}
+		})
+	}
+}
+
+// TestCheckBoundaryReadPath_StillAllowed pins the paths that stay valid after
+// the credential canon grew and the overlap check became cross-host: tool
+// caches beside a credential file, paths outside home, and home-relative
+// paths when home is /root (a system deny entry), while an absolute path
+// under /root is still rejected for another user.
+func TestCheckBoundaryReadPath_StillAllowed(t *testing.T) {
+	t.Parallel()
+	allowed := []string{
+		"~/sdks/android",
+		"/opt/sdk",
+		"~/.m2/repository",
+		"~/.gradle/caches",
+		"/home/other/sdk",
+		"~/.sshfoo",
+	}
+	for _, home := range []string{"/root", "/home/u"} {
+		for optName, opts := range matchOptionSets {
+			for _, p := range allowed {
+				t.Run(home+"/"+optName+"/"+p, func(t *testing.T) {
+					t.Parallel()
+					if err := checkBoundaryReadPath(p, home, opts); err != nil {
+						t.Fatalf("checkBoundaryReadPath(%q) with home %s = %v, want nil", p, home, err)
+					}
+				})
+			}
+		}
+	}
+	if err := checkBoundaryReadPath("/root/sdks", "/home/u", pathmatch.Options{}); err == nil {
+		t.Fatal(`checkBoundaryReadPath("/root/sdks") with home /home/u = nil, want an error`)
 	}
 }

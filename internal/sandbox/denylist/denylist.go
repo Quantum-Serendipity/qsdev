@@ -11,10 +11,14 @@ import (
 	"github.com/Quantum-Serendipity/qsdev/internal/secrets"
 )
 
-// matchOptions is how Overlaps and IsStrictAncestor compare names: the host
+// matchOptions is how Covering and Conflict compare names: the host
 // filesystem's (a variable so tests can drive the macOS and Windows forms on
 // any OS).
 var matchOptions = pathmatch.Platform
+
+// evalSymlinks resolves symlinks for resolveExistingPrefix (a variable so
+// tests can count the filesystem lookups a check costs).
+var evalSymlinks = filepath.EvalSymlinks
 
 // SystemDenyPaths returns absolute paths that must never be bind-mounted into
 // a sandbox. These cover system credential stores and privilege-escalation
@@ -86,7 +90,7 @@ func resolveExistingPrefix(path string) string {
 	clean := filepath.Clean(path)
 	var rest []string
 	for dir := clean; ; dir = filepath.Dir(dir) {
-		if resolved, err := filepath.EvalSymlinks(dir); err == nil {
+		if resolved, err := evalSymlinks(dir); err == nil {
 			return filepath.Join(append([]string{resolved}, rest...)...)
 		}
 		parent := filepath.Dir(dir)
@@ -113,20 +117,50 @@ func CandidatePaths(path string) []string {
 	return candidates
 }
 
-// Overlaps reports whether path equals deny or is a descendant of it, as the
-// host filesystem compares names (pathmatch.Within): on macOS and Windows
-// ~/.SSH overlaps ~/.ssh. It is the complement of IsStrictAncestor: together
-// they cover every way a mount path can conflict with a deny entry.
-func Overlaps(path, deny string) bool {
-	return matchOptions.Within(path, deny)
+// Covering returns the ExpandedDenyPaths entry that path (any CandidatePaths
+// form of it) equals or lies under, as the host filesystem compares names: on
+// macOS and Windows ~/.SSH/id_rsa is covered by ~/.ssh.
+func Covering(path string) (deny string, ok bool) {
+	return firstMatch(CandidatePaths(path), ExpandedDenyPaths(), covers)
 }
 
-// IsStrictAncestor reports whether ancestor is a proper parent directory of
-// descendant (not equal to it), as the host filesystem compares names
-// (pathmatch.StrictlyWithin). The filesystem root "/" is an ancestor of every
-// absolute path. Both mount validators use it to reject binding an ancestor of
-// a deny path (e.g. $HOME, which contains ~/.ssh), which would re-expose the
-// sensitive descendant inside the sandbox.
-func IsStrictAncestor(ancestor, descendant string) bool {
-	return matchOptions.StrictlyWithin(descendant, ancestor)
+// Conflict reports the ExpandedDenyPaths entry that path conflicts with, if
+// any: first one that a CandidatePaths form of path equals or lies under (as
+// Covering, exposes=false), otherwise one that a form of path is a strict
+// ancestor of (exposes=true). Binding such an ancestor (e.g. $HOME, which
+// contains ~/.ssh, or /etc, which contains /etc/shadow) would re-expose the
+// sensitive descendant inside the sandbox; the filesystem root "/" exposes
+// every entry. The deny list and the candidates are resolved once and shared
+// by both checks, since each resolution costs filesystem lookups.
+func Conflict(path string) (deny string, exposes, ok bool) {
+	denyPaths := ExpandedDenyPaths()
+	candidates := CandidatePaths(path)
+	if deny, ok := firstMatch(candidates, denyPaths, covers); ok {
+		return deny, false, true
+	}
+	deny, ok = firstMatch(candidates, denyPaths, exposesEntry)
+	return deny, ok, ok
+}
+
+// covers reports whether candidate equals deny or lies under it.
+func covers(candidate, deny string) bool {
+	return matchOptions.Within(candidate, deny)
+}
+
+// exposesEntry reports whether candidate is a strict ancestor of deny.
+func exposesEntry(candidate, deny string) bool {
+	return matchOptions.StrictlyWithin(deny, candidate)
+}
+
+// firstMatch returns the first deny entry that match reports for any of the
+// candidates, trying the candidates in order.
+func firstMatch(candidates, denyPaths []string, match func(candidate, deny string) bool) (string, bool) {
+	for _, candidate := range candidates {
+		for _, deny := range denyPaths {
+			if match(candidate, deny) {
+				return deny, true
+			}
+		}
+	}
+	return "", false
 }

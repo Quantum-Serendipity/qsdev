@@ -14,6 +14,7 @@ import (
 	"testing"
 
 	"github.com/Quantum-Serendipity/qsdev/internal/exitcode"
+	"github.com/Quantum-Serendipity/qsdev/internal/pathmatch"
 	"github.com/Quantum-Serendipity/qsdev/internal/sandbox"
 	"github.com/Quantum-Serendipity/qsdev/internal/sandbox/backendselect"
 	"github.com/Quantum-Serendipity/qsdev/internal/sandbox/shim"
@@ -226,7 +227,7 @@ func TestSandboxExec_BubblewrapEndToEnd(t *testing.T) {
 	if err != nil {
 		testutil.Unavailable(t, testutil.RequireE3, "cat not found: %v", err)
 	}
-	if real, err := filepath.EvalSymlinks(cat); err != nil || !pathWithin(real, sandboxStoreDir) {
+	if real, err := filepath.EvalSymlinks(cat); err != nil || !pathmatch.Within(real, sandboxStoreDir) {
 		testutil.Unavailable(t, testutil.RequireE3, "host coreutils are not in the Nix store")
 	}
 
@@ -694,7 +695,7 @@ func TestSandboxExec_GuardrailCreationExits2(t *testing.T) {
 	if err != nil {
 		testutil.Unavailable(t, testutil.RequireE3, "sh not found: %v", err)
 	}
-	if real, err := filepath.EvalSymlinks(sh); err != nil || !pathWithin(real, sandboxStoreDir) {
+	if real, err := filepath.EvalSymlinks(sh); err != nil || !pathmatch.Within(real, sandboxStoreDir) {
 		testutil.Unavailable(t, testutil.RequireE3, "host shell is not in the Nix store")
 	}
 

@@ -3,7 +3,6 @@ package container_test
 import (
 	"os"
 	"path/filepath"
-	"slices"
 	"strings"
 	"testing"
 
@@ -698,15 +697,14 @@ func TestDenyRules(t *testing.T) {
 }
 
 // TestRegistryCredentialsProtected covers W132: registry credential files
-// are read-denied and cannot be printed with cat.
+// cannot be printed with cat. Their Read denies are owned by the credential
+// canon (internal/secrets) and generated at every preset, so the module is
+// not a ReadDenyRuleProvider.
 func TestRegistryCredentialsProtected(t *testing.T) {
 	t.Parallel()
 	m := newModule()
-	read := m.ReadDenyRules(ecosystem.ModuleConfig{})
-	for _, want := range []string{"~/.docker/config.json", "~/.config/containers/auth.json"} {
-		if !slices.Contains(read, want) {
-			t.Errorf("ReadDenyRules missing %q: %v", want, read)
-		}
+	if _, ok := any(m).(ecosystem.ReadDenyRuleProvider); ok {
+		t.Error("container module implements ReadDenyRuleProvider; its credential stores belong to the canon")
 	}
 	rules := m.DenyRules(ecosystem.ModuleConfig{})
 	for _, cmd := range []string{"cat ~/.docker/config.json", "cat ~/.config/containers/auth.json"} {

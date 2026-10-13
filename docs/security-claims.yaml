@@ -309,6 +309,19 @@ claims:
     tests: [TestMountOptions_HTTPNoAuthRefusesGatedTools]
     tiers: []
 
+  - id: home-credential-read-deny
+    text: >-
+      Generated settings read-deny the home credential stores of the
+      internal/secrets canon at every preset, whatever languages the project
+      selects.
+    files: [docs/security-architecture.md]
+    tests:
+      - TestBuildPermissions_HomeCredentialReadDenies
+      - TestHomeCredentialReadDenies_Oracle
+      - TestBuildSandbox_HomeCredentialDenyRead
+      - TestModuleReadDenyRulesDoNotDuplicateCredentialCanon
+    tiers: [supply-chain-only, standard, full]
+
 # Overclaims withdrawn by H0-1. The claims test fails if any comes back.
 # No entry may match this file's own text, so the retracted wording appears
 # verbatim nowhere in the repository: write a pattern, where a bracketed

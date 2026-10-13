@@ -12,10 +12,17 @@ import (
 
 // TestDefaultChecks_VersionFlagsProbeable keeps the catalog inside the
 // version-probe contract: a flag procexec.VersionProbe rejects would make the
-// tool look installed with no version.
+// tool look installed with no version. A lookup-only check (no flag) is never
+// run, so it can have no version parser and no floor it could never meet.
 func TestDefaultChecks_VersionFlagsProbeable(t *testing.T) {
 	t.Parallel()
 	for _, tc := range DefaultChecks() {
+		if tc.VersionFlag == "" {
+			if tc.ParseVersion != nil || tc.MinVersion != "" || tc.Constraint != "" {
+				t.Errorf("check %s is lookup-only but has a version parser or floor", tc.Name)
+			}
+			continue
+		}
 		if !procexec.IsVersionFlag(tc.VersionFlag) {
 			t.Errorf("check %s: VersionFlag %q is not accepted by procexec.VersionProbe", tc.Name, tc.VersionFlag)
 		}
@@ -56,9 +63,6 @@ func TestParseVersion_FullOutput(t *testing.T) {
 		tool, raw, want string
 	}{
 		{"shellcheck", "ShellCheck - shell script analysis tool\nversion: 0.11.0\nlicense: GNU General Public License, version 3\n", "0.11.0"},
-		{"az", "{\n  \"azure-cli\": \"2.58.0\",\n  \"azure-cli-core\": \"2.58.0\"\n}\n", "2.58.0"},
-		{"az", "azure-cli                         2.58.0 *\n\ncore                              2.58.0 *\n", "2.58.0"},
-		{"gcloud", "Google Cloud SDK 462.0.1\nbq 2.0.101\n", "462.0.1"},
 		{"syft", "Application:   syft\nVersion:       1.4.1\nBuildDate:     2024-05-01\n", "1.4.1"},
 		{"grype", "Application:   grype\nVersion:       0.79.4\n", "0.79.4"},
 		{"devenv", "devenv 2.1.2 (x86_64-linux)\n", "2.1.2"},

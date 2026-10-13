@@ -49,6 +49,12 @@ if [ -z "$origin" ]; then
 	exit 1
 fi
 
+# jq normalises the .mcp.json release cutoffs before the drift check.
+if ! command -v jq >/dev/null 2>&1; then
+	echo "dogfood: jq is required (it is on GitHub's ubuntu runners and in the devenv shell)" >&2
+	exit 1
+fi
+
 account_home=$(getent passwd "$(id -u)" 2>/dev/null | cut -d: -f6 || true)
 overlay="${account_home:-$HOME}/.config/qsdev/defaults.yaml"
 overlay_warning=""
@@ -120,6 +126,36 @@ for merged in .claude/settings.json .mcp.json; do
 		status=1
 	fi
 done
+
+# The .mcp.json release cutoffs depend on the day qsdev runs:
+# mcpregistry.HardenedLauncherSpec age-gates an npx launcher with the env
+# npm_config_before and a uvx launcher with a leading --exclude-newer=<cutoff>
+# arg, both relative to the current UTC day, so a join on a later day
+# rewrites them. `qsdev check` above validates the committed cutoffs. A
+# change in the cutoffs alone is therefore not drift: when .mcp.json and
+# HEAD's agree with every cutoff replaced by a placeholder, restore the
+# committed file. Any other change is left for the drift check below.
+# shellcheck disable=SC2016 # a jq program: $p is a jq variable
+mcp_cutoff_filter='
+def cutoffs($p):
+	if type == "object" then
+		(if (.env | type) == "object" and (.env | has("npm_config_before"))
+			then .env.npm_config_before = $p else . end)
+		| (if (.args | type) == "array"
+			then .args |= map(if type == "string" and startswith("--exclude-newer=")
+				then "--exclude-newer=" + $p else . end)
+			else . end)
+	else . end;
+if (.mcpServers | type) == "object" then .mcpServers |= map_values(cutoffs($p)) else . end
+'
+mcp_cutoffs() { jq -S --arg p '<release-cutoff>' "$mcp_cutoff_filter"; }
+if ! git diff --quiet -- .mcp.json; then
+	if now=$(mcp_cutoffs <.mcp.json) && committed=$(git show HEAD:.mcp.json | mcp_cutoffs) &&
+		[ -n "$now" ] && [ "$now" = "$committed" ]; then
+		echo "==> .mcp.json: only the release cutoffs changed; restoring the committed file"
+		git checkout -- .mcp.json
+	fi
+fi
 
 drift=$(git status --porcelain --untracked-files=all)
 if [ -n "$drift" ]; then

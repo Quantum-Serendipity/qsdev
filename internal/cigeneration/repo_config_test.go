@@ -809,6 +809,63 @@ func TestDogfoodScript_ResetsMergedJSON(t *testing.T) {
 	}
 }
 
+// TestDogfoodScript_NormalizesReleaseCutoffs pins that scripts/dogfood.sh
+// does not report the .mcp.json release cutoffs as drift. Generation writes
+// them relative to the day it runs (mcpregistry.HardenedLauncherSpec: an npx
+// launcher's env npm_config_before, a uvx launcher's --exclude-newer= arg), so
+// a join on a later day rewrites them; qsdev check validates the committed
+// ones. After the resets and before the porcelain drift check, the script
+// compares .mcp.json with HEAD's under a jq normalisation of both cutoff
+// forms and restores the committed file only when the two are equal, so any
+// other change is still drift. Without jq it fails before doing any work.
+func TestDogfoodScript_NormalizesReleaseCutoffs(t *testing.T) {
+	t.Parallel()
+
+	script := readDogfoodScript(t)
+
+	jq, mk := scriptIndex(script, "command -v jq"), scriptIndex(script, `tmp=$(mktemp -d)`)
+	if jq < 0 || mk < 0 || jq > mk {
+		t.Errorf("dogfood.sh must check `command -v jq` before creating its directory (jq at %d, mktemp at %d)", jq, mk)
+	} else if !strings.Contains(script[jq:mk], "exit 1") {
+		t.Error("dogfood.sh's jq check does not `exit 1` when jq is missing")
+	}
+
+	for _, want := range []string{"npm_config_before", "--exclude-newer=", "jq "} {
+		if scriptIndex(script, want) < 0 {
+			t.Errorf("dogfood.sh's cutoff normalisation does not handle %q", want)
+		}
+	}
+	if !strings.Contains(script, "mcpregistry.HardenedLauncherSpec") {
+		t.Error("dogfood.sh does not name mcpregistry.HardenedLauncherSpec as the source of the cutoffs")
+	}
+
+	const restore = "git checkout -- .mcp.json"
+	if n := strings.Count(script, restore); n != 1 {
+		t.Fatalf("dogfood.sh has %d %q commands, want exactly one (the conditional restore)", n, restore)
+	}
+	checkout := scriptIndex(script, restore)
+	reset := dogfoodResetRe.FindStringIndex(script)
+	drift := scriptIndex(script, "git status --porcelain")
+	if reset == nil || checkout < 0 || drift < 0 || reset[0] >= checkout || checkout >= drift {
+		t.Fatalf("dogfood.sh must restore .mcp.json after the resets and before the drift check (reset %v, restore %d, drift %d)", reset, checkout, drift)
+	}
+
+	// The restore must be guarded by the normalised compare with HEAD's file.
+	ifStart := strings.LastIndex(script[:checkout], "if ")
+	if ifStart < 0 || ifStart < reset[0] {
+		t.Fatal("dogfood.sh restores .mcp.json outside an `if` comparing it with HEAD's")
+	}
+	cond := script[ifStart:checkout]
+	for _, want := range []string{"git show HEAD:.mcp.json", `= "$committed"`, "then"} {
+		if !strings.Contains(cond, want) {
+			t.Errorf("dogfood.sh's .mcp.json restore condition has no %q:\n%s", want, cond)
+		}
+	}
+	if n := strings.Count(cond, "mcp_cutoffs"); n < 2 {
+		t.Errorf("dogfood.sh's .mcp.json restore condition normalises %d side(s) with mcp_cutoffs, want both:\n%s", n, cond)
+	}
+}
+
 // TestDogfoodScript_CanonicalOrigin pins how scripts/dogfood.sh picks the
 // origin remote of its copy. Generated files derive from it
 // (.cosign/policy.yaml names the image repository and signing identity), so

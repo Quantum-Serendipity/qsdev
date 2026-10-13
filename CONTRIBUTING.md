@@ -77,20 +77,40 @@ plain source build. `devenv.nix` records the generating version, and the
 dogfood check builds without ldflags or VCS stamping, so its version is `dev`.
 A release binary, `make build` or a stamped build would show as drift.
 
+Put the build first on `PATH` (the generated hooks run `qsdev`), then, from
+the repository root:
+
 ```bash
-GOWORK=off go build -mod=vendor -buildvcs=false -o bin/qsdev-dev ./cmd/qsdev
-bin/qsdev-dev init --update
-bin/qsdev-dev repair --reset --file .claude/settings.json
-bin/qsdev-dev repair --reset --file .mcp.json
+GOWORK=off go build -mod=vendor -buildvcs=false -o bin/qsdev-dev/qsdev ./cmd/qsdev
+export PATH="$PWD/bin/qsdev-dev:$PATH"
+# 1. .qsdev.yaml names the project: `project_name: qsdev` (once).
+qsdev init --mode join                                  # 2.
+qsdev devenv add-overlay ./nix/go-overlay.nix           # 3. only if not yet recorded
+qsdev enable <tool>                                     # 4. only for a new tool
+qsdev update --configs-only --overwrite-modified        # 5.
+qsdev repair --reset --file .claude/settings.json       # 6.
+qsdev repair --reset --file .mcp.json                   # 7.
 ```
 
 Change the configuration only through qsdev commands (`qsdev enable`,
 `qsdev devenv add-package`, `qsdev devenv add-overlay`, ...), which record it in
 `.qsdev.yaml`. `devenv.local.nix` is per-developer and never committed.
-`init --update` keeps hand edits to `.claude/settings.json` and `.mcp.json` as
-user content; `qsdev repair --reset --file <file>` regenerates the file from
-scratch, which is why the steps above reset both. Commit the result, then run
-`make dogfood`.
+`update --overwrite-modified` regenerates hand-modified generated files in
+place instead of leaving a `<file>.new` sidecar; check that none is left
+(`git status` shows no `*.new`). It still keeps hand edits to
+`.claude/settings.json` and `.mcp.json` as user content, because they are
+three-way merged; `qsdev repair --reset --file <file>` regenerates the file
+from scratch, which is why the last two steps reset both. Commit the result,
+then run `make dogfood`.
+
+The `.mcp.json` release cutoffs are not drift. qsdev age-gates the `npx` and
+`uvx` MCP launchers with a cutoff relative to the day it runs (the env
+`npm_config_before` and the `--exclude-newer=` argument), so a regeneration on
+a later day rewrites them. `qsdev check` validates the committed cutoffs, and
+the dogfood script then compares `.mcp.json` with the committed one with every
+cutoff replaced by a placeholder: when only the cutoffs differ it restores the
+committed file, and any other change still fails the job. There is no need to
+commit a cutoff-only change.
 
 **Run the MCP servers from this tree.** `.mcp.json` starts the
 `agent-postmortem` and `version-sentinel` servers with

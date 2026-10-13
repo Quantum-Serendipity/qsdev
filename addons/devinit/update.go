@@ -841,11 +841,13 @@ func (o *updateOutcome) writeHeldSidecar(projectRoot string, fp FileUpdatePlan, 
 	return nil
 }
 
-// dropStaleSidecar removes the sidecar an earlier update left for a held file
-// now written in place. A failure is only reported: the file itself is
-// current.
+// dropStaleSidecar removes the sidecar an earlier update left for a file now
+// written in place: a held file, or a manual-merge file (devenv.nix) that was
+// force-overwritten or set to the generated content. Only those two kinds
+// ever get a sidecar, so a <file>.new beside any other file is the user's and
+// stays. A failure is only reported: the file itself is current.
 func (o *updateOutcome) dropStaleSidecar(fp FileUpdatePlan, projectRoot string, dryRun bool) {
-	if fp.HeldWith == "" || dryRun {
+	if (fp.HeldWith == "" && fp.Strategy != types.ManualMerge) || dryRun {
 		return
 	}
 	if err := update.CleanupSidecar(projectRoot, filepath.FromSlash(fp.Path+generate.SidecarSuffix)); err != nil {

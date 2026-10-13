@@ -125,19 +125,28 @@ func TestHermeticPath(t *testing.T) {
 			wantStubs: []string{"nix"},
 		},
 		{name: "nothing probed", host: []string{"git"}, wantHost: []string{"git"}},
+		{name: "host tool named twice", host: []string{"git", "git"}, probed: []string{"git"}, wantHost: []string{"git"}},
 		{name: "host tool missing", host: []string{"missing"}, wantErr: `host tool "missing"`},
 		{name: "probed name with a separator", probed: []string{"../escape"}, wantErr: "not a bare program name"},
+		{name: "probed name with a backslash", probed: []string{`a\b`}, wantErr: "not a bare program name"},
+		{name: "drive-relative name", probed: []string{"C:x"}, wantErr: "not a bare program name"},
+		{name: "name holding a PATH separator", host: []string{"a;b"}, wantErr: "not a bare program name"},
+		{name: "dot", probed: []string{"."}, wantErr: "not a bare program name"},
+		{name: "dot dot", probed: []string{".."}, wantErr: "not a bare program name"},
 		{name: "empty probed name", probed: []string{""}, wantErr: "not a bare program name"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
-			dir := t.TempDir()
+			dir := filepath.Join(t.TempDir(), "path")
 			tools := HermeticTools{Bin: binDir, Host: tt.host, Probed: tt.probed, Stub: filepath.Join(hostDir, "noop")}
 			path, err := hermeticPath(dir, tools, lookPath)
 			if tt.wantErr != "" {
 				if err == nil || !strings.Contains(err.Error(), tt.wantErr) {
 					t.Fatalf("hermeticPath = %q, %v; want an error containing %q", path, err, tt.wantErr)
+				}
+				if _, statErr := os.Stat(dir); statErr == nil && strings.Contains(tt.wantErr, "bare program name") {
+					t.Errorf("hermeticPath created %s before rejecting a name", dir)
 				}
 				return
 			}
@@ -156,6 +165,9 @@ func TestHermeticPath(t *testing.T) {
 			}
 			checkLinks(t, host, tt.wantHost, func(name string) string { return filepath.Join(hostDir, name) })
 			checkLinks(t, stubs, tt.wantStubs, func(string) string { return tools.Stub })
+			if again, err := hermeticPath(dir, tools, lookPath); err == nil {
+				t.Errorf("a second hermeticPath into %s = %q, want an error: it is single use", dir, again)
+			}
 		})
 	}
 }

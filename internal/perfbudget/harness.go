@@ -112,7 +112,9 @@ func WriteGoProject(dir string) error {
 }
 
 // RunIn runs argv in dir with env, as a fixture step rather than a
-// measurement, and fails t with its output when it fails.
+// measurement, and fails t with its output when it fails. A bare argv[0]
+// (git) resolves on the test process's PATH, not on env's, so a fixture
+// step runs the host's tool even when env's PATH is hermetic.
 func RunIn(t testing.TB, dir string, env []string, argv ...string) {
 	t.Helper()
 	if len(argv) == 0 {
@@ -200,32 +202,41 @@ const (
 	stubToolsDir = "stubs"
 )
 
-// HermeticPath creates, under dir, a directory linking each of tools.Host
-// to the host's binary and one linking each other name in tools.Probed to
-// tools.Stub, and returns the PATH of tools.Bin, then those two directories.
-// No host PATH directory is on it, so what a measured command costs does
-// not depend on what the machine running it has installed: a probe finds a
-// stub, whose CPU is a process start-up, and any other name is not found.
-// The probe logic still runs, so its cost is measured; only the external
-// tools' is not. A name with a path separator, an empty name or a host tool
-// the caller's PATH lacks is an error.
+// HermeticPath creates dir, which must not exist yet, holding a directory
+// that links each of tools.Host to the host's binary and one that links
+// each other name in tools.Probed to tools.Stub, and returns the PATH of
+// tools.Bin, then those two directories. No host PATH directory is on it,
+// so what a measured command costs does not depend on what the machine
+// running it has installed: a probe finds a stub, whose CPU is a process
+// start-up, and any other name is not found. The probe logic still runs, so
+// its cost is measured; only the external tools' is not. A name that is not
+// a bare program name (empty, ".", "..", or with a path separator, a volume
+// or a PATH list separator), a host tool the caller's PATH lacks, or an
+// existing dir is an error.
 func HermeticPath(dir string, tools HermeticTools) (string, error) {
 	return hermeticPath(dir, tools, procexec.LookPath)
 }
 
 func hermeticPath(dir string, tools HermeticTools, lookPath func(string) (string, error)) (string, error) {
-	host, stubs := filepath.Join(dir, hostToolsDir), filepath.Join(dir, stubToolsDir)
-	for _, d := range []string{host, stubs} {
-		if err := os.MkdirAll(d, 0o755); err != nil {
-			return "", fmt.Errorf("creating %s: %w", d, err)
-		}
-	}
 	for _, name := range slices.Concat(tools.Host, tools.Probed) {
-		if name == "" || name == "." || name == ".." || strings.ContainsAny(name, `/\`) {
+		if !isProgramName(name) {
 			return "", fmt.Errorf("tool name %q is not a bare program name", name)
 		}
 	}
-	for _, name := range tools.Host {
+	if err := os.MkdirAll(filepath.Dir(dir), 0o755); err != nil {
+		return "", fmt.Errorf("creating %s: %w", filepath.Dir(dir), err)
+	}
+	if err := os.Mkdir(dir, 0o755); err != nil {
+		return "", fmt.Errorf("creating the hermetic PATH directory: %w", err)
+	}
+	host, stubs := filepath.Join(dir, hostToolsDir), filepath.Join(dir, stubToolsDir)
+	for _, d := range []string{host, stubs} {
+		if err := os.Mkdir(d, 0o755); err != nil {
+			return "", fmt.Errorf("creating %s: %w", d, err)
+		}
+	}
+	hostNames := slices.Compact(slices.Sorted(slices.Values(tools.Host)))
+	for _, name := range hostNames {
 		target, err := lookPath(name)
 		if err != nil {
 			return "", fmt.Errorf("finding host tool %q: %w", name, err)
@@ -234,9 +245,8 @@ func hermeticPath(dir string, tools HermeticTools, lookPath func(string) (string
 			return "", err
 		}
 	}
-	probed := slices.Compact(slices.Sorted(slices.Values(tools.Probed)))
-	for _, name := range probed {
-		if slices.Contains(tools.Host, name) || inDir(tools.Bin, name) {
+	for _, name := range slices.Compact(slices.Sorted(slices.Values(tools.Probed))) {
+		if slices.Contains(hostNames, name) || inDir(tools.Bin, name) {
 			continue
 		}
 		if err := linkTool(stubs, name, tools.Stub); err != nil {
@@ -244,6 +254,14 @@ func hermeticPath(dir string, tools HermeticTools, lookPath func(string) (string
 		}
 	}
 	return strings.Join([]string{tools.Bin, host, stubs}, string(os.PathListSeparator)), nil
+}
+
+// isProgramName reports whether name is a bare program name PATH lookup
+// resolves in one directory: local, a single element, and free of the
+// characters that would make it a path, a volume (C:x) or several PATH
+// entries on any OS.
+func isProgramName(name string) bool {
+	return name != "" && name != "." && filepath.IsLocal(name) && !strings.ContainsAny(name, `/\:;`)
 }
 
 // inDir reports whether dir holds the program name, as PATH lookup finds it.

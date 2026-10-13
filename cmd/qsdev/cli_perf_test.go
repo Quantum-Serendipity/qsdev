@@ -3,7 +3,11 @@
 package main
 
 import (
+	"io/fs"
+	"maps"
+	"os"
 	"path/filepath"
+	"regexp"
 	"slices"
 	"strings"
 	"testing"
@@ -107,7 +111,8 @@ func newCLIPerfSuite(t *testing.T) *cliPerfSuite {
 	// The fixture runs on a hermetic PATH too, so the project it creates
 	// does not depend on what the host has installed. Before the project
 	// exists, its stubs are the tools doctor's registry lists.
-	setupPath := s.hermeticPath(t, filepath.Join(root, "path-setup"), "")
+	setupPath := s.hermeticPath(t, filepath.Join(root, "path-setup"), probedIn(t, ""))
+	s.checkStubsInert(t, root, setupPath)
 	s.calEnv = s.isolatedEnv(t, filepath.Join(root, "calibration"), setupPath)
 	env := s.isolatedEnv(t, filepath.Join(root, "user"), setupPath)
 
@@ -121,7 +126,7 @@ func newCLIPerfSuite(t *testing.T) *cliPerfSuite {
 
 	// The measured commands also find a stub for every program the
 	// project's hooks run, which doctor probes there.
-	measuredPath := s.hermeticPath(t, filepath.Join(root, "path"), s.project)
+	measuredPath := s.hermeticPath(t, filepath.Join(root, "path"), probedIn(t, s.project))
 	s.env = append(s.isolatedEnv(t, filepath.Join(root, "user"), measuredPath), procexec.ForbidExecEnv+"=1")
 	return s
 }
@@ -138,15 +143,20 @@ func (s *cliPerfSuite) isolatedEnv(t *testing.T, root, path string) []string {
 	return append(env, "QSDEV_SKIP_SETUP=1", branding.Get().EnvNoUpdate+"=1")
 }
 
-// hermeticPath creates, under dir, the hermetic PATH of a command run in
-// project ("" before it exists): the qsdev under test, hostTools, and a
-// stub for every other tool qsdev probes there (see probedTools).
-func (s *cliPerfSuite) hermeticPath(t *testing.T, dir, project string) string {
+// probedIn returns probedTools(project), failing t on an error.
+func probedIn(t *testing.T, project string) []string {
 	t.Helper()
 	probed, err := probedTools(project)
 	if err != nil {
 		t.Fatal(err)
 	}
+	return probed
+}
+
+// hermeticPath creates dir holding a hermetic PATH: the qsdev under test,
+// hostTools, and a stub for each of probed (see probedTools).
+func (s *cliPerfSuite) hermeticPath(t *testing.T, dir string, probed []string) string {
+	t.Helper()
 	path, err := perfbudget.HermeticPath(dir, perfbudget.HermeticTools{
 		Bin: filepath.Dir(s.bin), Host: hostTools, Probed: probed, Stub: s.noop,
 	})
@@ -154,6 +164,89 @@ func (s *cliPerfSuite) hermeticPath(t *testing.T, dir, project string) string {
 		t.Fatal(err)
 	}
 	return path
+}
+
+// checkStubsInert fails t when the stubs on stubbedPath change what init
+// generates: creating a project with them and with no stub at all, every
+// probed tool absent, must write the same tree. So the fixture is a project
+// a real host could get, not one shaped by a stub's empty answer (an empty
+// `podman info` would read as rootful Podman and add its guide).
+func (s *cliPerfSuite) checkStubsInert(t *testing.T, root, stubbedPath string) {
+	t.Helper()
+	barePath := s.hermeticPath(t, filepath.Join(root, "path-bare"), nil)
+	// Both run at the same path, which init records, and each moves aside
+	// after, so the trees differ only by what the stubs change and the run
+	// timestamps readTree masks.
+	dir := filepath.Join(root, "inert", "project")
+	trees := map[string]map[string]string{}
+	for name, path := range map[string]string{"stubbed": stubbedPath, "bare": barePath} {
+		env := s.isolatedEnv(t, filepath.Join(root, "inert-"+name, "user"), path)
+		s.goRepo(t, dir, env)
+		perfbudget.RunIn(t, dir, env, append(slices.Clone(s.netns), s.bin, "init", "--yes")...)
+		trees[name] = readTree(t, dir)
+		if err := os.Rename(dir, filepath.Join(root, "inert-"+name, "project")); err != nil {
+			t.Fatal(err)
+		}
+	}
+	stubbed, bare := trees["stubbed"], trees["bare"]
+	for _, rel := range slices.Sorted(maps.Keys(stubbed)) {
+		if want, ok := bare[rel]; !ok {
+			t.Errorf("init on the stubs writes %s, which it does not write with no tools", rel)
+		} else if got, wantLine, differ := firstLineDiff(stubbed[rel], want); differ {
+			t.Errorf("init on the stubs writes %s differently from init with no tools: %q, not %q", rel, got, wantLine)
+		}
+	}
+	for rel := range bare {
+		if _, ok := stubbed[rel]; !ok {
+			t.Errorf("init with no tools writes %s, which it does not write on the stubs", rel)
+		}
+	}
+}
+
+// firstLineDiff returns the first line where a and b differ, and whether
+// they do.
+func firstLineDiff(a, b string) (aLine, bLine string, differ bool) {
+	al, bl := strings.Split(a, "\n"), strings.Split(b, "\n")
+	for i := range max(len(al), len(bl)) {
+		aLine, bLine = "", ""
+		if i < len(al) {
+			aLine = al[i]
+		}
+		if i < len(bl) {
+			bLine = bl[i]
+		}
+		if aLine != bLine || i >= len(al) || i >= len(bl) {
+			return aLine, bLine, true
+		}
+	}
+	return "", "", false
+}
+
+// timestampRe matches an RFC 3339 timestamp, which readTree masks.
+var timestampRe = regexp.MustCompile(`\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d(\.\d+)?(Z|[+-]\d\d:\d\d)`)
+
+// readTree returns the content of every file under dir outside .git, by
+// slash-separated relative path, with every timestamp masked.
+func readTree(t *testing.T, dir string) map[string]string {
+	t.Helper()
+	tree := map[string]string{}
+	err := fs.WalkDir(os.DirFS(dir), ".", func(rel string, d fs.DirEntry, err error) error {
+		switch {
+		case err != nil:
+			return err
+		case d.IsDir() && d.Name() == ".git":
+			return fs.SkipDir
+		case d.IsDir():
+			return nil
+		}
+		data, err := os.ReadFile(filepath.Join(dir, filepath.FromSlash(rel)))
+		tree[rel] = timestampRe.ReplaceAllString(string(data), "<time>")
+		return err
+	})
+	if err != nil {
+		t.Fatalf("reading %s: %v", dir, err)
+	}
+	return tree
 }
 
 // lookPaths resolves each name on the test's PATH.

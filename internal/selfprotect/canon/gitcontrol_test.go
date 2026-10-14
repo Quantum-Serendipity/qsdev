@@ -1,7 +1,6 @@
 package canon
 
 import (
-	"path"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -345,7 +344,7 @@ func TestGitControlReach(t *testing.T) {
 		if strings.HasPrefix(name, ".") && !strings.HasPrefix(component, ".") {
 			return false // the shell's leading-dot rule
 		}
-		ok, err := path.Match(component, name)
+		ok, err := pathmatch.ShellMatch(component, name)
 		return ok || err != nil
 	}
 	tests := []struct {
@@ -381,6 +380,9 @@ func TestGitControlReach(t *testing.T) {
 		{".git/*/pre-commit", true, true, true}, // also .git/modules/pre-commit
 		{".git/hoo*/pre-commit", true, true, false},
 		{".[g]it/hooks/pre-commit", true, true, false},
+		{".[!x]it/hooks/pre-commit", true, true, false},
+		{".[[:alpha:]]it/hooks/pre-commit", true, true, false},
+		{".[!.]*", true, false, true},
 		{".git/*", true, true, true},
 		{".gi?", true, false, true},
 		{"*/.git", true, false, true},

@@ -242,13 +242,14 @@ func hasGlobMeta(s string) bool { return strings.ContainsAny(s, "*?[") }
 
 // shellSegMatch matches one path segment against a glob segment with the
 // shell's default rules: a leading '.' in name must be matched by a literal
-// leading '.' in the pattern. A malformed pattern counts as a match (fail
-// closed).
+// leading '.' in the pattern, and a bracket expression is read as the shell
+// reads it (`[!x]`, `[[:alpha:]]`; pathmatch.ShellMatch). A malformed pattern
+// counts as a match (fail closed).
 func shellSegMatch(pattern, name string) bool {
 	if strings.HasPrefix(name, ".") && !strings.HasPrefix(pattern, ".") {
 		return false
 	}
-	ok, err := path.Match(pattern, name)
+	ok, err := pathmatch.ShellMatch(pattern, name)
 	return ok || err != nil
 }
 

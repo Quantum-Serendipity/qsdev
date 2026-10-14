@@ -488,10 +488,11 @@ func targetDirOperands(args []string) (sources []string, dest string) {
 }
 
 // globMatch returns a hook target that glob pattern p can expand to, or "".
+// A pattern it cannot read returns a target (fail closed).
 func (t *hookTargets) globMatch(p string) string {
 	pattern := pathmatch.Key(p)
 	for f := range t.files {
-		if ok, _ := path.Match(pattern, f); ok {
+		if ok, err := pathmatch.ShellMatch(pattern, f); ok || err != nil {
 			return f
 		}
 	}

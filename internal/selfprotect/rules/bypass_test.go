@@ -124,6 +124,18 @@ func TestBash_ShellSpellingBypasses(t *testing.T) {
 		{name: "brace expansion", command: "rm ~/.{claude,x}/settings.json"},
 		{name: "quote-split verb", command: "r''m .claude/settings.json"},
 		{name: "glob system dir", command: "rm /etc/g?ev/policy.yaml"},
+		// Bracket expressions as the shell reads them, not as path.Match
+		// does: '!' negates, a leading ']' is literal, POSIX classes.
+		{name: "negated class of project dir", command: "rm -rf .[!.]laude"},
+		{name: "negated class moved away", command: "mv .[!x]laude x"},
+		{name: "negated class copy over settings", command: "cp /dev/null .[!x]laude/settings.json"},
+		{name: "negated class redirect", command: "printf '{}' > .[!x]laude/settings.json"},
+		{name: "negated class of every dot entry", command: "rm -rf .[!.]*"},
+		{name: "posix class of project dir", command: "rm -rf .[[:alpha:]]laude"},
+		{name: "posix class of every dot entry", command: "rm -rf .[[:lower:]]*"},
+		{name: "negated literal bracket", command: "rm -rf .[!]]*"},
+		{name: "find by negated name", command: "find . -name 'settings.[!x]son' -delete"},
+		{name: "find by negated path", command: "find . -path '*.[!x]laude/*' -delete"},
 	}, Deny)
 
 	runBashCases(t, []bashCase{
@@ -365,6 +377,8 @@ func TestModeChange_ProtectedAncestor(t *testing.T) {
 		{name: "after a cd the scan cannot follow", command: `cd "$(git rev-parse --show-toplevel)" && chmod -R a-x .`, cwd: src},
 		{name: "options after the operand", command: "chmod a-x . -R", cwd: project},
 		{name: "git directory", command: "chmod -R a-x .git", cwd: project},
+		{name: "negated glob of the dot entries", command: "chmod -R a-x .[!.]*", cwd: project},
+		{name: "posix class glob of the git directory", command: "chmod -R a-x .[[:alpha:]]it", cwd: project},
 		// Through a wrapper or a nested script.
 		{name: "under env", command: "env chmod -R a-x .", cwd: project},
 		{name: "under command", command: "command chmod -R a-x .", cwd: project},

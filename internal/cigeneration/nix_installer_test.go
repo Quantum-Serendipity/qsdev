@@ -12,6 +12,8 @@ import (
 	"slices"
 	"strings"
 	"testing"
+
+	"github.com/Quantum-Serendipity/qsdev/internal/state"
 )
 
 // nixSystems are the systems the catalog pins a Nix release tarball for, one
@@ -75,10 +77,17 @@ func TestNixInstallerAccessorsReturnCopies(t *testing.T) {
 
 // TestRepoNixInstallerIsCatalogOutput keeps this repository's own CI on the
 // generator's output: .github/scripts/install-nix.sh and .github/nix-release.env
-// are byte-identical to the catalog's embeds, and the script is executable.
+// are byte-identical to the catalog's embeds, the committed manifest of
+// generated files records each one's digest (so `qsdev check` and the dogfood
+// gate pass after a pin bump, which scripts/bump-tool-pins.sh keeps true), and
+// the script is executable.
 func TestRepoNixInstallerIsCatalogOutput(t *testing.T) {
 	t.Parallel()
 
+	manifest, err := state.LoadManifest(filepath.Join(repoRoot, state.ManifestFile()))
+	if err != nil {
+		t.Fatal(err)
+	}
 	for rel, want := range map[string][]byte{
 		InstallNixScriptPath: InstallNixScript(),
 		NixReleasePinsPath:   NixReleasePins(),
@@ -89,6 +98,10 @@ func TestRepoNixInstallerIsCatalogOutput(t *testing.T) {
 		}
 		if !bytes.Equal(got, want) {
 			t.Errorf("%s differs from the catalog's embedded copy; regenerate it (qsdev update) or edit internal/cigeneration instead", rel)
+		}
+		sum := sha256.Sum256(got)
+		if wantHash := state.HashPrefix + hex.EncodeToString(sum[:]); manifest[rel] != wantHash {
+			t.Errorf("%s records %s as %q, want %q (its current content)", state.ManifestFile(), rel, manifest[rel], wantHash)
 		}
 	}
 

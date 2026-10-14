@@ -15,6 +15,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/Quantum-Serendipity/qsdev/internal/state"
 )
 
 // These tests run scripts/bump-tool-pins.sh against stub gh and curl
@@ -112,7 +114,7 @@ printf '%s' "$msgs" | while IFS= read -r m; do echo "message: $m" >>"$log"; done
 `
 
 // bumpTools are the real binaries bump-tool-pins.sh may use.
-var bumpTools = []string{"bash", "sh", "jq", "mktemp", "mv", "rm", "cat", "tr"}
+var bumpTools = []string{"bash", "sh", "jq", "mktemp", "mv", "rm", "cat", "tr", "sha256sum"}
 
 // nixRelease is a Nix tag as upstream lists it. Its tarballs and their
 // published digests exist on the fake releases.nixos.org only when published
@@ -168,10 +170,17 @@ func runBump(t *testing.T, envFile string, gh, proxy map[string][]upstreamReleas
 	return res.code, res.out, res.after[0]
 }
 
+// bumpManifest is qsdev's manifest of machine-owned generated files, which
+// bump-tool-pins.sh reads from the repository root. Taking the name from
+// state.ManifestFile keeps the script's literal bound to it.
+var bumpManifest = state.ManifestFile()
+
 // bumpRun is one bump-tool-pins.sh run: the env files passed to it, in
-// order, the upstream releases its stubs serve and whether it opens a PR.
+// order, the manifest content in its working directory ("" for none), the
+// upstream releases its stubs serve and whether it opens a PR.
 type bumpRun struct {
 	envFiles []string
+	manifest string
 	gh       map[string][]upstreamRelease
 	proxy    map[string][]upstreamRelease
 	nix      []nixRelease
@@ -179,13 +188,15 @@ type bumpRun struct {
 }
 
 // bumpResult is what a bumpRun left behind: the exit code, combined output,
-// each env file's path and content afterwards, the upstream requests the
-// stubs answered and, with openPR, the git and gh PR commands the script ran.
+// each env file's path (relative to the working directory) and content
+// afterwards, the manifest afterwards, the upstream requests the stubs
+// answered and, with openPR, the git and gh PR commands the script ran.
 type bumpResult struct {
 	code     int
 	out      string
 	paths    []string
 	after    []string
+	manifest string
 	calls    []string
 	prEvents []string
 }
@@ -243,22 +254,33 @@ func runBumpFiles(t *testing.T, run bumpRun) bumpResult {
 		}
 		writeFile(t, filepath.Join(dir, "list"), list.String())
 	}
-	args := []string{"bump-tool-pins.sh"}
+	script, err := filepath.Abs("bump-tool-pins.sh")
+	if err != nil {
+		t.Fatal(err)
+	}
+	args := []string{script}
 	if run.openPR {
 		args = append(args, "--open-pr")
 	}
+	// The script runs from root, as from the repository root in CI, and is
+	// passed each env file relative to it.
 	envPaths := make([]string, len(run.envFiles))
 	for i, content := range run.envFiles {
 		dir := filepath.Join(root, "env", strconv.Itoa(i))
 		if err := os.MkdirAll(dir, 0o755); err != nil {
 			t.Fatal(err)
 		}
-		envPaths[i] = filepath.Join(dir, "tool-versions.env")
-		writeFile(t, envPaths[i], content)
+		envPaths[i] = "env/" + strconv.Itoa(i) + "/tool-versions.env"
+		writeFile(t, filepath.Join(dir, "tool-versions.env"), content)
 		args = append(args, envPaths[i])
+	}
+	manifestPath := filepath.Join(root, bumpManifest)
+	if run.manifest != "" {
+		writeFile(t, manifestPath, run.manifest)
 	}
 
 	cmd := exec.Command(filepath.Join(binDir, "bash"), args...)
+	cmd.Dir = root
 	cmd.Env = []string{"PATH=" + binDir, "HOME=" + root, "TMPDIR=" + root, "FAKE_UPSTREAM=" + upstream}
 	out, err := cmd.CombinedOutput()
 	res := bumpResult{out: string(out), paths: envPaths}
@@ -271,11 +293,18 @@ func runBumpFiles(t *testing.T, run bumpRun) bumpResult {
 		t.Fatalf("running bump-tool-pins.sh: %v", err)
 	}
 	for _, p := range envPaths {
-		after, rerr := os.ReadFile(p)
+		after, rerr := os.ReadFile(filepath.Join(root, filepath.FromSlash(p)))
 		if rerr != nil {
 			t.Fatal(rerr)
 		}
 		res.after = append(res.after, string(after))
+	}
+	if run.manifest != "" {
+		after, rerr := os.ReadFile(manifestPath)
+		if rerr != nil {
+			t.Fatal(rerr)
+		}
+		res.manifest = string(after)
 	}
 	res.calls = readLog(t, filepath.Join(upstream, "calls.log"))
 	res.prEvents = readLog(t, filepath.Join(upstream, "pr.log"))
@@ -635,6 +664,91 @@ func TestBumpToolPins_SameNixPinsMoveTogether(t *testing.T) {
 		if n := countOf(res.calls, call); n != 1 {
 			t.Errorf("%q requested %d times, want once; requests:\n%s", call, n, strings.Join(res.calls, "\n"))
 		}
+	}
+}
+
+// TestBumpToolPins_RecordsGeneratedDigests covers a bump of a file qsdev
+// generated (the CI pin catalog's copy, .github/nix-release.env): its digest
+// in qsdev's manifest moves to the new content in the same run, and with
+// --open-pr in the same commit, so `qsdev check` still reads the copy as
+// unmodified. Other manifest lines, files the manifest does not record and a
+// run that moves nothing or fails leave the manifest untouched.
+func TestBumpToolPins_RecordsGeneratedDigests(t *testing.T) {
+	t.Parallel()
+
+	current := nixEnvFile("2.34.8", nixSystems...)
+	bumped := nixEnvFile("2.35.0", nixSystems...)
+	digest := func(s string) string {
+		sum := sha256.Sum256([]byte(s))
+		return hex.EncodeToString(sum[:])
+	}
+	other := strings.Repeat("ab", 32) + "  .claude/rules/go-conventions.md\n"
+	manifest := func(copyContent string) string {
+		return other + digest(copyContent) + "  env/1/tool-versions.env\n"
+	}
+	tests := []struct {
+		name         string
+		nix          []nixRelease
+		openPR       bool
+		wantCode     int
+		wantEnvs     []string
+		wantManifest string
+		wantCommit   string
+	}{
+		{
+			name:         "a moved pin records the copy's new digest",
+			nix:          []nixRelease{{version: "2.35.0", age: 5 * day, published: true}},
+			wantEnvs:     []string{bumped, bumped},
+			wantManifest: manifest(bumped),
+		},
+		{
+			name:         "--open-pr commits the manifest with the pin files",
+			nix:          []nixRelease{{version: "2.35.0", age: 5 * day, published: true}},
+			openPR:       true,
+			wantEnvs:     []string{bumped, bumped},
+			wantManifest: manifest(bumped),
+			wantCommit:   "git commit -- env/0/tool-versions.env env/1/tool-versions.env " + bumpManifest,
+		},
+		{
+			name:         "no pin moves",
+			nix:          []nixRelease{{version: "2.35.0", age: day, published: true}},
+			wantEnvs:     []string{current, current},
+			wantManifest: manifest(current),
+		},
+		{
+			name:         "a failed run writes nothing",
+			nix:          []nixRelease{{version: "2.35.0", age: 5 * day, published: true, systems: []string{"x86_64-linux"}}},
+			wantCode:     1,
+			wantEnvs:     []string{current, current},
+			wantManifest: manifest(current),
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			res := runBumpFiles(t, bumpRun{
+				envFiles: []string{current, current},
+				manifest: manifest(current),
+				nix:      tc.nix,
+				openPR:   tc.openPR,
+			})
+			checkBumpFiles(t, res, tc.wantCode, tc.wantEnvs)
+			if res.manifest != tc.wantManifest {
+				t.Errorf("manifest after run:\n%s\nwant:\n%s\noutput:\n%s", res.manifest, tc.wantManifest, res.out)
+			}
+			if tc.wantCommit == "" {
+				return
+			}
+			var commits []string
+			for _, ev := range res.prEvents {
+				if strings.HasPrefix(ev, "git commit ") {
+					commits = append(commits, ev)
+				}
+			}
+			if !slices.Equal(commits, []string{tc.wantCommit}) {
+				t.Errorf("commits = %q, want [%q]", commits, tc.wantCommit)
+			}
+		})
 	}
 }
 

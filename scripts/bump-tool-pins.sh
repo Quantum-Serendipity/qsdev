@@ -29,10 +29,17 @@
 # file's new content is computed before any file is written: malformed or
 # missing upstream data fails the run with every file untouched.
 #
-# --open-pr commits every changed file to the tool-pins/bump branch in one
-# commit, force-pushes it and opens a PR unless one is already open. It needs
-# GH_TOKEN with contents:write and pull_requests:write; tool-pins.yml passes a
-# PAT so the PR triggers CI.
+# A changed file that qsdev generated (.github/nix-release.env) is recorded in
+# qsdev's manifest of machine-owned files, .qsdev-generated.sha256 in the
+# working directory. Its recorded digest is moved to the new content in the
+# same run, so `qsdev check` and the dogfood gate still read the file as
+# unmodified generator output.
+#
+# --open-pr commits every changed file, and the manifest when a recorded
+# digest moved, to the tool-pins/bump branch in one commit, force-pushes it
+# and opens a PR unless one is already open. It needs GH_TOKEN with
+# contents:write and pull_requests:write; tool-pins.yml passes a PAT so the PR
+# triggers CI.
 set -euo pipefail
 
 # The catalog's baseline age gate (72h in internal/catalog/defaults.yaml).
@@ -40,6 +47,9 @@ set -euo pipefail
 readonly MIN_AGE_DAYS=3
 readonly PR_BRANCH="tool-pins/bump"
 readonly NIX_RELEASES_URL="https://releases.nixos.org/nix"
+# qsdev's manifest (state.ManifestFile): "<sha256>  <path>" lines, sha256sum
+# text format, with paths relative to the repository root.
+readonly MANIFEST=".qsdev-generated.sha256"
 
 open_pr=false
 if [ "${1:-}" = "--open-pr" ]; then
@@ -270,11 +280,43 @@ bump_file() {
   done <"$1"
 }
 
+# record_digests sets manifest_out to MANIFEST's content with the digest of
+# every changed env file it records replaced by the digest of the file's new
+# content, and manifest_moved to true when it replaced any. It writes nothing.
+record_digests() {
+  local line path j digest
+  manifest_out=""
+  manifest_moved=false
+  while IFS= read -r line || [ -n "$line" ]; do
+    if [[ "$line" =~ ^[0-9a-f]{64}\ \ (.+)$ ]]; then
+      path="${BASH_REMATCH[1]}"
+      j=0
+      while [ "$j" -lt "${#env_files[@]}" ]; do
+        if [ -n "${summaries[$j]}" ] && [ "${env_files[$j]#./}" = "$path" ]; then
+          digest="$(printf '%s' "${new_contents[$j]}" | sha256sum)" || die "cannot hash the new $path"
+          line="${digest%% *}  $path"
+          manifest_moved=true
+        fi
+        j=$((j + 1))
+      done
+    fi
+    manifest_out+="$line"$'\n'
+  done <"$MANIFEST"
+}
+
+# write_file FILE CONTENT replaces FILE with CONTENT atomically.
+write_file() {
+  local tmp
+  tmp="$(mktemp "$1.XXXXXX")"
+  printf '%s' "$2" >"$tmp"
+  mv "$tmp" "$1"
+}
+
 for f in "${env_files[@]}"; do
   [ -f "$f" ] || die "$f not found"
 done
 
-# Compute every file before writing any.
+# Compute every file, and the manifest, before writing any.
 new_contents=()
 summaries=()
 for f in "${env_files[@]}"; do
@@ -283,6 +325,10 @@ for f in "${env_files[@]}"; do
   new_contents+=("$file_out")
   summaries+=("$file_summary")
 done
+manifest_moved=false
+if [ -f "$MANIFEST" ]; then
+  record_digests
+fi
 
 changed=()
 summary=""
@@ -290,14 +336,17 @@ i=0
 while [ "$i" -lt "${#env_files[@]}" ]; do
   if [ -n "${summaries[$i]}" ]; then
     f="${env_files[$i]}"
-    tmp="$(mktemp "${f}.XXXXXX")"
-    printf '%s' "${new_contents[$i]}" >"$tmp"
-    mv "$tmp" "$f"
+    write_file "$f" "${new_contents[$i]}"
     changed+=("$f")
     summary+="$f:"$'\n'"${summaries[$i]}"
   fi
   i=$((i + 1))
 done
+if [ "$manifest_moved" = true ]; then
+  write_file "$MANIFEST" "$manifest_out"
+  changed+=("$MANIFEST")
+  summary+="$MANIFEST: recorded the new digests of the generated pin files"$'\n'
+fi
 
 if [ -z "$summary" ]; then
   echo "All tool pins are current."

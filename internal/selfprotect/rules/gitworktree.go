@@ -51,6 +51,10 @@ const (
 	// fromPatches applies patch files (apply, am): the paths they name are
 	// written, tracked or not.
 	fromPatches
+	// sparseRules changes the sparse-checkout patterns (sparse-checkout set,
+	// add, init, reapply): any tracked path may leave the working tree, and
+	// which ones cannot be told in advance.
+	sparseRules
 )
 
 // emptyTree is git's (SHA-1) empty tree, which git knows without storing it:
@@ -90,6 +94,12 @@ type worktreeRewrite struct {
 	// pull is the merge of revs when it names the repository itself, and a
 	// fetch from elsewhere otherwise.
 	remote string
+	// clean, when set, is the git clean the command also runs over paths
+	// (`git clean`, `git stash -u`): it removes the untracked files git
+	// clean --dry-run with these options lists. An earlier index-only
+	// command (`git rm -r --cached .`, `git read-tree --empty`) can make a
+	// protected file one of them.
+	clean *gitrepo.CleanOptions
 }
 
 // gitOptSpec describes a git subcommand's options for parseGitOpts.
@@ -387,8 +397,108 @@ func parseWorktreeRewrite(sub string, rest []string) (worktreeRewrite, bool) {
 			return worktreeRewrite{}, false
 		}
 		return parsePatches(o)
+	case "clean":
+		return parseClean(rest)
+	case "sparse-checkout":
+		return parseSparseCheckout(rest)
 	}
 	return worktreeRewrite{}, false
+}
+
+// cleanLong are git clean's long options.
+var cleanLong = []string{"dry-run", "no-dry-run", "force", "no-force", "interactive", "quiet", "no-quiet", "exclude"}
+
+// parseClean returns what `git clean` removes: the untracked files its
+// options select (-d, -x, -X, -f, -e) under its pathspec. -f counts (twice
+// also removes nested repositories) and -e repeats, so the options are read
+// here rather than by parseGitOpts. A dry run (-n, unless a later
+// --no-dry-run) removes nothing; an interactive one removes what the listing
+// names, at most.
+func parseClean(rest []string) (worktreeRewrite, bool) {
+	var opts gitrepo.CleanOptions
+	var paths []string
+	dryRun := false
+	for i := 0; i < len(rest); i++ {
+		a := rest[i]
+		switch {
+		case a == "--":
+			paths = append(paths, rest[i+1:]...)
+			i = len(rest)
+		case strings.HasPrefix(a, "--"):
+			name, val, hasVal := strings.Cut(a[2:], "=")
+			switch abbreviatedOption(name, cleanLong) {
+			case "dry-run":
+				dryRun = true
+			case "no-dry-run":
+				dryRun = false
+			case "force":
+				opts.Force++
+			case "no-force":
+				opts.Force = 0
+			case "exclude":
+				if !hasVal && i+1 < len(rest) {
+					i++
+					val = rest[i]
+				}
+				opts.Excludes = append(opts.Excludes, val)
+			}
+		case len(a) > 1 && a[0] == '-':
+			for k := 1; k < len(a); k++ {
+				switch a[k] {
+				case 'n':
+					dryRun = true
+				case 'f':
+					opts.Force++
+				case 'd':
+					opts.Dirs = true
+				case 'x':
+					opts.Ignored = true
+				case 'X':
+					opts.OnlyIgnored = true
+				case 'e':
+					val := a[k+1:]
+					if val == "" && i+1 < len(rest) {
+						i++
+						val = rest[i]
+					}
+					opts.Excludes = append(opts.Excludes, val)
+					k = len(a)
+				}
+			}
+		default:
+			paths = append(paths, a)
+		}
+	}
+	if dryRun {
+		return worktreeRewrite{}, false
+	}
+	// Without -f git refuses unless clean.requireForce is off; judge it as
+	// the forced clean it may be.
+	opts.Force = max(opts.Force, 1)
+	return worktreeRewrite{clean: &opts, paths: paths}, true
+}
+
+// parseSparseCheckout returns what `git sparse-checkout <sub>` writes. set,
+// init and reapply apply a new or re-read pattern set, which may drop any
+// tracked file from the working tree; add does too unless it only adds
+// patterns that include more (none starting with '!', none read from
+// --stdin). list and check-rules only read, and disable only restores the
+// full tree. Any other subcommand is judged as a pattern change.
+func parseSparseCheckout(rest []string) (worktreeRewrite, bool) {
+	if len(rest) == 0 {
+		return worktreeRewrite{}, false
+	}
+	switch rest[0] {
+	case "list", "check-rules", "disable":
+		return worktreeRewrite{}, false
+	case "add":
+		if !slices.ContainsFunc(rest[1:], func(a string) bool {
+			return a == "--stdin" || strings.HasPrefix(a, "!") || strings.HasPrefix(a, `\!`)
+		}) {
+			return worktreeRewrite{}, false
+		}
+	}
+	return worktreeRewrite{source: sparseRules}, true
 }
 
 // controls reports whether the options continue, skip or end an operation in
@@ -751,6 +861,11 @@ func parseStashPush(o gitOpts, withPaths bool) (worktreeRewrite, bool) {
 	if o.has("-k", "--keep-index", "-S", "--staged", "-p", "--patch") && !o.has("--no-keep-index") {
 		rw.also = []worktreeRewrite{{source: fromIndex, paths: rw.paths}}
 	}
+	// --include-untracked and --all then remove the untracked (and, with
+	// --all, ignored) files they saved, as `git clean -f -d [-x]` does.
+	if all := o.has("-a", "--all"); all || o.has("-u", "--include-untracked") {
+		rw.clean = &gitrepo.CleanOptions{Force: 1, Dirs: true, Ignored: all}
+	}
 	return rw, true
 }
 
@@ -943,8 +1058,8 @@ func (ctx *EvalContext) scriptContext(sc scannedCommand, run cmdscan.ScriptRun) 
 // checkRewrite judges one rewriting git command.
 func (ctx *EvalContext) checkRewrite(sc scannedCommand, target gitArgs, rw worktreeRewrite, line rewriteLine) string {
 	what := "git " + target.sub
-	if target.sub == "stash" && len(target.rest) > 0 && !isFlag(target.rest[0]) {
-		what += " " + target.rest[0] // push, save, pop, apply or branch
+	if (target.sub == "stash" || target.sub == "sparse-checkout") && len(target.rest) > 0 && !isFlag(target.rest[0]) {
+		what += " " + target.rest[0] // stash push, save, pop, apply or branch; sparse-checkout set, ...
 	}
 	switch {
 	case line.psLocation:
@@ -978,17 +1093,22 @@ func (ctx *EvalContext) checkRewrite(sc scannedCommand, target gitArgs, rw workt
 		return "" // not a repository or an unknown revision: git itself fails
 	case verdict.tracked != "":
 		return what + " rewrites working-tree files after another command on the same line, which may change what it copies, in a repository that tracks protected " + verdict.tracked + "; run it in its own call so the files it writes can be checked"
+	case verdict.sparse != "":
+		return what + " changes which tracked files stay in the working tree, and may remove protected " + verdict.sparse + " that the repository tracks; a person must change the sparse-checkout patterns"
 	case verdict.overwritten != "":
 		return what + " would overwrite protected " + verdict.overwritten + " in the working tree"
+	case verdict.removed != "":
+		return what + " would remove protected " + verdict.removed + " from the working tree, which the index does not track"
 	}
 	return ""
 }
 
 // gitVerdict is what git reported about a rewrite: the protected path it
-// would overwrite, or, for a rewrite preceded on its line, a protected path
-// the repository tracks.
+// would overwrite or, as an untracked file, remove; for a rewrite preceded on
+// its line, a protected path the repository tracks; for a sparse-checkout
+// pattern change, a tracked protected path it may drop.
 type gitVerdict struct {
-	overwritten, tracked string
+	overwritten, removed, tracked, sparse string
 }
 
 // askGit asks git, read-only and in dir, about rewrite rw. A rewrite preceded
@@ -996,7 +1116,10 @@ type gitVerdict struct {
 // (the index, a fetched ref), so what it writes is known only in a
 // repository that tracks no protected file; any other rewrite is judged by
 // the paths it would write. When the first operand of an ambiguous checkout
-// names no revision, git reads its operands as paths, and so does askGit.
+// names no revision, git reads its operands as paths, and so does askGit. A
+// sparse-checkout pattern change is judged by whether the repository tracks
+// a protected path at all, and a clean (rw.clean) by the untracked paths it
+// would remove, also after another command, as tracking may not cover them.
 func (ctx *EvalContext) askGit(dir string, rw worktreeRewrite, preceded bool) (gitVerdict, error) {
 	client := gitrepo.Client{Runner: ctx.gitRunner}
 	top, err := client.Toplevel(ctx.Ctx, dir)
@@ -1009,15 +1132,41 @@ func (ctx *EvalContext) askGit(dir string, rw worktreeRewrite, preceded bool) (g
 	if rw.remote != "" && !remoteIsRepo(rw.remote, dir, top) {
 		return gitVerdict{}, nil // a pull from another repository: the residual
 	}
-	if preceded {
+	if preceded || rw.source == sparseRules {
 		tracked, err := client.TrackedPaths(ctx.Ctx, top)
-		return gitVerdict{tracked: firstProtected(top, tracked)}, err
+		first := firstProtected(top, tracked)
+		if rw.source == sparseRules {
+			return gitVerdict{sparse: first}, err
+		}
+		if err != nil || first != "" || rw.clean == nil {
+			return gitVerdict{tracked: first}, err
+		}
+	} else {
+		paths, err := rewrittenPaths(ctx.Ctx, client, dir, rw)
+		if errors.Is(err, gitrepo.ErrGit) && rw.orPaths != nil {
+			paths, err = rewrittenPaths(ctx.Ctx, client, dir, worktreeRewrite{source: fromIndex, paths: rw.orPaths})
+		}
+		if first := firstProtected(top, paths); err != nil || first != "" || rw.clean == nil {
+			return gitVerdict{overwritten: first}, err
+		}
 	}
-	paths, err := rewrittenPaths(ctx.Ctx, client, dir, rw)
-	if errors.Is(err, gitrepo.ErrGit) && rw.orPaths != nil {
-		paths, err = rewrittenPaths(ctx.Ctx, client, dir, worktreeRewrite{source: fromIndex, paths: rw.orPaths})
+	removed, err := client.CleanPaths(ctx.Ctx, dir, *rw.clean, rw.paths)
+	return gitVerdict{removed: ctx.firstRemovedProtected(dir, removed)}, err
+}
+
+// firstRemovedProtected returns the first of paths, relative to dir, whose
+// removal takes a protected path with it: a protected file or directory, an
+// entry in a protected directory, or a directory removed as a whole (a
+// trailing "/") that holds a git directory or a .claude-like location
+// (holdsProtectedEntry). It returns "" when there is none.
+func (ctx *EvalContext) firstRemovedProtected(dir string, paths []string) string {
+	for _, p := range paths {
+		abs := filepath.Join(dir, filepath.FromSlash(p))
+		if pathProtected(abs) || strings.HasSuffix(p, "/") && holdsProtectedEntry(&ctx.fs, abs) {
+			return p
+		}
 	}
-	return gitVerdict{overwritten: firstProtected(top, paths)}, err
+	return ""
 }
 
 // firstProtected returns the first of paths, relative to top, that canon

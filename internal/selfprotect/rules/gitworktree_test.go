@@ -31,7 +31,8 @@ type fakeGit struct {
 }
 
 // fakeKey names a query by the arguments that matter to it: "toplevel",
-// "fetch-head", "tracked", "diff <from> [<to>] -- [<pathspec>...]", "stash
+// "fetch-head", "tracked", "clean <options> -- [<pathspec>...]" (its answer
+// is git clean --dry-run's text), "diff <from> [<to>] -- [<pathspec>...]", "stash
 // <ref>", "log <rev>... --" or "apply [-p<n>] [--directory=<d>] -- <file>..."
 // (the forward and the reverse (-R) read of a patch share a key and an
 // answer, in --numstat form).
@@ -43,6 +44,8 @@ func fakeKey(args []string) string {
 		return "toplevel"
 	case slices.Contains(args, "ls-files"):
 		return "tracked"
+	case slices.Contains(args, "clean"):
+		return keyAfter("clean", args, "--dry-run")
 	case slices.Contains(args, "stash"):
 		return "stash " + args[len(args)-1]
 	case slices.Contains(args, "diff"):
@@ -947,6 +950,117 @@ func TestWorktreeRewrite_MergeFamilyStillAllowed(t *testing.T) {
 			git := rewriteRepo(top, true)
 			got, reason, matches := rewriteVerdict(t, "Bash", command, top, git)
 			if got != Allow {
+				t.Errorf("verdict = %v (matches %v, SP-007 %q), want Allow", got, matchIDs(matches), reason)
+			}
+			if n := git.callCount(); n != 0 {
+				t.Errorf("git spawned %d times, want none: %v", n, git.calls)
+			}
+		})
+	}
+}
+
+// cleanRepo is a rewriteRepo whose git clean --dry-run lists what each
+// option set would remove. In the evil one the index no longer tracks
+// .claude (after `git rm -r --cached .` or `git read-tree --empty`), so a
+// clean removes it; in the other only build output is untracked. Both track
+// what rewriteRepo does.
+func cleanRepo(top string, evil bool) *fakeGit {
+	git := rewriteRepo(top, evil)
+	dirs, ignored := "Would remove build/\n", "Would remove build/\nWould remove x.log\n"
+	if evil {
+		dirs = "Would remove .claude/\nWould remove build/\n"
+		ignored = "Would remove .claude/settings.local.json\n"
+	}
+	git.answers["clean -f --"] = "Would remove build.out\n"
+	git.answers["clean -d -f --"] = dirs
+	git.answers["clean -d -f -f --"] = dirs + "Would remove nested/\n"
+	git.answers["clean -d -x -f --"] = dirs + ignored
+	git.answers["clean -x -f --"] = ignored
+	git.answers["clean -d -f -- src"] = ""
+	git.answers["clean -d -f --exclude=keep --"] = "Would remove build/\n"
+	return git
+}
+
+// TestWorktreeRewrite_CleanAndSparse pins the two ways git drops a protected
+// file from the working tree without rewriting it: git clean (and stash -u /
+// --all, which clean what they save) removing a protected path the index
+// does not track, judged by git clean --dry-run, also after another command
+// on the line; and a sparse-checkout pattern change, denied in a repository
+// that tracks a protected path. Listing, dry runs, disable and an add of
+// patterns that only include more ask git nothing.
+func TestWorktreeRewrite_CleanAndSparse(t *testing.T) {
+	t.Parallel()
+	top := filepath.Join(homeDir(t), "project")
+	const removed = "would remove protected .claude/"
+	const sparse = "a person must change the sparse-checkout patterns"
+	const ownCall = "run it in its own call"
+	untrackedOnly := func(top string) *fakeGit {
+		git := cleanRepo(top, true)
+		git.tracked = "src/x.go\x00" // .claude was never tracked
+		return git
+	}
+	rows := []struct {
+		name, command string
+		git           *fakeGit
+		want          Verdict
+		reason        string
+	}{
+		{"clean of an untracked .claude", "git clean -fd", cleanRepo(top, true), Deny, removed},
+		{"clean with ignored files", "git clean -fdx", cleanRepo(top, true), Deny, removed},
+		{"clean of ignored settings", "git clean -f -x", cleanRepo(top, true), Deny, "would remove protected .claude/settings.local.json"},
+		{"clean, long options", "git clean --force -d", cleanRepo(top, true), Deny, removed},
+		{"clean of nested repositories", "git clean -ffd", cleanRepo(top, true), Deny, removed},
+		{"clean without -f", "git clean -d", cleanRepo(top, true), Deny, removed},
+		{"dry run turned off", "git clean -n --no-dry-run -fd", cleanRepo(top, true), Deny, removed},
+		{"clean in a script", "sh -c 'git clean -fd'", cleanRepo(top, true), Deny, removed},
+		{"after untracking on the line", "git rm -r -q --cached . && git clean -fd", cleanRepo(top, true), Deny, ownCall},
+		{"after read-tree on the line", "git read-tree --empty; git clean -fdq", cleanRepo(top, true), Deny, ownCall},
+		{"preceded, never tracked", "true && git clean -fd", untrackedOnly(top), Deny, removed},
+		{"stash with untracked files", "git stash -u", cleanRepo(top, true), Deny, removed},
+		{"stash with ignored files", "git stash push --all", cleanRepo(top, true), Deny, removed},
+		{"powershell clean", "PowerShell", cleanRepo(top, true), Deny, removed},
+		{"clean of build output", "git clean -fd", cleanRepo(top, false), Allow, ""},
+		{"clean with ignored build output", "git clean -fdx", cleanRepo(top, false), Allow, ""},
+		{"clean of a subdirectory", "git clean -fd -- src", cleanRepo(top, true), Allow, ""},
+		{"clean with an exclude pattern", "git clean -fd -e keep", cleanRepo(top, true), Allow, ""},
+		{"stash with untracked build output", "git stash -u", cleanRepo(top, false), Allow, ""},
+		{"sparse set", "git sparse-checkout set x", rewriteRepo(top, true), Deny, sparse},
+		{"sparse init", "git sparse-checkout init --no-cone", rewriteRepo(top, true), Deny, sparse},
+		{"sparse reapply", "git sparse-checkout reapply", rewriteRepo(top, true), Deny, sparse},
+		{"sparse add of a negation", "git sparse-checkout add '!/*/'", rewriteRepo(top, true), Deny, sparse},
+		{"sparse add from stdin", "git sparse-checkout add --stdin", rewriteRepo(top, true), Deny, sparse},
+		{"sparse set after a command", "git status && git sparse-checkout set /go.mod", rewriteRepo(top, true), Deny, sparse},
+		{"sparse set, nothing protected tracked", "git sparse-checkout set x", rewriteRepo(top, false), Allow, ""},
+	}
+	for _, tt := range rows {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			tool, command := "Bash", tt.command
+			if command == "PowerShell" {
+				tool, command = "PowerShell", "git clean -fd"
+			}
+			got, reason, matches := rewriteVerdict(t, tool, command, top, tt.git)
+			if got != tt.want {
+				t.Fatalf("%q: verdict = %v (matches %v, SP-007 %q), want %v", command, got, matchIDs(matches), reason, tt.want)
+			}
+			if tt.want == Deny && !strings.Contains(reason, tt.reason) {
+				t.Errorf("%q: SP-007 reason = %q, want it to contain %q", command, reason, tt.reason)
+			}
+		})
+	}
+
+	for _, command := range []string{
+		"git clean -n -fd",
+		"git clean --dry-run -fdx",
+		"git sparse-checkout list",
+		"git sparse-checkout check-rules",
+		"git sparse-checkout disable",
+		"git sparse-checkout add src docs",
+	} {
+		t.Run(command, func(t *testing.T) {
+			t.Parallel()
+			git := cleanRepo(top, true)
+			if got, reason, matches := rewriteVerdict(t, "Bash", command, top, git); got != Allow {
 				t.Errorf("verdict = %v (matches %v, SP-007 %q), want Allow", got, matchIDs(matches), reason)
 			}
 			if n := git.callCount(); n != 0 {

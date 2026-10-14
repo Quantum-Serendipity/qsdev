@@ -10,6 +10,8 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"slices"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -23,9 +25,16 @@ import (
 // $FAKE_UPSTREAM/github/<owner>_<repo>.json and
 // `gh api repos/<owner>/<repo>/tags?per_page=100` from
 // $FAKE_UPSTREAM/github/<owner>_<repo>.tags.json, and fails like a 404
-// otherwise.
+// otherwise. It logs each API request to $FAKE_UPSTREAM/calls.log. `gh pr
+// list` reports no open PR and `gh pr create` succeeds; both are logged to
+// $FAKE_UPSTREAM/pr.log.
 const fakeGH = `#!/bin/sh
+if [ "$1" = "pr" ]; then
+  echo "gh pr $2" >>"$FAKE_UPSTREAM/pr.log"
+  exit 0
+fi
 [ "$1" = "api" ] || { echo "unexpected gh call: $*" >&2; exit 2; }
+echo "gh api $2" >>"$FAKE_UPSTREAM/calls.log"
 path="${2#repos/}"
 case "$path" in
   */releases\?per_page=100) repo="${path%/releases?per_page=100}" suffix=json ;;
@@ -42,6 +51,7 @@ cat "$f"
 // and https://releases.nixos.org/nix/<path> from $FAKE_UPSTREAM/nix/<path>
 // (a HEAD request, -I, answers with a Last-Modified header read from
 // <path>.lm). It fails like ` + "`curl -f`" + ` on a 404 (exit 22) otherwise.
+// It logs each request to $FAKE_UPSTREAM/calls.log.
 const fakeUpstreamCurl = `#!/bin/sh
 url=""
 head=false
@@ -52,6 +62,11 @@ for a in "$@"; do
     -*I*) head=true ;;
   esac
 done
+if [ "$head" = true ]; then
+  echo "curl -I $url" >>"$FAKE_UPSTREAM/calls.log"
+else
+  echo "curl $url" >>"$FAKE_UPSTREAM/calls.log"
+fi
 case "$url" in
   https://proxy.golang.org/*/@v/*)
     rest="${url#https://proxy.golang.org/}"
@@ -70,6 +85,30 @@ if [ "$head" = true ]; then
 else
   cat "$f"
 fi
+`
+
+// fakeGit logs the git commands --open-pr runs to $FAKE_UPSTREAM/pr.log: a
+// commit as "git commit -- <paths>" followed by one "message: " line per -m
+// argument with its newlines turned into "|", anything else as "git <cmd>".
+const fakeGit = `#!/bin/sh
+log="$FAKE_UPSTREAM/pr.log"
+if [ "$1" != commit ]; then
+  echo "git $1" >>"$log"
+  exit 0
+fi
+shift
+paths=""
+msgs=""
+while [ $# -gt 0 ]; do
+  case "$1" in
+    -m) msgs="$msgs$(printf '%s' "$2" | tr '\n' '|')
+"; shift ;;
+    --) shift; paths="$*"; break ;;
+  esac
+  shift
+done
+echo "git commit -- $paths" >>"$log"
+printf '%s' "$msgs" | while IFS= read -r m; do echo "message: $m" >>"$log"; done
 `
 
 // bumpTools are the real binaries bump-tool-pins.sh may use.
@@ -124,6 +163,37 @@ func (r upstreamRelease) published(now time.Time) string {
 // combined output and the env file content afterwards.
 func runBump(t *testing.T, envFile string, gh, proxy map[string][]upstreamRelease, nix []nixRelease) (int, string, string) {
 	t.Helper()
+	res := runBumpFiles(t, bumpRun{envFiles: []string{envFile}, gh: gh, proxy: proxy, nix: nix})
+	return res.code, res.out, res.after[0]
+}
+
+// bumpRun is one bump-tool-pins.sh run: the env files passed to it, in
+// order, the upstream releases its stubs serve and whether it opens a PR.
+type bumpRun struct {
+	envFiles []string
+	gh       map[string][]upstreamRelease
+	proxy    map[string][]upstreamRelease
+	nix      []nixRelease
+	openPR   bool
+}
+
+// bumpResult is what a bumpRun left behind: the exit code, combined output,
+// each env file's path and content afterwards, the upstream requests the
+// stubs answered and, with openPR, the git and gh PR commands the script ran.
+type bumpResult struct {
+	code     int
+	out      string
+	paths    []string
+	after    []string
+	calls    []string
+	prEvents []string
+}
+
+// runBumpFiles runs bump-tool-pins.sh with run's env files, each written to
+// its own path, against stub upstreams, and with stub git and gh pr
+// commands that only record their arguments.
+func runBumpFiles(t *testing.T, run bumpRun) bumpResult {
+	t.Helper()
 	if runtime.GOOS != "linux" && runtime.GOOS != "darwin" {
 		t.Skip("bump-tool-pins.sh runs on the Linux CI runner; it needs bash")
 	}
@@ -146,10 +216,11 @@ func runBump(t *testing.T, envFile string, gh, proxy map[string][]upstreamReleas
 	}
 	writeExec(t, filepath.Join(binDir, "gh"), fakeGH)
 	writeExec(t, filepath.Join(binDir, "curl"), fakeUpstreamCurl)
+	writeExec(t, filepath.Join(binDir, "git"), fakeGit)
 
 	now := time.Now().UTC()
-	writeNixUpstream(t, filepath.Join(upstream, "github"), filepath.Join(upstream, "nix"), nix, now)
-	for repo, rels := range gh {
+	writeNixUpstream(t, filepath.Join(upstream, "github"), filepath.Join(upstream, "nix"), run.nix, now)
+	for repo, rels := range run.gh {
 		items := make([]string, 0, len(rels))
 		for _, r := range rels {
 			items = append(items, fmt.Sprintf(`{"tag_name": %q, "published_at": %q, "draft": false, "prerelease": %t}`,
@@ -158,7 +229,7 @@ func runBump(t *testing.T, envFile string, gh, proxy map[string][]upstreamReleas
 		writeFile(t, filepath.Join(upstream, "github", strings.ReplaceAll(repo, "/", "_")+".json"),
 			"["+strings.Join(items, ",")+"]")
 	}
-	for mod, rels := range proxy {
+	for mod, rels := range run.proxy {
 		dir := filepath.Join(upstream, "goproxy", strings.ReplaceAll(mod, "/", "_"))
 		if err := os.MkdirAll(dir, 0o755); err != nil {
 			t.Fatal(err)
@@ -171,26 +242,57 @@ func runBump(t *testing.T, envFile string, gh, proxy map[string][]upstreamReleas
 		}
 		writeFile(t, filepath.Join(dir, "list"), list.String())
 	}
-	envPath := filepath.Join(root, "tool-versions.env")
-	writeFile(t, envPath, envFile)
+	args := []string{"bump-tool-pins.sh"}
+	if run.openPR {
+		args = append(args, "--open-pr")
+	}
+	envPaths := make([]string, len(run.envFiles))
+	for i, content := range run.envFiles {
+		dir := filepath.Join(root, "env", strconv.Itoa(i))
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		envPaths[i] = filepath.Join(dir, "tool-versions.env")
+		writeFile(t, envPaths[i], content)
+		args = append(args, envPaths[i])
+	}
 
-	cmd := exec.Command(filepath.Join(binDir, "bash"), "bump-tool-pins.sh", envPath)
+	cmd := exec.Command(filepath.Join(binDir, "bash"), args...)
 	cmd.Env = []string{"PATH=" + binDir, "HOME=" + root, "TMPDIR=" + root, "FAKE_UPSTREAM=" + upstream}
 	out, err := cmd.CombinedOutput()
-	code := 0
+	res := bumpResult{out: string(out), paths: envPaths}
 	var exitErr *exec.ExitError
 	switch {
 	case err == nil:
 	case errors.As(err, &exitErr):
-		code = exitErr.ExitCode()
+		res.code = exitErr.ExitCode()
 	default:
 		t.Fatalf("running bump-tool-pins.sh: %v", err)
 	}
-	after, rerr := os.ReadFile(envPath)
-	if rerr != nil {
-		t.Fatal(rerr)
+	for _, p := range envPaths {
+		after, rerr := os.ReadFile(p)
+		if rerr != nil {
+			t.Fatal(rerr)
+		}
+		res.after = append(res.after, string(after))
 	}
-	return code, string(out), string(after)
+	res.calls = readLog(t, filepath.Join(upstream, "calls.log"))
+	res.prEvents = readLog(t, filepath.Join(upstream, "pr.log"))
+	return res
+}
+
+// readLog returns the lines a stub appended to path, or nil when it wrote
+// none.
+func readLog(t *testing.T, path string) []string {
+	t.Helper()
+	b, err := os.ReadFile(path)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil
+	}
+	if err != nil {
+		t.Fatal(err)
+	}
+	return strings.Split(strings.TrimSuffix(string(b), "\n"), "\n")
 }
 
 // writeNixUpstream serves rels as the tags of example/nix and, for the
@@ -426,6 +528,183 @@ func TestBumpToolPinsNix(t *testing.T) {
 			}
 			if got != tc.wantEnv {
 				t.Errorf("env file after run:\n%s\nwant:\n%s\noutput:\n%s", got, tc.wantEnv, out)
+			}
+		})
+	}
+}
+
+// checkBumpFiles reports a run whose exit code or env files differ from the
+// wanted ones.
+func checkBumpFiles(t *testing.T, res bumpResult, wantCode int, wantEnvs []string) {
+	t.Helper()
+	if res.code != wantCode {
+		t.Errorf("exit code = %d, want %d\noutput:\n%s", res.code, wantCode, res.out)
+	}
+	for i, want := range wantEnvs {
+		if res.after[i] != want {
+			t.Errorf("env file %d after run:\n%s\nwant:\n%s\noutput:\n%s", i, res.after[i], want, res.out)
+		}
+	}
+}
+
+// TestBumpToolPins_MultipleFiles covers a run over several env files: each
+// file's pins move as a single-file run would move them, and a pin that is
+// lower in a later file still moves to the newest aged release.
+func TestBumpToolPins_MultipleFiles(t *testing.T) {
+	t.Parallel()
+
+	bumped := strings.NewReplacer("TOOL_VERSION=v1.2.3", "TOOL_VERSION=v1.3.0",
+		"MOD_VERSION=v0.4.0", "MOD_VERSION=v0.5.1").Replace(bumpEnvFile)
+	modFile := func(v string) string { return "# source: goproxy example.com/mod\nMOD_VERSION=" + v + "\n" }
+	tests := []struct {
+		name     string
+		run      bumpRun
+		wantEnvs []string
+	}{
+		{
+			name: "github and goproxy pins in one file, the nix-release block in another",
+			run: bumpRun{
+				envFiles: []string{bumpEnvFile, nixEnvFile("2.34.8", nixSystems...)},
+				gh:       map[string][]upstreamRelease{"example/tool": {{version: "v1.3.0", age: 4 * day}}},
+				proxy:    map[string][]upstreamRelease{"example.com/mod": {{version: "v0.5.1", age: 10 * day}}},
+				nix:      []nixRelease{{version: "2.35.0", age: 5 * day, published: true}},
+			},
+			wantEnvs: []string{bumped, nixEnvFile("2.35.0", nixSystems...)},
+		},
+		{
+			name: "a lower pin in a later file sees releases below the earlier pin",
+			run: bumpRun{
+				envFiles: []string{modFile("v0.5.0"), modFile("v0.4.0")},
+				proxy: map[string][]upstreamRelease{"example.com/mod": {
+					{version: "v0.4.5", age: 20 * day}, {version: "v0.5.0", age: 10 * day},
+				}},
+			},
+			wantEnvs: []string{modFile("v0.5.0"), modFile("v0.5.0")},
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			checkBumpFiles(t, runBumpFiles(t, tc.run), 0, tc.wantEnvs)
+		})
+	}
+}
+
+// TestBumpToolPins_MultipleFilesAtomic covers malformed upstream data in a
+// later file: the run fails before writing any file, including an earlier
+// file whose pins would move.
+func TestBumpToolPins_MultipleFilesAtomic(t *testing.T) {
+	t.Parallel()
+
+	nixFile := nixEnvFile("2.34.8", nixSystems...)
+	res := runBumpFiles(t, bumpRun{
+		envFiles: []string{bumpEnvFile, nixFile},
+		gh:       map[string][]upstreamRelease{"example/tool": {{version: "v1.3.0", age: 4 * day}}},
+		proxy:    map[string][]upstreamRelease{"example.com/mod": {{version: "v0.5.1", age: 10 * day}}},
+		nix:      []nixRelease{{version: "2.35.0", age: 5 * day, published: true, systems: []string{"x86_64-linux"}}},
+	})
+	checkBumpFiles(t, res, 1, []string{bumpEnvFile, nixFile})
+}
+
+// TestBumpToolPins_SameNixPinsMoveTogether covers two identical nix-release
+// blocks, as in the CI pin catalog's source and its generated copy: they end
+// byte-identical, and the shared release is looked up and aged once.
+func TestBumpToolPins_SameNixPinsMoveTogether(t *testing.T) {
+	t.Parallel()
+
+	current := nixEnvFile("2.34.8", nixSystems...)
+	res := runBumpFiles(t, bumpRun{
+		envFiles: []string{current, current},
+		nix: []nixRelease{
+			{version: "2.36.0", age: day, published: true}, {version: "2.35.0", age: 5 * day, published: true},
+		},
+	})
+	want := nixEnvFile("2.35.0", nixSystems...)
+	checkBumpFiles(t, res, 0, []string{want, want})
+
+	once := []string{
+		"gh api repos/example/nix/tags?per_page=100",
+		"curl -I https://releases.nixos.org/nix/nix-2.35.0/nix-2.35.0-x86_64-linux.tar.xz.sha256",
+		"curl -I https://releases.nixos.org/nix/nix-2.36.0/nix-2.36.0-x86_64-linux.tar.xz.sha256",
+	}
+	for _, sys := range nixSystems {
+		once = append(once, "curl https://releases.nixos.org/nix/nix-2.35.0/nix-2.35.0-"+sys+".tar.xz.sha256")
+	}
+	for _, call := range once {
+		if n := countOf(res.calls, call); n != 1 {
+			t.Errorf("%q requested %d times, want once; requests:\n%s", call, n, strings.Join(res.calls, "\n"))
+		}
+	}
+}
+
+func countOf(lines []string, s string) int {
+	n := 0
+	for _, l := range lines {
+		if l == s {
+			n++
+		}
+	}
+	return n
+}
+
+// TestBumpToolPins_OpenPRCommitsAllFiles covers --open-pr over several env
+// files: every changed file, and only those, goes into one commit whose
+// message summarises each file, and one PR is opened.
+func TestBumpToolPins_OpenPRCommitsAllFiles(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name     string
+		gh       map[string][]upstreamRelease
+		wantFile []int
+	}{
+		{
+			name:     "both files change",
+			gh:       map[string][]upstreamRelease{"example/tool": {{version: "v1.3.0", age: 4 * day}}},
+			wantFile: []int{0, 1},
+		},
+		{
+			name:     "only the second file changes",
+			gh:       map[string][]upstreamRelease{"example/tool": {{version: "v1.3.0", age: day}}},
+			wantFile: []int{1},
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			res := runBumpFiles(t, bumpRun{
+				envFiles: []string{"# source: github example/tool\nTOOL_VERSION=v1.2.3\n", nixEnvFile("2.34.8", nixSystems...)},
+				gh:       tc.gh,
+				nix:      []nixRelease{{version: "2.35.0", age: 5 * day, published: true}},
+				openPR:   true,
+			})
+			if res.code != 0 {
+				t.Fatalf("exit code = %d, want 0\noutput:\n%s", res.code, res.out)
+			}
+			var commits, messages []string
+			for _, ev := range res.prEvents {
+				switch {
+				case strings.HasPrefix(ev, "git commit "):
+					commits = append(commits, ev)
+				case strings.HasPrefix(ev, "message: "):
+					messages = append(messages, ev)
+				}
+			}
+			want := make([]string, 0, len(tc.wantFile))
+			for _, i := range tc.wantFile {
+				want = append(want, res.paths[i])
+			}
+			if wantCommit := "git commit -- " + strings.Join(want, " "); !slices.Equal(commits, []string{wantCommit}) {
+				t.Errorf("commits = %q, want [%q]", commits, wantCommit)
+			}
+			body := strings.Join(messages, "\n")
+			for i, p := range res.paths {
+				if got, wantIn := strings.Contains(body, p), slices.Contains(tc.wantFile, i); got != wantIn {
+					t.Errorf("commit message mentions %s = %t, want %t\nmessage:\n%s", p, got, wantIn, body)
+				}
+			}
+			if n := countOf(res.prEvents, "gh pr create"); n != 1 {
+				t.Errorf("gh pr create ran %d times, want once; events:\n%s", n, strings.Join(res.prEvents, "\n"))
 			}
 		})
 	}

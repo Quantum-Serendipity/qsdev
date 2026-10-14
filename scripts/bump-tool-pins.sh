@@ -1,10 +1,11 @@
 #!/usr/bin/env bash
-# bump-tool-pins.sh: move the pins in .github/tool-versions.env to the newest
+# bump-tool-pins.sh: move the pins in the CI tool pin files to the newest
 # exact release that has aged past the cooldown (U26-02, Decision D9).
 #
-# Usage: scripts/bump-tool-pins.sh [--open-pr] [ENV_FILE]
+# Usage: scripts/bump-tool-pins.sh [--open-pr] [ENV_FILE...]
 #
-# Each KEY=value line in ENV_FILE must sit directly below a "# source:" line:
+# ENV_FILE defaults to .github/tool-versions.env. Each KEY=value line in an
+# ENV_FILE must sit directly below a "# source:" line:
 #   # source: github <owner>/<repo>       GitHub releases (gh api)
 #   # source: goproxy <module>            versions on proxy.golang.org
 #   # source: nix-release <owner>/<repo>  Nix X.Y.Z tags (gh api) whose
@@ -19,12 +20,16 @@
 # published tarball is not a release yet. When NIX_VERSION moves, every
 # nix-sha256 line below it is replaced with the new release's published
 # digest; .github/scripts/install-nix.sh checks the tarball against it in CI.
-# Malformed or missing upstream data fails the run before the file is touched.
 #
-# --open-pr commits the change to the tool-pins/bump branch, force-pushes it
-# and opens a PR unless one is already open. It needs GH_TOKEN with
-# contents:write and pull_requests:write; tool-pins.yml passes a PAT so the
-# PR triggers CI.
+# Each upstream release list and digest is read and aged once per run, so a
+# release pinned in several files moves them all to the same version. Every
+# file's new content is computed before any file is written: malformed or
+# missing upstream data fails the run with every file untouched.
+#
+# --open-pr commits every changed file to the tool-pins/bump branch in one
+# commit, force-pushes it and opens a PR unless one is already open. It needs
+# GH_TOKEN with contents:write and pull_requests:write; tool-pins.yml passes a
+# PAT so the PR triggers CI.
 set -euo pipefail
 
 # The catalog's baseline age gate (72h in internal/catalog/defaults.yaml).
@@ -38,7 +43,10 @@ if [ "${1:-}" = "--open-pr" ]; then
   open_pr=true
   shift
 fi
-env_file="${1:-.github/tool-versions.env}"
+if [ $# -eq 0 ]; then
+  set -- .github/tool-versions.env
+fi
+env_files=("$@")
 
 die() {
   echo "bump-tool-pins: $*" >&2
@@ -132,87 +140,166 @@ nix_sha256() {
 
 exact_re='^v[0-9]+\.[0-9]+\.[0-9]+$'
 nix_re='^[0-9]+\.[0-9]+\.[0-9]+$'
-[ -f "$env_file" ] || die "$env_file not found"
 
-out=""
-summary=""
-source_line=""
-# The Nix release in effect for the nix-sha256 lines, and whether it moved.
-nix_version=""
-nix_moved=false
-while IFS= read -r line || [ -n "$line" ]; do
-  if [[ "$line" =~ ^([A-Z][A-Z0-9_]*)=(.*)$ ]]; then
-    key="${BASH_REMATCH[1]}"
-    current="${BASH_REMATCH[2]}"
-    [[ "$source_line" =~ ^#\ source:\ (github|goproxy|nix-release|nix-sha256)\ ([^[:space:]]+)$ ]] ||
-      die "$key: no valid \"# source: github|goproxy|nix-release|nix-sha256 <target>\" line above it"
-    kind="${BASH_REMATCH[1]}"
-    target="${BASH_REMATCH[2]}"
+# The per-run upstream cache. Entry i of upstream_keys ("<kind> <target>")
+# holds, in upstream_lists, "<version> <published> <age days>" for every
+# release newer than upstream_floors[i]; it answers any pin at or above that
+# floor. Indexed arrays keep it to plain bash.
+upstream_keys=()
+upstream_floors=()
+upstream_lists=()
+digest_keys=()
+digest_values=()
 
-    if [ "$kind" = nix-sha256 ]; then
-      [ -n "$nix_version" ] || die "$key: a nix-sha256 line must follow the nix-release line"
-      if [ "$nix_moved" = true ]; then
-        digest="$(nix_sha256 "$nix_version" "$target")" ||
-          die "$key: cannot read the published SHA-256 of nix $nix_version for $target"
-        line="$key=$digest"
-        summary+="- $key: digest of nix-$nix_version-$target.tar.xz"$'\n'
-      fi
-      out+="$line"$'\n'
-      source_line="$line"
-      continue
+# upstream KEY KIND TARGET CURRENT sets upstream_list to "<version>
+# <published> <age days>" lines covering every exact release of TARGET newer
+# than CURRENT (it may hold older ones too; the caller filters). A release
+# list is read and aged once per run. KEY names the pin in errors.
+upstream() {
+  local key="$1" kind="$2" target="$3" current="$4" i=0 re list version published age
+  while [ "$i" -lt "${#upstream_keys[@]}" ]; do
+    if [ "${upstream_keys[$i]}" = "$kind $target" ] && ! newer "${upstream_floors[$i]}" "$current"; then
+      upstream_list="${upstream_lists[$i]}"
+      return 0
     fi
+    i=$((i + 1))
+  done
 
-    version_re="$exact_re"
-    if [ "$kind" = nix-release ]; then
-      version_re="$nix_re"
-      [[ "$current" =~ $nix_re ]] || die "$key=$current is not an exact Nix release (want X.Y.Z)"
-      nix_version="$current"
-    fi
+  re="$exact_re"
+  [ "$kind" != nix-release ] || re="$nix_re"
+  list="$(releases "$kind" "$target" "$current")" || die "$key: cannot read the releases of $kind $target"
+  upstream_list=""
+  while read -r version published; do
+    { [ -n "$version" ] && [[ "$version" =~ $re ]] && newer "$version" "$current"; } || continue
+    age="$(age_days "$published")" || die "$key: $kind $target reports an unreadable time for $version: $published"
+    upstream_list+="$version $published $age"$'\n'
+  done <<<"$list"
+  upstream_keys+=("$kind $target")
+  upstream_floors+=("$current")
+  upstream_lists+=("$upstream_list")
+}
 
-    list="$(releases "$kind" "$target" "$current")" || die "$key: cannot read the releases of $kind $target"
-    best=""
-    best_time=""
-    best_age=""
-    held=""
-    while read -r version published; do
-      { [ -n "$version" ] && [[ "$version" =~ $version_re ]] && newer "$version" "$current"; } || continue
-      age="$(age_days "$published")" || die "$key: $kind $target reports an unreadable time for $version: $published"
-      if [ "$age" -lt "$MIN_AGE_DAYS" ]; then
-        if [ -z "$held" ] || newer "$version" "$held"; then held="$version"; fi
-      elif [ -z "$best" ] || newer "$version" "$best"; then
-        best="$version"
-        best_time="$published"
-        best_age="$age"
-      fi
-    done <<<"$list"
+# cached_nix_sha256 KEY VERSION SYSTEM sets digest to the published SHA-256 of
+# VERSION's tarball for SYSTEM, reading each one once per run.
+cached_nix_sha256() {
+  local i=0
+  while [ "$i" -lt "${#digest_keys[@]}" ]; do
+    if [ "${digest_keys[$i]}" = "$2 $3" ]; then
+      digest="${digest_values[$i]}"
+      return 0
+    fi
+    i=$((i + 1))
+  done
+  digest="$(nix_sha256 "$2" "$3")" || die "$1: cannot read the published SHA-256 of nix $2 for $3"
+  digest_keys+=("$2 $3")
+  digest_values+=("$digest")
+}
 
-    if [ -n "$held" ] && { [ -z "$best" ] || newer "$held" "$best"; }; then
-      echo "$key: $held is under the $MIN_AGE_DAYS-day cooldown"
+# pick_release KEY KIND TARGET CURRENT sets best, best_time and best_age to
+# the newest release of TARGET newer than CURRENT that has aged MIN_AGE_DAYS,
+# or best to "" when there is none, and reports a newer one still held back.
+pick_release() {
+  local key="$1" kind="$2" target="$3" current="$4" held="" version published age
+  upstream "$key" "$kind" "$target" "$current"
+  best=""
+  best_time=""
+  best_age=""
+  while read -r version published age; do
+    { [ -n "$version" ] && newer "$version" "$current"; } || continue
+    if [ "$age" -lt "$MIN_AGE_DAYS" ]; then
+      if [ -z "$held" ] || newer "$version" "$held"; then held="$version"; fi
+    elif [ -z "$best" ] || newer "$version" "$best"; then
+      best="$version"
+      best_time="$published"
+      best_age="$age"
     fi
-    if [ -z "$best" ]; then
-      echo "$key: keeping $current; no newer release has aged $MIN_AGE_DAYS days"
-    else
-      echo "$key: $current -> $best ($best_age days old)"
-      line="$key=$best"
-      summary+="- $key: $current -> $best ($kind $target, published $best_time)"$'\n'
-      if [ "$kind" = nix-release ]; then
-        nix_version="$best"
-        nix_moved=true
-      fi
-    fi
+  done <<<"$upstream_list"
+
+  if [ -n "$held" ] && { [ -z "$best" ] || newer "$held" "$best"; }; then
+    echo "$key: $held is under the $MIN_AGE_DAYS-day cooldown"
   fi
-  out+="$line"$'\n'
-  source_line="$line"
-done <"$env_file"
+}
+
+# bump_file FILE sets file_out to FILE's content with every pin moved and
+# file_summary to one "- KEY: ..." line per moved pin ("" when none moved).
+# It writes nothing.
+bump_file() {
+  local line key current kind target source_line="" nix_version="" nix_moved=false
+  file_out=""
+  file_summary=""
+  while IFS= read -r line || [ -n "$line" ]; do
+    if [[ "$line" =~ ^([A-Z][A-Z0-9_]*)=(.*)$ ]]; then
+      key="${BASH_REMATCH[1]}"
+      current="${BASH_REMATCH[2]}"
+      [[ "$source_line" =~ ^#\ source:\ (github|goproxy|nix-release|nix-sha256)\ ([^[:space:]]+)$ ]] ||
+        die "$key: no valid \"# source: github|goproxy|nix-release|nix-sha256 <target>\" line above it"
+      kind="${BASH_REMATCH[1]}"
+      target="${BASH_REMATCH[2]}"
+
+      if [ "$kind" = nix-sha256 ]; then
+        [ -n "$nix_version" ] || die "$key: a nix-sha256 line must follow the nix-release line"
+        if [ "$nix_moved" = true ]; then
+          cached_nix_sha256 "$key" "$nix_version" "$target"
+          line="$key=$digest"
+          file_summary+="- $key: digest of nix-$nix_version-$target.tar.xz"$'\n'
+        fi
+      else
+        if [ "$kind" = nix-release ]; then
+          [[ "$current" =~ $nix_re ]] || die "$key=$current is not an exact Nix release (want X.Y.Z)"
+          nix_version="$current"
+        fi
+        pick_release "$key" "$kind" "$target" "$current"
+        if [ -z "$best" ]; then
+          echo "$key: keeping $current; no newer release has aged $MIN_AGE_DAYS days"
+        else
+          echo "$key: $current -> $best ($best_age days old)"
+          line="$key=$best"
+          file_summary+="- $key: $current -> $best ($kind $target, published $best_time)"$'\n'
+          if [ "$kind" = nix-release ]; then
+            nix_version="$best"
+            nix_moved=true
+          fi
+        fi
+      fi
+    fi
+    file_out+="$line"$'\n'
+    source_line="$line"
+  done <"$1"
+}
+
+for f in "${env_files[@]}"; do
+  [ -f "$f" ] || die "$f not found"
+done
+
+# Compute every file before writing any.
+new_contents=()
+summaries=()
+for f in "${env_files[@]}"; do
+  echo "$f:"
+  bump_file "$f"
+  new_contents+=("$file_out")
+  summaries+=("$file_summary")
+done
+
+changed=()
+summary=""
+i=0
+while [ "$i" -lt "${#env_files[@]}" ]; do
+  if [ -n "${summaries[$i]}" ]; then
+    f="${env_files[$i]}"
+    tmp="$(mktemp "${f}.XXXXXX")"
+    printf '%s' "${new_contents[$i]}" >"$tmp"
+    mv "$tmp" "$f"
+    changed+=("$f")
+    summary+="$f:"$'\n'"${summaries[$i]}"
+  fi
+  i=$((i + 1))
+done
 
 if [ -z "$summary" ]; then
   echo "All tool pins are current."
   exit 0
 fi
-
-tmp="$(mktemp "${env_file}.XXXXXX")"
-printf '%s' "$out" >"$tmp"
-mv "$tmp" "$env_file"
 
 if [ "$open_pr" != true ]; then
   exit 0
@@ -223,7 +310,7 @@ body="Bumped by .github/workflows/tool-pins.yml. Each release is at least ${MIN_
 git config user.name "qsdev-tool-pins"
 git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
 git switch -C "$PR_BRANCH"
-git commit -m "$title" -m "$summary" -- "$env_file"
+git commit -m "$title" -m "$summary" -- "${changed[@]}"
 git push --force origin "HEAD:refs/heads/$PR_BRANCH"
 if [ -z "$(gh pr list --head "$PR_BRANCH" --state open --json number --jq '.[].number')" ]; then
   gh pr create --head "$PR_BRANCH" --title "$title" --body "$body"

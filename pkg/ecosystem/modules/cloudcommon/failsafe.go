@@ -1,6 +1,10 @@
 package cloudcommon
 
-import "strings"
+import (
+	"strings"
+
+	"github.com/Quantum-Serendipity/qsdev/pkg/denyutil"
+)
 
 // FailSafeLayer identifies one of the three credential isolation layers.
 type FailSafeLayer int
@@ -50,7 +54,10 @@ type FailSafeReport struct {
 // counts a credential path as masked when it is in readDenyPaths or a
 // Read(...) rule in denyRules covers it (see ReadRulePaths): the generator
 // always emits the Read rules and adds the sandbox read-deny list only when
-// the Bash sandbox is enabled.
+// the Bash sandbox is enabled. Layer 3 requires every BashDenyRules rule and,
+// for each home path of ReadDenyPaths, a shell-read tripwire that covers it
+// (the file's or a containing directory's denyutil.HomeShellReadRules), so
+// deleting any rule of the tripwire the generator emits deactivates it.
 func ValidateFailSafe(
 	provider CloudProvider,
 	envVars map[string]string,
@@ -92,18 +99,26 @@ func ValidateFailSafe(
 	}
 	report.Statuses = append(report.Statuses, layer2)
 
-	// Layer 3: Agent deny rules — Bash deny patterns present. Bash rules match
-	// command text, so a complete rule set blocks the invocations Claude
-	// usually writes, not every way of running the CLI; the report says the
-	// rules are present, not that credential access is impossible.
+	// Layer 3: Agent deny rules — Bash deny patterns present: every
+	// credential-command rule literally, and a shell-read tripwire
+	// (denyutil.ShellReadCovered) over each home credential path. Bash rules
+	// match command text, so a complete rule set blocks the invocations
+	// Claude usually writes, not every way of running the CLI or reading a
+	// file; the report says the rules are present, not that credential access
+	// is impossible.
 	layer3 := FailSafeStatus{Provider: provider, Layer: LayerAgentDenyRules}
-	requiredRules := BashDenyRules(provider)
-	missingRules := findMissing(requiredRules, denyRules)
-	if len(missingRules) == 0 {
+	var problems []string
+	if missing := findMissing(BashDenyRules(provider), denyRules); len(missing) > 0 {
+		problems = append(problems, "missing Deny for: "+strings.Join(missing, ", "))
+	}
+	if uncovered := uncoveredShellReads(requiredPaths, denyRules); len(uncovered) > 0 {
+		problems = append(problems, "no shell-read deny covers "+strings.Join(uncovered, ", "))
+	}
+	if len(problems) == 0 {
 		layer3.Active = true
-		layer3.Details = "all credential-command deny rules present"
+		layer3.Details = "all credential-command and shell-read deny rules present"
 	} else {
-		layer3.Details = "missing Deny for: " + strings.Join(missingRules, ", ")
+		layer3.Details = strings.Join(problems, "; ")
 		allActive = false
 	}
 	report.Statuses = append(report.Statuses, layer3)
@@ -171,6 +186,20 @@ func ReadRulePaths(denyRules []string) []string {
 		}
 	}
 	return paths
+}
+
+// uncoveredShellReads returns the home paths ("~/"-prefixed) of paths whose
+// shell reads no rule set in denyRules denies (see denyutil.ShellReadCovered).
+// A project-relative path is skipped: the literal projectCLIConfigBashDeny
+// rules of BashDenyRules cover it.
+func uncoveredShellReads(paths, denyRules []string) []string {
+	var uncovered []string
+	for _, p := range paths {
+		if strings.HasPrefix(p, "~/") && !denyutil.ShellReadCovered(denyRules, p) {
+			uncovered = append(uncovered, p)
+		}
+	}
+	return uncovered
 }
 
 func findMissing(required, present []string) []string {

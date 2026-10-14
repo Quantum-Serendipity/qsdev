@@ -6,6 +6,7 @@ import (
 	"slices"
 	"testing"
 
+	"github.com/Quantum-Serendipity/qsdev/pkg/denyutil"
 	"github.com/Quantum-Serendipity/qsdev/pkg/ecosystem/modules/cloudcommon"
 	"github.com/Quantum-Serendipity/qsdev/pkg/types"
 )
@@ -102,7 +103,12 @@ func TestConfiguredProviders(t *testing.T) {
 func TestStatus(t *testing.T) {
 	t.Parallel()
 
-	full := Settings{Deny: cloudcommon.BashDenyRules(cloudcommon.AWS), DenyRead: cloudcommon.ReadDenyPaths(cloudcommon.AWS), Present: true}
+	// The generated deny rules: the AWS credential-command rules and the
+	// canon's shell-read tripwire over ~/.aws.
+	tripwire := denyutil.HomeShellReadRules(".aws", true)
+	deny := append(cloudcommon.BashDenyRules(cloudcommon.AWS), tripwire...)
+	full := Settings{Deny: deny, DenyRead: cloudcommon.ReadDenyPaths(cloudcommon.AWS), Present: true}
+	stripped := Settings{Deny: slices.DeleteFunc(slices.Clone(deny), func(r string) bool { return r == tripwire[0] }), DenyRead: full.DenyRead, Present: true}
 	dev := map[string]string{"AWS_PROFILE": "dev"}
 	langs := []types.LanguageConfig{{Name: "aws"}}
 	tests := []struct {
@@ -116,6 +122,7 @@ func TestStatus(t *testing.T) {
 		{"all layers", dev, full, true, StatusIsolated, 3},
 		{"placeholder profile", map[string]string{"AWS_PROFILE": "PLACEHOLDER"}, full, true, StatusDegraded, 3},
 		{"no deny rules", dev, Settings{DenyRead: full.DenyRead, Present: true}, true, StatusMisconfigured, 3},
+		{"~/.aws shell-read tripwire stripped", dev, stripped, true, StatusMisconfigured, 3},
 		{"empty settings file", dev, Settings{Present: true}, false, StatusMisconfigured, 3},
 		{"settings missing with Claude Code", dev, Settings{}, true, StatusMisconfigured, 3},
 		{"no Claude Code, profile set", dev, Settings{}, false, StatusIsolated, 1},

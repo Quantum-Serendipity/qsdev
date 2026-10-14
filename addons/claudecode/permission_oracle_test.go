@@ -5,6 +5,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/Quantum-Serendipity/qsdev/addons/claudecode"
 	"github.com/Quantum-Serendipity/qsdev/internal/catalog"
 	"github.com/Quantum-Serendipity/qsdev/internal/secrets"
 	"github.com/Quantum-Serendipity/qsdev/pkg/denyutil"
@@ -382,6 +383,43 @@ func TestHomeCredentialReadDenies_Oracle(t *testing.T) {
 			for _, rel := range []string{".npmrc", ".cargo/credentials.toml"} {
 				if r, ok := denied(p.deny, root+"/"+rel, true); ok {
 					t.Errorf("home rule %s blocks the project-local %s", r, rel)
+				}
+			}
+		})
+	}
+}
+
+// TestHomeCredentialShellReadDenies_NoFalsePositives judges the shell-read
+// tripwire with denyutil.MatchesBashRule: in every preset it is present, and
+// no tripwire rule matches a project-local file of a store's name, a command
+// that only uses a store without printing it, or a sibling path that merely
+// starts with a store's name.
+func TestHomeCredentialShellReadDenies_NoFalsePositives(t *testing.T) {
+	t.Parallel()
+	tripwire := claudecode.ExportHomeCredentialShellReadDenyRules()
+	benign := []string{
+		"cat README.md",
+		"cat ./.npmrc",
+		"cat .npmrc",
+		"ls ~/.ssh",
+		"ssh -i ~/.ssh/id_ed25519 host",
+		"cat ~/.sshfoo/x",
+		"cat ~/.config/ghq/x",
+		"cp -r ~/.sshfoo /tmp/x",
+		"cat ~/.config/ghq",
+	}
+	_, presets := generatedPresetPermissions(t)
+	for preset, p := range presets {
+		t.Run(preset, func(t *testing.T) {
+			t.Parallel()
+			for _, r := range tripwire {
+				if !slices.Contains(p.deny, r) {
+					t.Errorf("deny lacks tripwire rule %s", r)
+				}
+			}
+			for _, cmd := range benign {
+				if r, ok := denyutil.FirstMatchingBashRule(tripwire, cmd); ok {
+					t.Errorf("tripwire rule %s over-blocks %q", r, cmd)
 				}
 			}
 		})

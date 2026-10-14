@@ -322,6 +322,21 @@ claims:
       - TestModuleReadDenyRulesDoNotDuplicateCredentialCanon
     tiers: [supply-chain-only, standard, full]
 
+  - id: home-credential-shell-read-tripwire
+    text: >-
+      For each of `cat`, `less`, `head`, `tail`, `cp`, `base64` and `xxd`,
+      plain and behind `env` (`env FOO=1 cat ...`), it denies the reader
+      naming each store, with or without options before the path
+    files: [docs/security-architecture.md]
+    tests:
+      - TestBuildPermissions_HomeCredentialShellReadDenies
+      - TestHomeCredentialShellReadDenies_NoFalsePositives
+      - TestAllBaseDenyRules_HomeCredentialShellReadDenies
+      - TestHomeCredentialDenyRules
+      - TestModuleCredentialCatRules_StillDenied
+      - TestHomeShellReadRules
+    tiers: [supply-chain-only, standard, full]
+
 # Overclaims withdrawn by H0-1. The claims test fails if any comes back.
 # No entry may match this file's own text, so the retracted wording appears
 # verbatim nowhere in the repository: write a pattern, where a bracketed

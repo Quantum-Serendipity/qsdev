@@ -15,6 +15,7 @@ import (
 	"github.com/Quantum-Serendipity/qsdev/internal/secrets"
 	"github.com/Quantum-Serendipity/qsdev/internal/sliceutil"
 	"github.com/Quantum-Serendipity/qsdev/internal/validation"
+	"github.com/Quantum-Serendipity/qsdev/pkg/denyutil"
 	"github.com/Quantum-Serendipity/qsdev/pkg/ecosystem"
 	"github.com/Quantum-Serendipity/qsdev/pkg/fileutil"
 	"github.com/Quantum-Serendipity/qsdev/pkg/types"
@@ -106,7 +107,16 @@ func AllBaseDenyRules() []string {
 	if err != nil {
 		return nil
 	}
-	return append(withNestedSecretFileRules(cat.AllPermissionDenyRules()), homeCredentialReadDenyRules()...)
+	return append(withNestedSecretFileRules(cat.AllPermissionDenyRules()), HomeCredentialDenyRules()...)
+}
+
+// HomeCredentialDenyRules returns the deny rules every preset carries for the
+// home credential stores of the canon, whatever the languages: the Read
+// denies (homeCredentialReadDenyRules) followed by the shell-read tripwire
+// (homeCredentialShellReadDenyRules). Exported for qsdev check, which requires
+// each of them in a generated settings.json.
+func HomeCredentialDenyRules() []string {
+	return append(homeCredentialReadDenyRules(), homeCredentialShellReadDenyRules()...)
 }
 
 // HomeCredentialReadGlobs returns the home credential stores of the
@@ -120,8 +130,9 @@ func HomeCredentialReadGlobs() []string {
 // credential store of the canon (secrets.CredentialReadGlobs). Every preset
 // carries them whatever the languages, so a registry token such as ~/.npmrc
 // is out of the Read tool's reach in any project. Known limits:
-//   - Shell reads (Bash(cat ~/.npmrc)) are not covered; the Bash read policy
-//     belongs to the shell-read work (U15/XS-WS5).
+//   - Shell reads (Bash(cat ~/.npmrc)) are outside Read rules; the
+//     shell-read tripwire (homeCredentialShellReadDenyRules) covers the
+//     common reader spellings.
 //   - Claude Code matches Read rules case-sensitively, so ~/.NPMRC on a
 //     case-insensitive filesystem slips past them; the file-boundary hook is
 //     the backstop.
@@ -130,6 +141,31 @@ func HomeCredentialReadGlobs() []string {
 //     config inside it.
 func homeCredentialReadDenyRules() []string {
 	return readDenyPermissionRules(secrets.CredentialReadGlobs())
+}
+
+// homeCredentialShellReadDenyRules returns the shell-read tripwire: the
+// denyutil.HomeShellReadRules of each home credential store of the canon
+// (secrets.CredentialStores). For every reader of denyutil.ShellReaders, plain
+// and behind env, it denies "<reader> *~/<rel>*" for a file store and
+// "<reader> *~/<rel>/*", "<reader> *~/<rel>" and "<reader> *~/<rel> *" for a
+// directory store (so `cp -r ~/.ssh /tmp/x` too), with a path containing a
+// space in its backslash-escaped and double-quoted spellings. The '*' before
+// the path admits options (cat -n ~/.npmrc) and matches the empty string for
+// the bare form. Every preset carries it whatever the languages.
+//
+// It is a tripwire for the spellings an agent usually writes, not a boundary:
+// it misses $HOME and absolute spellings, every other reader (sed, awk,
+// python, ...), input redirection (wc < ~/.npmrc), quoting other than the
+// generated forms (cat ~/".npmrc"), globs (cat ~/.np?rc), path normalisation
+// (~//.npmrc, ~/./.npmrc), absolute reader paths (/bin/cat), stdin fed from
+// elsewhere (< ~/.npmrc cat -) and PowerShell. The native sandbox's denyRead is the
+// real control (XS-WS3).
+func homeCredentialShellReadDenyRules() []string {
+	var rules []string
+	for _, s := range secrets.CredentialStores() {
+		rules = append(rules, denyutil.HomeShellReadRules(s.Rel, s.Dir)...)
+	}
+	return rules
 }
 
 // rootSecretsReadRule is the catalog rule that read-denies the project's
@@ -174,11 +210,12 @@ func buildPermissions(preset PermissionPreset, answers types.WizardAnswers, regi
 	if err != nil {
 		return Permissions{}, fmt.Errorf("loading catalog for permissions: %w", err)
 	}
-	// The home credential stores of the canon come first, then the ecosystem
-	// deny rules, which include Read(...) rules for the credential files
-	// modules declare read-denied, so the agent's own Read tool is blocked from
-	// them whether or not the Bash sandbox is enabled.
-	ecosystemDeny := homeCredentialReadDenyRules()
+	// The home credential stores of the canon come first, with their Read
+	// denies and the shell-read tripwire, then the ecosystem deny rules, which
+	// include Read(...) rules for the credential files modules declare
+	// read-denied, so the agent's own Read tool is blocked from them whether
+	// or not the Bash sandbox is enabled.
+	ecosystemDeny := HomeCredentialDenyRules()
 	ecosystemDeny = append(ecosystemDeny, collectEcosystemDenyRules(answers, registry)...)
 	ecosystemDeny = append(ecosystemDeny, readDenyPermissionRules(collectEcosystemReadDenyRules(answers, registry))...)
 

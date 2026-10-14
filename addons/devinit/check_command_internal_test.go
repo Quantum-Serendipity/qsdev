@@ -153,6 +153,159 @@ func TestRequiredDenyRules_MatchGeneratedSettings(t *testing.T) {
 	}
 }
 
+// TestRequiredDenyRules_IncludesHomeCredentialDenies is the regression test
+// for `qsdev check` not noticing a deleted home credential deny: every preset,
+// supply-chain-only included, requires each canon Read deny and each rule of
+// the shell-read tripwire.
+func TestRequiredDenyRules_IncludesHomeCredentialDenies(t *testing.T) {
+	t.Parallel()
+	cat, err := catalog.Default()
+	if err != nil {
+		t.Fatal(err)
+	}
+	home := claudecode.HomeCredentialDenyRules()
+	if len(home) == 0 {
+		t.Fatal("HomeCredentialDenyRules() is empty")
+	}
+	cases := map[string]struct {
+		answers types.WizardAnswers
+		cfg     *types.QsdevConfig
+	}{
+		"no answers or config":         {},
+		"supply-chain-only from tier":  {cfg: &types.QsdevConfig{Tier: "supply-chain-only"}},
+		"supply-chain-only from level": {answers: types.WizardAnswers{PermissionLevel: "supply-chain-only"}},
+	}
+	for _, preset := range cat.PermissionPresets() {
+		cases["preset "+preset] = struct {
+			answers types.WizardAnswers
+			cfg     *types.QsdevConfig
+		}{answers: types.WizardAnswers{PermissionLevel: preset}}
+	}
+	for name, tt := range cases {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			required, err := requiredDenyRules(tt.answers, tt.cfg)
+			if err != nil {
+				t.Fatal(err)
+			}
+			set := make(map[string]bool, len(required))
+			for _, r := range required {
+				set[r] = true
+			}
+			for _, rule := range home {
+				if !set[rule] {
+					t.Errorf("required rules lack home credential deny %q", rule)
+				}
+			}
+		})
+	}
+}
+
+// generatedSettingsDir generates settings.json for preset into a fresh
+// project directory and returns the directory and the generated deny rules.
+func generatedSettingsDir(t *testing.T, preset string) (string, []string) {
+	t.Helper()
+	answers := types.WizardAnswers{ClaudeCode: true, PermissionLevel: preset}
+	file, err := claudecode.GenerateSettings(answers, ecosystem.DefaultRegistry(), claudecode.Config{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	dir := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(dir, ".claude"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, ".claude", "settings.json"), file.Content, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	settings, err := claudesettings.Parse(file.Content)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return dir, settings.Deny
+}
+
+// denyRuleResults runs the file-state check over dir with the rules preset
+// requires and returns its deny_rules_present pass, if any, and the rules it
+// reports missing.
+func denyRuleResults(t *testing.T, dir string, required []string) (passed bool, missing []string) {
+	t.Helper()
+	for _, r := range check.CheckFileState(check.CheckContext{ProjectRoot: dir, RequiredDenyRules: required}) {
+		switch r.Name {
+		case "deny_rules_present":
+			passed = passed || r.Status == check.StatusPass
+		case "deny_rule_missing":
+			if r.Status == check.StatusFail {
+				missing = append(missing, r.Metadata["rule"])
+			}
+		}
+	}
+	return passed, missing
+}
+
+// TestCheckDenyRules_GeneratedSettingsPass keeps, as on base, freshly
+// generated settings passing deny_rules_present at every preset.
+func TestCheckDenyRules_GeneratedSettingsPass(t *testing.T) {
+	t.Parallel()
+	cat, err := catalog.Default()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, preset := range cat.PermissionPresets() {
+		t.Run(preset, func(t *testing.T) {
+			t.Parallel()
+			dir, _ := generatedSettingsDir(t, preset)
+			required, err := requiredDenyRules(types.WizardAnswers{PermissionLevel: preset}, nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if passed, missing := denyRuleResults(t, dir, required); !passed || len(missing) > 0 {
+				t.Errorf("generated settings: deny_rules_present passed = %v, missing = %v", passed, missing)
+			}
+		})
+	}
+}
+
+// TestCheckDenyRules_HomeCredentialDenyDeleted deletes, one at a time, each
+// canon Read deny and each shell-read tripwire rule from generated settings:
+// deny_rules_present must fail and name the deleted rule at every preset.
+func TestCheckDenyRules_HomeCredentialDenyDeleted(t *testing.T) {
+	t.Parallel()
+	cat, err := catalog.Default()
+	if err != nil {
+		t.Fatal(err)
+	}
+	home := claudecode.HomeCredentialDenyRules()
+	for _, preset := range cat.PermissionPresets() {
+		t.Run(preset, func(t *testing.T) {
+			t.Parallel()
+			dir, deny := generatedSettingsDir(t, preset)
+			required, err := requiredDenyRules(types.WizardAnswers{PermissionLevel: preset}, nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			path := filepath.Join(dir, ".claude", "settings.json")
+			for _, rule := range home {
+				kept := slices.DeleteFunc(slices.Clone(deny), func(r string) bool { return r == rule })
+				if len(kept) == len(deny) {
+					t.Errorf("generated settings lack %q", rule)
+					continue
+				}
+				data, err := json.Marshal(map[string]any{"permissions": map[string]any{"deny": kept}})
+				if err != nil {
+					t.Fatal(err)
+				}
+				if err := os.WriteFile(path, data, 0o644); err != nil {
+					t.Fatal(err)
+				}
+				passed, missing := denyRuleResults(t, dir, required)
+				if passed || !slices.Contains(missing, rule) {
+					t.Errorf("without %q: deny_rules_present passed = %v, missing = %v", rule, passed, missing)
+				}
+			}
+		})
+	}
+}
+
 // TestCheckCmd_FailsWhenGuardHooksStripped drives `qsdev check` against a
 // generated project whose settings.json lost its guard hooks and was switched
 // to bypassPermissions: the report must carry high-severity posture failures

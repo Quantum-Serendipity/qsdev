@@ -728,17 +728,6 @@ func TestAuthCredentialEnd_NoAllocs(t *testing.T) {
 	}
 }
 
-// tokenShapeInput embeds a canon sample between fixed prefix and suffix text.
-// A private-key header sample is closed with its END line, because a header
-// with no END is redacted through the end of the input by design.
-func tokenShapeInput(sample string) (input, prefix, suffix string) {
-	prefix, suffix = "error: got ", " here"
-	if privateKeyBeginRe.MatchString(sample) {
-		sample += "\nMIIEsecretkeybody\n" + strings.Replace(sample, "BEGIN", "END", 1)
-	}
-	return prefix + sample + suffix, prefix, suffix
-}
-
 // TestRedactString_TokenShapes proves the log redactor covers every token
 // shape in the secrets canon: each sample is scrubbed from a plain string and
 // from a JSON slog record routed through RedactingHandler, while the fixed
@@ -753,7 +742,7 @@ func TestRedactString_TokenShapes(t *testing.T) {
 			t.Errorf("canon entry %q has no secretstest sample", vp.Name)
 		}
 		for i, sample := range samples[vp.Name] {
-			input, prefix, suffix := tokenShapeInput(sample)
+			input, prefix, suffix := secretstest.InContext(sample)
 			t.Run(fmt.Sprintf("%s/%d", vp.Name, i), func(t *testing.T) {
 				t.Parallel()
 
@@ -772,7 +761,7 @@ func TestRedactString_TokenShapes(t *testing.T) {
 				if strings.Contains(out, sample) {
 					t.Errorf("RedactingHandler left the %s sample: %s", vp.Name, out)
 				}
-				if !strings.Contains(out, `"msg":"error: got `) || !strings.Contains(out, ` here","detail":"error: got `) {
+				if !strings.Contains(out, `"msg":"`+prefix) || !strings.Contains(out, suffix+`","detail":"`+prefix) {
 					t.Errorf("RedactingHandler lost the surrounding text: %s", out)
 				}
 			})

@@ -351,7 +351,10 @@ func isMachineReadableFormat(f check.OutputFormat) bool {
 // requiredDenyRules returns the base deny rules the generator emits for the
 // project's permission preset; each must be present in .claude/settings.json.
 // The rules come from the catalog's deny sets for that preset, so a preset
-// that omits a set (e.g. supply-chain-only) is not required to carry it.
+// that omits a set (e.g. supply-chain-only) is not required to carry it, plus
+// the home credential denies of the credential canon (the Read denies and the
+// shell-read tripwire, claudecode.HomeCredentialDenyRules), which every
+// preset carries.
 func requiredDenyRules(answers types.WizardAnswers, cfg *types.QsdevConfig) ([]string, error) {
 	cat, err := catalog.Default()
 	if err != nil {
@@ -368,7 +371,7 @@ func requiredDenyRules(answers types.WizardAnswers, cfg *types.QsdevConfig) ([]s
 	for _, setName := range def.DenySets {
 		rules = append(rules, cat.PermissionDenyRules(setName)...)
 	}
-	return rules, nil
+	return append(rules, claudecode.HomeCredentialDenyRules()...), nil
 }
 
 // effectivePermissionPreset resolves the permission preset the same way

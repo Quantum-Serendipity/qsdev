@@ -58,6 +58,33 @@ All notable changes to qsdev are recorded in this file. The format is based on
   store or a directory containing it (`~/.m2`, `~/.config/gh`) now fails
   `qsdev check`; name a sub-directory such as `~/.m2/repository` instead.
   Run `qsdev init --update` to pick it up.
+- The generated `.claude/settings.json` now carries a shell-read tripwire
+  over the same credential stores at every preset, whatever the selected
+  languages (XS-WS5): a Bash deny for `cat`, `less`, `head`, `tail`, `cp`,
+  `base64` and `xxd`, plain and behind `env` (`env FOO=1 cat ...`), naming
+  each store, with or without options before the path
+  (`Bash(cat *~/.npmrc*)`). A directory store is denied both inside it
+  (`Bash(cat *~/.ssh/*)`) and by its bare path (`Bash(cp *~/.ssh)`,
+  `Bash(cp *~/.ssh *)`), so `cp -r ~/.ssh /tmp/x` is denied too, and a store
+  whose path holds a space is denied in its backslash-escaped and
+  double-quoted spellings. Before, only the AWS, GCP, Azure, Helm and
+  container modules denied `cat` over their own stores; those private copies
+  are gone, and the same reads are now denied with no module selected. It is
+  a tripwire, not a boundary: `$HOME/` and absolute spellings, other readers,
+  input redirection (`wc < ~/.npmrc`), stdin fed from elsewhere, quoting
+  other than the generated forms, globs (`~/.np?rc`), `~//` and `~/./`
+  spellings, absolute reader paths (`/bin/cat`) and PowerShell are not
+  matched, and the native sandbox's `denyRead` remains the real control.
+  Run `qsdev init --update` to pick it up.
+- `qsdev check` now requires the home credential denies at every preset,
+  `supply-chain-only` included (XS-WS5): deleting any canon `Read(...)` deny
+  or any shell-read tripwire rule from `.claude/settings.json` fails
+  `deny_rules_present`. The cloud credential isolation check likewise
+  requires, besides each cloud CLI operation rule, a shell-read tripwire
+  covering every home credential path of the provider (`~/.aws/credentials`
+  and the rest), so its agent deny rules layer fails when one is removed.
+  Settings generated before this change fail both checks until you run
+  `qsdev init --update`.
 - The credential-scan hook now looks for a placeholder word in an
   assignment's value only as a word, not glued into camel case (U17-08).
   `password = "MyExamplePassword"` and, in a config file,

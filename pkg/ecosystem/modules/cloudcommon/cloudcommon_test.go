@@ -4,6 +4,7 @@ import (
 	"sort"
 	"testing"
 
+	"github.com/Quantum-Serendipity/qsdev/internal/secrets"
 	"github.com/Quantum-Serendipity/qsdev/pkg/denyutil"
 )
 
@@ -41,11 +42,11 @@ func TestBashDenyRules(t *testing.T) {
 		provider CloudProvider
 		want     int
 	}{
-		{name: "AWS", provider: AWS, want: 42},
+		{name: "AWS", provider: AWS, want: 40},
 		// GCP and Azure include the two `cat` rules for the per-project CLI
 		// configuration directory (ProjectCLIConfigDir).
-		{name: "GCP", provider: GCP, want: 19},
-		{name: "Azure", provider: Azure, want: 33},
+		{name: "GCP", provider: GCP, want: 18},
+		{name: "Azure", provider: Azure, want: 32},
 	}
 
 	for _, tt := range tests {
@@ -56,6 +57,21 @@ func TestBashDenyRules(t *testing.T) {
 				t.Errorf("BashDenyRules(%s) returned %d rules, want %d", tt.provider, len(rules), tt.want)
 			}
 		})
+	}
+}
+
+// TestBashDenyRules_NoHomeCredentialStore keeps the credential canon the
+// single owner of the CLIs' home credential stores: the generated settings'
+// shell-read tripwire denies cat ~/.aws/credentials and the like at every
+// preset (pinned in addons/claudecode), so no provider rule names one.
+func TestBashDenyRules_NoHomeCredentialStore(t *testing.T) {
+	t.Parallel()
+	for _, p := range []CloudProvider{AWS, GCP, Azure} {
+		for _, r := range BashDenyRules(p) {
+			if m := secrets.HomeStoreMentions(r); len(m) > 0 {
+				t.Errorf("BashDenyRules(%s) rule %q copies the canon store ~/%s", p, r, m[0].Store.Rel)
+			}
+		}
 	}
 }
 
@@ -116,9 +132,9 @@ func TestAllBashDenyRules_MultiProvider(t *testing.T) {
 		t.Error("AllBashDenyRules result is not sorted")
 	}
 
-	// Total should be 42 + 17 + 31 = 90 (no overlaps between providers).
-	if len(rules) != 94 {
-		t.Errorf("AllBashDenyRules returned %d rules, want 94", len(rules))
+	// Total should be 40 + 18 + 32 = 90 (no overlaps between providers).
+	if len(rules) != 90 {
+		t.Errorf("AllBashDenyRules returned %d rules, want 90", len(rules))
 	}
 }
 

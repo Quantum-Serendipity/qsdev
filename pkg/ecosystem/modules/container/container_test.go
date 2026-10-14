@@ -8,6 +8,7 @@ import (
 
 	"gopkg.in/yaml.v3"
 
+	"github.com/Quantum-Serendipity/qsdev/internal/secrets"
 	"github.com/Quantum-Serendipity/qsdev/pkg/denyutil"
 	"github.com/Quantum-Serendipity/qsdev/pkg/ecosystem"
 	"github.com/Quantum-Serendipity/qsdev/pkg/ecosystem/modules/container"
@@ -696,20 +697,24 @@ func TestDenyRules(t *testing.T) {
 	}
 }
 
-// TestRegistryCredentialsProtected covers W132: registry credential files
-// cannot be printed with cat. Their Read denies are owned by the credential
-// canon (internal/secrets) and generated at every preset, so the module is
-// not a ReadDenyRuleProvider.
-func TestRegistryCredentialsProtected(t *testing.T) {
+// TestRegistryCredentialsOwnedByCanon covers W132 after the credential canon
+// took it over: the registry credential files are read-denied and guarded by
+// the shell-read tripwire at every preset from internal/secrets (pinned by
+// the claudecode generator tests), so the module is not a
+// ReadDenyRuleProvider and none of its deny rules names a home credential
+// store.
+func TestRegistryCredentialsOwnedByCanon(t *testing.T) {
 	t.Parallel()
 	m := newModule()
 	if _, ok := any(m).(ecosystem.ReadDenyRuleProvider); ok {
 		t.Error("container module implements ReadDenyRuleProvider; its credential stores belong to the canon")
 	}
-	rules := m.DenyRules(ecosystem.ModuleConfig{})
-	for _, cmd := range []string{"cat ~/.docker/config.json", "cat ~/.config/containers/auth.json"} {
-		if _, ok := denyutil.FirstMatch(rules, "Bash("+cmd+")"); !ok {
-			t.Errorf("%q is not denied", cmd)
+	for _, rt := range []string{"", "docker", "podman-rootless", "podman-rootful"} {
+		cfg := ecosystem.ModuleConfig{Extras: map[string]string{"container_runtime": rt}}
+		for _, r := range m.DenyRules(cfg) {
+			if m := secrets.HomeStoreMentions(r); len(m) > 0 {
+				t.Errorf("deny rule %q copies the canon store ~/%s", r, m[0].Store.Rel)
+			}
 		}
 	}
 }

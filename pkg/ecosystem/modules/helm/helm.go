@@ -166,12 +166,12 @@ var deniedSubcommands = []string{
 }
 
 // kubeconfigDenyRules keep the agent from printing the kubeconfig helm uses,
-// which carries cluster credentials: `kubectl config view --raw` and reading
-// it with cat.
+// which carries cluster credentials, with `kubectl config view --raw`. Reading
+// ~/.kube directly is covered by the credential canon (internal/secrets):
+// every preset read-denies it and carries the shell-read tripwire over it.
 var kubeconfigDenyRules = []string{
 	"Bash(kubectl *config *view*--raw*)",
 	"Bash(env *kubectl *config *view*--raw*)",
-	"Bash(cat ~/.kube/*)",
 }
 
 // DenyRules returns Claude Code deny-rule patterns for the Helm ecosystem.

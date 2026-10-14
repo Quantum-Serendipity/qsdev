@@ -4,6 +4,8 @@ import (
 	"go/ast"
 	"go/token"
 	"slices"
+
+	"github.com/Quantum-Serendipity/qsdev/internal/secrets"
 )
 
 // symbolBan forbids references to Pkg.Name outside the Owners directories.
@@ -70,8 +72,15 @@ const bashToolName = "Bash"
 // permission-rule pattern (`Bash(npm *)`), not a hook call's tool name.
 var bashLiteralOwners = []string{"internal/selfprotect/cmdscan", "pkg/denyutil"}
 
+// credentialStoreLiteralRuleID bans spelling a whole credential store as a
+// "~/<rel>" string literal outside the canon.
+const credentialStoreLiteralRuleID = "credential-store-literal"
+
+// credentialStoreOwners defines the credential canon.
+var credentialStoreOwners = []string{"internal/secrets"}
+
 func symbolRules() []Rule {
-	rules := make([]Rule, 0, len(symbolTable)+3)
+	rules := make([]Rule, 0, len(symbolTable)+4)
 	for _, b := range symbolTable {
 		rules = append(rules, Rule{ID: b.ID, Check: b.check})
 	}
@@ -79,7 +88,23 @@ func symbolRules() []Rule {
 		Rule{ID: "panic", Check: checkPanic},
 		Rule{ID: "init-non-module", Check: checkInit},
 		Rule{ID: bashLiteralRuleID, Check: checkBashLiteral},
+		Rule{ID: credentialStoreLiteralRuleID, Check: checkCredentialStoreLiteral},
 	)
+}
+
+// checkCredentialStoreLiteral counts string literals in non-test code
+// outside internal/secrets that mention a whole credential store as
+// "~/<rel>" (secrets.HomeStoreMentions with Whole set): the store itself, a
+// glob over it, or a rule or command naming it, whatever non-name character
+// follows. Narrower sub-paths ("~/.aws/credentials") and longer names
+// ("~/.sshfoo") are not matches. A private copy of a store path drifts when
+// the canon grows; the generated denies, sandbox paths and validators all
+// derive from secrets.CredentialStores instead.
+func checkCredentialStoreLiteral(repo *Repo) []Violation {
+	return countPerPkg(repo, credentialStoreLiteralRuleID, credentialStoreOwners, false, func(_ *File, n ast.Node) bool {
+		s, ok := stringLit(n)
+		return ok && slices.ContainsFunc(secrets.HomeStoreMentions(s), func(m secrets.StoreMention) bool { return m.Whole })
+	})
 }
 
 // checkBashLiteral counts == and != comparisons with the literal "Bash", and

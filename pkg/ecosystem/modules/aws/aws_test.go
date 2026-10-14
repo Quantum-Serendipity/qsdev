@@ -254,8 +254,10 @@ func TestDenyRules_AllPresent(t *testing.T) {
 	m := newModule()
 	rules := m.DenyRules(ecosystem.ModuleConfig{})
 
-	if len(rules) != 42 {
-		t.Fatalf("expected 42 deny rules, got %d: %v", len(rules), rules)
+	// cat ~/.aws/credentials and cat ~/.aws/config are denied at every preset
+	// by the canon's shell-read tripwire (addons/claudecode), not here.
+	if len(rules) != 40 {
+		t.Fatalf("expected 40 deny rules, got %d: %v", len(rules), rules)
 	}
 
 	denied := []string{
@@ -264,8 +266,6 @@ func TestDenyRules_AllPresent(t *testing.T) {
 		"aws sts assume-role --role-arn x",
 		"aws sts get-federation-token --name n",
 		"aws configure export-credentials",
-		"cat ~/.aws/credentials",
-		"cat ~/.aws/config",
 	}
 	for _, cmd := range denied {
 		if _, ok := denyutil.FirstMatch(rules, "Bash("+cmd+")"); !ok {

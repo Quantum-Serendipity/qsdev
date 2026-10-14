@@ -18,6 +18,10 @@ var (
 	ExportPackageGuardMinAgeDays = packageGuardMinAgeDays
 )
 
+// ExportHomeCredentialShellReadDenyRules exposes the shell-read tripwire
+// over the home credential canon for external tests.
+var ExportHomeCredentialShellReadDenyRules = homeCredentialShellReadDenyRules
+
 // ExportSaveAnswers exposes saveAnswers for external tests.
 var ExportSaveAnswers = saveAnswers
 

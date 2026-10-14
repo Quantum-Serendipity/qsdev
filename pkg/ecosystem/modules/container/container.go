@@ -341,21 +341,14 @@ var hostRootMountArgs = []string{
 // classic `pull`, the management-command `image pull` and `compose pull`.
 var containerPullSubcommands = []string{"pull", "image pull", "compose pull"}
 
-// registryAuthFiles are where the Docker and Podman CLIs store registry
-// credentials (base64-encoded passwords or tokens) after `login`. They feed
-// only the Bash(cat ...) denies below: the Read denies for them come from the
-// credential canon (internal/secrets), which every preset carries.
-var registryAuthFiles = []string{
-	"~/.docker/config.json",
-	"~/.config/containers/auth.json",
-}
-
 // DenyRules returns Claude Code deny-rule patterns for the container
 // ecosystem. For both Docker-compatible CLIs it denies explicit image pulls
 // (with global options such as --context or -H, and behind an env prefix,
 // which Claude Code does not strip before matching) and the
-// container-escape arguments listed in containerEscapeArgs. It also blocks
-// printing the registry credential files with cat.
+// container-escape arguments listed in containerEscapeArgs. The registry
+// credential files (~/.docker/config.json, ~/.config/containers/auth.json)
+// belong to the credential canon (internal/secrets): every preset read-denies
+// them and carries the shell-read tripwire over them.
 //
 // The pull rules anchor the global-option form on a dash
 // (denyutil.DashedOptionSubcommandRules), since Docker and Podman global
@@ -378,9 +371,6 @@ func (m *Module) DenyRules(_ ecosystem.ModuleConfig) []string {
 	for _, cli := range containerCLIs {
 		rules = append(rules, denyutil.DashedOptionSubcommandRules(cli, containerPullSubcommands...)...)
 		rules = append(rules, denyutil.SubcommandRules(cli, containerEscapeArgs...)...)
-	}
-	for _, f := range registryAuthFiles {
-		rules = append(rules, "Bash(cat "+f+"*)")
 	}
 	return rules
 }

@@ -23,6 +23,7 @@ import (
 	"github.com/Quantum-Serendipity/qsdev/internal/validation"
 	"github.com/Quantum-Serendipity/qsdev/pkg/denyutil"
 	"github.com/Quantum-Serendipity/qsdev/pkg/ecosystem"
+	"github.com/Quantum-Serendipity/qsdev/pkg/ecosystem/modules/cloudcommon"
 	"github.com/Quantum-Serendipity/qsdev/pkg/types"
 )
 
@@ -2052,6 +2053,257 @@ func TestAllBaseDenyRules_HomeCredentialReadDenies(t *testing.T) {
 		if !slices.Contains(base, "Read("+g+")") {
 			t.Errorf("AllBaseDenyRules lacks Read(%s)", g)
 		}
+	}
+}
+
+// shellPathSpellings returns the working shell spellings of ~/<rel>: the
+// plain one, or for a path with a space the backslash-escaped and the
+// double-quoted forms (the raw form would split into two arguments).
+func shellPathSpellings(rel string) []string {
+	if !strings.Contains(rel, " ") {
+		return []string{"~/" + rel}
+	}
+	return []string{"~/" + strings.ReplaceAll(rel, " ", `\ `), `~/"` + rel + `"`}
+}
+
+// shellReadProbes returns the commands that read store with reader: the bare
+// form, an option before the path, a trailing destination (cp's form) and the
+// env prefix. A directory store is probed both bare (`cp -r ~/.ssh /tmp/x`)
+// and with a file inside it.
+func shellReadProbes(reader string, store secrets.CredentialStore) []string {
+	var probes []string
+	for _, p := range shellPathSpellings(store.Rel) {
+		paths := []string{p}
+		if store.Dir {
+			paths = append(paths, p+"/", p+"/x")
+			probes = append(probes, reader+" -r "+p+" /tmp/x")
+		}
+		for _, q := range paths {
+			probes = append(probes,
+				reader+" "+q, reader+" -n "+q, reader+" "+q+" /tmp/x",
+				"env "+reader+" "+q, "env FOO=1 "+reader+" "+q)
+		}
+	}
+	return probes
+}
+
+// TestBuildPermissions_HomeCredentialShellReadDenies pins the shell-read
+// tripwire (XS-WS5): every preset, with no language selected, carries the
+// denyutil.HomeShellReadRules of each home credential store of the canon,
+// each exactly once, and its deny list denies every reader of
+// denyutil.ShellReaders over every store, bare, option-first, behind env, for
+// a directory store's bare path, and in the working spellings of a path with
+// a space.
+func TestBuildPermissions_HomeCredentialShellReadDenies(t *testing.T) {
+	t.Parallel()
+	rules := claudecode.ExportHomeCredentialShellReadDenyRules()
+	var want []string
+	for _, s := range secrets.CredentialStores() {
+		want = append(want, denyutil.HomeShellReadRules(s.Rel, s.Dir)...)
+	}
+	if !slices.Equal(rules, want) {
+		t.Fatalf("tripwire = %d rules, want the %d HomeShellReadRules of the canon stores", len(rules), len(want))
+	}
+	for _, r := range rules {
+		if err := denyutil.Validate(r); err != nil {
+			t.Errorf("tripwire rule: %v", err)
+		}
+		if strings.Contains(r, "Application Support") && !strings.Contains(r, `"Library/Application Support`) {
+			t.Errorf("tripwire rule %s has the raw unescaped-space spelling", r)
+		}
+	}
+	_, presets := generatedPresetPermissions(t)
+	for preset, p := range presets {
+		t.Run(preset, func(t *testing.T) {
+			t.Parallel()
+			for _, r := range rules {
+				if n := countRule(p.deny, r); n != 1 {
+					t.Errorf("deny has %s %d times, want 1", r, n)
+				}
+			}
+			for _, s := range secrets.CredentialStores() {
+				for _, reader := range denyutil.ShellReaders() {
+					for _, cmd := range shellReadProbes(reader, s) {
+						if _, ok := denyutil.FirstMatchingBashRule(p.deny, cmd); !ok {
+							t.Errorf("no deny rule denies %q", cmd)
+						}
+					}
+				}
+			}
+		})
+	}
+}
+
+// TestAllBaseDenyRules_HomeCredentialShellReadDenies verifies the base deny
+// list qsdev check and the MCP server classify as base carries the shell-read
+// tripwire.
+func TestAllBaseDenyRules_HomeCredentialShellReadDenies(t *testing.T) {
+	t.Parallel()
+	base := claudecode.AllBaseDenyRules()
+	for _, r := range claudecode.ExportHomeCredentialShellReadDenyRules() {
+		if !slices.Contains(base, r) {
+			t.Errorf("AllBaseDenyRules lacks %s", r)
+		}
+	}
+}
+
+// TestHomeCredentialDenyRules pins the exported home credential deny set qsdev
+// check requires: the canon's Read denies followed by the shell-read tripwire,
+// all of them in AllBaseDenyRules.
+func TestHomeCredentialDenyRules(t *testing.T) {
+	t.Parallel()
+	var want []string
+	for _, g := range secrets.CredentialReadGlobs() {
+		want = append(want, "Read("+g+")")
+	}
+	want = append(want, claudecode.ExportHomeCredentialShellReadDenyRules()...)
+	got := claudecode.HomeCredentialDenyRules()
+	if !slices.Equal(got, want) {
+		t.Fatalf("HomeCredentialDenyRules() has %d rules, want the %d Read denies and tripwire rules", len(got), len(want))
+	}
+	base := claudecode.AllBaseDenyRules()
+	for _, r := range got {
+		if !slices.Contains(base, r) {
+			t.Errorf("AllBaseDenyRules lacks %s", r)
+		}
+	}
+}
+
+// TestModuleCredentialCatRules_StillDenied keeps, as on base, every home
+// credential read the aws, gcp, azure, container and helm modules used to
+// deny with their own cat rules denied by the generated settings, now through
+// the canon tripwire, whether or not those modules are selected.
+func TestModuleCredentialCatRules_StillDenied(t *testing.T) {
+	t.Parallel()
+	cat, err := catalog.Default()
+	if err != nil {
+		t.Fatalf("catalog.Default: %v", err)
+	}
+	cmds := []string{
+		"cat ~/.aws/credentials",
+		"cat ~/.aws/config",
+		"cat ~/.config/gcloud/credentials.db",
+		"cat ~/.azure/msal_token_cache.json",
+		"cat ~/.kube/config",
+		"cat ~/.docker/config.json",
+		"cat ~/.config/containers/auth.json",
+	}
+	langSets := map[string][]string{
+		"no-languages": nil,
+		"modules":      {"aws", "gcp", "azure", "container", "helm"},
+	}
+	for _, preset := range cat.PermissionPresets() {
+		for setName, langs := range langSets {
+			t.Run(preset+"/"+setName, func(t *testing.T) {
+				t.Parallel()
+				answers := types.WizardAnswers{PermissionLevel: preset, Languages: langChoices(langs...)}
+				deny := mustUnmarshalSettings(t, mustGenerateSettings(t, answers, ecosystem.DefaultRegistry())).Permissions.Deny
+				for _, cmd := range cmds {
+					if _, ok := denyutil.FirstMatchingBashRule(deny, cmd); !ok {
+						t.Errorf("no deny rule blocks %q", cmd)
+					}
+				}
+			})
+		}
+	}
+}
+
+// TestValidateFailSafe_GeneratedSettingsAllLayersActive keeps, as on base,
+// the cloud fail-safe report all-active over settings generated with the
+// cloud modules selected and their account variables set: the modules' Bash
+// rules (Layer 3) and credential paths (Layer 2) are all in the output.
+func TestValidateFailSafe_GeneratedSettingsAllLayersActive(t *testing.T) {
+	t.Parallel()
+	cat, err := catalog.Default()
+	if err != nil {
+		t.Fatalf("catalog.Default: %v", err)
+	}
+	providers := []cloudcommon.CloudProvider{cloudcommon.AWS, cloudcommon.GCP, cloudcommon.Azure}
+	env := make(map[string]string)
+	for _, p := range providers {
+		env[cloudcommon.EnvVarForProvider(p)] = "dev"
+	}
+	for _, preset := range cat.PermissionPresets() {
+		t.Run(preset, func(t *testing.T) {
+			t.Parallel()
+			answers := types.WizardAnswers{PermissionLevel: preset, Languages: langChoices("aws", "gcp", "azure")}
+			s := mustUnmarshalSettings(t, mustGenerateSettings(t, answers, ecosystem.DefaultRegistry()))
+			var denyRead []string
+			if s.Sandbox != nil && s.Sandbox.Filesystem != nil {
+				denyRead = s.Sandbox.Filesystem.DenyRead
+			}
+			for _, r := range cloudcommon.ValidateAllProviders(providers, env, s.Permissions.Deny, denyRead) {
+				if !r.AllLayersActive {
+					t.Errorf("%s: fail-safe not all-active: %+v", r.Provider, r.Statuses)
+				}
+			}
+		})
+	}
+}
+
+// providerHomeStores returns the canon's directory stores holding provider's
+// home credential paths (cloudcommon.ReadDenyPaths): ~/.aws for AWS,
+// ~/.config/gcloud for GCP and ~/.azure for Azure.
+func providerHomeStores(t *testing.T, provider cloudcommon.CloudProvider) []secrets.CredentialStore {
+	t.Helper()
+	var stores []secrets.CredentialStore
+	for _, s := range secrets.CredentialStores() {
+		if !s.Dir {
+			continue
+		}
+		if slices.ContainsFunc(cloudcommon.ReadDenyPaths(provider), func(p string) bool {
+			return strings.HasPrefix(p, "~/"+s.Rel+"/")
+		}) {
+			stores = append(stores, s)
+		}
+	}
+	if len(stores) == 0 {
+		t.Fatalf("no canon directory store holds the %s credential paths", provider)
+	}
+	return stores
+}
+
+// TestValidateFailSafe_TripwireStripped is the regression test for the cloud
+// fail-safe no longer noticing a deleted shell-read deny once the modules'
+// Bash(cat ~/.aws/credentials*)-style rules moved into the canon tripwire:
+// removing any one tripwire rule of the provider's home store from generated
+// settings makes Layer 3 inactive at every preset.
+func TestValidateFailSafe_TripwireStripped(t *testing.T) {
+	t.Parallel()
+	cat, err := catalog.Default()
+	if err != nil {
+		t.Fatalf("catalog.Default: %v", err)
+	}
+	providers := []cloudcommon.CloudProvider{cloudcommon.AWS, cloudcommon.GCP, cloudcommon.Azure}
+	env := make(map[string]string)
+	for _, p := range providers {
+		env[cloudcommon.EnvVarForProvider(p)] = "dev"
+	}
+	for _, preset := range cat.PermissionPresets() {
+		t.Run(preset, func(t *testing.T) {
+			t.Parallel()
+			answers := types.WizardAnswers{PermissionLevel: preset, Languages: langChoices("aws", "gcp", "azure")}
+			s := mustUnmarshalSettings(t, mustGenerateSettings(t, answers, ecosystem.DefaultRegistry()))
+			var denyRead []string
+			if s.Sandbox != nil && s.Sandbox.Filesystem != nil {
+				denyRead = s.Sandbox.Filesystem.DenyRead
+			}
+			for _, p := range providers {
+				for _, store := range providerHomeStores(t, p) {
+					for _, rule := range denyutil.HomeShellReadRules(store.Rel, true) {
+						deny := slices.DeleteFunc(slices.Clone(s.Permissions.Deny), func(r string) bool { return r == rule })
+						if len(deny) == len(s.Permissions.Deny) {
+							t.Errorf("generated settings lack %s tripwire rule %s", p, rule)
+							continue
+						}
+						r := cloudcommon.ValidateFailSafe(p, env, deny, denyRead)
+						if l3 := r.Statuses[cloudcommon.LayerAgentDenyRules]; l3.Active || r.AllLayersActive {
+							t.Errorf("%s without %s: layer 3 active = %v, all = %v (%s)", p, rule, l3.Active, r.AllLayersActive, l3.Details)
+						}
+					}
+				}
+			}
+		})
 	}
 }
 

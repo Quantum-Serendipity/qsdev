@@ -63,7 +63,7 @@ func TestSymbolRules(t *testing.T) {
 	// Comments, strings, test files and same-named methods on local
 	// variables must add nothing beyond the entries above.
 	n := len(got) - countRule(got, "init-non-module") - countRule(got, "test-os-chdir") - countRule(got, "test-os-unsetenv") -
-		countRule(got, bashLiteralRuleID)
+		countRule(got, bashLiteralRuleID) - countRule(got, credentialStoreLiteralRuleID)
 	for _, r := range mcphealthProbeRules {
 		n -= countRule(got, r)
 	}
@@ -136,6 +136,38 @@ func TestNoLiteralBashToolComparison(t *testing.T) {
 	dropGitIgnored(t, repo)
 	for k, n := range Collect(repo, []Rule{{ID: bashLiteralRuleID, Check: checkBashLiteral}}) {
 		t.Errorf("%v: %d comparisons with the literal %q; use cmdscan.IsShellTool", k, n, bashToolName)
+	}
+}
+
+func TestCredentialStoreLiteralRule(t *testing.T) {
+	t.Parallel()
+	got := Collect(loadSymbolFixture(t), symbolRules())
+	wantViolations(t, got, []violationCase{
+		// A whole file store, a directory glob, a Bash rule, a raw literal,
+		// a store followed by a space and one followed by a quote; the
+		// sub-paths, project-relative names, $HOME script and longer
+		// siblings in the same package add nothing.
+		{"whole-store literals counted", Key{credentialStoreLiteralRuleID, "internal/creds"}, 6},
+		{"canon owner allowed", Key{credentialStoreLiteralRuleID, "internal/secrets"}, 0},
+	})
+	if n := countRule(got, credentialStoreLiteralRuleID); n != 1 {
+		t.Errorf("got %d %s entries, want 1 (test files exempt): %v", n, credentialStoreLiteralRuleID, got)
+	}
+}
+
+// TestNoCredentialStoreLiteralOutsideCanon requires every whole-store
+// "~/<rel>" spelling to come from the internal/secrets canon: a private copy
+// drifts when the canon grows (XS-WS5 E6). It runs the one rule on the
+// module, which has no baseline entry.
+func TestNoCredentialStoreLiteralOutsideCanon(t *testing.T) {
+	t.Parallel()
+	repo, err := Load(moduleRoot)
+	if err != nil {
+		t.Fatalf("loading module: %v", err)
+	}
+	dropGitIgnored(t, repo)
+	for k, n := range Collect(repo, []Rule{{ID: credentialStoreLiteralRuleID, Check: checkCredentialStoreLiteral}}) {
+		t.Errorf("%v: %d whole credential-store literals; derive them from secrets.CredentialStores", k, n)
 	}
 }
 

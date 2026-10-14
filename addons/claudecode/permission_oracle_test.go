@@ -290,12 +290,18 @@ func TestSecretsRuleAnchored(t *testing.T) {
 		"infra/secrets/values.yml",
 		"infra/secrets/creds.toml",
 		"infra/secrets/token.txt",
+		"deploy/secrets/nested/tls.key",
+		"apps/secrets/sub/.env",
 	}
 	sourceFiles := []string{
 		"internal/secrets/known_vars.go",
 		"internal/secrets/patterns.go",
 		"internal/secrets/secretstest/samples.go",
 		"pkg/secrets/README.md",
+		"internal/secrets/testdata/canon.json",
+		"internal/secrets/testdata/cases.yaml",
+		"internal/secrets/testdata/x.txt",
+		"internal/secrets/secretstest/fixtures/a.toml",
 	}
 	for preset, p := range presets {
 		def, ok := cat.PermissionPreset(preset)
@@ -326,17 +332,25 @@ func TestSecretsRuleAnchored(t *testing.T) {
 
 // TestNestedSecretRules_FromCanon pins that the nested secrets rules are
 // derived from the secrets canon, not a second list: every preset that
-// denies the top-level secrets/ directory denies each canon pattern inside
-// a secrets directory at any depth, and every such rule validates.
+// denies the top-level secrets/ directory denies each secret-material
+// pattern inside a secrets directory at any depth and each secret-data
+// pattern as a direct child of a secrets directory, and every such rule
+// validates.
 func TestNestedSecretRules_FromCanon(t *testing.T) {
 	t.Parallel()
+	var rules []string
+	for _, pat := range secrets.SecretMaterialPatterns() {
+		rules = append(rules, "Read(/**/secrets/**/"+pat+")")
+	}
+	for _, pat := range secrets.SecretDataPatterns() {
+		rules = append(rules, "Read(/**/secrets/"+pat+")")
+	}
 	_, presets := generatedPresetPermissions(t)
 	for preset, p := range presets {
 		if !slices.Contains(p.deny, "Read(/secrets/**)") {
 			continue
 		}
-		for _, pat := range secrets.SecretFilePatterns() {
-			rule := "Read(/**/secrets/**/" + pat + ")"
+		for _, rule := range rules {
 			if !slices.Contains(p.deny, rule) {
 				t.Errorf("preset %s lacks %s", preset, rule)
 			}

@@ -226,6 +226,48 @@ func TestSecretFilePatterns(t *testing.T) {
 	}
 }
 
+// TestSecretPatternClasses pins the split of the secret-file canon: the
+// material and data classes are disjoint, together they are exactly
+// SecretFilePatterns, and each accessor returns a fresh slice.
+func TestSecretPatternClasses(t *testing.T) {
+	t.Parallel()
+
+	material, data := SecretMaterialPatterns(), SecretDataPatterns()
+	if len(material) == 0 || len(data) == 0 {
+		t.Fatalf("empty class: material %q, data %q", material, data)
+	}
+	for _, p := range material {
+		if slices.Contains(data, p) {
+			t.Errorf("%q is in both the material and the data class", p)
+		}
+	}
+	union := slices.Concat(material, data)
+	all := SecretFilePatterns()
+	slices.Sort(union)
+	slices.Sort(all)
+	if !slices.Equal(union, all) {
+		t.Errorf("material and data = %q, SecretFilePatterns() = %q", union, all)
+	}
+
+	tests := []struct {
+		name string
+		get  func() []string
+	}{
+		{"SecretMaterialPatterns", SecretMaterialPatterns},
+		{"SecretDataPatterns", SecretDataPatterns},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			got := tt.get()
+			got[0] = "mutated"
+			if tt.get()[0] == "mutated" {
+				t.Errorf("%s returned a shared slice; mutating it changed the canon", tt.name)
+			}
+		})
+	}
+}
+
 // TestCredentialPaths_ReturnsCopy pins that a caller cannot mutate the canon.
 func TestCredentialPaths_ReturnsCopy(t *testing.T) {
 	t.Parallel()

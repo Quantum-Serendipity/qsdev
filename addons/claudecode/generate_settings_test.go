@@ -2333,8 +2333,11 @@ func TestBuildPermissions_BaseRulesPreserved(t *testing.T) {
 				wantDeny = append(wantDeny, cat.PermissionDenyRules(set)...)
 			}
 			if slices.Contains(wantDeny, "Read(/secrets/**)") {
-				for _, p := range secrets.SecretFilePatterns() {
+				for _, p := range secrets.SecretMaterialPatterns() {
 					wantDeny = append(wantDeny, "Read(/**/secrets/**/"+p+")")
+				}
+				for _, p := range secrets.SecretDataPatterns() {
+					wantDeny = append(wantDeny, "Read(/**/secrets/"+p+")")
 				}
 			}
 			for _, lang := range answers.Languages {

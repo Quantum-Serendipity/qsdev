@@ -145,6 +145,21 @@ claims:
     tests: [TestSecretsRuleAnchored, TestNestedSecretRules_FromCanon, TestSecretFilePatterns]
     tiers: [standard, full]
 
+  - id: nested-secret-data-direct-children
+    text: >-
+      The data formats (`*.json`, `*.yaml`, `*.yml`, `*.toml`, `*.txt`) are
+      denied only as direct children of one
+    files: [docs/security-architecture.md]
+    tests: [TestSecretsRuleAnchored, TestNestedSecretRules_FromCanon, TestSecretPatternClasses]
+    tiers: [standard, full]
+
+  - id: check-requires-nested-secret-rules
+    text: >-
+      `qsdev check` requires the same nested rules as the generator emits.
+    files: [docs/security-architecture.md]
+    tests: [TestCheckDenyRules_CanonReadDenyDeleted]
+    tiers: [standard, full]
+
   - id: enforce-always-not-liftable
     text: cannot be lifted with `qsdev session allow`
     files: [docs/security-architecture.md, docs/team-onboarding.md, docs/migration-guide.md]

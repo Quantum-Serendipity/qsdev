@@ -739,10 +739,11 @@ var dirChangeVerbs = map[string]bool{"cd": true, "pushd": true, "popd": true}
 
 // isMutating reports whether command sc may change files through its
 // arguments: anything but a proven read-only command (cmdscan.IsSafeReadCommand,
-// which models git/sort/rg by their arguments), a directory change, or a
+// which models git/sort/rg by their arguments), a directory change, a
+// read-only git in a repository a variable pins (repoPinnedRead), or a
 // nameless (redirect-only) command.
 func isMutating(sc scannedCommand) bool {
-	return sc.Name != "" && !cmdscan.IsSafeReadCommand(sc.Command) && !dirChangeVerbs[sc.Name]
+	return sc.Name != "" && !cmdscan.IsSafeReadCommand(sc.Command) && !dirChangeVerbs[sc.Name] && !repoPinnedRead(sc)
 }
 
 // patternOptions are tar's and rsync's options whose value is a file-name
@@ -951,7 +952,9 @@ func relativeWriteTarget(sc scannedCommand) bool {
 //   - it is a find whose actions can delete or rewrite protected files;
 //   - it sets variables (a prefix or bare assignment): PATH, LD_PRELOAD or
 //     GIT_EXTERNAL_DIFF can make a read-only command word run arbitrary code,
-//     and the assigned value is not analysed.
+//     and the assigned value is not analysed. A read-only git whose prefix
+//     assignments only pin the repository (`GIT_DIR=<dir> git log`,
+//     repoPinnedRead) is judged as `git --git-dir=<dir> log` is.
 //
 // Non-destructive copies (cp, rsync) and the other copy-family verbs are
 // exempt from the input rule: their exfiltration semantics are modelled by
@@ -959,7 +962,7 @@ func relativeWriteTarget(sc scannedCommand) bool {
 func protectedMutation(scs []scannedCommand) bool {
 	upstreamProtected := make(map[int]bool)
 	for _, sc := range scs {
-		if len(sc.Assigns) > 0 {
+		if len(sc.Assigns) > 0 && !repoPinnedRead(sc) {
 			return true
 		}
 		if anyArgRefersProtected(sc, mutationTargets(sc)) || anyRefersProtected(sc, sc.WriteRedirects) {

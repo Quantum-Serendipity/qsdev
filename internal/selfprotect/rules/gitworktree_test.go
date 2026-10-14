@@ -955,3 +955,46 @@ func TestWorktreeRewrite_MergeFamilyStillAllowed(t *testing.T) {
 		})
 	}
 }
+
+// TestRepoPinnedRead pins which commands read a repository a variable pins
+// the way `git --git-dir=<dir>` reads it: a read-only git whose assignments,
+// prefix or through env, only choose the repository. Any other variable, an
+// env option, an option that writes or runs a program, or a rewriting
+// subcommand is not one.
+func TestRepoPinnedRead(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		command string
+		want    bool
+	}{
+		{"GIT_DIR=../other/.git git log", true},
+		{"GIT_DIR=.git git status", true},
+		{"GIT_DIR=../o/.git GIT_WORK_TREE=../o git status", true},
+		{"env GIT_DIR=../other/.git git log --oneline -5", true},
+		{"GIT_DIR=.git env GIT_WORK_TREE=. git diff", true},
+		{"git log", false},
+		{"env git log", false},
+		{"GIT_DIR=.git GIT_EXTERNAL_DIFF=/tmp/x git diff", false},
+		{"env GIT_DIR=.git GIT_EXTERNAL_DIFF=/tmp/x git diff", false},
+		{"env -i GIT_DIR=.git git log", false},
+		{"env GIT_DIR=.git nice git log", false},
+		{"GIT_DIR=.git git log --output=x", false},
+		{"GIT_DIR=.git git -c core.pager=x log", false},
+		{"GIT_DIR=.git git checkout evil -- .", false},
+		{"GIT_DIR=$d git log", false},
+		{"GIT_DIR=.git cat x", false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.command, func(t *testing.T) {
+			t.Parallel()
+			ctx := EvalContext{ToolName: "Bash", Command: tt.command, CWD: t.TempDir()}
+			scs, err := ctx.scannedCommands()
+			if err != nil || len(scs) != 1 {
+				t.Fatalf("scannedCommands(%q) = %d commands, %v; want one", tt.command, len(scs), err)
+			}
+			if got := repoPinnedRead(scs[0]); got != tt.want {
+				t.Errorf("repoPinnedRead(%q) = %v, want %v", tt.command, got, tt.want)
+			}
+		})
+	}
+}

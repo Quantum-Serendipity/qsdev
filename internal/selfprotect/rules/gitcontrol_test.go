@@ -84,6 +84,11 @@ func TestGitControl_HookVerdicts(t *testing.T) {
 		{"rm .[!x]it/hooks/pre-commit", ""},
 		{"rm .[[:alpha:]]it/hooks/pre-commit", ""},
 		{"mv .[!x]it .g", ""},
+		// A repository pinned by variable keeps a read read-only only
+		// while the git command itself only reads.
+		{"GIT_DIR=.git git log --output=.git/hooks/pre-commit", ""},
+		{"GIT_DIR=.git git log > .git/hooks/pre-commit", ""},
+		{"GIT_DIR=.git; rm $GIT_DIR/hooks/pre-commit", ""},
 		{"rm .g{i,x}t/hooks/pre-commit", ""},
 		{"mv .git .g", `Move-Item .git .g`},
 		{"mv .git .g && rm .g/hooks/pre-commit && mv .g .git", `Move-Item .git .g; Remove-Item .g\hooks\pre-commit`},
@@ -135,6 +140,13 @@ func TestGitControl_HookVerdicts(t *testing.T) {
 		"echo build/ >> .git/info/exclude",
 		"cat ~/.gitconfig",
 		"git --git-dir=.git status",
+		// A repository pinned by variable for a read, as --git-dir pins it
+		// (parity with w1-s5).
+		"GIT_DIR=.git git status",
+		"GIT_DIR=../other/.git git log",
+		"GIT_DIR=../other/.git git log --oneline -5",
+		"env GIT_DIR=../other/.git git log",
+		"GIT_DIR=../other/.git GIT_WORK_TREE=../other git status",
 		"git status",
 		"git log",
 		"git diff",

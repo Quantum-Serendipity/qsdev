@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"path"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -789,6 +790,42 @@ func isRepoPinVar(name string) bool {
 		return true
 	}
 	return false
+}
+
+// repoPinnedRead reports whether sc runs a read-only git command
+// (cmdscan.IsSafeReadCommand: a read subcommand with no option that writes a
+// file or runs a program) in a repository chosen only by repo-pin variables
+// (isRepoPinVar), set as prefix assignments or through env: `GIT_DIR=<dir>
+// git log` and `env GIT_DIR=<dir> git status` read as `git --git-dir=<dir>
+// log` does. The variable's value is then no write target, and a prefix
+// assignment changes nothing a later command runs.
+func repoPinnedRead(sc scannedCommand) bool {
+	if program := path.Base(sc.Name); program != "git" && program != "env" || sc.AssignsDynamic || sc.HasExpansion {
+		return false
+	}
+	if slices.ContainsFunc(sc.Assigns, func(name string) bool { return !isRepoPinVar(name) }) {
+		return false
+	}
+	words := append([]string{sc.Name}, sc.Args...)
+	args, ok := gitInvocation(words)
+	if !ok {
+		return false
+	}
+	pins := len(sc.Assigns)
+	// Only NAME=value words may stand between env and git: an option (-i,
+	// -u, -C) or another wrapper changes more than the repository.
+	var between []string
+	if gitAt := len(words) - len(args) - 1; gitAt > 0 {
+		between = words[1:gitAt]
+	}
+	for _, w := range between {
+		name, _, isAssign := strings.Cut(w, "=")
+		if !isAssign || !isRepoPinVar(name) {
+			return false
+		}
+		pins++
+	}
+	return pins > 0 && cmdscan.IsSafeReadCommand(cmdscan.Command{Name: "git", Args: args})
 }
 
 // worktreeRewriteReason returns why a shell command's git would overwrite a

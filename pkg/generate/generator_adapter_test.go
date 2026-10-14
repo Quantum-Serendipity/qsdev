@@ -21,7 +21,7 @@ func TestGeneratorAdapter_Identity(t *testing.T) {
 
 	gen := &mockGenerator{
 		files: []types.GeneratedFile{
-			{Path: "a.txt", Content: []byte("alpha"), Mode: 0o644, Strategy: types.Overwrite},
+			{Path: "a.txt", Content: []byte("alpha"), Mode: 0o644, Strategy: types.Overwrite, PinLF: true},
 			{Path: "b.sh", Content: []byte("#!/bin/sh"), Mode: 0o755, Strategy: types.Skip},
 		},
 	}
@@ -66,6 +66,9 @@ func TestGeneratorAdapter_Identity(t *testing.T) {
 		}
 		if f.Strategy != orig.Strategy {
 			t.Errorf("file %d: expected strategy %v, got %v", i, orig.Strategy, f.Strategy)
+		}
+		if f.PinLF != orig.PinLF {
+			t.Errorf("file %d: expected PinLF %v, got %v", i, orig.PinLF, f.PinLF)
 		}
 	}
 }

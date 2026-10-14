@@ -74,6 +74,9 @@ func (p *InfraProfile) ConfigFiles(in ProjectInputs) ([]types.GeneratedFile, err
 		}
 		files = append(files, f)
 	}
+	if p.generatesEcosystemCI(in) {
+		files = append(files, nixInstallerFiles()...)
+	}
 
 	// Security documentation
 	doc, err := p.generateSecurityDoc(in)

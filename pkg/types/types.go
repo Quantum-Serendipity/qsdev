@@ -229,6 +229,11 @@ type GeneratedFile struct {
 	// declares the flake inputs devenv.nix's options read, so writing one
 	// without the other would split the pair.
 	HeldWith string `yaml:"-" json:"-"`
+	// PinLF pins the file to LF line endings in the project's .gitattributes
+	// although its content is not a script (scripts, content starting with
+	// "#!", are always pinned): a file a CI script parses line by line, such
+	// as a pin file, must not be checked out with CR line endings.
+	PinLF bool `yaml:"-" json:"-"`
 	// BaseContent, when non-nil, is the generator's own output for a file
 	// whose Content holds the merged bytes written to disk. State recording
 	// keeps it as the three-way merge base instead of Content. Generators

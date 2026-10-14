@@ -495,3 +495,30 @@ func TestUpdate_RemovesOrphanHookLib(t *testing.T) {
 		t.Errorf("%s is still tracked after update", claudecode.HookLibPath)
 	}
 }
+
+// TestUpdate_PinLFReachesGitattributes checks a generated file's PinLF
+// survives the update plan, so a file update writes rather than init writes
+// still pins it to LF line endings in .gitattributes.
+func TestUpdate_PinLFReachesGitattributes(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	files := []types.GeneratedFile{
+		{Path: ".github/nix-release.env", Content: []byte("NIX_VERSION=2.0.0\n"), Mode: 0o644, Strategy: types.Overwrite, PinLF: true},
+	}
+	plan := buildUpdatePlan(files, map[string]state.FileStatus{}, types.GeneratedState{}, dir, UpdateOptions{})
+	if len(plan.Files) != 1 || !plan.Files[0].PinLF {
+		t.Fatalf("update plan = %+v, want one file with PinLF", plan.Files)
+	}
+	var out updateOutcome
+	if _, err := out.writeValidated(dir, plan.Files[0], files[0].Content, files[0].Mode); err != nil {
+		t.Fatalf("writeValidated: %v", err)
+	}
+	got, err := os.ReadFile(filepath.Join(dir, ".gitattributes"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Contains(got, []byte("/.github/nix-release.env text eol=lf\n")) {
+		t.Errorf(".gitattributes does not pin the file:\n%s", got)
+	}
+}

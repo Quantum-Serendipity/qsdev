@@ -98,7 +98,7 @@ func WriteGeneratedFile(projectRoot string, f types.GeneratedFile) error {
 	if mode == 0 {
 		mode = fileutil.ModeReadWrite
 	}
-	pinScriptLineEndings(projectRoot, []types.GeneratedFile{f})
+	pinLFLineEndings(projectRoot, []types.GeneratedFile{f})
 	if err := fileutil.WriteFileAtomicInRoot(projectRoot, filepath.FromSlash(f.Path), f.Content, mode); err != nil {
 		return fmt.Errorf("writing %s: %w", f.Path, err)
 	}

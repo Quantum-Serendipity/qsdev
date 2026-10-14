@@ -89,6 +89,9 @@ type FileUpdatePlan struct {
 	Reason     string
 	// HeldWith is the generated file's partner; see types.GeneratedFile.
 	HeldWith string
+	// PinLF pins the written file to LF line endings; see
+	// types.GeneratedFile.PinLF.
+	PinLF bool
 }
 
 // UpdatePlan holds the complete update plan for all files.
@@ -425,6 +428,7 @@ func buildUpdatePlan(
 			NewContent: f.Content,
 			NewMode:    f.Mode,
 			HeldWith:   f.HeldWith,
+			PinLF:      f.PinLF,
 		}
 
 		fs, inState := modStatus[f.Path]
@@ -813,7 +817,7 @@ func executeUpdatePlan(
 // per-file failure (the file keeps its previous content and state); stop is
 // true only for a write error, which ends execution.
 func (o *updateOutcome) writeValidated(projectRoot string, fp FileUpdatePlan, content []byte, mode os.FileMode) (stop bool, err error) {
-	err = generate.WriteGeneratedFile(projectRoot, types.GeneratedFile{Path: fp.Path, Content: content, Mode: mode})
+	err = generate.WriteGeneratedFile(projectRoot, types.GeneratedFile{Path: fp.Path, Content: content, Mode: mode, PinLF: fp.PinLF})
 	switch {
 	case errors.Is(err, generate.ErrInvalidContent):
 		o.failures = append(o.failures, fileFailure{Path: fp.Path, Err: err})

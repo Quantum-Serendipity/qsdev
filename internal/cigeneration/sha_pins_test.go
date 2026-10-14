@@ -150,7 +150,7 @@ func TestGoreleaserVersionPinned(t *testing.T) {
 // the catalog but missing from AllActionRefs, or the reverse. Every check that
 // iterates the registry (drift, shape, upstream resolution) would otherwise
 // skip that pin silently, the state that let four unresolvable SHAs and an
-// unchecked ActionInstallNix accumulate.
+// unchecked third-party Nix action pin accumulate.
 func TestAllActionRefsCoversExportedVars(t *testing.T) {
 	t.Parallel()
 	assertCoversCatalog(t, "ActionRef", AllActionRefs())

@@ -90,16 +90,6 @@ var (
 		SHA:   "1638637db639e0ade3258b51db49a9a137574c3e",
 		Tag:   "v6",
 	}
-	// Installs Nix for the generated ecosystem-ci job, which runs each
-	// ecosystem's CI commands inside the project's devenv shell, and for this
-	// repository's own opengrep-nix CI job, which builds the OpenGrep
-	// derivation (TestActionPinsMatchWorkflows keeps the two in step).
-	ActionInstallNix = ActionRef{
-		Owner: "cachix",
-		Repo:  "install-nix-action",
-		SHA:   "13d8dd58da0234aa297dedd986986ccb8e7f3e24",
-		Tag:   "v31.11.1",
-	}
 	ActionLabeler = ActionRef{
 		Owner: "actions",
 		Repo:  "labeler",
@@ -120,7 +110,6 @@ func AllActionRefs() map[string]ActionRef {
 		"ActionDownloadArtifact": ActionDownloadArtifact,
 		"ActionOSVScanner":       ActionOSVScanner,
 		"ActionGrype":            ActionGrype,
-		"ActionInstallNix":       ActionInstallNix,
 		"ActionLabeler":          ActionLabeler,
 	}
 }

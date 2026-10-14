@@ -848,8 +848,13 @@ vulnerability scanner or CI runner protection. It has two jobs:
     for known vulnerabilities.
 - **`ecosystem-ci`** (when the project's languages contribute CI commands) —
   runs every selected ecosystem module's `CICommands` in the project's devenv
-  shell (`cachix/install-nix-action`, then `devenv shell`), so CI uses the
-  toolchains `devenv.nix` pins. Steps are grouped by phase: all **install**
+  shell, so CI uses the toolchains `devenv.nix` pins. Nix comes from the
+  official release tarball, which the generated
+  `.github/scripts/install-nix.sh` downloads and verifies against the
+  SHA-256 pinned in the generated `.github/nix-release.env` before anything
+  from it runs; no third-party action is used. Both files are written from
+  qsdev's CI pin catalog, the same source this repository's own CI installs
+  Nix from. Steps are grouped by phase: all **install**
   steps first (lock-file enforcing installs such as `npm ci --ignore-scripts`,
   `pnpm install --frozen-lockfile`, `cargo build --locked`,
   `dotnet restore --locked-mode`, `uv sync --locked`,

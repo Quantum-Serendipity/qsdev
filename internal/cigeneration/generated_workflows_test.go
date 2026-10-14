@@ -12,9 +12,9 @@ import (
 
 // TestGeneratedWorkflowsAllowlisted keeps every workflow qsdev generates
 // startable under the Actions allowlist, as TestWorkflowActionsAllowlisted
-// does for this repository's own workflows. Wave 1 generated
-// cachix/install-nix-action into the ecosystem-ci job, so a generated
-// workflow ended in startup_failure before any job ran.
+// does for this repository's own workflows. Wave 1 generated a third-party
+// Nix action into the ecosystem-ci job, so a generated workflow ended in
+// startup_failure before any job ran.
 func TestGeneratedWorkflowsAllowlisted(t *testing.T) {
 	t.Parallel()
 

@@ -46,15 +46,37 @@ func TestDockerignoreIsAllowlist(t *testing.T) {
 		t.Fatalf(".dockerignore must start by excluding everything (\"*\"), got %q", patterns)
 	}
 
-	lastInclude := -1
-	included := map[string]bool{}
-	for i, p := range patterns {
-		if rest, ok := strings.CutPrefix(p, "!"); ok {
-			lastInclude = i
-			included[strings.TrimSuffix(rest, "/")] = true
+	secrets := []string{"**/.qsdev/", "**/.env", "**/*.key", "**/*.pem"}
+	secretStart := len(patterns)
+	for _, secret := range secrets {
+		if i := slices.Index(patterns, secret); i >= 0 && i < secretStart {
+			secretStart = i
 		}
 	}
-	for _, secret := range []string{"**/.qsdev/", "**/.env", "**/*.key", "**/*.pem"} {
+
+	// A re-include after the secret patterns is an exception for an embedded
+	// build input that a secret pattern also matches. It must name one file
+	// by its exact path, and that file must be one the build embeds (checked
+	// below), so no such re-include can resurrect secret material.
+	lastInclude := -1
+	included := map[string]bool{}
+	exceptions := map[string]bool{}
+	for i, p := range patterns {
+		rest, ok := strings.CutPrefix(p, "!")
+		if !ok {
+			continue
+		}
+		if i > secretStart {
+			if !isExactFilePattern(rest) {
+				t.Errorf("re-include %q follows the secret patterns but is not one exact file path", p)
+			}
+			exceptions[rest] = true
+			continue
+		}
+		lastInclude = i
+		included[strings.TrimSuffix(rest, "/")] = true
+	}
+	for _, secret := range secrets {
 		if i := slices.Index(patterns, secret); i < lastInclude {
 			t.Errorf("secret pattern %q must be excluded after the last re-include", secret)
 		}
@@ -87,6 +109,7 @@ func TestDockerignoreIsAllowlist(t *testing.T) {
 	if err != nil {
 		t.Fatalf("go list: %v", err)
 	}
+	embedded := map[string]bool{}
 	for _, line := range strings.Split(string(out), "\n") {
 		rel, err := filepath.Rel(absRoot, line)
 		if line == "" || err != nil || strings.HasPrefix(rel, "..") || rel == "." {
@@ -102,11 +125,25 @@ func TestDockerignoreIsAllowlist(t *testing.T) {
 		probe := rel
 		if info, err := os.Stat(line); err == nil && info.IsDir() {
 			probe = rel + "/x.go"
+		} else {
+			embedded[rel] = true
 		}
 		if dockerignoreExcludes(t, patterns, probe) {
 			t.Errorf("%s is needed by the build but .dockerignore excludes it", rel)
 		}
 	}
+	for f := range exceptions {
+		if !embedded[f] {
+			t.Errorf(".dockerignore re-includes %s after the secret patterns, but the build does not embed it; "+
+				"such re-includes are only for embedded build inputs a secret pattern also matches", f)
+		}
+	}
+}
+
+// isExactFilePattern reports whether a .dockerignore pattern names one file
+// by its exact path: no glob metacharacter and no trailing slash.
+func isExactFilePattern(p string) bool {
+	return !strings.ContainsAny(p, "*?[\\") && !strings.HasSuffix(p, "/")
 }
 
 // dockerignoreExcludes reports whether path (slash-separated, relative to the

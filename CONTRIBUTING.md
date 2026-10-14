@@ -191,19 +191,28 @@ Each job that uses one loads that file into `$GITHUB_ENV` and references
 `${{ env.KEY }}`, and `TestToolVersionsSingleSource` fails if a workflow
 hard-codes one of these versions.
 
-Nix is pinned there too: `NIX_VERSION` and one `NIX_SHA256_<SYSTEM>` digest
-per runner platform. CI jobs install it with `.github/scripts/install-nix.sh`,
-which reads those pins, checks the official release tarball against its
-digest before extracting it, and runs the bundled installer. The repository's
-Actions allowlist admits no Nix action, and `TestWorkflowActionsAllowlisted`
-fails if a workflow uses an action outside that allowlist.
+Nix is pinned in the CI pin catalog instead, because qsdev generates the same
+installer for every project: `NIX_VERSION` and one `NIX_SHA256_<SYSTEM>`
+digest per runner platform live only in `internal/cigeneration/nix-release.env`.
+The installer script is `internal/cigeneration/install-nix.sh`. This
+repository's `.github/nix-release.env` and `.github/scripts/install-nix.sh`
+are their generated copies, and `TestRepoNixInstallerIsCatalogOutput` fails if
+either differs from the catalog. CI jobs run
+`.github/scripts/install-nix.sh .github/nix-release.env`, which checks the
+official release tarball against its digest before extracting it, and runs the
+bundled installer. The repository's Actions allowlist admits no Nix action,
+and `TestWorkflowActionsAllowlisted` fails if a workflow uses an action outside
+that allowlist.
 
 `.github/workflows/tool-pins.yml` runs `scripts/bump-tool-pins.sh` every
-Monday. The script moves each pin to the newest exact release that is at least
-3 days old, never to an older one, and opens or updates a single PR from the
-`tool-pins/bump` branch. To add a tool, add a `KEY=vX.Y.Z` line with a
-`# source:` line above it (see the file's header). To bump a tool by hand, edit
-the file, still respecting the 3-day age gate.
+Monday on all three pin files at once. The script moves each pin to the newest
+exact release that is at least 3 days old, never to an older one, and opens or
+updates a single PR from the `tool-pins/bump` branch, so the Nix catalog and
+its copy move together. To add a tool, add a `KEY=vX.Y.Z` line with a
+`# source:` line above it to `.github/tool-versions.env` (see the file's
+header). To bump a pin by hand, edit the file, still respecting the 3-day age
+gate; for Nix, edit `internal/cigeneration/nix-release.env` and
+`.github/nix-release.env` identically.
 
 ### Tool pins token
 

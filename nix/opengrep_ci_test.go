@@ -18,8 +18,9 @@ const (
 	hashesOnlyCommand = packagingScript + " --hashes-only"
 	hashesOnlyIf      = "${{ !cancelled() && matrix.os == 'ubuntu-latest' }}"
 	// installNixScript installs the pinned, checksum-verified official Nix
-	// release; the repository's Actions allowlist admits no Nix action.
-	installNixScript = ".github/scripts/install-nix.sh"
+	// release from the CI pin catalog's generated pins; the repository's
+	// Actions allowlist admits no Nix action.
+	installNixScript = ".github/scripts/install-nix.sh .github/nix-release.env"
 )
 
 // opengrepLegs is every runner the derivation must build on: one per

@@ -4,8 +4,11 @@
 #
 # Usage: scripts/bump-tool-pins.sh [--open-pr] [ENV_FILE...]
 #
-# ENV_FILE defaults to .github/tool-versions.env. Each KEY=value line in an
-# ENV_FILE must sit directly below a "# source:" line:
+# With no ENV_FILE it bumps the repository's three pin files together:
+# .github/tool-versions.env, the CI pin catalog's Nix release pins
+# (internal/cigeneration/nix-release.env) and their generated copy
+# (.github/nix-release.env), so the catalog and its copy never drift. Each
+# KEY=value line in an ENV_FILE must sit directly below a "# source:" line:
 #   # source: github <owner>/<repo>       GitHub releases (gh api)
 #   # source: goproxy <module>            versions on proxy.golang.org
 #   # source: nix-release <owner>/<repo>  Nix X.Y.Z tags (gh api) whose
@@ -44,7 +47,7 @@ if [ "${1:-}" = "--open-pr" ]; then
   shift
 fi
 if [ $# -eq 0 ]; then
-  set -- .github/tool-versions.env
+  set -- .github/tool-versions.env internal/cigeneration/nix-release.env .github/nix-release.env
 fi
 env_files=("$@")
 

@@ -124,7 +124,8 @@ type nixRelease struct {
 	systems   []string
 }
 
-// nixSystems are the systems .github/tool-versions.env pins a Nix tarball for.
+// nixSystems are the systems the CI pin catalog's nix-release.env pins a Nix
+// tarball for.
 var nixSystems = []string{"x86_64-linux", "aarch64-linux", "aarch64-darwin", "x86_64-darwin"}
 
 // nixDigest is the fake published SHA-256 of a Nix release tarball.

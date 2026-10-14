@@ -110,7 +110,7 @@ var exactVersionRe = regexp.MustCompile(`^v\d+\.\d+\.\d+$`)
 func TestGoreleaserVersionPinned(t *testing.T) {
 	t.Parallel()
 
-	toolVersions := readToolVersions(t)
+	toolVersions := readPinFiles(t, pinFiles...).values
 	versions := map[string]string{} // version -> first workflow using it
 	for file, wf := range readRepoWorkflows(t) {
 		for jobName, job := range wf.Jobs {

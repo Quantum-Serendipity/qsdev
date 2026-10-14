@@ -43,3 +43,10 @@
 
 # Test scratch that may appear inside the re-included trees.
 **/*.tmp
+
+# Embedded build inputs the secret patterns above also match, re-included one
+# exact path at a time (never a glob): the CI pin catalog's public Nix release
+# pins, which the binary embeds (internal/cigeneration/nix_installer.go).
+# TestDockerignoreIsAllowlist accepts a re-include here only when it names a
+# file `go build ./cmd/qsdev` embeds.
+!internal/cigeneration/nix-release.env

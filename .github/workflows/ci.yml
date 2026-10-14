@@ -332,11 +332,12 @@ jobs:
         run: go install gotest.tools/gotestsum@${{ env.GOTESTSUM_VERSION }}
 
       # The official release tarball, checked against its pinned SHA-256 in
-      # .github/tool-versions.env before it runs; no third-party action.
+      # .github/nix-release.env (generated from the CI pin catalog) before it
+      # runs; no third-party action.
       - name: Install Nix
         env:
           GITHUB_TOKEN: ${{ github.token }}
-        run: .github/scripts/install-nix.sh
+        run: .github/scripts/install-nix.sh .github/nix-release.env
 
       # Ubuntu 24.04 confines unprivileged user namespaces with AppArmor,
       # and bwrap needs one.
@@ -418,11 +419,12 @@ jobs:
           go-version-file: go.mod
 
       # The official release tarball, checked against its pinned SHA-256 in
-      # .github/tool-versions.env before it runs; no third-party action.
+      # .github/nix-release.env (generated from the CI pin catalog) before it
+      # runs; no third-party action.
       - name: Install Nix
         env:
           GITHUB_TOKEN: ${{ github.token }}
-        run: .github/scripts/install-nix.sh
+        run: .github/scripts/install-nix.sh .github/nix-release.env
 
       - name: Build OpenGrep and validate rules and fixtures
         run: nix/opengrep/test-packaging.sh

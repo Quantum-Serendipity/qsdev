@@ -243,11 +243,25 @@ func TestNoRenovateConfig(t *testing.T) {
 }
 
 // toolVersionsFile is the single source of the CI tool versions that no
-// Dependabot ecosystem covers (U26-02).
+// Dependabot ecosystem covers (U26-02), apart from Nix.
 var toolVersionsFile = filepath.Join(".github", "tool-versions.env")
 
+// pinFiles are this repository's CI pin files: tool-versions.env and the
+// generated copy of the catalog's Nix release pins, which install-nix.sh
+// reads. No key may be defined in more than one of them.
+var pinFiles = []string{toolVersionsFile, filepath.FromSlash(NixReleasePinsPath)}
+
+// bumpedPinFiles are the files tool-pins.yml has bump-tool-pins.sh keep
+// current: both pin files and the catalog's Nix source, so a pin bump moves
+// the source and its generated copy together.
+var bumpedPinFiles = []string{
+	".github/tool-versions.env",
+	"internal/cigeneration/nix-release.env",
+	NixReleasePinsPath,
+}
+
 var (
-	// toolVersionLineRe is one KEY=value assignment in tool-versions.env.
+	// toolVersionLineRe is one KEY=value assignment in a pin file.
 	toolVersionLineRe = regexp.MustCompile(`^([A-Z][A-Z0-9_]*)=(.*)$`)
 	// toolSourceLineRe is the "# source:" annotation bump-tool-pins.sh reads;
 	// it captures the source kind and its target.
@@ -270,22 +284,49 @@ var (
 )
 
 // repoScriptsDir holds the scripts workflows run; they may read pins from
-// tool-versions.env but must not carry versions of their own.
+// the pin files but must not carry versions of their own.
 var repoScriptsDir = filepath.Join(repoRoot, ".github", "scripts")
 
-// readToolVersions parses tool-versions.env. Workflows append its assignment
-// lines to $GITHUB_ENV, which rejects anything but NAME=value, so every
-// non-comment line must be one, defined once, with a "# source:" line
-// directly above it for the updater and a value of the shape that source
-// yields: an exact vX.Y.Z release, an exact X.Y.Z Nix release, or the SHA-256
-// of that Nix release's tarball for one system.
-func readToolVersions(t *testing.T) map[string]string {
+// pinSet is the pins of one or more pin files.
+type pinSet struct {
+	values map[string]string // key -> pinned value
+	files  map[string]string // key -> the pin file defining it
+}
+
+// readPinFiles reads and checks each pin file under the repository root
+// (parsePinFile) and merges their pins, failing on a key that more than one
+// file defines.
+func readPinFiles(t *testing.T, rels ...string) pinSet {
 	t.Helper()
 
-	b, err := os.ReadFile(filepath.Join(repoRoot, toolVersionsFile))
-	if err != nil {
-		t.Fatalf("reading %s: %v", toolVersionsFile, err)
+	pins := pinSet{values: map[string]string{}, files: map[string]string{}}
+	for _, rel := range rels {
+		b, err := os.ReadFile(filepath.Join(repoRoot, rel))
+		if err != nil {
+			t.Fatalf("reading %s: %v", rel, err)
+		}
+		name := filepath.ToSlash(rel)
+		for key, value := range parsePinFile(t, name, b) {
+			if other, dup := pins.files[key]; dup {
+				t.Errorf("%s: %s is also defined in %s; each pin has one source", name, key, other)
+			}
+			pins.values[key] = value
+			pins.files[key] = name
+		}
 	}
+	return pins
+}
+
+// parsePinFile parses one pin file's content; name labels its errors.
+// Workflows append tool-versions.env's assignment lines to $GITHUB_ENV, which
+// rejects anything but NAME=value, and install-nix.sh parses its pins the
+// same way, so every non-comment line must be one, defined once, with a
+// "# source:" line directly above it for the updater and a value of the shape
+// that source yields: an exact vX.Y.Z release, an exact X.Y.Z Nix release, or
+// the SHA-256 of that Nix release's tarball for one system.
+func parsePinFile(t *testing.T, name string, b []byte) map[string]string {
+	t.Helper()
+
 	versions := map[string]string{}
 	prev := ""
 	nixRelease := false
@@ -293,9 +334,9 @@ func readToolVersions(t *testing.T) map[string]string {
 		switch m := toolVersionLineRe.FindStringSubmatch(line); {
 		case line == "" || strings.HasPrefix(line, "#"):
 		case m == nil:
-			t.Errorf("%s:%d: %q is neither a comment nor KEY=value", toolVersionsFile, i+1, line)
+			t.Errorf("%s:%d: %q is neither a comment nor KEY=value", name, i+1, line)
 		default:
-			where := fmt.Sprintf("%s:%d", toolVersionsFile, i+1)
+			where := fmt.Sprintf("%s:%d", name, i+1)
 			if _, dup := versions[m[1]]; dup {
 				t.Errorf("%s: %s is defined twice", where, m[1])
 			}
@@ -310,7 +351,7 @@ func readToolVersions(t *testing.T) map[string]string {
 		prev = line
 	}
 	if len(versions) == 0 {
-		t.Fatalf("%s defines no tool versions", toolVersionsFile)
+		t.Fatalf("%s defines no pins", name)
 	}
 	return versions
 }
@@ -434,10 +475,10 @@ func readRepoWorkflows(t *testing.T) map[string]workflowFile {
 	return out
 }
 
-// loadsToolVersions reports whether a step appends tool-versions.env to
+// loadsPinFile reports whether a step appends the pin file (a slash path) to
 // $GITHUB_ENV, which makes its keys visible as env.* to later steps.
-func loadsToolVersions(s workflowStep) bool {
-	return strings.Contains(s.Run, filepath.ToSlash(toolVersionsFile)) && strings.Contains(s.Run, "GITHUB_ENV")
+func loadsPinFile(s workflowStep, file string) bool {
+	return strings.Contains(s.Run, file) && strings.Contains(s.Run, "GITHUB_ENV")
 }
 
 // stepText is every expression-bearing field of a step.
@@ -452,10 +493,9 @@ func stepText(s workflowStep) string {
 	return b.String()
 }
 
-// markScriptPins marks the tool-versions keys each CI script in scripts
-// names as used, and fails on a pin-shaped name a script reads that
-// tool-versions.env does not define.
-func markScriptPins(t *testing.T, scripts map[string]bool, versions map[string]string, used map[string]bool) {
+// markScriptPins marks the pin keys each CI script in scripts names as used,
+// and fails on a pin-shaped name a script reads that no pin file defines.
+func markScriptPins(t *testing.T, scripts map[string]bool, pins pinSet, used map[string]bool) {
 	t.Helper()
 
 	for rel := range scripts {
@@ -465,32 +505,39 @@ func markScriptPins(t *testing.T, scripts map[string]bool, versions map[string]s
 			continue
 		}
 		for _, name := range scriptPinKeyRe.FindAllString(string(b), -1) {
-			if _, ok := versions[name]; ok {
+			if _, ok := pins.values[name]; ok {
 				used[name] = true
 			} else {
-				t.Errorf("%s reads %s, which %s does not define", rel, name, toolVersionsFile)
+				t.Errorf("%s reads %s, which no pin file (%v) defines", rel, name, pinFiles)
 			}
 		}
 	}
 }
 
 // TestToolVersionsSingleSource is the U26-02 regression test for the tool
-// pins no Dependabot ecosystem covers. Their versions live only in
-// tool-versions.env, which tool-pins.yml keeps current with a cooldown: no
-// `go install` or action `version:` input may carry a literal version, every
-// ${{ env.X }} must resolve (a tool-versions key only after the job loaded
-// the file), and every key must be used somewhere, by a workflow or by a
-// .github/scripts script a workflow runs.
+// pins no Dependabot ecosystem covers. Their versions live only in the pin
+// files, which tool-pins.yml keeps current with a cooldown: no `go install`
+// or action `version:` input may carry a literal version, every ${{ env.X }}
+// must resolve (a pin key only after the job loaded its file), and every key
+// must be used somewhere, by a workflow or by a .github/scripts script a
+// workflow runs. The Nix pins live only in the catalog's nix-release.env and
+// its generated copy, never in tool-versions.env, and install-nix.sh reads
+// every one of them.
 func TestToolVersionsSingleSource(t *testing.T) {
 	t.Parallel()
 
-	versions := readToolVersions(t)
+	pins := readPinFiles(t, pinFiles...)
+	for key, file := range pins.files {
+		if strings.HasPrefix(key, "NIX_") && file != NixReleasePinsPath {
+			t.Errorf("%s defines %s; the Nix pins live only in %s", file, key, NixReleasePinsPath)
+		}
+	}
 	used := map[string]bool{}
 	scripts := map[string]bool{}
 	for file, wf := range readRepoWorkflows(t) {
 		for jobName, job := range wf.Jobs {
 			where := file + " job " + jobName
-			loaded := false
+			loaded := map[string]bool{}
 			for i, s := range job.Steps {
 				step := fmt.Sprintf("%s step %d (%s)", where, i+1, s.Name)
 				for _, script := range workflowScriptRe.FindAllString(s.Run, -1) {
@@ -498,13 +545,13 @@ func TestToolVersionsSingleSource(t *testing.T) {
 				}
 				for _, m := range goInstallRe.FindAllStringSubmatch(s.Run, -1) {
 					ref := toolEnvRefRe.FindStringSubmatch(m[1])
-					if ref == nil || versions[ref[1]] == "" {
+					if ref == nil || pins.values[ref[1]] == "" {
 						t.Errorf("%s: go install version %q, want ${{ env.KEY }} with KEY from %s", step, m[1], toolVersionsFile)
 					}
 				}
 				if v, ok := s.With["version"]; ok && s.Uses != "" {
 					ref := toolEnvRefRe.FindStringSubmatch(v)
-					if ref == nil || versions[ref[1]] == "" {
+					if ref == nil || pins.values[ref[1]] == "" {
 						t.Errorf("%s: %s version %q, want ${{ env.KEY }} with KEY from %s", step, s.Uses, v, toolVersionsFile)
 					}
 				}
@@ -513,27 +560,30 @@ func TestToolVersionsSingleSource(t *testing.T) {
 					_, inStep := s.Env[name]
 					_, inJob := job.Env[name]
 					_, inWorkflow := wf.Env[name]
-					_, isTool := versions[name]
+					pinFile, isTool := pins.files[name]
 					switch {
-					case isTool && !loaded:
-						t.Errorf("%s: uses env.%s before any step loads %s into $GITHUB_ENV", step, name, toolVersionsFile)
+					case isTool && !loaded[pinFile]:
+						t.Errorf("%s: uses env.%s before any step loads %s into $GITHUB_ENV", step, name, pinFile)
 					case isTool:
 						used[name] = true
 					case !inStep && !inJob && !inWorkflow:
 						t.Errorf("%s: env.%s is defined nowhere", step, name)
 					}
 				}
-				loaded = loaded || loadsToolVersions(s)
+				for _, rel := range pinFiles {
+					f := filepath.ToSlash(rel)
+					loaded[f] = loaded[f] || loadsPinFile(s, f)
+				}
 			}
 		}
 	}
-	markScriptPins(t, scripts, versions, used)
-	for key := range versions {
+	markScriptPins(t, scripts, pins, used)
+	for key, file := range pins.files {
 		if !used[key] {
-			t.Errorf("%s: %s is used by no workflow; remove it", toolVersionsFile, key)
+			t.Errorf("%s: %s is used by no workflow; remove it", file, key)
 		}
 	}
-	assertNoLiteralToolVersions(t, versions)
+	assertNoLiteralToolVersions(t, pins)
 }
 
 // literalVersionRe matches version (vX.Y.Z) anywhere in text, with or
@@ -546,7 +596,7 @@ func literalVersionRe(version string) *regexp.Regexp {
 // script for the pinned tool versions and digests, so a literal pin outside
 // the structural checks (`go run pkg@v1.2.3`, a release download URL, an env
 // value, a hard-coded checksum) still fails.
-func assertNoLiteralToolVersions(t *testing.T, versions map[string]string) {
+func assertNoLiteralToolVersions(t *testing.T, pins pinSet) {
 	t.Helper()
 
 	var files []string
@@ -570,20 +620,39 @@ func assertNoLiteralToolVersions(t *testing.T, versions map[string]string) {
 			t.Fatalf("reading %s: %v", path, err)
 		}
 		name := filepath.ToSlash(strings.TrimPrefix(path, repoRoot+string(filepath.Separator)))
-		for key, version := range versions {
+		for key, version := range pins.values {
 			re := literalVersionRe(version)
 			for i, line := range strings.Split(string(b), "\n") {
 				if re.MatchString(line) {
 					t.Errorf("%s:%d contains %s's pin %s literally; read %s from %s",
-						name, i+1, key, version, key, toolVersionsFile)
+						name, i+1, key, version, key, pins.files[key])
 				}
 			}
 		}
 	}
 }
 
-// bumpMinAgeRe captures the cooldown bump-tool-pins.sh applies.
-var bumpMinAgeRe = regexp.MustCompile(`(?m)^readonly MIN_AGE_DAYS=(\d+)$`)
+var (
+	// bumpMinAgeRe captures the cooldown bump-tool-pins.sh applies.
+	bumpMinAgeRe = regexp.MustCompile(`(?m)^readonly MIN_AGE_DAYS=(\d+)$`)
+	// bumpDefaultRe captures the pin files bump-tool-pins.sh bumps when it
+	// is given none.
+	bumpDefaultRe = regexp.MustCompile(`(?m)^\s*set -- (\S.*)$`)
+)
+
+// bumpArgs returns the pin files a run script passes to bump-tool-pins.sh:
+// the words after the script name on its (continued) line, without flags.
+func bumpArgs(run string) []string {
+	_, after, _ := strings.Cut(strings.ReplaceAll(run, "\\\n", " "), "scripts/bump-tool-pins.sh")
+	line, _, _ := strings.Cut(after, "\n")
+	var files []string
+	for _, w := range strings.Fields(line) {
+		if !strings.HasPrefix(w, "-") {
+			files = append(files, w)
+		}
+	}
+	return files
+}
 
 // TestToolPinsWorkflowScope pins the scope of the tool pin updater. It holds
 // a PAT that can push branches and open PRs, so it runs only on its schedule
@@ -620,6 +689,9 @@ func TestToolPinsWorkflowScope(t *testing.T) {
 			}
 			if strings.Contains(s.Run, "scripts/bump-tool-pins.sh") {
 				runsScript = true
+				if got := bumpArgs(s.Run); !slices.Equal(got, bumpedPinFiles) {
+					t.Errorf("job %s bumps %v, want %v: the Nix source and its generated copy must move together", name, got, bumpedPinFiles)
+				}
 			}
 		}
 	}
@@ -630,6 +702,11 @@ func TestToolPinsWorkflowScope(t *testing.T) {
 	b, err := os.ReadFile(filepath.Join(repoRoot, "scripts", "bump-tool-pins.sh"))
 	if err != nil {
 		t.Fatalf("reading bump-tool-pins.sh: %v", err)
+	}
+	if m := bumpDefaultRe.FindSubmatch(b); m == nil {
+		t.Error("bump-tool-pins.sh has no `set -- <default pin files>` line")
+	} else if got := strings.Fields(string(m[1])); !slices.Equal(got, bumpedPinFiles) {
+		t.Errorf("bump-tool-pins.sh default pin files = %v, want %v", got, bumpedPinFiles)
 	}
 	m := bumpMinAgeRe.FindSubmatch(b)
 	if m == nil {

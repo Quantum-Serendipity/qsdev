@@ -4619,10 +4619,15 @@ def _archive_issues(detections: list, cwd: object, command: str) -> list:
     issues = []
     chdir = _DIR_CHANGE_RE.search(command)
     for path in paths:
-        # Another user's ~name stays unexpanded (no user-database lookup), so
-        # it is never taken for an unmodified committed file.
-        local = lib.expand_home(path) or path
-        if _names_archive_elsewhere(command, path):
+        local = lib.expand_home(path)
+        if local is None:
+            # Another user's ~name: the shell expands it into that user's
+            # home, which the guard cannot resolve without a user-database
+            # lookup. Never read it as a path below cwd, where a committed
+            # `~name/x.tgz` would vouch for the other user's file.
+            issues.append(f"installs local archive {path}, in another user's home, which the guard "
+                          f"cannot resolve without a user-database lookup; it cannot verify its contents")
+        elif _names_archive_elsewhere(command, path):
             issues.append(f"installs local archive {path}, which the same command also names elsewhere "
                           f"and may change before the install runs")
         elif chdir is not None and not os.path.isabs(local):

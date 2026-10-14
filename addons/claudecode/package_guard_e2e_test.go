@@ -552,6 +552,19 @@ func TestPackageGuard_LocalArchivesUncheckable(t *testing.T) {
 			}
 		})
 	}
+	// Another user's ~name expands into that user's home, which the hook
+	// cannot resolve without a user-database lookup. A committed file at the
+	// same text below the project (`~name/x.tgz`) must not vouch for it.
+	const otherHome = "~qsdevnosuchuser/x.tgz"
+	writeTestFile(t, filepath.Join(dir, filepath.FromSlash(otherHome)), committed)
+	otherTree := gitLsTreeEnv(t, map[string]string{otherHome: id, "./" + otherHome: id})
+	res := runPackageGuardIn(t, dir, "Bash", map[string]any{"command": "npm install --ignore-scripts " + otherHome}, otherTree)
+	if got := res.decision(); got != "ask" || !strings.Contains(res.reason(), "in another user's home") {
+		t.Errorf("%s: decision = %q, reason %q; want ask naming another user's home", otherHome, got, res.reason())
+	}
+	if len(res.Subprocesses) != 0 {
+		t.Errorf("%s: subprocesses = %q, want none", otherHome, res.Subprocesses)
+	}
 	// Without a directory change, quoting or an unrelated glob, the committed
 	// archive keeps the base verdict after one git ls-tree.
 	for _, command := range []string{

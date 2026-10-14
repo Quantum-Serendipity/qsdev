@@ -136,13 +136,22 @@ claims:
 
   - id: nested-secret-files-read-denied
     text: >-
-      inside a directory named `secrets` at any depth the secret-material
-      files of the internal/secrets canon (dotenv files, `*.key`, `*.pem`,
-      `*.p12`, `*.pfx`, keystores, and `*.json`, `*.yaml`, `*.yml`, `*.toml`
-      and `*.txt` files) are denied too. Source code in such a directory, such
-      as `internal/secrets/*.go`, stays readable.
+      Below a directory named `secrets` elsewhere in the project, the secret
+      material of the internal/secrets canon is denied at any depth, and its
+      data formats only as direct children of that directory. Source code in
+      such a directory, such as `internal/secrets/*.go`, stays readable.
     files: [docs/security-architecture.md]
     tests: [TestSecretsRuleAnchored, TestNestedSecretRules_FromCanon, TestSecretFilePatterns]
+    tiers: [standard, full]
+
+  - id: nested-secret-data-depth-limit
+    text: >-
+      A data file in a subdirectory of a nested `secrets` directory is not
+      denied: the testdata of a source package named `secrets`
+      (`internal/secrets/testdata/cases.json`) stays readable, and so does a
+      per-environment layout such as `infra/secrets/prod/sa.json`.
+    files: [docs/security-architecture.md]
+    tests: [TestSecretsRuleAnchored]
     tiers: [standard, full]
 
   - id: nested-secret-data-direct-children

@@ -177,17 +177,21 @@ const rootSecretsReadRule = "Read(/secrets/**)"
 // WithNestedSecretFileRules adds, to a deny list that read-denies the
 // top-level secrets/ directory, the nested secrets rules derived from the
 // secrets canon. Settings generation and qsdev check (which requires what
-// the generator emits) both derive the rules from it. Claude Code deny rules cannot carve out exceptions, so the
-// patterns are scoped by depth instead:
+// the generator emits) both derive the rules from it.
+//
+// Claude Code deny rules cannot carve out exceptions, so the patterns are
+// scoped by depth instead:
 //
 //   - secret material (secrets.SecretMaterialPatterns: dotenv files, keys,
 //     keystores) is denied at any depth below a directory named secrets
 //     (services/api/secrets/prod.env, deploy/secrets/tls/server.pem);
 //   - secret data formats (secrets.SecretDataPatterns: JSON, YAML, TOML,
 //     text) are denied only as direct children of such a directory
-//     (infra/secrets/sa.json), since below that they are ordinary data, such
-//     as the testdata of a source package named secrets
-//     (internal/secrets/testdata/cases.json).
+//     (infra/secrets/sa.json), since below that they may be ordinary data,
+//     such as the testdata of a source package named secrets
+//     (internal/secrets/testdata/cases.json). A data file in a subdirectory,
+//     such as infra/secrets/prod/sa.json, is therefore not denied; the docs
+//     state this limit and TestSecretsRuleAnchored pins it.
 //
 // Source code beside the secrets stays readable either way.
 func WithNestedSecretFileRules(deny []string) []string {

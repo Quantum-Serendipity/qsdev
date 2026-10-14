@@ -450,7 +450,11 @@ All notable changes to qsdev are recorded in this file. The format is based on
   deny the data formats (`*.json`, `*.yaml`, `*.yml`, `*.toml`, `*.txt`)
   only as direct children of a directory named `secrets`
   (`Read(/**/secrets/*.json)`), so `internal/secrets/testdata/cases.json`
-  is readable while `infra/secrets/sa.json` stays denied. Secret material
+  is readable while `infra/secrets/sa.json` stays denied. This narrows the
+  coverage: a data file in a subdirectory of a nested `secrets` directory,
+  such as `infra/secrets/prod/sa.json` or `k8s/secrets/staging/db.yaml`, is
+  no longer read-denied. Keep such files directly inside the `secrets`
+  directory or under the top-level `secrets/`. Secret material
   (dotenv files, keys, certificates, keystores, `*.gpg`, `*.age`) is still
   denied at any depth below a `secrets` directory, and the top-level
   `secrets/` is still denied as a whole. `qsdev check` now also requires

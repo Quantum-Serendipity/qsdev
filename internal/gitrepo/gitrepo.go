@@ -1,7 +1,8 @@
 // Package gitrepo answers read-only questions about a git repository: where
 // its top level and hooks directory are, which paths differ between two
 // trees, which paths a stash, a commit or a patch file changes, which
-// paths the index tracks and which heads FETCH_HEAD records for merging. Every query runs git with an argv array, in the
+// paths the index tracks, which untracked paths git clean would remove and
+// which heads FETCH_HEAD records for merging. Every query runs git with an argv array, in the
 // caller's directory, with repository-pinning variables scrubbed and a short
 // timeout, and none of them writes to the repository (--no-optional-locks,
 // no fsmonitor, no external diff or textconv). A rename is listed as both
@@ -19,6 +20,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"slices"
+	"strconv"
 	"strings"
 	"time"
 
@@ -295,6 +297,83 @@ func (c Client) TrackedPaths(ctx context.Context, dir string) ([]string, error) 
 		return nil, err
 	}
 	return splitNUL(out), nil
+}
+
+// CleanOptions are the git clean options that decide which untracked files
+// it removes.
+type CleanOptions struct {
+	// Force is how many times -f is given: twice also removes untracked
+	// nested repositories.
+	Force int
+	// Dirs (-d) removes untracked directories as a whole.
+	Dirs bool
+	// Ignored (-x) also removes ignored files; OnlyIgnored (-X) removes only
+	// those.
+	Ignored, OnlyIgnored bool
+	// Excludes are -e patterns, which keep matching files.
+	Excludes []string
+}
+
+// cleanRemovePrefix and cleanSkipPrefix start the lines of `git clean
+// --dry-run` output (LC_ALL=C).
+const (
+	cleanRemovePrefix = "Would remove "
+	cleanSkipPrefix   = "Would skip repository "
+)
+
+// CleanPaths lists the paths, relative to dir, that git clean with opts and
+// pathspec would remove when run in dir: `git clean --dry-run` with the same
+// options, which removes nothing. A directory it would remove as a whole ends
+// in "/". Paths are printed unquoted unless they hold a control character,
+// '"' or '\', which git C-quotes.
+func (c Client) CleanPaths(ctx context.Context, dir string, opts CleanOptions, pathspec []string) ([]string, error) {
+	args := []string{"--no-optional-locks", "-c", "core.fsmonitor=false", "-c", "core.quotePath=false", "clean", "--dry-run"}
+	if opts.Dirs {
+		args = append(args, "-d")
+	}
+	switch {
+	case opts.OnlyIgnored:
+		args = append(args, "-X")
+	case opts.Ignored:
+		args = append(args, "-x")
+	}
+	for range min(opts.Force, 2) {
+		args = append(args, "-f")
+	}
+	for _, e := range opts.Excludes {
+		args = append(args, "--exclude="+e)
+	}
+	args = append(append(args, "--"), pathspec...)
+	out, err := c.run(ctx, c.queryTimeoutOrDefault(), Call{Dir: dir, Args: args})
+	if err != nil {
+		return nil, err
+	}
+	return cleanOutputPaths(out)
+}
+
+// cleanOutputPaths parses `git clean --dry-run` output into the paths it
+// would remove, C-unquoted; a skipped repository is not one.
+func cleanOutputPaths(out []byte) ([]string, error) {
+	var paths []string
+	for line := range strings.Lines(string(out)) {
+		line = strings.TrimRight(line, "\r\n")
+		if strings.HasPrefix(line, cleanSkipPrefix) {
+			continue
+		}
+		p, ok := strings.CutPrefix(line, cleanRemovePrefix)
+		if !ok || p == "" {
+			continue
+		}
+		if strings.HasPrefix(p, `"`) {
+			unquoted, err := strconv.Unquote(p)
+			if err != nil {
+				return nil, fmt.Errorf("%w: unreadable clean path %s", ErrGit, p)
+			}
+			p = unquoted
+		}
+		paths = append(paths, p)
+	}
+	return paths, nil
 }
 
 // run executes call under timeout and reports a missed deadline as

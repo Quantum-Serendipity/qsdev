@@ -79,6 +79,11 @@ var localProbes = []localProbe{
 	// internal/gitrepo's patch listing: --numstat turns applying off, and
 	// the rest is -R, -p<n>, --directory=<d>, "--" and the patch files.
 	{Name: "git", Args: []string{"--no-optional-locks", "apply", "--numstat", "-z"}, Prefix: true, Kind: ProbeQuery},
+	// internal/gitrepo's clean listing: --dry-run removes nothing, and the
+	// rest is -d, -x or -X, -f, --exclude=<pattern>, "--" and the pathspec.
+	{Name: "git", Args: []string{
+		"--no-optional-locks", "-c", "core.fsmonitor=false", "-c", "core.quotePath=false", "clean", "--dry-run",
+	}, Prefix: true, Kind: ProbeQuery},
 	// internal/gitrepo's index listing, exactly: no pathspec, no options.
 	{Name: "git", Args: []string{"--no-optional-locks", "-c", "core.fsmonitor=false", "ls-files", "-z"}, Kind: ProbeQuery},
 	{Name: "getent", Args: []string{"passwd"}, Prefix: true, Kind: ProbeQuery},

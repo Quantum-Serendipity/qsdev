@@ -270,6 +270,79 @@ func TestTrackedPaths(t *testing.T) {
 	}
 }
 
+// TestCleanPaths proves the clean listing against git: it names what git
+// clean with the same options would remove, a directory as a whole with -d,
+// ignored files only with -x or -X, and it removes nothing itself. After the
+// index stops tracking a file, the file is untracked and listed.
+func TestCleanPaths(t *testing.T) {
+	requireGit(t)
+	t.Parallel()
+	repo := newRepo(t)
+	writeFile(t, repo, ".gitignore", "*.log\n")
+	writeFile(t, repo, "loose.txt", "u\n")
+	writeFile(t, repo, "newdir/a.txt", "u\n")
+	writeFile(t, repo, "build.log", "u\n")
+	c := client(t)
+	ctx := context.Background()
+
+	tests := []struct {
+		name     string
+		opts     CleanOptions
+		pathspec []string
+		want     []string
+	}{
+		{"files", CleanOptions{Force: 1}, nil, []string{".gitignore", "loose.txt"}},
+		{"directories", CleanOptions{Force: 1, Dirs: true}, nil, []string{".gitignore", "loose.txt", "newdir/"}},
+		{"ignored too", CleanOptions{Force: 1, Ignored: true}, nil, []string{".gitignore", "build.log", "loose.txt"}},
+		{"only ignored", CleanOptions{Force: 1, OnlyIgnored: true}, nil, []string{"build.log"}},
+		{"excluded", CleanOptions{Force: 1, Excludes: []string{"loose.*"}}, nil, []string{".gitignore"}},
+		{"pathspec", CleanOptions{Force: 1, Dirs: true}, []string{"newdir"}, []string{"newdir/"}},
+	}
+	for _, tt := range tests {
+		got, err := c.CleanPaths(ctx, repo, tt.opts, tt.pathspec)
+		if err != nil {
+			t.Fatalf("%s: CleanPaths: %v", tt.name, err)
+		}
+		slices.Sort(got)
+		if !slices.Equal(got, tt.want) {
+			t.Errorf("%s: CleanPaths = %q, want %q", tt.name, got, tt.want)
+		}
+	}
+	if _, err := os.Stat(filepath.Join(repo, "loose.txt")); err != nil {
+		t.Errorf("the listing removed loose.txt: %v", err)
+	}
+
+	runGit(t, repo, "rm", "-r", "-q", "--cached", ".")
+	got, err := c.CleanPaths(ctx, repo, CleanOptions{Force: 1, Dirs: true}, nil)
+	if err != nil {
+		t.Fatalf("CleanPaths after rm --cached: %v", err)
+	}
+	if !slices.Contains(got, ".claude/") {
+		t.Errorf("CleanPaths after rm --cached = %q, want .claude/", got)
+	}
+	if _, err := c.CleanPaths(ctx, t.TempDir(), CleanOptions{Force: 1}, nil); err == nil {
+		t.Error("CleanPaths(non-repo) succeeded, want an error")
+	}
+}
+
+// TestCleanOutputPaths pins the parse of git clean's listing: C-quoted paths
+// are unquoted, a skipped nested repository is not removed, and a quoted path
+// that cannot be read is an error rather than a path the check never sees.
+func TestCleanOutputPaths(t *testing.T) {
+	t.Parallel()
+	out := "Would remove a.txt\nWould remove \"we\\\"ird\\tname\"\nWould skip repository nested/\r\nWould remove dir/\n"
+	got, err := cleanOutputPaths([]byte(out))
+	if err != nil {
+		t.Fatalf("cleanOutputPaths: %v", err)
+	}
+	if want := []string{"a.txt", "we\"ird\tname", "dir/"}; !slices.Equal(got, want) {
+		t.Errorf("cleanOutputPaths = %q, want %q", got, want)
+	}
+	if _, err := cleanOutputPaths([]byte("Would remove \"bad\n")); !errors.Is(err, ErrGit) {
+		t.Errorf("cleanOutputPaths(unterminated quote) error = %v, want ErrGit", err)
+	}
+}
+
 // branchRepo is newRepo after main moved on: main changes the settings file
 // and branch feature, forked before that, changes only src/x.go. Branch
 // moved renames the settings file away.
@@ -500,6 +573,15 @@ func TestCallShapes(t *testing.T) {
 				"--end-of-options", "stash@{1}"}}},
 		{"TrackedPaths", func() { _, _ = c.TrackedPaths(ctx, dir) },
 			[][]string{{"--no-optional-locks", "-c", "core.fsmonitor=false", "ls-files", "-z"}}},
+		// The options follow --dry-run, an exclude is bound to its option and
+		// the pathspec follows "--"; -f is passed at most twice.
+		{"CleanPaths", func() {
+			_, _ = c.CleanPaths(ctx, dir, CleanOptions{Force: 3, Dirs: true, Ignored: true, Excludes: []string{"-n"}}, []string{"-x"})
+		}, [][]string{{"--no-optional-locks", "-c", "core.fsmonitor=false", "-c", "core.quotePath=false", "clean", "--dry-run",
+			"-d", "-x", "-f", "-f", "--exclude=-n", "--", "-x"}}},
+		{"CleanPaths only ignored", func() { _, _ = c.CleanPaths(ctx, dir, CleanOptions{Ignored: true, OnlyIgnored: true}, nil) },
+			[][]string{{"--no-optional-locks", "-c", "core.fsmonitor=false", "-c", "core.quotePath=false", "clean", "--dry-run",
+				"-X", "--"}}},
 		// A revision that starts with "-" stays a revision.
 		{"CommitPaths", func() { _, _ = c.CommitPaths(ctx, dir, []string{"main..evil", "--all"}) },
 			[][]string{slices.Concat(log, []string{"main..evil", "--all", "--"})}},

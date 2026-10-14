@@ -8,11 +8,13 @@ allowed-tools: Bash(qsdev *) Read Grep Glob
 
 ## Current Environment
 
-!`qsdev detect --json 2>/dev/null || echo '{"ecosystems": []}'`
+!`ls -a`
+
+!`qsdev info --json 2>/dev/null || echo "ERROR: 'qsdev info --json' exited with status $?. Any output above may be partial; do not treat missing data as empty."`
 
 ## Instructions
 
-1. **Report detected ecosystems**: Present each detected language or platform ecosystem:
+1. **Report detected ecosystems**: Identify ecosystems from the manifest and lock files in the project listing above (use Glob to find manifests in subdirectories), and note which ones the `qsdev info` output shows as already configured. Present each language or platform ecosystem:
    - Language name and detected version
    - Package manager in use
    - Key framework or build tool markers found

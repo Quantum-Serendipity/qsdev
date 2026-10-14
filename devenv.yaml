@@ -9,14 +9,21 @@ inputs:
         inputs:
             nixpkgs:
                 follows: nixpkgs
+    go-overlay:
+        url: github:purpleclay/go-overlay
+        inputs:
+            nixpkgs:
+                follows: nixpkgs
 impure: false
-allow_unfree: true
-allow_broken: false
-permitted_unfree_packages: []
-permitted_insecure_packages: []
+nixpkgs:
+    allowUnfree: true
+    allowBroken: false
+    permittedUnfreePackages: []
+    permittedInsecurePackages: []
 clean:
     enabled: true
     keep:
+        - PATH
         - TERM
         - COLORTERM
         - HOME

@@ -1,0 +1,5 @@
+{
+  "name": "qsdev-lsp",
+  "description": "qsdev-managed LSP servers for configured ecosystems",
+  "version": "0.1.0"
+}

@@ -36,7 +36,8 @@ func IsShellTool(toolName string) bool {
 // a compound command (e.g. `{ echo x; } > f` or `( echo x ) > f`) is reported
 // as a nameless Command (Name == "") whose WriteRedirects holds the target,
 // alongside the inner commands. WriteRedirects lists targets that a command can
-// create or clobber (`>`, `>>`, `<>`, `>|`, `&>`, ...); ReadRedirects lists
+// create or clobber (`>`, `>>`, `<>`, `>|`, `&>`, ...), leaving out those that
+// write no file (writesNoFile: `2>/dev/null`, `2>&1`); ReadRedirects lists
 // input sources (`<`, `<&`, here-docs) which are reads, not mutations.
 type Command struct {
 	Name           string
@@ -54,6 +55,14 @@ type Command struct {
 	// expansion, as rendered in Args: an expansion of unknown value renders
 	// as nothing, so `"$(echo ~)/.config"` is "/.config" here.
 	ExpandedArgs []string
+	// ExpandedArgIndexes holds the index in Args of each word in
+	// ExpandedArgs, in the same order.
+	ExpandedArgIndexes []int
+	// SplitArgs holds the indexes in Args of the expanded words the shell
+	// may turn into several words or none (see maySplit: `$X`, `"$@"`), so
+	// the rendered argument may stand for any number of arguments. A
+	// double-quoted `"$X"` or `"$(cmd)"` stays one word.
+	SplitArgs []int
 	// TildeWords holds the indexes of the command's words (0 is Name, i is
 	// Args[i-1]) that start with an unquoted, unescaped ~, which the shell
 	// expands to a home directory. A quoted or escaped ~ stays literal.
@@ -477,6 +486,24 @@ func isLongOptionPrefix(name, option string) bool {
 	return name != "" && strings.HasPrefix(option, name)
 }
 
+// writesNoFile reports whether the output redirect r writes no file: its
+// target is the literal word /dev/null (`2>/dev/null`, `&>/dev/null`), or it
+// duplicates or closes a file descriptor (`2>&1`, `>&-`), whose file an
+// earlier redirect named. An expansion in the target may name any file.
+func writesNoFile(r *syntax.Redirect) bool {
+	if !isWriteOp(r.Op) || len(r.Word.Parts) != 1 {
+		return false
+	}
+	lit, ok := r.Word.Parts[0].(*syntax.Lit)
+	if !ok {
+		return false
+	}
+	if lit.Value == "/dev/null" {
+		return true
+	}
+	return r.Op == syntax.DplOut && (lit.Value == "-" || strings.Trim(lit.Value, "0123456789") == "" && lit.Value != "")
+}
+
 // isWriteOp reports whether a redirect operator creates or clobbers its target
 // (an output/mutation), as opposed to reading from it. Callers treat only write
 // targets as mutation candidates; read redirects (`<`, `<&`, here-docs) are not.
@@ -583,9 +610,11 @@ func parse(command string, vars map[string]string, stdinComputed bool) ([]Comman
 			}
 			t, e := wordText(r.Word, vars)
 			c.HasExpansion = c.HasExpansion || e
-			if isWriteOp(r.Op) {
+			switch {
+			case writesNoFile(r):
+			case isWriteOp(r.Op):
 				c.WriteRedirects = append(c.WriteRedirects, t)
-			} else {
+			default:
 				c.ReadRedirects = append(c.ReadRedirects, t)
 			}
 			if r.Hdoc != nil {
@@ -683,15 +712,43 @@ func callCommand(call *syntax.CallExpr, vars map[string]string) Command {
 			c.TildeWords = append(c.TildeWords, i)
 		}
 	}
-	for _, w := range call.Args[1:] {
+	for i, w := range call.Args[1:] {
 		t, e := wordText(w, vars)
 		c.Args = append(c.Args, t)
 		c.HasExpansion = c.HasExpansion || e
 		if e {
 			c.ExpandedArgs = append(c.ExpandedArgs, t)
+			c.ExpandedArgIndexes = append(c.ExpandedArgIndexes, i)
+		}
+		if e && maySplit(w) {
+			c.SplitArgs = append(c.SplitArgs, i)
 		}
 	}
 	return c
+}
+
+// maySplit reports whether the shell may turn the word w into several words
+// or none: it holds an expansion outside double quotes, whose value bash
+// splits on IFS and globs, or one inside them that yields a word per element
+// (`"$@"`, `"${a[@]}"`, `"${!pre@}"`, or another expansion nested in a
+// parameter operator). A single-quoted string, `$'...'` included, never
+// splits.
+func maySplit(w *syntax.Word) bool {
+	for _, part := range w.Parts {
+		switch p := part.(type) {
+		case *syntax.Lit, *syntax.SglQuoted:
+		case *syntax.DblQuoted:
+			for _, dp := range p.Parts {
+				if pe, ok := dp.(*syntax.ParamExp); ok && (pe.Param == nil || pe.Param.Value == "@" ||
+					pe.Index != nil || pe.Names != 0 || pe.Exp != nil || pe.Repl != nil || pe.NestedParam != nil) {
+					return true
+				}
+			}
+		default:
+			return true
+		}
+	}
+	return false
 }
 
 // assignPipelines maps each simple-command statement that is a stage of a pipe

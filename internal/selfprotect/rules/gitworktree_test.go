@@ -472,6 +472,12 @@ func TestWorktreeRewrite_PrecedingCommands(t *testing.T) {
 		git.answers["tracked ."] = git.tracked
 		return git
 	}
+	// protectedChmod is tracked where a pathspec names the protected file.
+	protectedChmod := func() *fakeGit {
+		git := tracked()
+		git.answers["tracked .claude/settings.json"] = ".claude/settings.json\x00"
+		return git
+	}
 	// untracked also holds an untracked protected file a git add may track.
 	untracked := func() *fakeGit {
 		git := tracked()
@@ -588,7 +594,20 @@ func TestWorktreeRewrite_PrecedingCommands(t *testing.T) {
 		{"chmod of a source file then switch", "Bash", "git add --chmod=+x src/x.go && git switch main", tracked(), Allow, ""},
 		{"chmod of a directory holding a protected file then checkout", "Bash", "git add --chmod=-x . && git checkout -- .", wholeTree(), Deny,
 			"git checkout would overwrite protected .claude/settings.json"},
-		{"chmod of everything then switch", "Bash", "git add -A --chmod=+x && git switch main", tracked(), Deny,
+		// Git applies --chmod to an explicit pathspec only: without one, -A
+		// and -u stage the working tree's modes.
+		{"chmod with -A and no pathspec then switch", "Bash", "git add -A --chmod=+x && git switch main", tracked(), Allow, ""},
+		{"chmod with -u and no pathspec then switch", "Bash", "git add --chmod=+x -u && git switch main", tracked(), Allow, ""},
+		{"chmod with --all and no pathspec then switch", "Bash", "git add --all --chmod=-x && git switch main", tracked(), Allow, ""},
+		{"chmod with no pathspec then switch", "Bash", "git add --chmod=+x && git switch main", tracked(), Allow, ""},
+		{"chmod of everything with -A then switch", "Bash", "git add -A --chmod=+x . && git switch main", wholeTree(), Deny,
+			"git switch would overwrite protected .claude/settings.json"},
+		// Naming a protected path to git add is itself a protected change.
+		{"chmod of a protected file then switch", "Bash", "git add --chmod=-x .claude/settings.json && git switch main", protectedChmod(), Deny,
+			"modifies or exfiltrates a protected config path"},
+		{"chmod of a protected file after -u then switch", "Bash", "git add -u --chmod=+x -- .claude/settings.json && git switch main", protectedChmod(), Deny,
+			"modifies or exfiltrates a protected config path"},
+		{"chmod of the tree then switch", "Bash", "git add --chmod=+x . && git switch main", wholeTree(), Deny,
 			"git switch would overwrite protected .claude/settings.json"},
 		{"chmod from a pathspec file then switch", "Bash", "git add --chmod=+x --pathspec-from-file=list && git switch main", tracked(), Deny, tracksOwnCall},
 		// PowerShell commands that only read or print.

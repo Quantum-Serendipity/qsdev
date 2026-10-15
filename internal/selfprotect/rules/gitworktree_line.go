@@ -285,12 +285,10 @@ func (l *rewriteLine) ranCommit(o gitOpts) {
 }
 
 // chmodAdd is a git add --chmod: it stages the mode it names for the tracked
-// paths that pathspec, relative to dir, matches, or for every tracked path
-// with all.
+// paths that pathspec, relative to dir, matches.
 type chmodAdd struct {
 	dir      string
 	pathspec []string
-	all      bool
 }
 
 // ranAdd records a git add sc with options o. A dry run stages nothing.
@@ -298,10 +296,12 @@ type chmodAdd struct {
 // converted content the working tree does not hold, so they count as an
 // unmodelled change. Any other add copies working-tree content into the
 // index (added), of ignored files too with --force (addedIgnored), and
-// --chmod also stages a mode the working tree may not have for the paths it
-// names (chmods), which a later rewrite may then write; it counts as an
-// unmodelled change when those paths are not known (--pathspec-from-file, an
-// unknown directory).
+// --chmod also stages a mode the working tree may not have for the paths its
+// pathspec names (chmods), which a later rewrite may then write; it counts
+// as an unmodelled change when those paths are not known
+// (--pathspec-from-file, an unknown directory). Git applies --chmod to an
+// explicit pathspec only: `git add -A --chmod=+x` and `git add -u
+// --chmod=+x` stage the working tree's modes, as without --chmod.
 func (l *rewriteLine) ranAdd(sc scannedCommand, o gitOpts) {
 	switch {
 	case o.has("-n", "--dry-run"):
@@ -315,13 +315,16 @@ func (l *rewriteLine) ranAdd(sc scannedCommand, o gitOpts) {
 	if !o.has("--chmod") {
 		return
 	}
+	pathspec := append(slices.Clone(o.operands), o.paths...)
+	if len(pathspec) == 0 && !o.has("--pathspec-from-file") {
+		return
+	}
 	dir, ok := rewriteDir(sc, nil)
 	if !ok || o.has("--pathspec-from-file") {
 		l.changed = true
 		return
 	}
-	pathspec := append(slices.Clone(o.operands), o.paths...)
-	l.chmods = append(l.chmods, chmodAdd{dir: dir, pathspec: pathspec, all: len(pathspec) == 0})
+	l.chmods = append(l.chmods, chmodAdd{dir: dir, pathspec: pathspec})
 }
 
 // stashKeepingGit are the git subcommands that never change the stash list:
@@ -402,7 +405,7 @@ func (ctx *EvalContext) precededBy(client gitrepo.Client, top, dir string, rw wo
 		if err != nil || ctx.firstRemovedProtected(top, untracked) != "" {
 			return true, nil, nil
 		}
-		also, err = ctx.chmodded(client, top, line.chmods)
+		also, err = ctx.chmodded(client, line.chmods)
 		if errors.Is(err, gitrepo.ErrTimeout) {
 			return false, nil, err
 		}
@@ -420,16 +423,12 @@ func (ctx *EvalContext) precededBy(client gitrepo.Client, top, dir string, rw wo
 	return err != nil, append(also, committed...), nil
 }
 
-// chmodded returns the tracked paths, relative to the toplevel top, whose
-// mode the git add --chmod commands chmods stage.
-func (ctx *EvalContext) chmodded(client gitrepo.Client, top string, chmods []chmodAdd) ([]string, error) {
+// chmodded returns the tracked paths, relative to the toplevel, whose mode
+// the git add --chmod commands chmods stage.
+func (ctx *EvalContext) chmodded(client gitrepo.Client, chmods []chmodAdd) ([]string, error) {
 	var paths []string
 	for _, c := range chmods {
-		dir, pathspec := c.dir, c.pathspec
-		if c.all {
-			dir, pathspec = top, nil
-		}
-		tracked, err := client.TrackedPaths(ctx.Ctx, dir, pathspec)
+		tracked, err := client.TrackedPaths(ctx.Ctx, c.dir, c.pathspec)
 		if err != nil {
 			return nil, err
 		}

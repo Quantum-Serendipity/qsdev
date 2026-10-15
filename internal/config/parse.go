@@ -228,6 +228,7 @@ func ValidateQsdevConfig(cfg *types.QsdevConfig, opts ValidateOptions) []Validat
 	}
 
 	errs = append(errs, validateSplicedValues(cfg)...)
+	errs = append(errs, validateGoSource(cfg)...)
 
 	// Validate security level.
 	if cfg.Security.Level != "" && !validation.IsValidSecurityLevel(cfg.Security.Level) {
@@ -479,6 +480,37 @@ func validateSplicedValues(cfg *types.QsdevConfig) []ValidationError {
 					Message: "invalid option; keys must be identifiers and values a single word of letters, digits, '.', '_' or '-'",
 				})
 			}
+		}
+	}
+	return errs
+}
+
+// validateGoSource checks the go_source extra (types.SettingGoSource). An
+// unknown value is rejected rather than read as the go-overlay default: a
+// misspelled "nixpkgs" would otherwise keep the go-overlay input the
+// declaration was meant to drop. The extra is only read by the go entry.
+func validateGoSource(cfg *types.QsdevConfig) []ValidationError {
+	var errs []ValidationError
+	for i, lang := range cfg.Languages {
+		src, ok := types.LanguageChoice{Extras: lang.Extras}.Setting(types.SettingGoSource)
+		if !ok {
+			continue
+		}
+		field := fmt.Sprintf("languages[%d].extras.%s", i, types.SettingGoSource)
+		switch {
+		case lang.Name != "go":
+			errs = append(errs, ValidationError{
+				Field:   field,
+				Value:   src,
+				Message: "go_source applies only to the go language entry",
+			})
+		case !types.IsValidGoSource(src):
+			errs = append(errs, ValidationError{
+				Field: field,
+				Value: src,
+				Message: "unknown Go source; " + validValues(types.GoSources()) +
+					" (nixpkgs: the project's nixpkgs and overlays supply the required Go; go-overlay: fetch it from github:purpleclay/go-overlay)",
+			})
 		}
 	}
 	return errs

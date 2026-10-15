@@ -52,6 +52,10 @@ var goReleaseRe = regexp.MustCompile(`^1\.(\d+)(\.\d+|rc\d+)?$`)
 // directive, as the release the project needs.
 const ExtraToolchain = "toolchain"
 
+// ExtraGoSource is the ModuleConfig extra declaring where the shell's Go
+// comes from: types.GoSourceGoOverlay (the default) or types.GoSourceNixpkgs.
+const ExtraGoSource = types.SettingGoSource
+
 // goOverlayInput is the flake input devenv's languages.go.version selects
 // exact Go releases from.
 const goOverlayInput = "github:purpleclay/go-overlay"
@@ -126,38 +130,92 @@ func (m *Module) DevenvNixFragment(config ecosystem.ModuleConfig) (string, error
 		Comment: "Verify all public modules against the Go checksum database",
 	})
 
-	release, note := requiredGoRelease(config)
+	plan, err := planGoSource(config)
+	if err != nil {
+		return "", err
+	}
 	var props []ecosystem.NixProperty
-	if release != "" {
-		// devenv sets GOTOOLCHAIN=local, so the shell's Go must be at least
-		// the release go.mod requires. nixpkgs' Go (binary-cached, and what
-		// gopls and the other Go tools are built against) is kept whenever it
-		// is new enough; otherwise that exact release comes from go-overlay.
-		v := ecosystem.NixString(release)
-		props = append(props, ecosystem.NixProperty{
-			Key:   "version",
-			Value: fmt.Sprintf("lib.mkIf (!(lib.versionAtLeast pkgs.go.version %s)) %s", v, v),
-		})
+	if p, ok := plan.property(); ok {
+		props = append(props, p)
 	}
 	fragment := ecosystem.BuildLanguageFragment(ecosystem.NixLangConfig{
 		EnablePath: "languages.go",
 		Properties: props,
 		EnvVars:    envVars,
 	})
-	if note != "" {
-		fragment = "  # " + note + "\n" + fragment
+	if plan.note != "" {
+		fragment = "  # " + plan.note + "\n" + fragment
 	}
 	return fragment, nil
 }
 
 // DevenvYamlInputs contributes the go-overlay flake input when the fragment
 // sets languages.go.version; devenv refuses to evaluate the version option
-// without it. The input and the version line are an invariant pair.
+// without it. The input and the version line are an invariant pair, both
+// decided by planGoSource. An invalid go_source yields no input: the
+// fragment returns the error, so generation fails before either is written.
 func (m *Module) DevenvYamlInputs(config ecosystem.ModuleConfig) []ecosystem.DevenvInput {
-	if release, _ := requiredGoRelease(config); release == "" {
+	if plan, err := planGoSource(config); err != nil || !plan.goOverlay() {
 		return nil
 	}
 	return []ecosystem.DevenvInput{{URL: goOverlayInput, Follows: "nixpkgs", Options: []string{"languages.go.version"}}}
+}
+
+// goSourcePlan is how the generated shell provides the Go release the
+// project requires.
+type goSourcePlan struct {
+	release string // required release; "" leaves nixpkgs' Go unconstrained
+	note    string // see requiredGoRelease
+	source  string // types.GoSourceGoOverlay or types.GoSourceNixpkgs
+}
+
+// planGoSource decides, from the required release and the go_source extra,
+// both the languages.go property and whether the go-overlay input is needed.
+// An unknown go_source is an error: reading it as the default would keep the
+// input a misspelled "nixpkgs" was meant to drop.
+func planGoSource(config ecosystem.ModuleConfig) (goSourcePlan, error) {
+	source := config.Extra(ExtraGoSource, types.GoSourceGoOverlay)
+	if !types.IsValidGoSource(source) {
+		return goSourcePlan{}, fmt.Errorf("go extra %s=%q: unknown Go source; valid values: %s",
+			ExtraGoSource, source, strings.Join(types.GoSources(), ", "))
+	}
+	release, note := requiredGoRelease(config)
+	return goSourcePlan{release: release, note: note, source: source}, nil
+}
+
+// goOverlay reports whether the shell selects its Go from go-overlay, which
+// needs the go-overlay flake input.
+func (p goSourcePlan) goOverlay() bool {
+	return p.release != "" && p.source == types.GoSourceGoOverlay
+}
+
+// property returns the languages.go line enforcing the required release, if
+// one is known. devenv sets GOTOOLCHAIN=local, so the shell's Go must be at
+// least that release. nixpkgs' Go (binary-cached, and what gopls and the
+// other Go tools are built against) is kept whenever it is new enough.
+// Otherwise, by default, that exact release comes from go-overlay; when the
+// project declares go_source=nixpkgs, evaluating the shell fails instead, so
+// the declaration cannot silently lie. release passed goReleaseRe, so it is
+// safe inside a Nix string.
+func (p goSourcePlan) property() (ecosystem.NixProperty, bool) {
+	if p.release == "" {
+		return ecosystem.NixProperty{}, false
+	}
+	v := ecosystem.NixString(p.release)
+	if p.goOverlay() {
+		return ecosystem.NixProperty{
+			Key:   "version",
+			Value: fmt.Sprintf("lib.mkIf (!(lib.versionAtLeast pkgs.go.version %s)) %s", v, v),
+		}, true
+	}
+	msg := fmt.Sprintf("qsdev: .qsdev.yaml declares %s=%s, but pkgs.go is ${pkgs.go.version}, "+
+		"older than the required Go %s; raise it through nixpkgs or a registered overlay, "+
+		"or remove %s to fetch Go %s from go-overlay",
+		ExtraGoSource, types.GoSourceNixpkgs, p.release, ExtraGoSource, p.release)
+	return ecosystem.NixProperty{
+		Key:   "package",
+		Value: fmt.Sprintf("if lib.versionAtLeast pkgs.go.version %s then pkgs.go else throw \"%s\"", v, msg),
+	}, true
 }
 
 // SecurityConfigs returns generated security configuration files.

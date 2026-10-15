@@ -40,6 +40,7 @@ func ConfigToAnswers(cfg *types.QsdevConfig, detected types.DetectedProject, pro
 			Name:           lang.Name,
 			Version:        lang.Version,
 			PackageManager: lang.PackageManager,
+			Extras:         slices.Clone(lang.Extras),
 		})
 	}
 

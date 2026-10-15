@@ -539,3 +539,91 @@ func TestDevenvPackages_ProvisionsGovulncheck(t *testing.T) {
 		t.Errorf("DevenvPackages() = %q, want it to contain govulncheck", pkgs)
 	}
 }
+
+// TestGoSource covers the go_source extra: the go-overlay input and the
+// version line, or the guarded pkgs.go package line, are decided together, so
+// devenv.yaml and devenv.nix can never disagree.
+func TestGoSource(t *testing.T) {
+	t.Parallel()
+	m := &golang.Module{}
+	withSource := func(version, source string) ecosystem.ModuleConfig {
+		return ecosystem.ModuleConfig{Version: version, Extras: map[string]string{golang.ExtraGoSource: source}}
+	}
+
+	tests := []struct {
+		name      string
+		config    ecosystem.ModuleConfig
+		wantErr   bool
+		wantInput bool
+		wantLine  string // "" means no version or package line
+	}{
+		{
+			name:      "default is go-overlay",
+			config:    ecosystem.ModuleConfig{Version: "1.26.9"},
+			wantInput: true,
+			wantLine:  `version = lib.mkIf (!(lib.versionAtLeast pkgs.go.version "1.26.9")) "1.26.9";`,
+		},
+		{
+			name:      "explicit go-overlay",
+			config:    withSource("1.26.9", types.GoSourceGoOverlay),
+			wantInput: true,
+			wantLine:  `version = lib.mkIf (!(lib.versionAtLeast pkgs.go.version "1.26.9")) "1.26.9";`,
+		},
+		{
+			name:   "nixpkgs guards pkgs.go without the input",
+			config: withSource("1.26.9", types.GoSourceNixpkgs),
+			wantLine: `package = if lib.versionAtLeast pkgs.go.version "1.26.9" then pkgs.go else throw ` +
+				`"qsdev: .qsdev.yaml declares go_source=nixpkgs, but pkgs.go is ${pkgs.go.version}, older than the required Go 1.26.9; ` +
+				`raise it through nixpkgs or a registered overlay, or remove go_source to fetch Go 1.26.9 from go-overlay";`,
+		},
+		{
+			name:   "nixpkgs uses the toolchain release",
+			config: ecosystem.ModuleConfig{Version: "1.24", Extras: map[string]string{golang.ExtraGoSource: types.GoSourceNixpkgs, golang.ExtraToolchain: "1.26.8"}},
+			wantLine: `package = if lib.versionAtLeast pkgs.go.version "1.26.8" then pkgs.go else throw ` +
+				`"qsdev: .qsdev.yaml declares go_source=nixpkgs, but pkgs.go is ${pkgs.go.version}, older than the required Go 1.26.8; ` +
+				`raise it through nixpkgs or a registered overlay, or remove go_source to fetch Go 1.26.8 from go-overlay";`,
+		},
+		{name: "no release known, default", config: ecosystem.ModuleConfig{}},
+		{name: "no release known, nixpkgs", config: withSource("", types.GoSourceNixpkgs)},
+		{name: "unknown source rejected", config: withSource("1.26.9", "nixpgks"), wantErr: true},
+		{name: "bare flag rejected", config: withSource("1.26.9", "true"), wantErr: true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			fragment, err := m.DevenvNixFragment(tt.config)
+			inputs := m.DevenvYamlInputs(tt.config)
+			if tt.wantErr {
+				if err == nil || !strings.Contains(err.Error(), "go_source") || !strings.Contains(err.Error(), "nixpkgs") {
+					t.Fatalf("DevenvNixFragment() error = %v, want an error naming go_source and its valid values", err)
+				}
+				if len(inputs) != 0 {
+					t.Errorf("DevenvYamlInputs() = %+v, want none for an invalid go_source", inputs)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("DevenvNixFragment() returned error: %v", err)
+			}
+			hasInput := len(inputs) == 1 && inputs[0].URL == "github:purpleclay/go-overlay" &&
+				slices.Equal(inputs[0].Options, []string{"languages.go.version"})
+			if hasInput != tt.wantInput {
+				t.Errorf("DevenvYamlInputs() = %+v, want go-overlay input = %v", inputs, tt.wantInput)
+			}
+			// The version option needs the input, and only it does.
+			if hasVersion := strings.Contains(fragment, "version ="); hasVersion != tt.wantInput {
+				t.Errorf("version line present = %v, want %v (it must pair with the input)\n%s", hasVersion, tt.wantInput, fragment)
+			}
+			if tt.wantLine == "" {
+				if strings.Contains(fragment, "version =") || strings.Contains(fragment, "package =") {
+					t.Errorf("unexpected version or package line:\n%s", fragment)
+				}
+				return
+			}
+			if !strings.Contains(fragment, "    "+tt.wantLine+"\n") {
+				t.Errorf("fragment missing\n%s\ngot:\n%s", tt.wantLine, fragment)
+			}
+		})
+	}
+}

@@ -1,6 +1,7 @@
 package config
 
 import (
+	"reflect"
 	"slices"
 	"strings"
 	"testing"
@@ -192,7 +193,7 @@ func TestResolveConfig_LocalLayerAddsOnly(t *testing.T) {
 	cfg := result.Config
 
 	wantLangs := []types.LanguageConfig{{Name: "go", Version: "1.23"}, {Name: "python", PackageManager: "uv"}, {Name: "rust"}}
-	if !slices.Equal(cfg.Languages, wantLangs) {
+	if !reflect.DeepEqual(cfg.Languages, wantLangs) {
 		t.Errorf("languages = %+v, want %+v", cfg.Languages, wantLangs)
 	}
 	if len(cfg.Services) != 2 || cfg.Services[1].Name != "redis" {

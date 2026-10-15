@@ -189,6 +189,44 @@ that older configurations and detection record; likewise for Java, where
 `package_manager` (also set by `--java-build-tool` and project-type profiles)
 takes precedence over the `build_tool` extra.
 
+#### Declared extras
+
+`.qsdev.yaml` does not record the extras detection and the wizard produce
+(detection re-derives them on every run). A `languages:` entry can instead
+carry `extras` the team declares by hand. They take precedence over detected
+values, and qsdev commands (`init --update`, `enable`, `devenv add-*`,
+re-creating the project) keep them as committed:
+
+```yaml
+languages:
+  - name: go
+    version: 1.26.9
+    extras:
+      - go_source=nixpkgs
+```
+
+| Language | Extra | Values |
+|---|---|---|
+| Go | `go_source` | `go-overlay` (default), `nixpkgs` |
+
+`go_source` says where the devenv shell's Go comes from. devenv sets
+`GOTOOLCHAIN=local`, so the shell's Go must be at least the release go.mod
+requires (the newer of its `go` and `toolchain` lines, or `version`):
+
+- `go-overlay` keeps nixpkgs' `pkgs.go` when it is new enough and otherwise
+  selects that exact release from the `github:purpleclay/go-overlay` flake
+  input, which devenv.yaml then declares (`languages.go.version`).
+- `nixpkgs` declares that the project's nixpkgs, with its registered
+  `overlays`, supplies a new enough Go, for example an overlay that raises
+  `go_1_26`. devenv.yaml gets no go-overlay input, and devenv.nix sets
+  `languages.go.package` to `pkgs.go` guarded by the required release: if
+  `pkgs.go` is older, evaluating the shell fails with
+  `qsdev: .qsdev.yaml declares go_source=nixpkgs, but pkgs.go is <version>, older than the required Go <release>; ...`
+  rather than giving a Go that cannot build the module.
+
+`qsdev check` rejects any other value, and `go_source` on a language other
+than `go`.
+
 ### Git settings
 
 `git.branch_pattern` is the POSIX extended regular expression the always-on
@@ -1031,6 +1069,7 @@ Key contents:
 - `require_version: ">=2.1"` -- Minimum devenv version
 - `inputs.nixpkgs.url: "github:NixOS/nixpkgs/nixpkgs-unstable"` -- Nixpkgs input
 - `inputs.git-hooks.url: "github:cachix/git-hooks.nix"` -- Pre-commit hook framework (when hooks are needed)
+- `inputs.go-overlay.url: "github:purpleclay/go-overlay"` -- Exact Go releases, for a Go project whose release is known, unless it declares `go_source=nixpkgs` (see [Declared extras](#declared-extras))
 - `impure: false` -- Prevents impure builds
 - `allow_unfree: false` -- Blocks unfree packages
 - `allow_broken: false` -- Blocks broken packages

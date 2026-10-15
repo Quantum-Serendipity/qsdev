@@ -53,6 +53,12 @@ type LanguageConfig struct {
 	Name           string `yaml:"name"`
 	Version        string `yaml:"version,omitempty"`
 	PackageManager string `yaml:"package_manager,omitempty"`
+	// Extras are module settings the team declares by hand ("key=value", or
+	// a bare "key" meaning "true"), such as go_source=nixpkgs. They reach the
+	// ecosystem module as ModuleConfig.Extras and take precedence over what
+	// detection suggests. qsdev commands keep them as committed and never
+	// record detected extras here, which detection re-derives on every run.
+	Extras []string `yaml:"extras,omitempty"`
 }
 
 // ServiceConfig specifies a development service (database, cache, etc.) in .qsdev.yaml.

@@ -911,10 +911,10 @@ func parseStash(rest []string) (worktreeRewrite, bool) {
 	o := parseGitOpts(rest[1:], stashSpec)
 	switch rest[0] {
 	case "pop", "apply":
-		return worktreeRewrite{source: fromStash, rev: firstOr(o.operands, "stash@{0}")}, true
+		return worktreeRewrite{source: fromStash, rev: firstOr(o.operands, latestStash)}, true
 	case "branch":
 		// stash branch <name> [<stash>]
-		ref := "stash@{0}"
+		ref := latestStash
 		if len(o.operands) > 1 {
 			ref = o.operands[1]
 		}
@@ -1134,24 +1134,13 @@ func worktreeRewriteReason(ctx *EvalContext) string {
 	return ctx.rewriteWalk(scs, rewriteLine{})
 }
 
-// rewriteLine is what rewriteWalk knows of the line around the commands it
-// walks.
-type rewriteLine struct {
-	// depth counts the shell scripts the commands are nested in.
-	depth int
-	// preceded reports that a command other than a directory change or a
-	// read-only git runs before them.
-	preceded bool
-	// psLocation reports a PowerShell line that changes location.
-	psLocation bool
-}
-
-// rewriteWalk checks the rewriting git commands of scs in order. Any command
-// but cd, pushd, popd and read-only git that precedes a rewrite on its line
-// may change the source the rewrite copies (the index, a fetched ref) before
-// it runs, so such a rewrite is allowed only in a repository that tracks no
-// protected file (askGit). A shell script (`sh -c`, eval) is walked in the
-// directory its shell runs in.
+// rewriteWalk checks the rewriting git commands of scs in order. A command
+// that precedes a rewrite on its line may change the source the rewrite
+// copies (the index, a fetched ref, the stash) before it runs; what each
+// command may change is recorded in line (see rewriteLine), and a rewrite
+// whose source a command may have changed in a way the model cannot follow
+// is allowed only in a repository that tracks no protected file (askGit). A
+// shell script (`sh -c`, eval) is walked in the directory its shell runs in.
 func (ctx *EvalContext) rewriteWalk(scs []scannedCommand, line rewriteLine) string {
 	for _, sc := range scs {
 		words := append([]string{sc.Name}, sc.Args...)
@@ -1159,7 +1148,7 @@ func (ctx *EvalContext) rewriteWalk(scs []scannedCommand, line rewriteLine) stri
 			if reason := ctx.scriptRewriteReason(sc, run, line); reason != "" {
 				return reason
 			}
-			line.preceded = true
+			line.changeAll()
 			continue
 		}
 		args, ok := gitInvocation(words)
@@ -1167,19 +1156,19 @@ func (ctx *EvalContext) rewriteWalk(scs []scannedCommand, line rewriteLine) stri
 			if reason := unknownProgramRewrite(sc); reason != "" {
 				return reason
 			}
-			line.preceded = line.preceded || !isLocationChange(sc.Name)
+			if !inertCommand(sc) {
+				line.changeAll()
+			}
 			continue
 		}
 		target := splitGitArgs(args)
-		rw, ok := parseWorktreeRewrite(target.sub, target.rest)
-		if !ok {
-			line.preceded = line.preceded || !gitReadOnly(target)
-			continue
+		rw, rewrites := parseWorktreeRewrite(target.sub, target.rest)
+		if rewrites {
+			if reason := ctx.checkRewrite(sc, target, rw, line); reason != "" {
+				return reason
+			}
 		}
-		if reason := ctx.checkRewrite(sc, target, rw, line); reason != "" {
-			return reason
-		}
-		line.preceded = true
+		line.ranGit(sc, args, target, rw, rewrites)
 	}
 	return ""
 }
@@ -1247,7 +1236,7 @@ func (ctx *EvalContext) checkRewrite(sc scannedCommand, target gitArgs, rw workt
 	if !ok {
 		return what + " rewrites working-tree files in a directory that is not known, so they cannot be checked"
 	}
-	if line.preceded && rw.source == fromPatches {
+	if rw.source == fromPatches && line.readsChanged(rw) {
 		// The patch may name any path, tracked or not, so tracking tells
 		// nothing about a patch an earlier command may have written.
 		return what + " applies a patch after another command on the same line, which may change the patch; run it in its own call so the files it writes can be checked"
@@ -1255,7 +1244,7 @@ func (ctx *EvalContext) checkRewrite(sc scannedCommand, target gitArgs, rw workt
 	if ctx.Ctx == nil {
 		return what + " rewrites working-tree files, and this check has no deadline to ask git which"
 	}
-	verdict, err := ctx.askGit(dir, rw, line.preceded)
+	verdict, err := ctx.askGit(dir, rw, line)
 	switch {
 	case errors.Is(err, gitrepo.ErrTimeout):
 		return what + " rewrites working-tree files, and git did not answer in time to tell which"
@@ -1289,16 +1278,17 @@ type gitVerdict struct {
 	overwritten, removed, tracked, sparse string
 }
 
-// askGit asks git, read-only and in dir, about rewrite rw. A rewrite preceded
-// on its line by another command may copy something that command changes
-// (the index, a fetched ref), so what it writes is known only in a
-// repository that tracks no protected file; any other rewrite is judged by
-// the paths it would write. When the first operand of an ambiguous checkout
-// names no revision, git reads its operands as paths, and so does askGit. A
-// sparse-checkout pattern change is judged by whether the repository tracks
-// a protected path at all, and a clean (rw.clean) by the untracked paths it
-// would remove, also after another command, as tracking may not cover them.
-func (ctx *EvalContext) askGit(dir string, rw worktreeRewrite, preceded bool) (gitVerdict, error) {
+// askGit asks git, read-only and in dir, about rewrite rw. A rewrite whose
+// source an earlier command of its line may have changed in a way the line's
+// model cannot follow (precededBy) is known only in a repository that tracks
+// no protected file; any other rewrite is judged by the paths it would
+// write, with those an earlier commit recorded. When the first operand of an
+// ambiguous checkout names no revision, git reads its operands as paths, and
+// so does askGit. A sparse-checkout pattern change is judged by whether the
+// repository tracks a protected path at all, and a clean (rw.clean) by the
+// untracked paths it would remove, also after another command, as tracking
+// may not cover them.
+func (ctx *EvalContext) askGit(dir string, rw worktreeRewrite, line rewriteLine) (gitVerdict, error) {
 	client := gitrepo.Client{Runner: ctx.gitRunner}
 	top, err := client.Toplevel(ctx.Ctx, dir)
 	if errors.Is(err, gitrepo.ErrNotRepo) && rw.source == fromPatches {
@@ -1309,6 +1299,10 @@ func (ctx *EvalContext) askGit(dir string, rw worktreeRewrite, preceded bool) (g
 	}
 	if rw.remote != "" && !remoteIsRepo(rw.remote, dir, top) {
 		return gitVerdict{}, nil // a pull from another repository: the residual
+	}
+	preceded, committed, err := ctx.precededBy(client, top, dir, rw, line)
+	if err != nil {
+		return gitVerdict{}, err
 	}
 	if preceded || rw.source == sparseRules {
 		tracked, err := client.TrackedPaths(ctx.Ctx, top, nil)
@@ -1324,7 +1318,7 @@ func (ctx *EvalContext) askGit(dir string, rw worktreeRewrite, preceded bool) (g
 		if errors.Is(err, gitrepo.ErrGit) && rw.orPaths != nil {
 			paths, err = rewrittenPaths(ctx.Ctx, client, dir, worktreeRewrite{source: fromIndex, paths: rw.orPaths})
 		}
-		if first := firstProtected(top, paths); err != nil || first != "" || rw.clean == nil {
+		if first := firstProtected(top, append(paths, committed...)); err != nil || first != "" || rw.clean == nil {
 			return gitVerdict{overwritten: first}, err
 		}
 	}

@@ -173,7 +173,7 @@ const (
 var safeReadVerbs = map[string]bool{
 	"cat": true, "grep": true, "egrep": true, "fgrep": true,
 	"ls": true, "head": true, "tail": true, "wc": true, "echo": true,
-	"printf": true, "test": true, "[": true, "true": true, "false": true,
+	"printf": true, "test": true, "[": true, "true": true, "false": true, ":": true,
 	"pwd": true, "stat": true, "file": true, "diff": true, "cmp": true,
 	"cut": true, "jq": true, "tac": true, "nl": true, "printenv": true,
 	"du": true,

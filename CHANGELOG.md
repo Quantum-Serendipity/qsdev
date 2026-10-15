@@ -507,6 +507,26 @@ All notable changes to qsdev are recorded in this file. The format is based on
 
 ### Security
 
+- SP-007 no longer denies every working-tree rewrite that follows another
+  command on its line in a repository that tracks `.claude/`. Each earlier
+  command is now judged by what it can change for the rewrite: an inert
+  command (`echo`, `true`, `:`, `test`, `cat`, a read-only git, a
+  directory change) changes nothing, a commit adds the paths it records,
+  an add counts only when it may track an untracked protected file, a
+  stash push leaves `stash@{0}` to its own check, and a fetch, pull,
+  checkout or other rewrite keeps the stash. So `echo start; git checkout
+  -- main.go`, `true && git restore main.go`, `git stash && git stash pop`,
+  `git stash && git pull --rebase && git stash pop`, `git commit -am x &&
+  git switch main`, `git add -A && git commit -m x && git checkout main`
+  and `git checkout -b topic && git stash pop` are allowed again, as on
+  w1-s5, unless the rewrite writes a protected path. Still denied in such
+  a repository, with a reason to run the rewrite in its own call: a
+  rewrite after an unknown program or script (`go test ./... && git
+  checkout main`), a rewrite from a revision after a fetch, pull or other
+  rewrite (`git fetch && git rebase origin/main`, `git checkout main &&
+  git merge topic`), a restore after `git restore --staged`, and a stash
+  pop after a drop or pop. docs/security-architecture.md lists them.
+
 - SP-007 now judges `git rm` as a working-tree rewrite. A recursive
   `git rm` that does not name `.claude` (`git rm -r .`,
   `git rm -r -q -- .`) deleted every tracked protected file and was

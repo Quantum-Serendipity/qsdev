@@ -319,10 +319,17 @@ func TestWorktreeRewriteWithTrackedProtected(t *testing.T) {
 		// own target, and allowed in one that tracks none.
 		{"index replaced first, evil", "Bash", "cp /tmp/i .git/index && git checkout-index -a -f", top, evilRepo(), Deny, tracksOwnCall},
 		{"fetch first, evil", "Bash", "git fetch o && git reset --hard FETCH_HEAD", top, evilRepo(), Deny, tracksOwnCall},
-		{"echo first, evil", "Bash", "echo hi; git reset --hard HEAD", top, evilRepo(), Deny, tracksOwnCall},
+		{"echo writing a file first, evil", "Bash", "echo hi > x; git reset --hard HEAD", top, evilRepo(), Deny, tracksOwnCall},
 		{"second rewrite on the line, evil", "Bash", "git checkout -- src/x.go && git reset --hard evil", top, evilRepo(), Deny, tracksOwnCall},
+		// (The fake answers no untracked-file query, so the add counts as
+		// an unmodelled change; TestWorktreeRewrite_PrecedingCommands
+		// judges an add and a commit against a repository that answers.)
 		{"commit then benign switch, evil", "Bash", "git add -A && git commit -m x && git switch main", top, evilRepo(), Deny, tracksOwnCall},
-		{"stash around a benign switch, evil", "Bash", "git stash && git switch main && git stash pop", top, evilRepo(), Deny, tracksOwnCall},
+		// The stash push may save nothing, and the pop then applies the
+		// stash entry that changes the protected file.
+		{"stash around a benign switch, evil", "Bash", "git stash && git switch main && git stash pop", top, evilRepo(), Deny, "git stash pop " + overwrite},
+		// echo cannot change what the reset copies: judged on its own.
+		{"echo first, evil", "Bash", "echo hi; git reset --hard HEAD", top, evilRepo(), Allow, ""},
 		// A branch or tag creation changes what a later checkout copies; a
 		// read-only form (cmdscan.GitReadOnly) does not.
 		{"branch creation first, evil", "Bash", "git branch newb && git checkout newb", top, evilRepo(), Deny, tracksOwnCall},
@@ -430,6 +437,130 @@ func TestWorktreeRewriteWithTrackedProtected(t *testing.T) {
 				t.Errorf("%s: verdict = %v, SP-007 reason %q, want Deny with %q", tool, got, reason, overwrite)
 			}
 		})
+	}
+}
+
+// TestWorktreeRewrite_PrecedingCommands pins what an earlier command of the
+// line changes for a rewrite (W1 wave fix, rewriteLine): a command that
+// cannot change the index, a ref, the stash or a patch (echo, true, cat, a
+// read-only git) leaves the rewrite judged on its own; a commit adds the
+// paths it records, an add counts when an untracked protected path exists, a
+// stash push leaves stash@{0} to its own check, and a fetch or pull keeps the
+// stash. Anything else is judged by whether the repository tracks a
+// protected path, as before.
+func TestWorktreeRewrite_PrecedingCommands(t *testing.T) {
+	t.Parallel()
+	top := filepath.Join(homeDir(t), "project")
+	const tracksOwnCall = "in a repository that tracks protected .claude/settings.json; run it in its own call"
+	// tracked tracks .claude/settings.json, but neither its branches, its
+	// stash, its index nor its working tree change it, and it has no
+	// untracked file.
+	tracked := func() *fakeGit {
+		git := rewriteRepo(top, false)
+		git.tracked = ".claude/settings.json\x00src/x.go\x00"
+		git.answers["clean -d -f --"] = ""
+		git.answers["clean -d -x -f --"] = ""
+		return git
+	}
+	// untracked also holds an untracked protected file a git add may track.
+	untracked := func() *fakeGit {
+		git := tracked()
+		git.answers["clean -d -f --"] = "Would remove .claude/settings.local.json\n"
+		git.answers["clean -d -x -f --"] = "Would remove .claude/settings.local.json\n"
+		return git
+	}
+	// ignored holds an ignored protected directory, which only add --force
+	// tracks.
+	ignored := func() *fakeGit {
+		git := tracked()
+		git.answers["clean -d -x -f --"] = "Would remove .qsdev/\n"
+		return git
+	}
+	// unborn has no HEAD: what a commit records cannot be listed.
+	unborn := func() *fakeGit {
+		git := tracked()
+		delete(git.answers, "diff HEAD --")
+		return git
+	}
+	// evil's index holds a protected change that a commit records.
+	evil := func() *fakeGit {
+		git := rewriteRepo(top, true)
+		git.answers["clean -d -x -f --"] = ""
+		return git
+	}
+	tests := []struct {
+		name, tool, command string
+		git                 *fakeGit
+		want                Verdict
+		reason              string // a substring of SP-007's reason when want is Deny
+	}{
+		{"stash, pull, pop", "Bash", "git stash && git pull && git stash pop", tracked(), Allow, ""},
+		{"stash, pull, pop in PowerShell", "PowerShell", "git stash; git pull; git stash pop", tracked(), Allow, ""},
+		{"stash and pop", "Bash", "git stash && git stash pop", tracked(), Allow, ""},
+		{"commit then switch", "Bash", "git commit -am x && git switch main", tracked(), Allow, ""},
+		{"add, commit, checkout", "Bash", "git add -A && git commit -m x && git checkout main", tracked(), Allow, ""},
+		{"new branch then pop", "Bash", "git checkout -b topic && git stash pop", tracked(), Allow, ""},
+		{"fetch then pop", "Bash", "git fetch origin && git stash pop", tracked(), Allow, ""},
+		{"echo then checkout", "Bash", "echo start; git checkout -- src/x.go", tracked(), Allow, ""},
+		{"true then restore", "Bash", "true && git restore src/x.go", tracked(), Allow, ""},
+		{"no-op then restore", "Bash", ": && test -f go.mod && git restore src/x.go", tracked(), Allow, ""},
+		{"cat then switch", "Bash", "cat go.mod && git switch main", tracked(), Allow, ""},
+		{"commit then patch", "Bash", "git commit -m x && git apply fix.patch", tracked(), Allow, ""},
+		{"dry-run add then checkout", "Bash", "git add -n . && git checkout -- src/x.go", untracked(), Allow, ""},
+		{"add with an ignored protected directory", "Bash", "git add -A && git commit -m x && git checkout main", ignored(), Allow, ""},
+		{"forced add with an ignored protected directory", "Bash", "git add -f -A && git reset --hard", ignored(), Deny, tracksOwnCall},
+		// The commit records the protected change staged in the index, and
+		// the switch then writes main's version over it.
+		{"commit of a protected change then switch", "Bash", "git commit -am x && git switch main", evil(), Deny,
+			"git switch would overwrite protected .claude/settings.json"},
+		// An unmodelled change before the rewrite.
+		{"tests then checkout", "Bash", "go test ./... && git checkout main", tracked(), Deny, tracksOwnCall},
+		{"fetch then rebase", "Bash", "git fetch && git rebase main", tracked(), Deny, tracksOwnCall},
+		{"checkout then merge", "Bash", "git checkout main && git merge feature", tracked(), Deny, tracksOwnCall},
+		{"redirect then checkout", "Bash", "printf x > idx && git checkout -- src/x.go", tracked(), Deny, tracksOwnCall},
+		{"wrapped commit then switch", "Bash", "env git commit -m x && git switch main", tracked(), Deny, tracksOwnCall},
+		{"commit with -C then switch", "Bash", "git -C . commit -m x && git switch main", tracked(), Deny, tracksOwnCall},
+		{"amend then switch", "Bash", "git commit --amend -m x && git switch main", tracked(), Deny, tracksOwnCall},
+		{"commit then reset to the old HEAD", "Bash", "git commit -m x && git reset --hard HEAD~1", tracked(), Deny, tracksOwnCall},
+		{"commit then reflog revision", "Bash", "git commit -m x && git checkout HEAD@{1} -- .", tracked(), Deny, tracksOwnCall},
+		{"commit in an unborn repository", "Bash", "git commit -m x && git switch main", unborn(), Deny, tracksOwnCall},
+		{"edited add then switch", "Bash", "git add -e && git switch main", tracked(), Deny, tracksOwnCall},
+		{"add of an untracked protected file", "Bash", "git add -A && git checkout -- src/x.go", untracked(), Deny, tracksOwnCall},
+		{"stash then patch", "Bash", "git stash && git apply fix.patch", tracked(), Deny, "applies a patch after another command"},
+		// The stash list changed: stash@{0} is not the entry judged now.
+		{"drop then pop", "Bash", "git stash drop && git stash pop", tracked(), Deny, tracksOwnCall},
+		{"fetch into the stash then pop", "Bash", "git fetch . x:refs/stash && git stash pop", tracked(), Deny, tracksOwnCall},
+		{"fetch with a refmap then pop", "Bash", "git fetch --refmap=x origin main && git stash pop", tracked(), Deny, tracksOwnCall},
+		{"pop then pop", "Bash", "git stash pop && git stash pop", tracked(), Deny, tracksOwnCall},
+		{"stash then an older entry", "Bash", "git stash && git stash pop stash@{1}", tracked(), Deny, tracksOwnCall},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			got, reason, matches := rewriteVerdict(t, tt.tool, tt.command, top, tt.git)
+			if got != tt.want {
+				t.Fatalf("%q: verdict = %v (matches %v, SP-007 %q), want %v", tt.command, got, matchIDs(matches), reason, tt.want)
+			}
+			if tt.want == Deny && !strings.Contains(reason, tt.reason) {
+				t.Errorf("%q: SP-007 reason = %q, want it to contain %q", tt.command, reason, tt.reason)
+			}
+		})
+	}
+}
+
+// TestMovesWithCommit pins the revisions a commit before a rewrite may
+// redirect to another commit.
+func TestMovesWithCommit(t *testing.T) {
+	t.Parallel()
+	for rev, want := range map[string]bool{
+		"HEAD": false, "main": false, "evil": false, "@{-1}": false, "@{u}": false, "main@{upstream}": false,
+		"@{push}": false, "origin/main": false, "a..b": false,
+		"HEAD~1": true, "main^": true, "HEAD^{tree}": true, ":/fix": true, "HEAD:x": true, "@{1}": true,
+		"HEAD@{yesterday}": true, "main@{u}@{2}": true,
+	} {
+		if got := movesWithCommit(rev); got != want {
+			t.Errorf("movesWithCommit(%q) = %v, want %v", rev, got, want)
+		}
 	}
 }
 

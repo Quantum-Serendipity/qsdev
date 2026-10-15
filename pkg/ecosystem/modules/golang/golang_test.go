@@ -449,9 +449,9 @@ func TestWizardFields(t *testing.T) {
 	}
 
 	// go_source is the one setting .qsdev.yaml can commit for go.
-	src := ecosystem.SettingFields(m)
+	src := ecosystem.CommittableFields(m)
 	if len(src) != 1 || src[0].Key != golang.ExtraGoSource || src[0].Type != ecosystem.FieldTypeSelect {
-		t.Fatalf("SettingFields() = %+v, want the go_source select", src)
+		t.Fatalf("CommittableFields() = %+v, want the go_source select", src)
 	}
 	var values []string
 	for _, o := range src[0].Options {

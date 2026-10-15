@@ -48,10 +48,11 @@ type ValidateOptions struct {
 	// (mcpserve.MountableToolNames); mcp.disabled_tools must name one of them.
 	// Validation of that list is skipped when none are given.
 	MCPToolNames []string
-	// Settings are the language settings the ecosystem modules declare
-	// (ecosystem.Registry.DeclaredSettings), the only keys languages[].extras
-	// may set. Without them every extras entry is rejected.
-	Settings ecosystem.DeclaredSettings
+	// Settings are the committable language settings of the ecosystem modules
+	// (ecosystem.Registry.CommittableSettings), the only keys
+	// languages[].extras may set. Without them every extras entry is
+	// rejected.
+	Settings ecosystem.CommittableSettings
 }
 
 // ParseQsdevConfig reads and parses a .qsdev.yaml file at path.
@@ -491,10 +492,11 @@ func validateSplicedValues(cfg *types.QsdevConfig) []ValidationError {
 }
 
 // validateLanguageExtras checks each committed languages[].extras entry
-// against the settings the language's module declares (opts.Settings): an
-// entry naming any other key, such as a detected one (directory, manifests)
-// or a misspelling, is rejected rather than ignored, and so is a declared
-// setting with a value its module does not accept.
+// against the committable settings of the language's module (opts.Settings):
+// an entry naming any other key, such as a detected one (directory,
+// manifests), a wizard setting that is not committable, or a misspelling, is
+// rejected rather than ignored, and so is a committable setting with a value
+// its module does not accept.
 func validateLanguageExtras(cfg *types.QsdevConfig, opts ValidateOptions) []ValidationError {
 	var errs []ValidationError
 	for i, lang := range cfg.Languages {

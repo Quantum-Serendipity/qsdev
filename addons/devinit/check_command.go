@@ -261,7 +261,7 @@ func catalogFreeCheckContext(cmd *cobra.Command, projectRoot string) check.Check
 		ClaudeUserDir:   claudeUserDir(),
 		OrgConfigDrift:  catalog.ProjectOrgConfigDrift(projectRoot),
 		OrgConfigSource: catalog.ProjectOrgConfigSource(projectRoot),
-		Settings:        declaredSettings(),
+		Settings:        committableSettings(),
 	}
 	// Parse config if present. The error travels in the context so the report
 	// (including machine-readable formats) distinguishes "not found" from a

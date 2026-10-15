@@ -178,9 +178,10 @@ type CheckContext struct {
 	TrustedMCP   map[string][]mcpregistry.LaunchSpec
 	MCPToolNames []string // tools the MCP server can mount, for validating mcp.disabled_tools
 	ProfileNames []string // project-type profiles, for validating `profile`
-	// Settings are the language settings the ecosystem modules declare, the
-	// only keys languages[].extras may set (see config.ValidateOptions).
-	Settings             ecosystem.DeclaredSettings
+	// Settings are the committable language settings of the ecosystem
+	// modules, the only keys languages[].extras may set (see
+	// config.ValidateOptions).
+	Settings             ecosystem.CommittableSettings
 	RequiredDenyRules    []string
 	StateFile            string
 	DenyRules            []string

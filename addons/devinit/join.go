@@ -170,8 +170,8 @@ func buildJoinAnswers(cmd *cobra.Command, opts InitOptions, projectRoot string) 
 	// frontend/, Yarn Classic, TypeScript), so complete each language from
 	// detection as the create path does; otherwise the joiner would
 	// regenerate devenv.nix, hooks and hardening files for the wrong
-	// directory or package manager. policy.Apply then sets the extras the
-	// team commits (go_source), limited to the settings modules declare.
+	// directory or package manager. policy.Apply then sets the committable
+	// settings (go_source) from .qsdev.yaml alone.
 	for i := range answers.Languages {
 		answers.Languages[i] = detected.WithSuggested(answers.Languages[i])
 	}
@@ -181,7 +181,7 @@ func buildJoinAnswers(cmd *cobra.Command, opts InitOptions, projectRoot string) 
 		return types.WizardAnswers{}, fmt.Errorf("loading catalog for defaults: %w", err)
 	}
 	applyJoinDefaults(&answers, cat, registry)
-	policy.Apply(&answers, declaredSettings())
+	policy.Apply(&answers, committableSettings())
 
 	// Validate answers.
 	if err := ValidateAnswers(answers); err != nil {

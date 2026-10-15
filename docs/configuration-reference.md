@@ -189,11 +189,12 @@ that older configurations and detection record; likewise for Java, where
 `package_manager` (also set by `--java-build-tool` and project-type profiles)
 takes precedence over the `build_tool` extra.
 
-#### Declared extras
+#### Committed settings
 
 `.qsdev.yaml` does not record the extras detection and the wizard produce
-(detection re-derives them on every run). A `languages:` entry can instead
-carry `extras` the team declares by hand:
+(detection re-derives them on every run). A few settings are instead
+committed: a `languages:` entry records them as `extras`, and for them the
+committed file is the single source of truth:
 
 ```yaml
 languages:
@@ -203,36 +204,31 @@ languages:
       - go_source=nixpkgs
 ```
 
-An extra can set only a setting the language's module declares (its wizard
-settings other than `version` and `package_manager`), to a value that
-setting accepts. `qsdev check` rejects any other key, including the extras
-detection records (`directory`, `manifests`, `toolchain`, ...) and a
-misspelled key, and any other value. `qsdev init` (create, join and
-`--update`) applies a committed extra over the detected or saved value, and
-day-2 commands (`enable`, `devenv add-*`, re-creating the project) keep the
-committed extras as they are. `.qsdev.local.yaml` cannot set extras: they
-are ignored there with a warning. After changing a committed extra, run
-`qsdev init --update`. The declared settings are:
+Only a setting the language's module marks committable can be recorded, to
+a value that setting accepts. A setting that decides which checks run, or
+that relaxes an allowlist, is never committable. `qsdev check` rejects any
+other key, including the extras detection records (`directory`,
+`manifests`, `toolchain`, ...), the other wizard settings and a misspelled
+key, and any other value; `qsdev init` warns about each one and ignores it.
 
-<!-- declared-settings:begin -->
+- Creating a project records a committable setting chosen in the wizard or
+  an answers file when it differs from the default.
+- `qsdev init` (create over an existing file, join and `--update`) sets each
+  committable setting from `.qsdev.yaml`; one the file does not record goes
+  back to its default. Edit `.qsdev.yaml` and run `qsdev init --update` to
+  change one; the saved answers never override it.
+- Day-2 commands (`enable`, `devenv add-*`, re-creating the project) keep the
+  committed extras as they are.
+- `.qsdev.local.yaml` cannot set extras: they are ignored there with a
+  warning.
+
+The committable settings are:
+
+<!-- committable-settings:begin -->
 | Language | Extra | Values |
 |---|---|---|
-| `aws` | `aws_default_region` | comma-separated words, such as `us-east-1` |
-| `aws` | `aws_profile` | comma-separated words, such as `dev` |
-| `aws` | `aws_vault` | `true`, `false` (default) |
-| `clojure` | `build_tool` | `tools-deps` (default), `leiningen` |
-| `container` | `trusted_registries` | comma-separated words, such as `docker.io,ghcr.io,registry.example.com` |
-| `cpp` | `build_system` | `cmake` (default), `meson`, `make` |
-| `dart` | `flutter` | `true`, `false` (default) |
 | `go` | `go_source` | `go-overlay` (default), `nixpkgs` |
-| `haskell` | `build_tool` | `cabal` (default), `stack` |
-| `java` | `kotlin` | `true`, `false` (default) |
-| `javascript` | `typescript` | `true`, `false` (default) |
-| `rust` | `channel` | `stable` (default), `beta`, `nightly` |
-| `scala` | `build_tool` | `sbt` (default), `mill` |
-| `scala` | `jdk_version` | `25`, `21` (default), `17`, `11`, `8` |
-| `terraform` | `variant` | `terraform` (default), `opentofu` |
-<!-- declared-settings:end -->
+<!-- committable-settings:end -->
 
 `extras` needs a qsdev release that knows the key: earlier releases reject
 it as an unknown field when they parse `.qsdev.yaml`. The schema `version`
@@ -1097,7 +1093,7 @@ Key contents:
 - `require_version: ">=2.1"` -- Minimum devenv version
 - `inputs.nixpkgs.url: "github:NixOS/nixpkgs/nixpkgs-unstable"` -- Nixpkgs input
 - `inputs.git-hooks.url: "github:cachix/git-hooks.nix"` -- Pre-commit hook framework (when hooks are needed)
-- `inputs.go-overlay.url: "github:purpleclay/go-overlay"` -- Exact Go releases, for a Go project whose release is known, unless it declares `go_source=nixpkgs` (see [Declared extras](#declared-extras))
+- `inputs.go-overlay.url: "github:purpleclay/go-overlay"` -- Exact Go releases, for a Go project whose release is known, unless it commits `go_source=nixpkgs` (see [Committed settings](#committed-settings))
 - `impure: false` -- Prevents impure builds
 - `allow_unfree: false` -- Blocks unfree packages
 - `allow_broken: false` -- Blocks broken packages

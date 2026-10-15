@@ -9,8 +9,8 @@ func ecosystems() *ecosystem.Registry {
 	return ecosystem.DefaultRegistry()
 }
 
-// declaredSettings returns the language settings the ecosystem modules
-// declare: the languages[].extras keys .qsdev.yaml may commit.
-func declaredSettings() ecosystem.DeclaredSettings {
-	return ecosystems().DeclaredSettings()
+// committableSettings returns the committable language settings of the
+// ecosystem modules: the languages[].extras keys .qsdev.yaml may record.
+func committableSettings() ecosystem.CommittableSettings {
+	return ecosystems().CommittableSettings()
 }

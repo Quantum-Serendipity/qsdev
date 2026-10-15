@@ -455,6 +455,7 @@ func projectGitignoreEntries() []string {
 
 func finalizeProject(cmd *cobra.Command, opts InitOptions, answers types.WizardAnswers, projectRoot string, accResult accumulatorResult) error {
 	qsdevCfg := qsdevconfig.AnswersToConfig(answers, version.Info().Version)
+	qsdevconfig.RecordCommittableSettings(&qsdevCfg, answers, committableSettings())
 	qsdevCfgPath := filepath.Join(projectRoot, branding.Get().ConfigFile)
 	committed, err := qsdevconfig.ParseQsdevConfig(qsdevCfgPath)
 	switch {

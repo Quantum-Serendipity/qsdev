@@ -25,8 +25,8 @@ func writeFiles(t *testing.T, root string, files map[string]string) {
 }
 
 // TestDetectedModuleConfig_CommittedExtras checks the checks see the
-// ModuleConfig generation uses: detected extras, with a committed extra
-// replacing one only for a setting the module declares. A committed
+// ModuleConfig generation uses: detected extras, with the module's
+// committable settings taken from the committed extras alone. A committed
 // directory or toolchain is never applied.
 func TestDetectedModuleConfig_CommittedExtras(t *testing.T) {
 	t.Parallel()
@@ -44,8 +44,8 @@ func TestDetectedModuleConfig_CommittedExtras(t *testing.T) {
 		wantDirectory string
 	}{
 		{"detected only", nil, "", "1.26.8", ""},
-		{"declared setting applied", []string{"go_source=nixpkgs"}, golang.GoSourceNixpkgs, "1.26.8", ""},
-		{"undeclared keys ignored", []string{"toolchain=1.26.9", "directory=docs"}, "", "1.26.8", ""},
+		{"committable setting applied", []string{"go_source=nixpkgs"}, golang.GoSourceNixpkgs, "1.26.8", ""},
+		{"other keys ignored", []string{"toolchain=1.26.9", "directory=docs"}, "", "1.26.8", ""},
 		{"invalid value ignored", []string{"go_source=nixpgks"}, "", "1.26.8", ""},
 	}
 	for _, tt := range tests {

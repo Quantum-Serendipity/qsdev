@@ -54,7 +54,7 @@ const ExtraToolchain = "toolchain"
 
 // ExtraGoSource is the ModuleConfig extra declaring where the shell's Go
 // comes from: GoSourceGoOverlay (the default) or GoSourceNixpkgs. It is a
-// declared setting (see WizardFields), so .qsdev.yaml can commit it.
+// committable setting (goSourceField), so .qsdev.yaml records it.
 const ExtraGoSource = "go_source"
 
 // The values ExtraGoSource accepts.
@@ -68,9 +68,11 @@ const (
 	GoSourceNixpkgs = "nixpkgs"
 )
 
-// goSourceField declares ExtraGoSource: a wizard field, and so a setting
-// .qsdev.yaml may commit as a go extra.
+// goSourceField declares ExtraGoSource: a wizard field, and a committable
+// one, so .qsdev.yaml records it as a go extra. Either value keeps the
+// release go.mod requires enforced, so sharing it weakens no control.
 var goSourceField = ecosystem.WizardField{
+	Committable: true,
 	Key:         ExtraGoSource,
 	Label:       "Go source",
 	Description: "Where the shell's Go comes from: go-overlay fetches the required release when nixpkgs' Go is older; nixpkgs declares that nixpkgs and the project's overlays supply it",

@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"io/fs"
+	"slices"
 	"strings"
 
 	qsdevanswers "github.com/Quantum-Serendipity/qsdev/internal/answers"
@@ -30,7 +31,7 @@ func applyCommittedPolicy(w io.Writer, projectRoot string, a *types.WizardAnswer
 		return err
 	}
 	warnPolicyViolations(w, policy)
-	policy.Apply(a, declaredSettings())
+	policy.Apply(a, committableSettings())
 	// Apply installs the committed java block as is; reject an invalid one
 	// here, since update does not revalidate the answers it loads.
 	if errs := validateJavaConfig(a.Java); len(errs) > 0 {
@@ -39,9 +40,10 @@ func applyCommittedPolicy(w io.Writer, projectRoot string, a *types.WizardAnswer
 	return nil
 }
 
-// warnPolicyViolations prints each setting the security floor raised.
+// warnPolicyViolations prints each setting the security floor raised and
+// each committed language extra Apply ignores.
 func warnPolicyViolations(w io.Writer, policy *qsdevconfig.ProjectPolicy) {
-	for _, msg := range policy.Warnings() {
+	for _, msg := range slices.Concat(policy.Warnings(), policy.ExtrasWarnings(committableSettings())) {
 		fmt.Fprintln(w, "Warning: "+msg)
 	}
 }

@@ -137,3 +137,46 @@ func TestShellGateDodge_RuleIDs(t *testing.T) {
 		})
 	}
 }
+
+// TestShellGateDodge_GitVariables pins the guarded files a variable git reads
+// can write (W1 wave fix): git writes its index over the file GIT_INDEX_FILE
+// names, also for a read such as git status, and runs the command line an
+// editor, pager or ssh variable holds. SP-015 and the gate-dodge rules judge
+// those values as SP-007 does for protected paths.
+func TestShellGateDodge_GitVariables(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		command  string
+		wantRule string // "" allows
+	}{
+		{"GIT_INDEX_FILE=devenv.yaml git read-tree HEAD", "SP-015"},
+		{"GIT_INDEX_FILE=devenv.yaml git status", "SP-015"},
+		{"GIT_INDEX_FILE=.qsdev.yaml git status", "GD-001"},
+		{"GIT_INDEX_FILE=.pre-commit-config.yaml git read-tree HEAD", "GD-003"},
+		{"GIT_INDEX_FILE=.npmrc git status", "GD-004"},
+		{"GIT_INDEX_FILE=~/.bashrc git status", "SP-015"},
+		{"GIT_OBJECT_DIRECTORY=.npmrc git status", "GD-004"},
+		{"env GIT_INDEX_FILE=devenv.yaml git status", "SP-015"},
+		{"export GIT_INDEX_FILE=devenv.yaml; git status", "SP-015"},
+		{"GIT_EDITOR='cp /dev/null devenv.yaml #' git commit --amend", "SP-015"},
+		{"GIT_SEQUENCE_EDITOR='cp /dev/null .npmrc #' git commit", "GD-004"},
+		{"GIT_SSH_COMMAND='rm .qsdev.yaml; ssh' git fetch", "GD-001"},
+		{"PAGER='tee devenv.yaml' git log", "SP-015"},
+		{"EDITOR='cp /dev/null devenv.yaml #'; git commit --amend", "SP-015"},
+		// A value that names no guarded file, and a variable no program runs.
+		{"GIT_INDEX_FILE=/tmp/idx git read-tree HEAD", ""},
+		{"GIT_INDEX_FILE=.git/index.tmp git status", ""},
+		{"GIT_EDITOR=vim git commit", ""},
+		{`MSG="fix devenv.yaml" git commit -m x`, ""},
+		{`F=devenv.yaml; cat "$F"`, ""},
+	}
+	for _, tt := range tests {
+		t.Run(tt.command, func(t *testing.T) {
+			t.Parallel()
+			d, denied := Evaluate(&rules.EvalContext{ToolName: "Bash", Command: tt.command, CWD: t.TempDir(), Ctx: t.Context()})
+			if denied != (tt.wantRule != "") || d.RuleID != tt.wantRule {
+				t.Errorf("Evaluate(%s) = %+v, %v; want rule %q", tt.command, d, denied, tt.wantRule)
+			}
+		})
+	}
+}

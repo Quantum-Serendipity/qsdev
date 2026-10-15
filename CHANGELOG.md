@@ -507,6 +507,18 @@ All notable changes to qsdev are recorded in this file. The format is based on
 
 ### Security
 
+- SP-015 and the gate-dodge rules now judge the values of the git
+  variables that write a file or run a program, as SP-007 does for
+  protected paths. `GIT_INDEX_FILE=devenv.yaml git read-tree HEAD` replaced
+  `devenv.yaml` with a git index, and `GIT_INDEX_FILE=.qsdev.yaml git
+  status`, `env GIT_INDEX_FILE=devenv.yaml git status` and
+  `GIT_EDITOR='cp /dev/null devenv.yaml #' git commit --amend` were
+  allowed; a `GIT_INDEX_FILE` or `GIT_OBJECT_DIRECTORY` value naming a
+  guarded file, or a guarded file named inside an editor, pager, ssh or
+  askpass variable, is now a shell write of that file. A value naming no
+  guarded file (`GIT_INDEX_FILE=/tmp/idx git read-tree HEAD`) stays
+  allowed.
+
 - Self-protection now denies, as `EVASION-obfuscation`, a shell or
   interpreter that reads its program from standard input computed at run
   time, under Bash and Monitor and in the scripts the MCP server's

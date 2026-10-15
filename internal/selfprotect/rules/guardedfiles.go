@@ -131,6 +131,9 @@ func rewrittenName(scs []scannedCommand, mentioned string, names []string, judge
 		if !redefined && judge.skip(i) {
 			continue
 		}
+		if n := assignedName(sc, names); n != "" {
+			return n, true
+		}
 		targets, writes := writeTargets(scs, i)
 		if redefined {
 			targets, writes = slices.Concat(sc.Args, sc.WriteRedirects), true
@@ -157,6 +160,50 @@ func rewrittenName(scs []scannedCommand, mentioned string, names []string, judge
 		}
 	}
 	return "", false
+}
+
+// assignedName returns the entry of names that a variable sc sets hands to
+// the programs it runs, or "": a write-target pin (isWriteTargetPinVar)
+// names a file git writes even for a read (`GIT_INDEX_FILE=devenv.yaml git
+// read-tree HEAD` replaces devenv.yaml with an index), so its value is a
+// write target; and a variable whose value a program runs as a command line
+// (runsProgramVar: `GIT_EDITOR='cp /dev/null devenv.yaml #' git commit
+// --amend`) names the file inside that value, as an inline program does. It
+// reads the prefix, bare and declared assignments of sc (`export
+// GIT_INDEX_FILE=...`) and the NAME=value operands of env, so the git that
+// reads the variable may run later on the line; a value set without export
+// is judged too, as the name may already be exported.
+func assignedName(sc scannedCommand, names []string) string {
+	for _, a := range slices.Concat(sc.AssignTexts, envOperandAssigns(sc)) {
+		name, value, _ := strings.Cut(a, "=")
+		switch {
+		case isWriteTargetPinVar(name):
+			if n := guardedTarget(sc, value, names, nil); n != "" {
+				return n
+			}
+		case runsProgramVar(name):
+			if n := nameInWord(value, names); n != "" {
+				return n
+			}
+		}
+	}
+	return ""
+}
+
+// envOperandAssigns returns the NAME=value operands of an env command (`env
+// GIT_INDEX_FILE=x git status`), which set NAME for the program env runs, or
+// nil for any other command.
+func envOperandAssigns(sc scannedCommand) []string {
+	if path.Base(sc.Name) != "env" {
+		return nil
+	}
+	var assigns []string
+	for _, a := range sc.Args {
+		if name, _, ok := strings.Cut(a, "="); ok && name != "" && !isFlag(a) {
+			assigns = append(assigns, a)
+		}
+	}
+	return assigns
 }
 
 // writeTargets returns the words naming the files scs[i] may write, and

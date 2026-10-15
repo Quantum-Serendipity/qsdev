@@ -159,6 +159,22 @@ func isGitEnvVar(name string) bool {
 		name == "GIT_TEMPLATE_DIR"
 }
 
+// commandLineEnvVars are the variables whose value git or another program
+// runs as a command line: the editors git starts for a commit message or a
+// rebase todo list, the pagers, the ssh and askpass programs git starts for a
+// remote, and the input preprocessors of less.
+var commandLineEnvVars = map[string]bool{
+	"GIT_EDITOR": true, "GIT_SEQUENCE_EDITOR": true, "EDITOR": true, "VISUAL": true,
+	"GIT_PAGER": true, "PAGER": true, "MANPAGER": true, "LESSOPEN": true, "LESSCLOSE": true,
+	"GIT_SSH": true, "GIT_SSH_COMMAND": true, "GIT_ASKPASS": true, "SSH_ASKPASS": true, "GIT_PROXY_COMMAND": true,
+}
+
+// runsProgramVar reports whether a program runs the variable's value as a
+// command line, or can be made to run any program through it (isGitEnvVar).
+func runsProgramVar(name string) bool {
+	return commandLineEnvVars[name] || isGitEnvVar(name)
+}
+
 // commitGateEnvVars are canon.CommitGateEnvVars.
 var commitGateEnvVars = canon.CommitGateEnvVars()
 

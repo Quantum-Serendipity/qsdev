@@ -30,6 +30,14 @@ func TestParse_QuoteAndEscapeRemoval(t *testing.T) {
 		{"ansi-c unicode escape", `rm $'.claude'`, ".claude", false},
 		{"ansi-c simple escapes", `rm $'a\tb\\c'`, "a\tb\\c", false},
 		{"ansi-c unmodelled escape is opaque", `rm $'\cA.claude'`, `\cA.claude`, true},
+		// Bash ends an ANSI-C string at its first NUL; the word goes on.
+		{"ansi-c hex NUL ends the string", `rm -$'\x00m'x`, "-x", false},
+		{"ansi-c octal NUL ends the string", `rm a$'b\0c'd`, "abd", false},
+		{"ansi-c wrapped octal NUL ends the string", `rm a$'b\400c'd`, "abd", false},
+		{"ansi-c unicode NUL ends the string", `rm a$'b\u0000c'd`, "abd", false},
+		{"ansi-c long unicode NUL ends the string", `rm a$'b\U00000000c'd`, "abd", false},
+		{"ansi-c NUL drops an unmodelled escape after it", `rm a$'\x00\cA'd`, "ad", false},
+		{"ansi-c octal 1 is kept", `rm a$'\401'd`, "a\x01d", false},
 		{"glob characters are kept", `rm .c*e/settings.json`, ".c*e/settings.json", false},
 		{"braces are kept", `rm .{claude,x}`, ".{claude,x}", false},
 	}

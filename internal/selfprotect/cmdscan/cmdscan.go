@@ -1201,10 +1201,16 @@ var ansiCSimple = map[byte]string{
 // decodeANSIC decodes the body of a bash `$'...'` string. It reports ok=false
 // when it meets an escape it does not model (such as `\cX`), so the caller can
 // treat the word as opaque (fail closed) instead of trusting a wrong rendering.
+// Bash ends the string at its first NUL (`\0`, `\x00`, `\u0000`, or an octal
+// escape that wraps to 0 such as `\400`), so the rest of the string, which
+// the command never sees, is dropped: `-$'\x00m'"$X"` is `-` and "$X".
 func decodeANSIC(s string) (string, bool) {
 	var b strings.Builder
 	ok := true
 	for i := 0; i < len(s); i++ {
+		if s[i] == 0 {
+			break
+		}
 		if s[i] != '\\' || i+1 >= len(s) {
 			b.WriteByte(s[i])
 			continue
@@ -1218,6 +1224,9 @@ func decodeANSIC(s string) (string, bool) {
 		switch {
 		case c >= '0' && c <= '7':
 			n, width := parseDigits(s[i:], 8, 3)
+			if byte(n) == 0 {
+				return b.String(), ok
+			}
 			b.WriteByte(byte(n))
 			i += width - 1
 		case c == 'x' || c == 'u' || c == 'U':
@@ -1227,6 +1236,9 @@ func decodeANSIC(s string) (string, bool) {
 				b.WriteByte('\\')
 				b.WriteByte(c)
 				continue
+			}
+			if n == 0 {
+				return b.String(), ok
 			}
 			if c == 'x' {
 				b.WriteByte(byte(n))

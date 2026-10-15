@@ -121,10 +121,13 @@ type gitOpts struct {
 	// valueArgs are the indexes in the parsed args of the words read as an
 	// option's value (`-m <msg>`), not as an option or an operand.
 	valueArgs []int
-	// attachedValues maps the index in the parsed args of a word holding a
-	// value option and its value (`-m<msg>`, `--message=<msg>`) to the
-	// offset in the word where the value starts.
-	attachedValues map[int]int
+	// attachedArgs are the indexes in the parsed args of the words holding a
+	// value option and its value (`-m<msg>`, `--message=<msg>`).
+	attachedArgs []int
+	// unmodelled reports an option word whose option names hold a character
+	// git's options never do (`-{a,-amend}`, `--{amend,x}`): the shell may
+	// expand it, as a brace or glob pattern, into other options.
+	unmodelled bool
 }
 
 func (o gitOpts) has(names ...string) bool {
@@ -155,7 +158,9 @@ func (o gitOpts) revisions() []string {
 // parseGitOpts splits args per spec. A long option is canonicalised to the
 // known option it unambiguously abbreviates, as git's option parser does
 // (`--har` is --hard); a short cluster (`-qf`, `-bname`) is split into its
-// options, the rest of the cluster after a value option being its value.
+// options, the rest of the cluster after a value option being its value. An
+// option name with a character outside [A-Za-z0-9] (and -, in a long name)
+// sets unmodelled.
 func parseGitOpts(args []string, spec gitOptSpec) gitOpts {
 	o := gitOpts{set: map[string]string{}}
 	for i := 0; i < len(args); i++ {
@@ -167,10 +172,11 @@ func parseGitOpts(args []string, spec gitOptSpec) gitOpts {
 			return o
 		case strings.HasPrefix(a, "--"):
 			raw, val, hasVal := strings.Cut(a[2:], "=")
+			o.unmodelled = o.unmodelled || strings.ContainsFunc(raw, func(r rune) bool { return r != '-' && !optionChar(r) })
 			name := abbreviatedOption(raw, spec.long)
 			switch {
 			case hasVal && spec.longValue[name]:
-				o.attach(i, len("--")+len(raw)+len("="))
+				o.attachedArgs = append(o.attachedArgs, i)
 			case !hasVal && spec.longValue[name] && i+1 < len(args):
 				i++
 				val = args[i]
@@ -180,6 +186,7 @@ func parseGitOpts(args []string, spec gitOptSpec) gitOpts {
 		case len(a) > 1 && a[0] == '-':
 			for k := 1; k < len(a); k++ {
 				opt := "-" + a[k:k+1]
+				o.unmodelled = o.unmodelled || !optionChar(rune(a[k]))
 				if strings.IndexByte(spec.shortValue, a[k]) < 0 {
 					o.set[opt] = ""
 					continue
@@ -187,7 +194,7 @@ func parseGitOpts(args []string, spec gitOptSpec) gitOpts {
 				val := a[k+1:]
 				switch {
 				case val != "":
-					o.attach(i, k+1)
+					o.attachedArgs = append(o.attachedArgs, i)
 				case i+1 < len(args):
 					i++
 					val = args[i]
@@ -203,13 +210,10 @@ func parseGitOpts(args []string, spec gitOptSpec) gitOpts {
 	return o
 }
 
-// attach records that the value of an option starts at offset start of the
-// parsed word i (gitOpts.attachedValues).
-func (o *gitOpts) attach(i, start int) {
-	if o.attachedValues == nil {
-		o.attachedValues = map[int]int{}
-	}
-	o.attachedValues[i] = start
+// optionChar reports whether r may appear in a git option name: an ASCII
+// letter or digit.
+func optionChar(r rune) bool {
+	return r >= 'a' && r <= 'z' || r >= 'A' && r <= 'Z' || r >= '0' && r <= '9'
 }
 
 // abbreviatedOption returns the known long option name abbreviates

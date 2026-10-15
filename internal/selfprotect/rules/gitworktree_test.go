@@ -580,6 +580,18 @@ func TestWorktreeRewrite_PrecedingCommands(t *testing.T) {
 		// The attached value does not swallow the next word: --amend is seen.
 		{"amend after an attached quoted message then switch", "Bash", `git commit -m"$MSG" --amend && git switch main`, tracked(), Deny, tracksOwnCall},
 		{"amend after a quoted long message then switch", "Bash", `git commit --message="$MSG" --amend && git switch main`, tracked(), Deny, tracksOwnCall},
+		// Bash ends an ANSI-C string at a NUL: `-$'\x00m'"$X"` is `-` and
+		// the value of X, which may be `-amend`.
+		{"commit with a hex NUL before an expanded option then switch", "Bash", `git commit -C HEAD -$'\x00m'"$X" && git switch main`, tracked(), Deny, tracksOwnCall},
+		{"commit with an octal NUL before an expanded option then switch", "Bash", `git commit -C HEAD -$'\0m'"$X" && git switch main`, tracked(), Deny, tracksOwnCall},
+		{"commit with a message and a NUL before an expanded option then switch", "Bash", `git commit -m x -$'\x00m'"$X" && git switch main`, tracked(), Deny, tracksOwnCall},
+		// Brace and glob patterns in an option word may expand into other
+		// options (`-{a,-amend}` is `-a --amend`).
+		{"commit with a braced expanded option then switch", "Bash", `git commit -{m"$X",-amend} && git switch main`, tracked(), Deny, tracksOwnCall},
+		{"commit with a braced option cluster then switch", "Bash", "git commit -m x -{a,-amend} && git switch main", tracked(), Deny, tracksOwnCall},
+		{"commit with a braced long option then switch", "Bash", "git commit -m x --{amend,all} && git switch main", tracked(), Deny, tracksOwnCall},
+		{"commit with a globbed option then switch", "Bash", "git commit -m x -[a]* && git switch main", tracked(), Deny, tracksOwnCall},
+		{"add with a braced option then switch", "Bash", "git add -{A,f} && git switch main", tracked(), Deny, tracksOwnCall},
 		{"add with a variable then switch", "Bash", `git add "$F" && git switch main`, tracked(), Deny, tracksOwnCall},
 		// A branch created at HEAD keeps the commit a later rewrite reads,
 		// unless the rewrite names the branch or the previous one.
@@ -634,6 +646,55 @@ func TestWorktreeRewrite_PrecedingCommands(t *testing.T) {
 				t.Errorf("%q: SP-007 reason = %q, want it to contain %q", tt.command, reason, tt.reason)
 			}
 		})
+	}
+}
+
+// TestMarkedArgs pins that markedArgs marks each expanded word at its first
+// expansion, and fails closed when the scan has no literal text for one, or
+// when that text already holds expansionMark.
+func TestMarkedArgs(t *testing.T) {
+	t.Parallel()
+	cmd := func(prefixes ...string) scannedCommand {
+		var sc scannedCommand
+		sc.Args = []string{"commit", "-m", "-a"}
+		sc.ExpandedArgIndexes = []int{1}
+		sc.ExpandedArgPrefixes = prefixes
+		return sc
+	}
+	tests := []struct {
+		name   string
+		sc     scannedCommand
+		want   []string
+		marked bool
+	}{
+		{"attached value", cmd("-m"), []string{"-m" + expansionMark, "-a"}, true},
+		{"no literal text", cmd(), []string{"-m", "-a"}, false},
+		{"literal text holding the mark", cmd("-" + expansionMark + "m"), []string{"-m", "-a"}, false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			got, marked := markedArgs(tt.sc, tt.sc.Args[1:])
+			if !slices.Equal(got, tt.want) || marked != tt.marked {
+				t.Errorf("markedArgs = %q, %v; want %q, %v", got, marked, tt.want, tt.marked)
+			}
+		})
+	}
+}
+
+// TestParseGitOpts_Unmodelled pins the option words whose names hold a
+// character git's options never do, which the shell may expand into other
+// options.
+func TestParseGitOpts_Unmodelled(t *testing.T) {
+	t.Parallel()
+	for args, want := range map[string]bool{
+		"-am x": false, "-m{x,y}": false, "--message={a,b}": false, "-C HEAD -1": false, "--no-verify": false,
+		"-{a,-amend}": true, "-a{m,-amend}": true, "--{amend,all}": true, "-[a]*": true, "--am*": true,
+		"-m x -" + expansionMark: true,
+	} {
+		if got := parseGitOpts(strings.Fields(args), commitSpec).unmodelled; got != want {
+			t.Errorf("parseGitOpts(%q).unmodelled = %v, want %v", args, got, want)
+		}
 	}
 }
 

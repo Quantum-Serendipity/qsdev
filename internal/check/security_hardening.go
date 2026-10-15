@@ -297,9 +297,10 @@ func checkSecurityConfigSettings(projectRoot string, lang types.LanguageConfig, 
 }
 
 // detectedModuleConfig returns the ModuleConfig generation uses for lang: the
-// configured version, package manager and extras completed from what the
-// module detects in projectRoot, the same merge
-// types.DetectedProject.WithSuggested applies. The checks therefore inspect the files generation actually wrote,
+// configured version and package manager completed from what the module
+// detects in projectRoot, the same merge types.DetectedProject.WithSuggested
+// applies, with the committed extras the module declares as settings on
+// top. The checks therefore inspect the files generation actually wrote,
 // such as a subproject's frontend/.npmrc or a Yarn Classic .yarnrc, against
 // the release-age gates of the compliance window minReleaseAge, as
 // ecosystem.ToGenerationConfig passes it, and with the registry proxy infra
@@ -315,9 +316,10 @@ func detectedModuleConfig(projectRoot string, mod ecosystem.EcosystemModule, lan
 		}
 		cfg.Extras = maps.Clone(det.SuggestedConfig.Extras)
 	}
-	// Committed extras take precedence over detected ones, as in
-	// config.AdoptCommitted.
-	if committed := ecosystem.ExtrasMap(lang.Extras); committed != nil {
+	// The committed extras that set a setting mod declares replace detected
+	// values, as config.ProjectPolicy.Apply does; no other key is applied.
+	settings := ecosystem.DeclaredSettings{lang.Name: ecosystem.SettingFields(mod)}
+	if committed := settings.Committed(lang.Name, lang.Extras); committed != nil {
 		if cfg.Extras == nil {
 			cfg.Extras = make(map[string]string, len(committed))
 		}

@@ -166,7 +166,7 @@ module's default), and every answer is stored under the key the module reads:
 
 | Language | Wizard settings (stored as) |
 |---|---|
-| Go | Go version (`version`) |
+| Go | Go version (`version`), Go source (`extras: go_source=go-overlay\|nixpkgs`) |
 | JavaScript/TypeScript | Node.js version (`version`), package manager (`package_manager`), TypeScript (`extras: typescript`) |
 | Python | Python version (`version`), package manager (`package_manager`: `pip`, `uv`, `poetry`) |
 | Rust | channel (`extras: channel=stable\|beta\|nightly`) |
@@ -193,9 +193,7 @@ takes precedence over the `build_tool` extra.
 
 `.qsdev.yaml` does not record the extras detection and the wizard produce
 (detection re-derives them on every run). A `languages:` entry can instead
-carry `extras` the team declares by hand. They take precedence over detected
-values, and qsdev commands (`init --update`, `enable`, `devenv add-*`,
-re-creating the project) keep them as committed:
+carry `extras` the team declares by hand:
 
 ```yaml
 languages:
@@ -205,9 +203,40 @@ languages:
       - go_source=nixpkgs
 ```
 
+An extra can set only a setting the language's module declares (its wizard
+settings other than `version` and `package_manager`), to a value that
+setting accepts. `qsdev check` rejects any other key, including the extras
+detection records (`directory`, `manifests`, `toolchain`, ...) and a
+misspelled key, and any other value. `qsdev init` (create, join and
+`--update`) applies a committed extra over the detected or saved value, and
+day-2 commands (`enable`, `devenv add-*`, re-creating the project) keep the
+committed extras as they are. `.qsdev.local.yaml` cannot set extras: they
+are ignored there with a warning. After changing a committed extra, run
+`qsdev init --update`. The declared settings are:
+
+<!-- declared-settings:begin -->
 | Language | Extra | Values |
 |---|---|---|
-| Go | `go_source` | `go-overlay` (default), `nixpkgs` |
+| `aws` | `aws_default_region` | comma-separated words, such as `us-east-1` |
+| `aws` | `aws_profile` | comma-separated words, such as `dev` |
+| `aws` | `aws_vault` | `true`, `false` (default) |
+| `clojure` | `build_tool` | `tools-deps` (default), `leiningen` |
+| `container` | `trusted_registries` | comma-separated words, such as `docker.io,ghcr.io,registry.example.com` |
+| `cpp` | `build_system` | `cmake` (default), `meson`, `make` |
+| `dart` | `flutter` | `true`, `false` (default) |
+| `go` | `go_source` | `go-overlay` (default), `nixpkgs` |
+| `haskell` | `build_tool` | `cabal` (default), `stack` |
+| `java` | `kotlin` | `true`, `false` (default) |
+| `javascript` | `typescript` | `true`, `false` (default) |
+| `rust` | `channel` | `stable` (default), `beta`, `nightly` |
+| `scala` | `build_tool` | `sbt` (default), `mill` |
+| `scala` | `jdk_version` | `25`, `21` (default), `17`, `11`, `8` |
+| `terraform` | `variant` | `terraform` (default), `opentofu` |
+<!-- declared-settings:end -->
+
+`extras` needs a qsdev release that knows the key: earlier releases reject
+it as an unknown field when they parse `.qsdev.yaml`. The schema `version`
+is unchanged, so raise `qsdev_version` if teammates may run an older qsdev.
 
 `go_source` says where the devenv shell's Go comes from. devenv sets
 `GOTOOLCHAIN=local`, so the shell's Go must be at least the release go.mod
@@ -222,10 +251,9 @@ requires (the newer of its `go` and `toolchain` lines, or `version`):
   `languages.go.package` to `pkgs.go` guarded by the required release: if
   `pkgs.go` is older, evaluating the shell fails with
   `qsdev: .qsdev.yaml declares go_source=nixpkgs, but pkgs.go is <version>, older than the required Go <release>; ...`
-  rather than giving a Go that cannot build the module.
-
-`qsdev check` rejects any other value, and `go_source` on a language other
-than `go`.
+  rather than giving a Go that cannot build the module. The line has
+  priority 999 (`lib.mkOverride 999`), so a `languages.go.package` set in
+  `devenv.local.nix` still takes precedence.
 
 ### Git settings
 

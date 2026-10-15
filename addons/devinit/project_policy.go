@@ -30,7 +30,7 @@ func applyCommittedPolicy(w io.Writer, projectRoot string, a *types.WizardAnswer
 		return err
 	}
 	warnPolicyViolations(w, policy)
-	policy.Apply(a)
+	policy.Apply(a, declaredSettings())
 	// Apply installs the committed java block as is; reject an invalid one
 	// here, since update does not revalidate the answers it loads.
 	if errs := validateJavaConfig(a.Java); len(errs) > 0 {

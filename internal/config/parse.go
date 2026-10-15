@@ -16,6 +16,7 @@ import (
 	"github.com/Quantum-Serendipity/qsdev/internal/profile"
 	"github.com/Quantum-Serendipity/qsdev/internal/validation"
 	"github.com/Quantum-Serendipity/qsdev/pkg/branding"
+	"github.com/Quantum-Serendipity/qsdev/pkg/ecosystem"
 	"github.com/Quantum-Serendipity/qsdev/pkg/types"
 	"gopkg.in/yaml.v3"
 )
@@ -47,6 +48,10 @@ type ValidateOptions struct {
 	// (mcpserve.MountableToolNames); mcp.disabled_tools must name one of them.
 	// Validation of that list is skipped when none are given.
 	MCPToolNames []string
+	// Settings are the language settings the ecosystem modules declare
+	// (ecosystem.Registry.DeclaredSettings), the only keys languages[].extras
+	// may set. Without them every extras entry is rejected.
+	Settings ecosystem.DeclaredSettings
 }
 
 // ParseQsdevConfig reads and parses a .qsdev.yaml file at path.
@@ -228,7 +233,7 @@ func ValidateQsdevConfig(cfg *types.QsdevConfig, opts ValidateOptions) []Validat
 	}
 
 	errs = append(errs, validateSplicedValues(cfg)...)
-	errs = append(errs, validateGoSource(cfg)...)
+	errs = append(errs, validateLanguageExtras(cfg, opts)...)
 
 	// Validate security level.
 	if cfg.Security.Level != "" && !validation.IsValidSecurityLevel(cfg.Security.Level) {
@@ -485,31 +490,18 @@ func validateSplicedValues(cfg *types.QsdevConfig) []ValidationError {
 	return errs
 }
 
-// validateGoSource checks the go_source extra (types.SettingGoSource). An
-// unknown value is rejected rather than read as the go-overlay default: a
-// misspelled "nixpkgs" would otherwise keep the go-overlay input the
-// declaration was meant to drop. The extra is only read by the go entry.
-func validateGoSource(cfg *types.QsdevConfig) []ValidationError {
+// validateLanguageExtras checks each committed languages[].extras entry
+// against the settings the language's module declares (opts.Settings): an
+// entry naming any other key, such as a detected one (directory, manifests)
+// or a misspelling, is rejected rather than ignored, and so is a declared
+// setting with a value its module does not accept.
+func validateLanguageExtras(cfg *types.QsdevConfig, opts ValidateOptions) []ValidationError {
 	var errs []ValidationError
 	for i, lang := range cfg.Languages {
-		src, ok := types.LanguageChoice{Extras: lang.Extras}.Setting(types.SettingGoSource)
-		if !ok {
-			continue
-		}
-		field := fmt.Sprintf("languages[%d].extras.%s", i, types.SettingGoSource)
-		switch {
-		case lang.Name != "go":
+		for _, err := range opts.Settings.CheckExtras(lang.Name, lang.Extras) {
 			errs = append(errs, ValidationError{
-				Field:   field,
-				Value:   src,
-				Message: "go_source applies only to the go language entry",
-			})
-		case !types.IsValidGoSource(src):
-			errs = append(errs, ValidationError{
-				Field: field,
-				Value: src,
-				Message: "unknown Go source; " + validValues(types.GoSources()) +
-					" (nixpkgs: the project's nixpkgs and overlays supply the required Go; go-overlay: fetch it from github:purpleclay/go-overlay)",
+				Field:   fmt.Sprintf("languages[%d].extras", i),
+				Message: err.Error(),
 			})
 		}
 	}

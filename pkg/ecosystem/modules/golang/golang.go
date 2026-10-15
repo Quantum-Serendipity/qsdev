@@ -53,8 +53,34 @@ var goReleaseRe = regexp.MustCompile(`^1\.(\d+)(\.\d+|rc\d+)?$`)
 const ExtraToolchain = "toolchain"
 
 // ExtraGoSource is the ModuleConfig extra declaring where the shell's Go
-// comes from: types.GoSourceGoOverlay (the default) or types.GoSourceNixpkgs.
-const ExtraGoSource = types.SettingGoSource
+// comes from: GoSourceGoOverlay (the default) or GoSourceNixpkgs. It is a
+// declared setting (see WizardFields), so .qsdev.yaml can commit it.
+const ExtraGoSource = "go_source"
+
+// The values ExtraGoSource accepts.
+const (
+	// GoSourceGoOverlay keeps nixpkgs' Go when it is new enough and otherwise
+	// selects the required release from the go-overlay flake input.
+	GoSourceGoOverlay = "go-overlay"
+	// GoSourceNixpkgs declares that the project's nixpkgs, with its
+	// registered overlays, supplies the required Go: no go-overlay input is
+	// generated, and evaluating the shell fails if pkgs.go is older.
+	GoSourceNixpkgs = "nixpkgs"
+)
+
+// goSourceField declares ExtraGoSource: a wizard field, and so a setting
+// .qsdev.yaml may commit as a go extra.
+var goSourceField = ecosystem.WizardField{
+	Key:         ExtraGoSource,
+	Label:       "Go source",
+	Description: "Where the shell's Go comes from: go-overlay fetches the required release when nixpkgs' Go is older; nixpkgs declares that nixpkgs and the project's overlays supply it",
+	Type:        ecosystem.FieldTypeSelect,
+	Options: []ecosystem.WizardOption{
+		{Label: "go-overlay (fetch the required release when needed)", Value: GoSourceGoOverlay},
+		{Label: "nixpkgs (nixpkgs and the project's overlays supply it)", Value: GoSourceNixpkgs},
+	},
+	Default: GoSourceGoOverlay,
+}
 
 // goOverlayInput is the flake input devenv's languages.go.version selects
 // exact Go releases from.
@@ -166,7 +192,7 @@ func (m *Module) DevenvYamlInputs(config ecosystem.ModuleConfig) []ecosystem.Dev
 type goSourcePlan struct {
 	release string // required release; "" leaves nixpkgs' Go unconstrained
 	note    string // see requiredGoRelease
-	source  string // types.GoSourceGoOverlay or types.GoSourceNixpkgs
+	source  string // GoSourceGoOverlay or GoSourceNixpkgs
 }
 
 // planGoSource decides, from the required release and the go_source extra,
@@ -174,10 +200,9 @@ type goSourcePlan struct {
 // An unknown go_source is an error: reading it as the default would keep the
 // input a misspelled "nixpkgs" was meant to drop.
 func planGoSource(config ecosystem.ModuleConfig) (goSourcePlan, error) {
-	source := config.Extra(ExtraGoSource, types.GoSourceGoOverlay)
-	if !types.IsValidGoSource(source) {
-		return goSourcePlan{}, fmt.Errorf("go extra %s=%q: unknown Go source; valid values: %s",
-			ExtraGoSource, source, strings.Join(types.GoSources(), ", "))
+	source := config.Extra(ExtraGoSource, GoSourceGoOverlay)
+	if err := goSourceField.CheckValue(source); err != nil {
+		return goSourcePlan{}, fmt.Errorf("go extra %s: %w", ExtraGoSource, err)
 	}
 	release, note := requiredGoRelease(config)
 	return goSourcePlan{release: release, note: note, source: source}, nil
@@ -186,7 +211,7 @@ func planGoSource(config ecosystem.ModuleConfig) (goSourcePlan, error) {
 // goOverlay reports whether the shell selects its Go from go-overlay, which
 // needs the go-overlay flake input.
 func (p goSourcePlan) goOverlay() bool {
-	return p.release != "" && p.source == types.GoSourceGoOverlay
+	return p.release != "" && p.source == GoSourceGoOverlay
 }
 
 // property returns the languages.go line enforcing the required release, if
@@ -195,8 +220,9 @@ func (p goSourcePlan) goOverlay() bool {
 // other Go tools are built against) is kept whenever it is new enough.
 // Otherwise, by default, that exact release comes from go-overlay; when the
 // project declares go_source=nixpkgs, evaluating the shell fails instead, so
-// the declaration cannot silently lie. release passed goReleaseRe, so it is
-// safe inside a Nix string.
+// the declaration cannot silently lie. That package line has priority 999,
+// so a plain languages.go.package in devenv.local.nix still overrides it.
+// release passed goReleaseRe, so it is safe inside a Nix string.
 func (p goSourcePlan) property() (ecosystem.NixProperty, bool) {
 	if p.release == "" {
 		return ecosystem.NixProperty{}, false
@@ -210,11 +236,12 @@ func (p goSourcePlan) property() (ecosystem.NixProperty, bool) {
 	}
 	msg := fmt.Sprintf("qsdev: .qsdev.yaml declares %s=%s, but pkgs.go is ${pkgs.go.version}, "+
 		"older than the required Go %s; raise it through nixpkgs or a registered overlay, "+
-		"or remove %s to fetch Go %s from go-overlay",
-		ExtraGoSource, types.GoSourceNixpkgs, p.release, ExtraGoSource, p.release)
+		"or remove %s and run qsdev init --update to fetch Go %s from go-overlay",
+		ExtraGoSource, GoSourceNixpkgs, p.release, ExtraGoSource, p.release)
 	return ecosystem.NixProperty{
-		Key:   "package",
-		Value: fmt.Sprintf("if lib.versionAtLeast pkgs.go.version %s then pkgs.go else throw \"%s\"", v, msg),
+		Key: "package",
+		Value: fmt.Sprintf("lib.mkOverride 999 (if lib.versionAtLeast pkgs.go.version %s then pkgs.go else throw \"%s\")",
+			v, msg),
 	}, true
 }
 
@@ -337,6 +364,7 @@ func (m *Module) WizardFields() []ecosystem.WizardField {
 			Type:        ecosystem.FieldTypeInput,
 			Placeholder: "1.24",
 		},
+		goSourceField,
 	}
 }
 

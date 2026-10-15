@@ -166,11 +166,12 @@ func buildJoinAnswers(cmd *cobra.Command, opts InitOptions, projectRoot string) 
 	answers.ProjectName = qsdevconfig.ProjectNameFor(policy.Committed, projectRoot)
 	answers.Detected = detected
 	answers.Confirmed = true
-	// .qsdev.yaml records only the module extras the team declares
-	// (go_source); detected ones (a JavaScript UI in frontend/, Yarn
-	// Classic, TypeScript) are not, so complete each language from detection as
-	// the create path does; otherwise the joiner would regenerate devenv.nix,
-	// hooks and hardening files for the wrong directory or package manager.
+	// .qsdev.yaml records no detected module extras (a JavaScript UI in
+	// frontend/, Yarn Classic, TypeScript), so complete each language from
+	// detection as the create path does; otherwise the joiner would
+	// regenerate devenv.nix, hooks and hardening files for the wrong
+	// directory or package manager. policy.Apply then sets the extras the
+	// team commits (go_source), limited to the settings modules declare.
 	for i := range answers.Languages {
 		answers.Languages[i] = detected.WithSuggested(answers.Languages[i])
 	}
@@ -180,7 +181,7 @@ func buildJoinAnswers(cmd *cobra.Command, opts InitOptions, projectRoot string) 
 		return types.WizardAnswers{}, fmt.Errorf("loading catalog for defaults: %w", err)
 	}
 	applyJoinDefaults(&answers, cat, registry)
-	policy.Apply(&answers)
+	policy.Apply(&answers, declaredSettings())
 
 	// Validate answers.
 	if err := ValidateAnswers(answers); err != nil {

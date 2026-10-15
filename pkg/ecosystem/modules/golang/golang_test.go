@@ -436,8 +436,8 @@ func TestWizardFields(t *testing.T) {
 	m := &golang.Module{}
 	fields := m.WizardFields()
 
-	if len(fields) != 1 {
-		t.Fatalf("WizardFields() returned %d fields, want 1", len(fields))
+	if len(fields) != 2 {
+		t.Fatalf("WizardFields() returned %d fields, want 2", len(fields))
 	}
 
 	f := fields[0]
@@ -446,6 +446,19 @@ func TestWizardFields(t *testing.T) {
 	}
 	if f.Type != ecosystem.FieldTypeInput {
 		t.Errorf("Type = %v, want FieldTypeInput", f.Type)
+	}
+
+	// go_source is the one setting .qsdev.yaml can commit for go.
+	src := ecosystem.SettingFields(m)
+	if len(src) != 1 || src[0].Key != golang.ExtraGoSource || src[0].Type != ecosystem.FieldTypeSelect {
+		t.Fatalf("SettingFields() = %+v, want the go_source select", src)
+	}
+	var values []string
+	for _, o := range src[0].Options {
+		values = append(values, o.Value)
+	}
+	if want := []string{golang.GoSourceGoOverlay, golang.GoSourceNixpkgs}; !slices.Equal(values, want) {
+		t.Errorf("go_source options = %v, want %v", values, want)
 	}
 }
 
@@ -565,26 +578,26 @@ func TestGoSource(t *testing.T) {
 		},
 		{
 			name:      "explicit go-overlay",
-			config:    withSource("1.26.9", types.GoSourceGoOverlay),
+			config:    withSource("1.26.9", golang.GoSourceGoOverlay),
 			wantInput: true,
 			wantLine:  `version = lib.mkIf (!(lib.versionAtLeast pkgs.go.version "1.26.9")) "1.26.9";`,
 		},
 		{
 			name:   "nixpkgs guards pkgs.go without the input",
-			config: withSource("1.26.9", types.GoSourceNixpkgs),
-			wantLine: `package = if lib.versionAtLeast pkgs.go.version "1.26.9" then pkgs.go else throw ` +
+			config: withSource("1.26.9", golang.GoSourceNixpkgs),
+			wantLine: `package = lib.mkOverride 999 (if lib.versionAtLeast pkgs.go.version "1.26.9" then pkgs.go else throw ` +
 				`"qsdev: .qsdev.yaml declares go_source=nixpkgs, but pkgs.go is ${pkgs.go.version}, older than the required Go 1.26.9; ` +
-				`raise it through nixpkgs or a registered overlay, or remove go_source to fetch Go 1.26.9 from go-overlay";`,
+				`raise it through nixpkgs or a registered overlay, or remove go_source and run qsdev init --update to fetch Go 1.26.9 from go-overlay");`,
 		},
 		{
 			name:   "nixpkgs uses the toolchain release",
-			config: ecosystem.ModuleConfig{Version: "1.24", Extras: map[string]string{golang.ExtraGoSource: types.GoSourceNixpkgs, golang.ExtraToolchain: "1.26.8"}},
-			wantLine: `package = if lib.versionAtLeast pkgs.go.version "1.26.8" then pkgs.go else throw ` +
+			config: ecosystem.ModuleConfig{Version: "1.24", Extras: map[string]string{golang.ExtraGoSource: golang.GoSourceNixpkgs, golang.ExtraToolchain: "1.26.8"}},
+			wantLine: `package = lib.mkOverride 999 (if lib.versionAtLeast pkgs.go.version "1.26.8" then pkgs.go else throw ` +
 				`"qsdev: .qsdev.yaml declares go_source=nixpkgs, but pkgs.go is ${pkgs.go.version}, older than the required Go 1.26.8; ` +
-				`raise it through nixpkgs or a registered overlay, or remove go_source to fetch Go 1.26.8 from go-overlay";`,
+				`raise it through nixpkgs or a registered overlay, or remove go_source and run qsdev init --update to fetch Go 1.26.8 from go-overlay");`,
 		},
 		{name: "no release known, default", config: ecosystem.ModuleConfig{}},
-		{name: "no release known, nixpkgs", config: withSource("", types.GoSourceNixpkgs)},
+		{name: "no release known, nixpkgs", config: withSource("", golang.GoSourceNixpkgs)},
 		{name: "unknown source rejected", config: withSource("1.26.9", "nixpgks"), wantErr: true},
 		{name: "bare flag rejected", config: withSource("1.26.9", "true"), wantErr: true},
 	}

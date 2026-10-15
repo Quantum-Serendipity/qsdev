@@ -7,6 +7,7 @@ import (
 	"fmt"
 
 	"github.com/Quantum-Serendipity/qsdev/internal/mcpregistry"
+	"github.com/Quantum-Serendipity/qsdev/pkg/ecosystem"
 	"github.com/Quantum-Serendipity/qsdev/pkg/types"
 )
 
@@ -174,9 +175,12 @@ type CheckContext struct {
 	// definition of the same name).
 	// A required server whose on-disk entry is none of them fails. Nil when
 	// unknown, in which case only the entry's presence is checked.
-	TrustedMCP           map[string][]mcpregistry.LaunchSpec
-	MCPToolNames         []string // tools the MCP server can mount, for validating mcp.disabled_tools
-	ProfileNames         []string // project-type profiles, for validating `profile`
+	TrustedMCP   map[string][]mcpregistry.LaunchSpec
+	MCPToolNames []string // tools the MCP server can mount, for validating mcp.disabled_tools
+	ProfileNames []string // project-type profiles, for validating `profile`
+	// Settings are the language settings the ecosystem modules declare, the
+	// only keys languages[].extras may set (see config.ValidateOptions).
+	Settings             ecosystem.DeclaredSettings
 	RequiredDenyRules    []string
 	StateFile            string
 	DenyRules            []string

@@ -334,7 +334,7 @@ func TestProjectPolicy_Apply(t *testing.T) {
 				t.Fatal(err)
 			}
 			a := tt.answers
-			p.Apply(&a)
+			p.Apply(&a, nil)
 			tt.check(t, a)
 		})
 	}

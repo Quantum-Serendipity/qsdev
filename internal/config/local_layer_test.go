@@ -261,7 +261,7 @@ func TestProjectPolicy_ApplyLocal(t *testing.T) {
 				ExtraPackages:   []string{"jq"},
 				EnabledTools:    map[string]bool{"gitleaks": true, "changelog": false},
 			}
-			policy.Apply(&a)
+			policy.Apply(&a, nil)
 			policy.ApplyLocal(&a)
 
 			if a.PermissionLevel != tt.wantLevel {

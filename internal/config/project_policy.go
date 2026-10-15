@@ -9,6 +9,7 @@ import (
 	"slices"
 
 	"github.com/Quantum-Serendipity/qsdev/pkg/branding"
+	"github.com/Quantum-Serendipity/qsdev/pkg/ecosystem"
 	"github.com/Quantum-Serendipity/qsdev/pkg/types"
 )
 
@@ -98,8 +99,13 @@ func ResolveProjectPolicy(project *types.QsdevConfig, local *LocalConfig) (*Proj
 // unset permission level from the client compliance level, and installs the
 // client MCP policy, the git branch naming pattern, the hook settings (the
 // `hooks` block) and the java and cloud blocks, which replace any earlier
-// ones because .qsdev.yaml is authoritative for them.
-func (p *ProjectPolicy) Apply(a *types.WizardAnswers) {
+// ones because .qsdev.yaml is authoritative for them. Likewise each committed
+// language extra that sets a setting in settings (the modules' declarations)
+// to a value it accepts replaces the answers' value for that key; any other
+// extra is ignored here (ValidateQsdevConfig rejects it), so a committed
+// entry can never set a detected key such as directory or manifests.
+func (p *ProjectPolicy) Apply(a *types.WizardAnswers, settings ecosystem.DeclaredSettings) {
+	applyCommittedExtras(a.Languages, p.Committed.Languages, settings)
 	level := EffectiveSecurityLevel(p.Effective.Config)
 	if CompareComplianceLevels(level, a.ComplianceLevel) > 0 {
 		a.ComplianceLevel = level
@@ -133,6 +139,21 @@ func (p *ProjectPolicy) Apply(a *types.WizardAnswers) {
 	// its only source, so a hand edit reaches the next update.
 	a.Java = cloneJava(p.Committed.Java)
 	a.Cloud = p.Committed.Cloud
+}
+
+// applyCommittedExtras sets, in each of langs that committed also lists, the
+// committed extras settings declares (see ProjectPolicy.Apply), in key order.
+func applyCommittedExtras(langs []types.LanguageChoice, committed []types.LanguageConfig, settings ecosystem.DeclaredSettings) {
+	for i := range langs {
+		j := slices.IndexFunc(committed, func(c types.LanguageConfig) bool { return c.Name == langs[i].Name })
+		if j < 0 {
+			continue
+		}
+		declared := settings.Committed(langs[i].Name, committed[j].Extras)
+		for _, k := range slices.Sorted(maps.Keys(declared)) {
+			langs[i] = langs[i].WithSetting(k, declared[k])
+		}
+	}
 }
 
 // ApplyLocal adds the developer's .qsdev.local.yaml, as ResolveConfig applied

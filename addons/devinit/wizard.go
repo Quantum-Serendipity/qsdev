@@ -15,7 +15,6 @@ import (
 	"github.com/Quantum-Serendipity/qsdev/internal/catalog"
 	"github.com/Quantum-Serendipity/qsdev/internal/termutil"
 	"github.com/Quantum-Serendipity/qsdev/internal/toolreg"
-	"github.com/Quantum-Serendipity/qsdev/pkg/ecosystem"
 	"github.com/Quantum-Serendipity/qsdev/pkg/types"
 )
 
@@ -157,7 +156,7 @@ func newFormState(detected types.DetectedProject, defaults, partial types.Wizard
 		fs.quickChoice = "customize"
 	}
 
-	fs.moduleFields = newModuleFields(ecosystem.DefaultRegistry(),
+	fs.moduleFields = newModuleFields(ecosystems(),
 		knownLanguageChoices(defaults.Languages, partial.Languages), detected)
 	seedFromPartial(fs, partial, flagSet)
 	return fs

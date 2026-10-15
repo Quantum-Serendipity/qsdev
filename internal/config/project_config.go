@@ -9,7 +9,6 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
-	"strings"
 
 	"gopkg.in/yaml.v3"
 
@@ -44,12 +43,11 @@ import (
 //     what detection requires (go.mod's go directive, say) when that is newer
 //     (see WizardAnswers.RaiseVersionsToDetected), so a stale answers file
 //     never lowers the team's toolchain pin. Lowering a pin is a committed
-//     change to .qsdev.yaml, never a local one;
-//   - each language takes the extras the committed file declares for it
-//     (go_source, say), over the answers' values for the same keys.
+//     change to .qsdev.yaml, never a local one.
 //
-// An unreadable config is left to the caller's policy load and
-// SyncProjectConfig, which report it.
+// Committed language extras are applied by ProjectPolicy.Apply, which knows
+// the settings the modules declare. An unreadable config is left to the
+// caller's policy load and SyncProjectConfig, which report it.
 func AdoptCommitted(projectRoot string, a *types.WizardAnswers) {
 	cfg, err := ParseQsdevConfig(filepath.Join(projectRoot, branding.Get().ConfigFile))
 	if errors.Is(err, fs.ErrNotExist) {
@@ -61,7 +59,7 @@ func AdoptCommitted(projectRoot string, a *types.WizardAnswers) {
 	if err != nil {
 		return
 	}
-	adoptCommittedLanguages(a, cfg)
+	adoptCommittedVersions(a, cfg)
 	a.HookPolicy = cfg.Hooks.Clone()
 	a.ClaudePermissions = cfg.ClaudeCode.Permissions.Clone()
 	if ClaudeCodeEnabled(cfg) {
@@ -77,37 +75,26 @@ func AdoptCommitted(projectRoot string, a *types.WizardAnswers) {
 	a.Tier = cfg.Tier
 }
 
-// adoptCommittedLanguages gives every answers language the version cfg pins
-// for it, raised to what detection requires, and the extras cfg declares for
-// it, which replace the answers' entries for the same keys. A language cfg
-// does not pin a version for keeps the answers' version, still raised to
-// detection.
-func adoptCommittedLanguages(a *types.WizardAnswers, cfg *types.QsdevConfig) {
-	committed := make(map[string]types.LanguageConfig, len(cfg.Languages))
+// adoptCommittedVersions gives every answers language the version cfg pins for
+// it and then raises it to what detection requires. A language cfg does not
+// pin a version for keeps the answers' version, still raised to detection.
+func adoptCommittedVersions(a *types.WizardAnswers, cfg *types.QsdevConfig) {
+	pinned := make(map[string]string, len(cfg.Languages))
 	for _, l := range cfg.Languages {
-		committed[l.Name] = l
+		if l.Version != "" {
+			pinned[l.Name] = l.Version
+		}
 	}
 	for i := range a.Languages {
-		l, ok := committed[a.Languages[i].Name]
-		if !ok {
-			continue
-		}
-		if l.Version != "" {
-			a.Languages[i].Version = l.Version
-		}
-		for _, e := range l.Extras {
-			k, v, hasValue := strings.Cut(e, "=")
-			if !hasValue {
-				v = "true"
-			}
-			a.Languages[i] = a.Languages[i].WithSetting(k, v)
+		if v, ok := pinned[a.Languages[i].Name]; ok {
+			a.Languages[i].Version = v
 		}
 	}
 	a.RaiseVersionsToDetected()
 }
 
 // keepCommittedExtras gives each language in langs the extras current
-// declares for it: they are a hand-written team declaration, and the answers
+// commits for it: they are a hand-written team declaration, and the answers
 // carry detected extras that must not be committed.
 func keepCommittedExtras(langs, current []types.LanguageConfig) {
 	for i := range langs {
@@ -204,10 +191,11 @@ func AnswersToConfig(answers types.WizardAnswers, binaryVersion string) types.Qs
 // written for a re-created project (`qsdev init --force` or `--mode create`
 // over an existing file), the committed keys the answers cannot express or do
 // not own: the client block, the security bools, the hooks block,
-// claude_code.permissions, git settings, the java and cloud blocks (which only .qsdev.yaml sets),
-// tools.config, mcp.disabled_tools and each kept language's extras.
-// security.level keeps the stricter of the two, so re-creating a project never
-// silently drops its declared security floor or client policy.
+// claude_code.permissions, git settings, the java and cloud blocks (which
+// only .qsdev.yaml sets), tools.config, mcp.disabled_tools and each kept
+// language's extras. security.level keeps the stricter of the two, so
+// re-creating a project never silently drops its declared security floor or
+// client policy.
 func PreserveCommittedPolicy(fresh, committed *types.QsdevConfig) {
 	if committed == nil {
 		return
@@ -278,13 +266,13 @@ func WriteProjectConfig(projectRoot string, cfg types.QsdevConfig) error {
 // overlays, claude_code and tool decisions); keys the answers do not carry
 // (qsdev_version, security, profile, infra_profile, hooks,
 // claude_code.permissions, infrastructure, client, git, java, cloud,
-// tools.config, mcp, and each language's extras) are kept as committed. A project without .qsdev.yaml
-// (e.g. a standalone `devenv init`) is left alone. The claude_code block is
-// replaced only when the answers configure Claude Code or the committed file
-// already disables it: answers that switch it off never disable it in the
-// committed file. The file is rewritten
-// only when a synced key actually changed or it is at an older schema
-// version, which is thereby migrated to the current one.
+// tools.config, mcp, and each language's extras) are kept as committed. A
+// project without .qsdev.yaml (e.g. a standalone `devenv init`) is left
+// alone. The claude_code block is replaced only when the answers configure
+// Claude Code or the committed file already disables it: answers that switch
+// it off never disable it in the committed file. The file is rewritten only
+// when a synced key actually changed or it is at an older schema version,
+// which is thereby migrated to the current one.
 func SyncProjectConfig(projectRoot string, answers types.WizardAnswers) error {
 	cfgFile := branding.Get().ConfigFile
 	path := filepath.Join(projectRoot, cfgFile)

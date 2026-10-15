@@ -24,7 +24,9 @@ func ProjectNameFor(cfg *types.QsdevConfig, projectRoot string) string {
 // field devinit persists there must be read back here. Config-level types
 // (LanguageConfig, ServiceConfig) become their wizard equivalents
 // (LanguageChoice, ServiceChoice), and fields without a config equivalent get
-// the same defaults the create path applies.
+// the same defaults the create path applies. Language extras are not mapped:
+// only the settings their modules declare may be applied, which
+// ProjectPolicy.Apply does.
 func ConfigToAnswers(cfg *types.QsdevConfig, detected types.DetectedProject, projectRoot string) types.WizardAnswers {
 	answers := types.WizardAnswers{
 		ProjectRoot: projectRoot,
@@ -40,7 +42,6 @@ func ConfigToAnswers(cfg *types.QsdevConfig, detected types.DetectedProject, pro
 			Name:           lang.Name,
 			Version:        lang.Version,
 			PackageManager: lang.PackageManager,
-			Extras:         slices.Clone(lang.Extras),
 		})
 	}
 

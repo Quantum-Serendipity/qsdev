@@ -128,6 +128,10 @@ type gitOpts struct {
 	// attachedArgs are the indexes in the parsed args of the words holding a
 	// value option and its value (`-m<msg>`, `--message=<msg>`).
 	attachedArgs []int
+	// markOnlyArgs are the attachedArgs of a short value option whose value
+	// is expansionMark alone (`-m<mark>`, from `-m"$MSG"`): the expansion may
+	// be empty, and the option then takes the next word as its value.
+	markOnlyArgs []int
 	// unmodelled reports an option word whose option names hold a character
 	// git's options never do (`-{a,-amend}`, `--{amend,x}`): the shell may
 	// expand it, as a brace or glob pattern, into other options.
@@ -207,6 +211,9 @@ func parseGitOpts(args []string, spec gitOptSpec) gitOpts {
 				switch {
 				case val != "":
 					o.attachedArgs = append(o.attachedArgs, i)
+					if val == expansionMark {
+						o.markOnlyArgs = append(o.markOnlyArgs, i)
+					}
 				case i+1 < len(args):
 					i++
 					val = args[i]

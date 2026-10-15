@@ -591,6 +591,18 @@ func TestWorktreeRewrite_PrecedingCommands(t *testing.T) {
 		{"commit with a braced option cluster then switch", "Bash", "git commit -m x -{a,-amend} && git switch main", tracked(), Deny, tracksOwnCall},
 		{"commit with a braced long option then switch", "Bash", "git commit -m x --{amend,all} && git switch main", tracked(), Deny, tracksOwnCall},
 		{"commit with a globbed option then switch", "Bash", "git commit -m x -[a]* && git switch main", tracked(), Deny, tracksOwnCall},
+		// An attached value that is all expansion may be empty: the option
+		// then takes the next word, and `-m"$U" --dry-run` commits.
+		{"dry run after an attached message then reset", "Bash", `git commit -m"$U" --dry-run && git reset --hard HEAD~1`, tracked(), Deny, tracksOwnCall},
+		{"dry run after an attached message then checkout", "Bash", `git commit -m"$U" --dry-run && git checkout HEAD~1 -- .`, tracked(), Deny, tracksOwnCall},
+		{"dry run after a NUL message then reset", "Bash", `git commit -m$'\x00'"$X" --dry-run && git reset --hard HEAD~1`, tracked(), Deny, tracksOwnCall},
+		{"dry run after an attached message cluster then reset", "Bash", `git commit -am"$U" --dry-run && git reset --hard HEAD~1`, tracked(), Deny, tracksOwnCall},
+		{"dry run after an attached message file then reset", "Bash", `git commit -F"$F" --dry-run && git reset --hard HEAD~1`, tracked(), Deny, tracksOwnCall},
+		{"dry run after two empty messages then reset", "Bash", `git commit -m"$U" -m -m"$V" --dry-run && git reset --hard HEAD~1`, tracked(), Deny, tracksOwnCall},
+		{"amend after an empty message then switch", "Bash", `git commit -m"$U" -m --amend && git switch main`, tracked(), Deny, tracksOwnCall},
+		{"dry run after a literal attached message then reset", "Bash", `git commit -mx"$U" --dry-run && git reset --hard HEAD~1`, tracked(), Allow, ""},
+		{"dry run after a separate message then reset", "Bash", `git commit -m "$U" --dry-run && git reset --hard HEAD~1`, tracked(), Allow, ""},
+		{"dry run after an attached message then switch", "Bash", `git commit -m"$U" --dry-run && git switch main`, tracked(), Allow, ""},
 		// -S and -u take an optional value, attached only.
 		{"commit with an attached signing key then switch", "Bash", "git commit -Suser@example.com -m x && git switch main", tracked(), Allow, ""},
 		{"commit with a bare -S then switch", "Bash", "git commit -S -m x && git switch main", tracked(), Allow, ""},
@@ -683,6 +695,41 @@ func TestMarkedArgs(t *testing.T) {
 			got, marked := markedArgs(tt.sc, tt.sc.Args[1:])
 			if !slices.Equal(got, tt.want) || marked != tt.marked {
 				t.Errorf("markedArgs = %q, %v; want %q, %v", got, marked, tt.want, tt.marked)
+			}
+		})
+	}
+}
+
+// TestCommitReadings pins the readings of a commit whose attached short
+// values may be empty: each such word is also read as the option alone, in
+// word order, and too many readings leave the commit unmodelled.
+func TestCommitReadings(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		command  string
+		readings int // 0: unmodelled
+	}{
+		{`git commit -am "$MSG"`, 1},
+		{`git commit --message="$MSG" --dry-run`, 1},
+		{`git commit -m"$U" --dry-run`, 2},
+		{`git commit -m"$U" -m -m"$V" --dry-run`, 3},
+		// An emptied -m"$A" takes -m"$B" as its value.
+		{`git commit -m"$A" -m"$B" -a`, 3},
+		{`git commit -m"$A" -a -m"$B" -a`, 4},
+		{`git commit -m"$U" "$X"`, 0},
+		{`git commit -m"$A" -a -m"$B" -a -m"$C" -a -m"$D" -a -m"$E" -a`, 0},
+	}
+	for _, tt := range tests {
+		t.Run(tt.command, func(t *testing.T) {
+			t.Parallel()
+			cmds, err := cmdscan.Parse(tt.command)
+			if err != nil || len(cmds) != 1 {
+				t.Fatalf("Parse(%q) = %+v, %v", tt.command, cmds, err)
+			}
+			sc := scannedCommand{Command: cmds[0]}
+			readings, ok := commitReadings(sc, sc.Args[1:])
+			if got := len(readings); !ok && got != 0 || ok && got != tt.readings || !ok && tt.readings != 0 {
+				t.Errorf("commitReadings(%q) = %d readings, %v; want %d", tt.command, got, ok, tt.readings)
 			}
 		})
 	}

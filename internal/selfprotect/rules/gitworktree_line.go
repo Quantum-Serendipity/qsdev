@@ -96,23 +96,21 @@ func (ctx *EvalContext) inertCommand(i int, sc scannedCommand) bool {
 // may do anything.
 func (l *rewriteLine) ranGit(sc scannedCommand, args []string, target gitArgs, rw worktreeRewrite, rewrites bool) {
 	commit := !rewrites && target.sub == "commit"
-	var opts gitOpts
-	marked := false
+	var readings []gitOpts
+	modelled := false
 	if commit {
-		var rest []string
-		rest, marked = markedArgs(sc, target.rest)
-		opts = parseGitOpts(rest, commitSpec)
+		readings, modelled = commitReadings(sc, target.rest)
 	}
 	switch {
 	case !rewrites && gitReadOnly(target):
-	case !directGit(sc, args, target) || sc.HasExpansion && (!commit || !marked || !expansionsAreValues(sc, opts)):
+	case !directGit(sc, args, target) || sc.HasExpansion && (!commit || !modelled):
 		l.changeAll()
 	case rewrites && rw.source == fromStash:
 		l.changeAll()
 	case rewrites && target.sub == "stash":
 		l.stashPushed = true
 	case commit:
-		l.ranCommit(opts)
+		l.ranCommit(readings...)
 	case !rewrites && (target.sub == "add" || target.sub == "stage"):
 		l.ranAdd(sc, parseGitOpts(target.rest, addSpec))
 	default:
@@ -135,23 +133,73 @@ func directGit(sc scannedCommand, args []string, target gitArgs) bool {
 		args[0] == target.sub && len(sc.Assigns) == 0 && !sc.AssignsDynamic && len(sc.WriteRedirects) == 0
 }
 
+// maxCommitReadings bounds the readings commitReadings follows before it
+// gives up on a commit as unmodelled.
+const maxCommitReadings = 16
+
+// commitReadings returns the parses of the arguments rest after the commit
+// subcommand of the direct git sc that the shell's expansions may produce,
+// and whether each one is modelled: every expanded word is an option's value
+// (expansionsAreValues). Without an expansion it is the one parse of rest.
+// Otherwise it starts from the arguments markedArgs marked, where each
+// expansion is non-empty; an expansion that is all of a short option's
+// attached value (`-m"$MSG"`, gitOpts.markOnlyArgs) may also be empty, and
+// the option then takes the next word as its value (`-m"$U" --dry-run`
+// commits with the message --dry-run), so each such word is also read
+// emptied, in every combination. Emptying a word changes only how the words
+// after it parse, so the combinations are walked in word order.
+func commitReadings(sc scannedCommand, rest []string) ([]gitOpts, bool) {
+	if !sc.HasExpansion {
+		return []gitOpts{parseGitOpts(rest, commitSpec)}, true
+	}
+	marked, ok := markedArgs(sc, rest)
+	if !ok {
+		return nil, false
+	}
+	var readings []gitOpts
+	var read func(words []string, emptied []int) bool
+	read = func(words []string, emptied []int) bool {
+		o := parseGitOpts(words, commitSpec)
+		readings = append(readings, o)
+		if len(readings) > maxCommitReadings || !expansionsAreValues(sc, o, emptied) {
+			return false
+		}
+		for _, j := range o.markOnlyArgs {
+			if len(emptied) > 0 && j <= emptied[len(emptied)-1] {
+				continue
+			}
+			next := slices.Clone(words)
+			next[j] = strings.TrimSuffix(next[j], expansionMark)
+			if !read(next, append(slices.Clone(emptied), j)) {
+				return false
+			}
+		}
+		return true
+	}
+	if !read(marked, nil) {
+		return nil, false
+	}
+	return readings, true
+}
+
 // expansionsAreValues reports whether every argument of the direct git sc
 // built from an expansion is the value of an option of its subcommand (o,
 // parsed from the arguments markedArgs marked) and stays one word (not
 // cmdscan.Command.SplitArgs): the separate value word (`git commit -am
 // "$MSG"`), or a value attached to its option in a word whose expansions all
 // follow the option (`--message="$MSG"`, `-m"$MSG"`; markedArgs cut each
-// word at its first expansion). Such a value cannot become an option or an
+// word at its first expansion). The words emptied (commitReadings) are the
+// short option alone (`-m`). Such a value cannot become an option or an
 // operand, so the command is what its literal words say; `git commit -am
 // $MSG` or `-m$MSG` may split into `--amend`. Options the shell may expand
 // into others (gitOpts.unmodelled) are never trusted.
-func expansionsAreValues(sc scannedCommand, o gitOpts) bool {
+func expansionsAreValues(sc scannedCommand, o gitOpts, emptied []int) bool {
 	if len(sc.SplitArgs) > 0 || len(sc.ExpandedArgIndexes) == 0 || o.unmodelled {
 		return false
 	}
 	return !slices.ContainsFunc(sc.ExpandedArgIndexes, func(i int) bool {
 		j := i - 1 // Args[0] is the subcommand
-		return !slices.Contains(o.valueArgs, j) && !slices.Contains(o.attachedArgs, j)
+		return !slices.Contains(o.valueArgs, j) && !slices.Contains(o.attachedArgs, j) && !slices.Contains(emptied, j)
 	})
 }
 
@@ -162,12 +210,13 @@ const expansionMark = "\x00"
 // markedArgs returns the arguments rest after the subcommand of the direct
 // git sc with each word built from an expansion cut to its literal text
 // before the expansion (cmdscan.Command.ExpandedArgPrefixes) and
-// expansionMark, so an expansion that may render as nothing still reads as a
-// value attached to its option (`-m"$MSG" -a` is `-m<mark> -a`, not -m with
-// the value -a), and reports whether it marked them. It returns rest and
-// false when the scan does not know the literal text of each expanded word,
-// or when one already holds expansionMark, which the marking could not tell
-// from its own.
+// expansionMark: the reading where every expansion is non-empty, so
+// `-m"$MSG" -a` is `-m<mark> -a`, -m with an attached value. An expansion
+// may also be empty, where `-m"$MSG" -a` is -m with the value -a; that
+// reading is commitReadings'. It reports whether it marked the words, and
+// returns rest and false when the scan does not know the literal text of
+// each expanded word, or when one already holds expansionMark, which the
+// marking could not tell from its own.
 func markedArgs(sc scannedCommand, rest []string) ([]string, bool) {
 	prefixes := sc.ExpandedArgPrefixes
 	if len(prefixes) != len(sc.ExpandedArgIndexes) || len(rest) != len(sc.Args)-1 ||
@@ -264,21 +313,24 @@ var (
 	}
 )
 
-// ranCommit records a git commit with options o. A dry run commits nothing.
-// --amend replaces HEAD with a commit on HEAD's parent, so a revision then
-// names a commit the model does not know, and --interactive edits the index
-// as a patch; both count as an unmodelled change, as do options the shell
-// may expand into others (gitOpts.unmodelled: `-{a,-amend}`). Any other
-// commit is recorded (committed).
-func (l *rewriteLine) ranCommit(o gitOpts) {
-	switch {
-	case o.unmodelled:
-		l.changed = true
-	case o.has("--dry-run"):
-	case o.has("--amend", "--interactive"):
-		l.changed = true
-	default:
-		l.committed = true
+// ranCommit records a git commit read as each of readings (commitReadings),
+// with the effects of every reading. A dry run commits nothing. --amend
+// replaces HEAD with a commit on HEAD's parent, so a revision then names a
+// commit the model does not know, and --interactive edits the index as a
+// patch; both count as an unmodelled change, as do options the shell may
+// expand into others (gitOpts.unmodelled: `-{a,-amend}`). Any other commit
+// is recorded (committed).
+func (l *rewriteLine) ranCommit(readings ...gitOpts) {
+	for _, o := range readings {
+		switch {
+		case o.unmodelled:
+			l.changed = true
+		case o.has("--dry-run"):
+		case o.has("--amend", "--interactive"):
+			l.changed = true
+		default:
+			l.committed = true
+		}
 	}
 }
 

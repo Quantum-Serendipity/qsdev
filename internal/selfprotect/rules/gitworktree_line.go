@@ -250,7 +250,8 @@ var (
 			"reuse-message": true, "reedit-message": true, "fixup": true, "squash": true, "file": true, "author": true,
 			"date": true, "message": true, "template": true, "trailer": true, "cleanup": true, "pathspec-from-file": true,
 		},
-		shortValue: "cCFmt",
+		shortValue:    "cCFmt",
+		shortOptional: "Su",
 	}
 	addSpec = gitOptSpec{
 		long: []string{

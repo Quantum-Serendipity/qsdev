@@ -110,6 +110,10 @@ type gitOptSpec struct {
 	long       []string        // known long options, without --
 	longValue  map[string]bool // long options taking the next word as value
 	shortValue string          // short options taking a value
+	// shortOptional are the short options taking an optional value, which
+	// can only be attached: the rest of the cluster (`-Skey`, `-uno`), never
+	// the next word (`-S -m x`).
+	shortOptional string
 }
 
 // gitOpts is a git subcommand's arguments split into options and operands.
@@ -158,7 +162,8 @@ func (o gitOpts) revisions() []string {
 // parseGitOpts splits args per spec. A long option is canonicalised to the
 // known option it unambiguously abbreviates, as git's option parser does
 // (`--har` is --hard); a short cluster (`-qf`, `-bname`) is split into its
-// options, the rest of the cluster after a value option being its value. An
+// options, the rest of the cluster after a value option (or an option with an
+// optional value, spec.shortOptional) being its value. An
 // option name with a character outside [A-Za-z0-9] (and -, in a long name)
 // sets unmodelled.
 func parseGitOpts(args []string, spec gitOptSpec) gitOpts {
@@ -187,6 +192,13 @@ func parseGitOpts(args []string, spec gitOptSpec) gitOpts {
 			for k := 1; k < len(a); k++ {
 				opt := "-" + a[k:k+1]
 				o.unmodelled = o.unmodelled || !optionChar(rune(a[k]))
+				if strings.IndexByte(spec.shortOptional, a[k]) >= 0 {
+					o.set[opt] = a[k+1:]
+					if k+1 < len(a) {
+						o.attachedArgs = append(o.attachedArgs, i)
+					}
+					break
+				}
 				if strings.IndexByte(spec.shortValue, a[k]) < 0 {
 					o.set[opt] = ""
 					continue

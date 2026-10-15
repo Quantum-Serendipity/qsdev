@@ -591,6 +591,12 @@ func TestWorktreeRewrite_PrecedingCommands(t *testing.T) {
 		{"commit with a braced option cluster then switch", "Bash", "git commit -m x -{a,-amend} && git switch main", tracked(), Deny, tracksOwnCall},
 		{"commit with a braced long option then switch", "Bash", "git commit -m x --{amend,all} && git switch main", tracked(), Deny, tracksOwnCall},
 		{"commit with a globbed option then switch", "Bash", "git commit -m x -[a]* && git switch main", tracked(), Deny, tracksOwnCall},
+		// -S and -u take an optional value, attached only.
+		{"commit with an attached signing key then switch", "Bash", "git commit -Suser@example.com -m x && git switch main", tracked(), Allow, ""},
+		{"commit with a bare -S then switch", "Bash", "git commit -S -m x && git switch main", tracked(), Allow, ""},
+		{"commit with an untracked-files mode then switch", "Bash", "git commit -uno -am x && git switch main", tracked(), Allow, ""},
+		{"commit with a quoted signing key then switch", "Bash", `git commit -S"$KEY" -am x && git switch main`, tracked(), Allow, ""},
+		{"amend after a bare -S then switch", "Bash", "git commit -S --amend -m x && git switch main", tracked(), Deny, tracksOwnCall},
 		{"add with a braced option then switch", "Bash", "git add -{A,f} && git switch main", tracked(), Deny, tracksOwnCall},
 		{"add with a variable then switch", "Bash", `git add "$F" && git switch main`, tracked(), Deny, tracksOwnCall},
 		// A branch created at HEAD keeps the commit a later rewrite reads,
@@ -690,7 +696,8 @@ func TestParseGitOpts_Unmodelled(t *testing.T) {
 	for args, want := range map[string]bool{
 		"-am x": false, "-m{x,y}": false, "--message={a,b}": false, "-C HEAD -1": false, "--no-verify": false,
 		"-{a,-amend}": true, "-a{m,-amend}": true, "--{amend,all}": true, "-[a]*": true, "--am*": true,
-		"-m x -" + expansionMark: true,
+		"-m x -" + expansionMark:  true,
+		"-Suser@example.com -m x": false, "-S -m x": false, "-uno": false, "-qS{a,b}": false,
 	} {
 		if got := parseGitOpts(strings.Fields(args), commitSpec).unmodelled; got != want {
 			t.Errorf("parseGitOpts(%q).unmodelled = %v, want %v", args, got, want)

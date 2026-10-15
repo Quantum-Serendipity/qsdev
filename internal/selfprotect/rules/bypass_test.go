@@ -117,6 +117,13 @@ func TestBash_ShellSpellingBypasses(t *testing.T) {
 		{name: "find in project by pattern", command: "find . -name settings.json -path '*claude*' -delete"},
 		{name: "ansi-c string after trigger", command: `grep x .claude/settings.json; rm ~/$'\x2e'claude/settings.json`},
 		{name: "ansi-c string alone", command: `rm ~/$'\x2e'claude/settings.json`},
+		// zsh ends the word at a NUL in an ANSI-C string (`.claude`), bash
+		// drops the rest of the string (`.claudex`): the word is opaque.
+		{name: "ansi-c hex NUL after the project dir", command: `rm -rf .claude$'\x00'x`},
+		{name: "ansi-c octal NUL after the project dir", command: `rm -rf .claude$'\0'x`},
+		{name: "ansi-c NUL inside the project dir", command: `rm -rf .cl$'\x00'aude`},
+		{name: "ansi-c NUL move of the project dir", command: `mv .claude$'\x00'x /tmp/gone`},
+		{name: "ansi-c NUL find of the project dir", command: `find . -name .claude$'\x00'x -delete`},
 		{name: "quoted tail of project dir", command: "rm -rf .cl'aude'"},
 		{name: "quote-split project settings", command: `rm -rf ./.cla""ude/settings.json`},
 		{name: "glob of project dir", command: "rm -rf .clau*"},

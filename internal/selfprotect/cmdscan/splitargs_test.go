@@ -70,6 +70,8 @@ func TestParse_ExpandedArgPrefixes(t *testing.T) {
 		{`git commit -m'lit'$'\t'"$X"`, []string{"-mlit\t"}},
 		{`git commit -m "$(date)" --author=$'\x2e'"${W}"`, []string{"", "--author=."}},
 		{`git commit -m 'literal $X'`, nil},
+		{`git commit -C HEAD -$'\x00m'"$X"`, []string{"-"}},
+		{`git commit .claude$'\x00'x`, []string{".claude"}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.command, func(t *testing.T) {

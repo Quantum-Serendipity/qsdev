@@ -1201,15 +1201,18 @@ var ansiCSimple = map[byte]string{
 // decodeANSIC decodes the body of a bash `$'...'` string. It reports ok=false
 // when it meets an escape it does not model (such as `\cX`), so the caller can
 // treat the word as opaque (fail closed) instead of trusting a wrong rendering.
-// Bash ends the string at its first NUL (`\0`, `\x00`, `\u0000`, or an octal
-// escape that wraps to 0 such as `\400`), so the rest of the string, which
-// the command never sees, is dropped: `-$'\x00m'"$X"` is `-` and "$X".
+// A NUL (raw, `\0`, `\x00`, `\u0000`, `\U00000000`, or an octal escape that
+// wraps to 0 such as `\400`) also reports ok=false, with the text before it:
+// shells disagree on what follows it. Bash drops the rest of the `$'...'`
+// string and goes on with the word (`.claude$'\x00'x` is `.claudex`), while
+// zsh keeps the NUL and the word handed to the command ends there
+// (`.claude`).
 func decodeANSIC(s string) (string, bool) {
 	var b strings.Builder
 	ok := true
 	for i := 0; i < len(s); i++ {
 		if s[i] == 0 {
-			break
+			return b.String(), false
 		}
 		if s[i] != '\\' || i+1 >= len(s) {
 			b.WriteByte(s[i])
@@ -1225,7 +1228,7 @@ func decodeANSIC(s string) (string, bool) {
 		case c >= '0' && c <= '7':
 			n, width := parseDigits(s[i:], 8, 3)
 			if byte(n) == 0 {
-				return b.String(), ok
+				return b.String(), false
 			}
 			b.WriteByte(byte(n))
 			i += width - 1
@@ -1238,7 +1241,7 @@ func decodeANSIC(s string) (string, bool) {
 				continue
 			}
 			if n == 0 {
-				return b.String(), ok
+				return b.String(), false
 			}
 			if c == 'x' {
 				b.WriteByte(byte(n))

@@ -50,3 +50,44 @@ func TestParse_ExpandedAndSplitArgs(t *testing.T) {
 		})
 	}
 }
+
+// TestParse_ExpandedArgPrefixes pins the literal text before the first
+// expansion of each expanded argument word (ExpandedArgPrefixes), which
+// tells a value attached to its option (`-m"$MSG"`) from an expanded option.
+func TestParse_ExpandedArgPrefixes(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		command  string
+		prefixes []string
+	}{
+		{`git commit -am "$MSG"`, []string{""}},
+		{`git commit -m"$MSG" -a`, []string{"-m"}},
+		{`git commit --message="$MSG" -a`, []string{"--message="}},
+		{`git commit "--message=$MSG"`, []string{"--message="}},
+		{`git commit -m$MSG`, []string{"-m"}},
+		{`git commit -m"a\"b$X"c`, []string{`-ma"b`}},
+		{`git commit --mess"$X"=y`, []string{"--mess"}},
+		{`git commit -m'lit'$'\t'"$X"`, []string{"-mlit\t"}},
+		{`git commit -m "$(date)" --author=$'\x2e'"${W}"`, []string{"", "--author=."}},
+		{`git commit -m 'literal $X'`, nil},
+		{`git commit -C HEAD -$'\x00m'"$X"`, []string{"-"}},
+		{`git commit .claude$'\x00'x`, []string{".claude"}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.command, func(t *testing.T) {
+			t.Parallel()
+			cmds, err := Parse(tt.command)
+			if err != nil || len(cmds) == 0 {
+				t.Fatalf("Parse(%q) = %+v, %v", tt.command, cmds, err)
+			}
+			i := slices.IndexFunc(cmds, func(c Command) bool { return c.Name == "git" })
+			if i < 0 {
+				t.Fatalf("Parse(%q) = %+v, want a git command", tt.command, cmds)
+			}
+			c := cmds[i]
+			if !slices.Equal(c.ExpandedArgPrefixes, tt.prefixes) {
+				t.Errorf("Parse(%q).ExpandedArgPrefixes = %q, want %q", tt.command, c.ExpandedArgPrefixes, tt.prefixes)
+			}
+		})
+	}
+}

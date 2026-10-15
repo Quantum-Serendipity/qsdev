@@ -30,6 +30,15 @@ func TestParse_QuoteAndEscapeRemoval(t *testing.T) {
 		{"ansi-c unicode escape", `rm $'.claude'`, ".claude", false},
 		{"ansi-c simple escapes", `rm $'a\tb\\c'`, "a\tb\\c", false},
 		{"ansi-c unmodelled escape is opaque", `rm $'\cA.claude'`, `\cA.claude`, true},
+		// Shells disagree after a NUL in an ANSI-C string (bash drops the
+		// rest of the string, zsh ends the word there): the word is opaque.
+		{"ansi-c hex NUL is opaque", `rm -$'\x00m'x`, "-x", true},
+		{"ansi-c octal NUL is opaque", `rm a$'b\0c'd`, "abd", true},
+		{"ansi-c wrapped octal NUL is opaque", `rm a$'b\400c'd`, "abd", true},
+		{"ansi-c unicode NUL is opaque", `rm a$'b\u0000c'd`, "abd", true},
+		{"ansi-c long unicode NUL is opaque", `rm a$'b\U00000000c'd`, "abd", true},
+		{"ansi-c NUL after a protected name is opaque", `rm .claude$'\x00'x`, ".claudex", true},
+		{"ansi-c octal 1 is kept", `rm a$'\401'd`, "a\x01d", false},
 		{"glob characters are kept", `rm .c*e/settings.json`, ".c*e/settings.json", false},
 		{"braces are kept", `rm .{claude,x}`, ".{claude,x}", false},
 	}

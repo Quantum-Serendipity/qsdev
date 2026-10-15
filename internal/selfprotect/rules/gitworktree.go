@@ -110,6 +110,10 @@ type gitOptSpec struct {
 	long       []string        // known long options, without --
 	longValue  map[string]bool // long options taking the next word as value
 	shortValue string          // short options taking a value
+	// shortOptional are the short options taking an optional value, which
+	// can only be attached: the rest of the cluster (`-Skey`, `-uno`), never
+	// the next word (`-S -m x`).
+	shortOptional string
 }
 
 // gitOpts is a git subcommand's arguments split into options and operands.
@@ -121,6 +125,17 @@ type gitOpts struct {
 	// valueArgs are the indexes in the parsed args of the words read as an
 	// option's value (`-m <msg>`), not as an option or an operand.
 	valueArgs []int
+	// attachedArgs are the indexes in the parsed args of the words holding a
+	// value option and its value (`-m<msg>`, `--message=<msg>`).
+	attachedArgs []int
+	// markOnlyArgs are the attachedArgs of a short value option whose value
+	// is expansionMark alone (`-m<mark>`, from `-m"$MSG"`): the expansion may
+	// be empty, and the option then takes the next word as its value.
+	markOnlyArgs []int
+	// unmodelled reports an option word whose option names hold a character
+	// git's options never do (`-{a,-amend}`, `--{amend,x}`): the shell may
+	// expand it, as a brace or glob pattern, into other options.
+	unmodelled bool
 }
 
 func (o gitOpts) has(names ...string) bool {
@@ -151,7 +166,10 @@ func (o gitOpts) revisions() []string {
 // parseGitOpts splits args per spec. A long option is canonicalised to the
 // known option it unambiguously abbreviates, as git's option parser does
 // (`--har` is --hard); a short cluster (`-qf`, `-bname`) is split into its
-// options, the rest of the cluster after a value option being its value.
+// options, the rest of the cluster after a value option (or an option with an
+// optional value, spec.shortOptional) being its value. An
+// option name with a character outside [A-Za-z0-9] (and -, in a long name)
+// sets unmodelled.
 func parseGitOpts(args []string, spec gitOptSpec) gitOpts {
 	o := gitOpts{set: map[string]string{}}
 	for i := 0; i < len(args); i++ {
@@ -162,9 +180,13 @@ func parseGitOpts(args []string, spec gitOptSpec) gitOpts {
 			o.paths = args[i+1:]
 			return o
 		case strings.HasPrefix(a, "--"):
-			name, val, hasVal := strings.Cut(a[2:], "=")
-			name = abbreviatedOption(name, spec.long)
-			if !hasVal && spec.longValue[name] && i+1 < len(args) {
+			raw, val, hasVal := strings.Cut(a[2:], "=")
+			o.unmodelled = o.unmodelled || strings.ContainsFunc(raw, func(r rune) bool { return r != '-' && !optionChar(r) })
+			name := abbreviatedOption(raw, spec.long)
+			switch {
+			case hasVal && spec.longValue[name]:
+				o.attachedArgs = append(o.attachedArgs, i)
+			case !hasVal && spec.longValue[name] && i+1 < len(args):
 				i++
 				val = args[i]
 				o.valueArgs = append(o.valueArgs, i)
@@ -173,12 +195,26 @@ func parseGitOpts(args []string, spec gitOptSpec) gitOpts {
 		case len(a) > 1 && a[0] == '-':
 			for k := 1; k < len(a); k++ {
 				opt := "-" + a[k:k+1]
+				o.unmodelled = o.unmodelled || !optionChar(rune(a[k]))
+				if strings.IndexByte(spec.shortOptional, a[k]) >= 0 {
+					o.set[opt] = a[k+1:]
+					if k+1 < len(a) {
+						o.attachedArgs = append(o.attachedArgs, i)
+					}
+					break
+				}
 				if strings.IndexByte(spec.shortValue, a[k]) < 0 {
 					o.set[opt] = ""
 					continue
 				}
 				val := a[k+1:]
-				if val == "" && i+1 < len(args) {
+				switch {
+				case val != "":
+					o.attachedArgs = append(o.attachedArgs, i)
+					if val == expansionMark {
+						o.markOnlyArgs = append(o.markOnlyArgs, i)
+					}
+				case i+1 < len(args):
 					i++
 					val = args[i]
 					o.valueArgs = append(o.valueArgs, i)
@@ -191,6 +227,12 @@ func parseGitOpts(args []string, spec gitOptSpec) gitOpts {
 		}
 	}
 	return o
+}
+
+// optionChar reports whether r may appear in a git option name: an ASCII
+// letter or digit.
+func optionChar(r rune) bool {
+	return r >= 'a' && r <= 'z' || r >= 'A' && r <= 'Z' || r >= '0' && r <= '9'
 }
 
 // abbreviatedOption returns the known long option name abbreviates

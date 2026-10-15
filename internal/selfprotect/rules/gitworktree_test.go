@@ -472,6 +472,12 @@ func TestWorktreeRewrite_PrecedingCommands(t *testing.T) {
 		git.answers["tracked ."] = git.tracked
 		return git
 	}
+	// protectedChmod is tracked where a pathspec names the protected file.
+	protectedChmod := func() *fakeGit {
+		git := tracked()
+		git.answers["tracked .claude/settings.json"] = ".claude/settings.json\x00"
+		return git
+	}
 	// untracked also holds an untracked protected file a git add may track.
 	untracked := func() *fakeGit {
 		git := tracked()
@@ -554,7 +560,56 @@ func TestWorktreeRewrite_PrecedingCommands(t *testing.T) {
 		{"commit with a substituted message then switch", "Bash", `git commit -m "wip $(date)" && git switch main`, tracked(), Deny, tracksOwnCall},
 		{"commit with an unquoted message variable then switch", "Bash", "git commit -am $MSG && git switch main", tracked(), Deny, tracksOwnCall},
 		{"commit with a variable option then switch", "Bash", `git commit "$OPT" -m x && git switch main`, tracked(), Deny, tracksOwnCall},
-		{"commit with a variable message option then switch", "Bash", `git commit -m"$MSG" && git switch main`, tracked(), Deny, tracksOwnCall},
+		// A double-quoted value attached to its option stays one word and
+		// cannot become an option or an operand either.
+		{"commit with an attached quoted message then switch", "Bash", `git commit -m"$MSG" && git switch main`, tracked(), Allow, ""},
+		{"commit with an attached quoted message and -a then switch", "Bash", `git commit -m"$MSG" -a && git switch main`, tracked(), Allow, ""},
+		{"commit with a quoted long message then switch", "Bash", `git commit --message="$MSG" -a && git switch main`, tracked(), Allow, ""},
+		{"commit with an abbreviated quoted long message then switch", "Bash", `git commit --mess="$MSG" -a && git switch main`, tracked(), Allow, ""},
+		{"commit with a quoted message cluster then switch", "Bash", `git commit -am"$MSG" && git switch main`, tracked(), Allow, ""},
+		{"commit with a wholly quoted message option then switch", "Bash", `git commit "-m$MSG" -a && git switch main`, tracked(), Allow, ""},
+		{"commit with a quoted author then switch", "Bash", `git commit --author="$WHO" -am x && git switch main`, tracked(), Allow, ""},
+		// An unquoted attached value may split into an option or an operand.
+		{"commit with an unquoted attached message then switch", "Bash", "git commit -m$MSG -a && git switch main", tracked(), Deny, tracksOwnCall},
+		{"commit with an unquoted long message then switch", "Bash", "git commit --message=$MSG -a && git switch main", tracked(), Deny, tracksOwnCall},
+		// The expansion is not in an option's value.
+		{"commit with a quoted expansion after a flag then switch", "Bash", `git commit -a"$X" -m x && git switch main`, tracked(), Deny, tracksOwnCall},
+		{"commit with an expanded long option name then switch", "Bash", `git commit --mess"$X"=y -a && git switch main`, tracked(), Deny, tracksOwnCall},
+		{"commit with an expanded value-less long option then switch", "Bash", `git commit --amend="$X" -m x && git switch main`, tracked(), Deny, tracksOwnCall},
+		{"commit with an expanded short option then switch", "Bash", `git commit -"$O" -m x && git switch main`, tracked(), Deny, tracksOwnCall},
+		// The attached value does not swallow the next word: --amend is seen.
+		{"amend after an attached quoted message then switch", "Bash", `git commit -m"$MSG" --amend && git switch main`, tracked(), Deny, tracksOwnCall},
+		{"amend after a quoted long message then switch", "Bash", `git commit --message="$MSG" --amend && git switch main`, tracked(), Deny, tracksOwnCall},
+		// Bash ends an ANSI-C string at a NUL: `-$'\x00m'"$X"` is `-` and
+		// the value of X, which may be `-amend`.
+		{"commit with a hex NUL before an expanded option then switch", "Bash", `git commit -C HEAD -$'\x00m'"$X" && git switch main`, tracked(), Deny, tracksOwnCall},
+		{"commit with an octal NUL before an expanded option then switch", "Bash", `git commit -C HEAD -$'\0m'"$X" && git switch main`, tracked(), Deny, tracksOwnCall},
+		{"commit with a message and a NUL before an expanded option then switch", "Bash", `git commit -m x -$'\x00m'"$X" && git switch main`, tracked(), Deny, tracksOwnCall},
+		// Brace and glob patterns in an option word may expand into other
+		// options (`-{a,-amend}` is `-a --amend`).
+		{"commit with a braced expanded option then switch", "Bash", `git commit -{m"$X",-amend} && git switch main`, tracked(), Deny, tracksOwnCall},
+		{"commit with a braced option cluster then switch", "Bash", "git commit -m x -{a,-amend} && git switch main", tracked(), Deny, tracksOwnCall},
+		{"commit with a braced long option then switch", "Bash", "git commit -m x --{amend,all} && git switch main", tracked(), Deny, tracksOwnCall},
+		{"commit with a globbed option then switch", "Bash", "git commit -m x -[a]* && git switch main", tracked(), Deny, tracksOwnCall},
+		// An attached value that is all expansion may be empty: the option
+		// then takes the next word, and `-m"$U" --dry-run` commits.
+		{"dry run after an attached message then reset", "Bash", `git commit -m"$U" --dry-run && git reset --hard HEAD~1`, tracked(), Deny, tracksOwnCall},
+		{"dry run after an attached message then checkout", "Bash", `git commit -m"$U" --dry-run && git checkout HEAD~1 -- .`, tracked(), Deny, tracksOwnCall},
+		{"dry run after a NUL message then reset", "Bash", `git commit -m$'\x00'"$X" --dry-run && git reset --hard HEAD~1`, tracked(), Deny, tracksOwnCall},
+		{"dry run after an attached message cluster then reset", "Bash", `git commit -am"$U" --dry-run && git reset --hard HEAD~1`, tracked(), Deny, tracksOwnCall},
+		{"dry run after an attached message file then reset", "Bash", `git commit -F"$F" --dry-run && git reset --hard HEAD~1`, tracked(), Deny, tracksOwnCall},
+		{"dry run after two empty messages then reset", "Bash", `git commit -m"$U" -m -m"$V" --dry-run && git reset --hard HEAD~1`, tracked(), Deny, tracksOwnCall},
+		{"amend after an empty message then switch", "Bash", `git commit -m"$U" -m --amend && git switch main`, tracked(), Deny, tracksOwnCall},
+		{"dry run after a literal attached message then reset", "Bash", `git commit -mx"$U" --dry-run && git reset --hard HEAD~1`, tracked(), Allow, ""},
+		{"dry run after a separate message then reset", "Bash", `git commit -m "$U" --dry-run && git reset --hard HEAD~1`, tracked(), Allow, ""},
+		{"dry run after an attached message then switch", "Bash", `git commit -m"$U" --dry-run && git switch main`, tracked(), Allow, ""},
+		// -S and -u take an optional value, attached only.
+		{"commit with an attached signing key then switch", "Bash", "git commit -Suser@example.com -m x && git switch main", tracked(), Allow, ""},
+		{"commit with a bare -S then switch", "Bash", "git commit -S -m x && git switch main", tracked(), Allow, ""},
+		{"commit with an untracked-files mode then switch", "Bash", "git commit -uno -am x && git switch main", tracked(), Allow, ""},
+		{"commit with a quoted signing key then switch", "Bash", `git commit -S"$KEY" -am x && git switch main`, tracked(), Allow, ""},
+		{"amend after a bare -S then switch", "Bash", "git commit -S --amend -m x && git switch main", tracked(), Deny, tracksOwnCall},
+		{"add with a braced option then switch", "Bash", "git add -{A,f} && git switch main", tracked(), Deny, tracksOwnCall},
 		{"add with a variable then switch", "Bash", `git add "$F" && git switch main`, tracked(), Deny, tracksOwnCall},
 		// A branch created at HEAD keeps the commit a later rewrite reads,
 		// unless the rewrite names the branch or the previous one.
@@ -569,7 +624,20 @@ func TestWorktreeRewrite_PrecedingCommands(t *testing.T) {
 		{"chmod of a source file then switch", "Bash", "git add --chmod=+x src/x.go && git switch main", tracked(), Allow, ""},
 		{"chmod of a directory holding a protected file then checkout", "Bash", "git add --chmod=-x . && git checkout -- .", wholeTree(), Deny,
 			"git checkout would overwrite protected .claude/settings.json"},
-		{"chmod of everything then switch", "Bash", "git add -A --chmod=+x && git switch main", tracked(), Deny,
+		// Git applies --chmod to an explicit pathspec only: without one, -A
+		// and -u stage the working tree's modes.
+		{"chmod with -A and no pathspec then switch", "Bash", "git add -A --chmod=+x && git switch main", tracked(), Allow, ""},
+		{"chmod with -u and no pathspec then switch", "Bash", "git add --chmod=+x -u && git switch main", tracked(), Allow, ""},
+		{"chmod with --all and no pathspec then switch", "Bash", "git add --all --chmod=-x && git switch main", tracked(), Allow, ""},
+		{"chmod with no pathspec then switch", "Bash", "git add --chmod=+x && git switch main", tracked(), Allow, ""},
+		{"chmod of everything with -A then switch", "Bash", "git add -A --chmod=+x . && git switch main", wholeTree(), Deny,
+			"git switch would overwrite protected .claude/settings.json"},
+		// Naming a protected path to git add is itself a protected change.
+		{"chmod of a protected file then switch", "Bash", "git add --chmod=-x .claude/settings.json && git switch main", protectedChmod(), Deny,
+			"modifies or exfiltrates a protected config path"},
+		{"chmod of a protected file after -u then switch", "Bash", "git add -u --chmod=+x -- .claude/settings.json && git switch main", protectedChmod(), Deny,
+			"modifies or exfiltrates a protected config path"},
+		{"chmod of the tree then switch", "Bash", "git add --chmod=+x . && git switch main", wholeTree(), Deny,
 			"git switch would overwrite protected .claude/settings.json"},
 		{"chmod from a pathspec file then switch", "Bash", "git add --chmod=+x --pathspec-from-file=list && git switch main", tracked(), Deny, tracksOwnCall},
 		// PowerShell commands that only read or print.
@@ -596,6 +664,91 @@ func TestWorktreeRewrite_PrecedingCommands(t *testing.T) {
 				t.Errorf("%q: SP-007 reason = %q, want it to contain %q", tt.command, reason, tt.reason)
 			}
 		})
+	}
+}
+
+// TestMarkedArgs pins that markedArgs marks each expanded word at its first
+// expansion, and fails closed when the scan has no literal text for one, or
+// when that text already holds expansionMark.
+func TestMarkedArgs(t *testing.T) {
+	t.Parallel()
+	cmd := func(prefixes ...string) scannedCommand {
+		var sc scannedCommand
+		sc.Args = []string{"commit", "-m", "-a"}
+		sc.ExpandedArgIndexes = []int{1}
+		sc.ExpandedArgPrefixes = prefixes
+		return sc
+	}
+	tests := []struct {
+		name   string
+		sc     scannedCommand
+		want   []string
+		marked bool
+	}{
+		{"attached value", cmd("-m"), []string{"-m" + expansionMark, "-a"}, true},
+		{"no literal text", cmd(), []string{"-m", "-a"}, false},
+		{"literal text holding the mark", cmd("-" + expansionMark + "m"), []string{"-m", "-a"}, false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			got, marked := markedArgs(tt.sc, tt.sc.Args[1:])
+			if !slices.Equal(got, tt.want) || marked != tt.marked {
+				t.Errorf("markedArgs = %q, %v; want %q, %v", got, marked, tt.want, tt.marked)
+			}
+		})
+	}
+}
+
+// TestCommitReadings pins the readings of a commit whose attached short
+// values may be empty: each such word is also read as the option alone, in
+// word order, and too many readings leave the commit unmodelled.
+func TestCommitReadings(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		command  string
+		readings int // 0: unmodelled
+	}{
+		{`git commit -am "$MSG"`, 1},
+		{`git commit --message="$MSG" --dry-run`, 1},
+		{`git commit -m"$U" --dry-run`, 2},
+		{`git commit -m"$U" -m -m"$V" --dry-run`, 3},
+		// An emptied -m"$A" takes -m"$B" as its value.
+		{`git commit -m"$A" -m"$B" -a`, 3},
+		{`git commit -m"$A" -a -m"$B" -a`, 4},
+		{`git commit -m"$U" "$X"`, 0},
+		{`git commit -m"$A" -a -m"$B" -a -m"$C" -a -m"$D" -a -m"$E" -a`, 0},
+	}
+	for _, tt := range tests {
+		t.Run(tt.command, func(t *testing.T) {
+			t.Parallel()
+			cmds, err := cmdscan.Parse(tt.command)
+			if err != nil || len(cmds) != 1 {
+				t.Fatalf("Parse(%q) = %+v, %v", tt.command, cmds, err)
+			}
+			sc := scannedCommand{Command: cmds[0]}
+			readings, ok := commitReadings(sc, sc.Args[1:])
+			if got := len(readings); !ok && got != 0 || ok && got != tt.readings || !ok && tt.readings != 0 {
+				t.Errorf("commitReadings(%q) = %d readings, %v; want %d", tt.command, got, ok, tt.readings)
+			}
+		})
+	}
+}
+
+// TestParseGitOpts_Unmodelled pins the option words whose names hold a
+// character git's options never do, which the shell may expand into other
+// options.
+func TestParseGitOpts_Unmodelled(t *testing.T) {
+	t.Parallel()
+	for args, want := range map[string]bool{
+		"-am x": false, "-m{x,y}": false, "--message={a,b}": false, "-C HEAD -1": false, "--no-verify": false,
+		"-{a,-amend}": true, "-a{m,-amend}": true, "--{amend,all}": true, "-[a]*": true, "--am*": true,
+		"-m x -" + expansionMark:  true,
+		"-Suser@example.com -m x": false, "-S -m x": false, "-uno": false, "-qS{a,b}": false,
+	} {
+		if got := parseGitOpts(strings.Fields(args), commitSpec).unmodelled; got != want {
+			t.Errorf("parseGitOpts(%q).unmodelled = %v, want %v", args, got, want)
+		}
 	}
 }
 

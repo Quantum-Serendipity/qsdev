@@ -96,20 +96,21 @@ func (ctx *EvalContext) inertCommand(i int, sc scannedCommand) bool {
 // may do anything.
 func (l *rewriteLine) ranGit(sc scannedCommand, args []string, target gitArgs, rw worktreeRewrite, rewrites bool) {
 	commit := !rewrites && target.sub == "commit"
-	var opts gitOpts
+	var readings []gitOpts
+	modelled := false
 	if commit {
-		opts = parseGitOpts(target.rest, commitSpec)
+		readings, modelled = commitReadings(sc, target.rest)
 	}
 	switch {
 	case !rewrites && gitReadOnly(target):
-	case !directGit(sc, args, target) || sc.HasExpansion && (!commit || !expansionsAreValues(sc, opts)):
+	case !directGit(sc, args, target) || sc.HasExpansion && (!commit || !modelled):
 		l.changeAll()
 	case rewrites && rw.source == fromStash:
 		l.changeAll()
 	case rewrites && target.sub == "stash":
 		l.stashPushed = true
 	case commit:
-		l.ranCommit(opts)
+		l.ranCommit(readings...)
 	case !rewrites && (target.sub == "add" || target.sub == "stage"):
 		l.ranAdd(sc, parseGitOpts(target.rest, addSpec))
 	default:
@@ -132,19 +133,103 @@ func directGit(sc scannedCommand, args []string, target gitArgs) bool {
 		args[0] == target.sub && len(sc.Assigns) == 0 && !sc.AssignsDynamic && len(sc.WriteRedirects) == 0
 }
 
+// maxCommitReadings bounds the readings commitReadings follows before it
+// gives up on a commit as unmodelled.
+const maxCommitReadings = 16
+
+// commitReadings returns the parses of the arguments rest after the commit
+// subcommand of the direct git sc that the shell's expansions may produce,
+// and whether each one is modelled: every expanded word is an option's value
+// (expansionsAreValues). Without an expansion it is the one parse of rest.
+// Otherwise it starts from the arguments markedArgs marked, where each
+// expansion is non-empty; an expansion that is all of a short option's
+// attached value (`-m"$MSG"`, gitOpts.markOnlyArgs) may also be empty, and
+// the option then takes the next word as its value (`-m"$U" --dry-run`
+// commits with the message --dry-run), so each such word is also read
+// emptied, in every combination. Emptying a word changes only how the words
+// after it parse, so the combinations are walked in word order.
+func commitReadings(sc scannedCommand, rest []string) ([]gitOpts, bool) {
+	if !sc.HasExpansion {
+		return []gitOpts{parseGitOpts(rest, commitSpec)}, true
+	}
+	marked, ok := markedArgs(sc, rest)
+	if !ok {
+		return nil, false
+	}
+	var readings []gitOpts
+	var read func(words []string, emptied []int) bool
+	read = func(words []string, emptied []int) bool {
+		o := parseGitOpts(words, commitSpec)
+		readings = append(readings, o)
+		if len(readings) > maxCommitReadings || !expansionsAreValues(sc, o, emptied) {
+			return false
+		}
+		for _, j := range o.markOnlyArgs {
+			if len(emptied) > 0 && j <= emptied[len(emptied)-1] {
+				continue
+			}
+			next := slices.Clone(words)
+			next[j] = strings.TrimSuffix(next[j], expansionMark)
+			if !read(next, append(slices.Clone(emptied), j)) {
+				return false
+			}
+		}
+		return true
+	}
+	if !read(marked, nil) {
+		return nil, false
+	}
+	return readings, true
+}
+
 // expansionsAreValues reports whether every argument of the direct git sc
-// built from an expansion is the separate value word of an option of its
-// subcommand (o, parsed from the arguments after the subcommand) and stays
-// one word (not cmdscan.Command.SplitArgs): `git commit -am "$MSG"`. Such a
-// value cannot become an option or an operand, so the command is what its
-// literal words say; `git commit -am $MSG` may split into `--amend`.
-func expansionsAreValues(sc scannedCommand, o gitOpts) bool {
-	if len(sc.SplitArgs) > 0 || len(sc.ExpandedArgIndexes) == 0 {
+// built from an expansion is the value of an option of its subcommand (o,
+// parsed from the arguments markedArgs marked) and stays one word (not
+// cmdscan.Command.SplitArgs): the separate value word (`git commit -am
+// "$MSG"`), or a value attached to its option in a word whose expansions all
+// follow the option (`--message="$MSG"`, `-m"$MSG"`; markedArgs cut each
+// word at its first expansion). The words emptied (commitReadings) are the
+// short option alone (`-m`). Such a value cannot become an option or an
+// operand, so the command is what its literal words say; `git commit -am
+// $MSG` or `-m$MSG` may split into `--amend`. Options the shell may expand
+// into others (gitOpts.unmodelled) are never trusted.
+func expansionsAreValues(sc scannedCommand, o gitOpts, emptied []int) bool {
+	if len(sc.SplitArgs) > 0 || len(sc.ExpandedArgIndexes) == 0 || o.unmodelled {
 		return false
 	}
 	return !slices.ContainsFunc(sc.ExpandedArgIndexes, func(i int) bool {
-		return !slices.Contains(o.valueArgs, i-1) // Args[0] is the subcommand
+		j := i - 1 // Args[0] is the subcommand
+		return !slices.Contains(o.valueArgs, j) && !slices.Contains(o.attachedArgs, j) && !slices.Contains(emptied, j)
 	})
+}
+
+// expansionMark stands in markedArgs for the value of an expansion: a NUL,
+// which no shell word holds.
+const expansionMark = "\x00"
+
+// markedArgs returns the arguments rest after the subcommand of the direct
+// git sc with each word built from an expansion cut to its literal text
+// before the expansion (cmdscan.Command.ExpandedArgPrefixes) and
+// expansionMark: the reading where every expansion is non-empty, so
+// `-m"$MSG" -a` is `-m<mark> -a`, -m with an attached value. An expansion
+// may also be empty, where `-m"$MSG" -a` is -m with the value -a; that
+// reading is commitReadings'. It reports whether it marked the words, and
+// returns rest and false when the scan does not know the literal text of
+// each expanded word, or when one already holds expansionMark, which the
+// marking could not tell from its own.
+func markedArgs(sc scannedCommand, rest []string) ([]string, bool) {
+	prefixes := sc.ExpandedArgPrefixes
+	if len(prefixes) != len(sc.ExpandedArgIndexes) || len(rest) != len(sc.Args)-1 ||
+		slices.ContainsFunc(prefixes, func(p string) bool { return strings.Contains(p, expansionMark) }) {
+		return rest, false
+	}
+	marked := slices.Clone(rest)
+	for k, i := range sc.ExpandedArgIndexes {
+		if i >= 1 {
+			marked[i-1] = prefixes[k] + expansionMark
+		}
+	}
+	return marked, true
 }
 
 // branchedHere returns the branch the git command target creates at HEAD
@@ -214,7 +299,8 @@ var (
 			"reuse-message": true, "reedit-message": true, "fixup": true, "squash": true, "file": true, "author": true,
 			"date": true, "message": true, "template": true, "trailer": true, "cleanup": true, "pathspec-from-file": true,
 		},
-		shortValue: "cCFmt",
+		shortValue:    "cCFmt",
+		shortOptional: "Su",
 	}
 	addSpec = gitOptSpec{
 		long: []string{
@@ -227,41 +313,51 @@ var (
 	}
 )
 
-// ranCommit records a git commit with options o. A dry run commits nothing.
-// --amend replaces HEAD with a commit on HEAD's parent, so a revision then
-// names a commit the model does not know, and --interactive edits the index
-// as a patch; both count as an unmodelled change. Any other commit is
-// recorded (committed).
-func (l *rewriteLine) ranCommit(o gitOpts) {
-	switch {
-	case o.has("--dry-run"):
-	case o.has("--amend", "--interactive"):
-		l.changed = true
-	default:
-		l.committed = true
+// ranCommit records a git commit read as each of readings (commitReadings),
+// with the effects of every reading. A dry run commits nothing. --amend
+// replaces HEAD with a commit on HEAD's parent, so a revision then names a
+// commit the model does not know, and --interactive edits the index as a
+// patch; both count as an unmodelled change, as do options the shell may
+// expand into others (gitOpts.unmodelled: `-{a,-amend}`). Any other commit
+// is recorded (committed).
+func (l *rewriteLine) ranCommit(readings ...gitOpts) {
+	for _, o := range readings {
+		switch {
+		case o.unmodelled:
+			l.changed = true
+		case o.has("--dry-run"):
+		case o.has("--amend", "--interactive"):
+			l.changed = true
+		default:
+			l.committed = true
+		}
 	}
 }
 
 // chmodAdd is a git add --chmod: it stages the mode it names for the tracked
-// paths that pathspec, relative to dir, matches, or for every tracked path
-// with all.
+// paths that pathspec, relative to dir, matches.
 type chmodAdd struct {
 	dir      string
 	pathspec []string
-	all      bool
 }
 
 // ranAdd records a git add sc with options o. A dry run stages nothing.
 // --edit and --interactive stage an edited patch and --renormalize a
 // converted content the working tree does not hold, so they count as an
-// unmodelled change. Any other add copies working-tree content into the
+// unmodelled change, as do options the shell may expand into others
+// (gitOpts.unmodelled). Any other add copies working-tree content into the
 // index (added), of ignored files too with --force (addedIgnored), and
-// --chmod also stages a mode the working tree may not have for the paths it
-// names (chmods), which a later rewrite may then write; it counts as an
-// unmodelled change when those paths are not known (--pathspec-from-file, an
-// unknown directory).
+// --chmod also stages a mode the working tree may not have for the paths its
+// pathspec names (chmods), which a later rewrite may then write; it counts
+// as an unmodelled change when those paths are not known
+// (--pathspec-from-file, an unknown directory). Git applies --chmod to an
+// explicit pathspec only: `git add -A --chmod=+x` and `git add -u
+// --chmod=+x` stage the working tree's modes, as without --chmod.
 func (l *rewriteLine) ranAdd(sc scannedCommand, o gitOpts) {
 	switch {
+	case o.unmodelled:
+		l.changed = true
+		return
 	case o.has("-n", "--dry-run"):
 		return
 	case o.has("-e", "--edit", "-i", "--interactive", "--renormalize"):
@@ -273,13 +369,16 @@ func (l *rewriteLine) ranAdd(sc scannedCommand, o gitOpts) {
 	if !o.has("--chmod") {
 		return
 	}
+	pathspec := append(slices.Clone(o.operands), o.paths...)
+	if len(pathspec) == 0 && !o.has("--pathspec-from-file") {
+		return
+	}
 	dir, ok := rewriteDir(sc, nil)
 	if !ok || o.has("--pathspec-from-file") {
 		l.changed = true
 		return
 	}
-	pathspec := append(slices.Clone(o.operands), o.paths...)
-	l.chmods = append(l.chmods, chmodAdd{dir: dir, pathspec: pathspec, all: len(pathspec) == 0})
+	l.chmods = append(l.chmods, chmodAdd{dir: dir, pathspec: pathspec})
 }
 
 // stashKeepingGit are the git subcommands that never change the stash list:
@@ -360,7 +459,7 @@ func (ctx *EvalContext) precededBy(client gitrepo.Client, top, dir string, rw wo
 		if err != nil || ctx.firstRemovedProtected(top, untracked) != "" {
 			return true, nil, nil
 		}
-		also, err = ctx.chmodded(client, top, line.chmods)
+		also, err = ctx.chmodded(client, line.chmods)
 		if errors.Is(err, gitrepo.ErrTimeout) {
 			return false, nil, err
 		}
@@ -378,16 +477,12 @@ func (ctx *EvalContext) precededBy(client gitrepo.Client, top, dir string, rw wo
 	return err != nil, append(also, committed...), nil
 }
 
-// chmodded returns the tracked paths, relative to the toplevel top, whose
-// mode the git add --chmod commands chmods stage.
-func (ctx *EvalContext) chmodded(client gitrepo.Client, top string, chmods []chmodAdd) ([]string, error) {
+// chmodded returns the tracked paths, relative to the toplevel, whose mode
+// the git add --chmod commands chmods stage.
+func (ctx *EvalContext) chmodded(client gitrepo.Client, chmods []chmodAdd) ([]string, error) {
 	var paths []string
 	for _, c := range chmods {
-		dir, pathspec := c.dir, c.pathspec
-		if c.all {
-			dir, pathspec = top, nil
-		}
-		tracked, err := client.TrackedPaths(ctx.Ctx, dir, pathspec)
+		tracked, err := client.TrackedPaths(ctx.Ctx, c.dir, c.pathspec)
 		if err != nil {
 			return nil, err
 		}

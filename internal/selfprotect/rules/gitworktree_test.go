@@ -554,7 +554,26 @@ func TestWorktreeRewrite_PrecedingCommands(t *testing.T) {
 		{"commit with a substituted message then switch", "Bash", `git commit -m "wip $(date)" && git switch main`, tracked(), Deny, tracksOwnCall},
 		{"commit with an unquoted message variable then switch", "Bash", "git commit -am $MSG && git switch main", tracked(), Deny, tracksOwnCall},
 		{"commit with a variable option then switch", "Bash", `git commit "$OPT" -m x && git switch main`, tracked(), Deny, tracksOwnCall},
-		{"commit with a variable message option then switch", "Bash", `git commit -m"$MSG" && git switch main`, tracked(), Deny, tracksOwnCall},
+		// A double-quoted value attached to its option stays one word and
+		// cannot become an option or an operand either.
+		{"commit with an attached quoted message then switch", "Bash", `git commit -m"$MSG" && git switch main`, tracked(), Allow, ""},
+		{"commit with an attached quoted message and -a then switch", "Bash", `git commit -m"$MSG" -a && git switch main`, tracked(), Allow, ""},
+		{"commit with a quoted long message then switch", "Bash", `git commit --message="$MSG" -a && git switch main`, tracked(), Allow, ""},
+		{"commit with an abbreviated quoted long message then switch", "Bash", `git commit --mess="$MSG" -a && git switch main`, tracked(), Allow, ""},
+		{"commit with a quoted message cluster then switch", "Bash", `git commit -am"$MSG" && git switch main`, tracked(), Allow, ""},
+		{"commit with a wholly quoted message option then switch", "Bash", `git commit "-m$MSG" -a && git switch main`, tracked(), Allow, ""},
+		{"commit with a quoted author then switch", "Bash", `git commit --author="$WHO" -am x && git switch main`, tracked(), Allow, ""},
+		// An unquoted attached value may split into an option or an operand.
+		{"commit with an unquoted attached message then switch", "Bash", "git commit -m$MSG -a && git switch main", tracked(), Deny, tracksOwnCall},
+		{"commit with an unquoted long message then switch", "Bash", "git commit --message=$MSG -a && git switch main", tracked(), Deny, tracksOwnCall},
+		// The expansion is not in an option's value.
+		{"commit with a quoted expansion after a flag then switch", "Bash", `git commit -a"$X" -m x && git switch main`, tracked(), Deny, tracksOwnCall},
+		{"commit with an expanded long option name then switch", "Bash", `git commit --mess"$X"=y -a && git switch main`, tracked(), Deny, tracksOwnCall},
+		{"commit with an expanded value-less long option then switch", "Bash", `git commit --amend="$X" -m x && git switch main`, tracked(), Deny, tracksOwnCall},
+		{"commit with an expanded short option then switch", "Bash", `git commit -"$O" -m x && git switch main`, tracked(), Deny, tracksOwnCall},
+		// The attached value does not swallow the next word: --amend is seen.
+		{"amend after an attached quoted message then switch", "Bash", `git commit -m"$MSG" --amend && git switch main`, tracked(), Deny, tracksOwnCall},
+		{"amend after a quoted long message then switch", "Bash", `git commit --message="$MSG" --amend && git switch main`, tracked(), Deny, tracksOwnCall},
 		{"add with a variable then switch", "Bash", `git add "$F" && git switch main`, tracked(), Deny, tracksOwnCall},
 		// A branch created at HEAD keeps the commit a later rewrite reads,
 		// unless the rewrite names the branch or the previous one.

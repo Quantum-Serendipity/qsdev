@@ -121,6 +121,10 @@ type gitOpts struct {
 	// valueArgs are the indexes in the parsed args of the words read as an
 	// option's value (`-m <msg>`), not as an option or an operand.
 	valueArgs []int
+	// attachedValues maps the index in the parsed args of a word holding a
+	// value option and its value (`-m<msg>`, `--message=<msg>`) to the
+	// offset in the word where the value starts.
+	attachedValues map[int]int
 }
 
 func (o gitOpts) has(names ...string) bool {
@@ -162,9 +166,12 @@ func parseGitOpts(args []string, spec gitOptSpec) gitOpts {
 			o.paths = args[i+1:]
 			return o
 		case strings.HasPrefix(a, "--"):
-			name, val, hasVal := strings.Cut(a[2:], "=")
-			name = abbreviatedOption(name, spec.long)
-			if !hasVal && spec.longValue[name] && i+1 < len(args) {
+			raw, val, hasVal := strings.Cut(a[2:], "=")
+			name := abbreviatedOption(raw, spec.long)
+			switch {
+			case hasVal && spec.longValue[name]:
+				o.attach(i, len("--")+len(raw)+len("="))
+			case !hasVal && spec.longValue[name] && i+1 < len(args):
 				i++
 				val = args[i]
 				o.valueArgs = append(o.valueArgs, i)
@@ -178,7 +185,10 @@ func parseGitOpts(args []string, spec gitOptSpec) gitOpts {
 					continue
 				}
 				val := a[k+1:]
-				if val == "" && i+1 < len(args) {
+				switch {
+				case val != "":
+					o.attach(i, k+1)
+				case i+1 < len(args):
 					i++
 					val = args[i]
 					o.valueArgs = append(o.valueArgs, i)
@@ -191,6 +201,15 @@ func parseGitOpts(args []string, spec gitOptSpec) gitOpts {
 		}
 	}
 	return o
+}
+
+// attach records that the value of an option starts at offset start of the
+// parsed word i (gitOpts.attachedValues).
+func (o *gitOpts) attach(i, start int) {
+	if o.attachedValues == nil {
+		o.attachedValues = map[int]int{}
+	}
+	o.attachedValues[i] = start
 }
 
 // abbreviatedOption returns the known long option name abbreviates

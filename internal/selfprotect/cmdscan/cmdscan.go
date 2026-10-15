@@ -58,6 +58,11 @@ type Command struct {
 	// ExpandedArgIndexes holds the index in Args of each word in
 	// ExpandedArgs, in the same order.
 	ExpandedArgIndexes []int
+	// ExpandedArgPrefixes holds the literal text of each word in
+	// ExpandedArgs before its first expansion, in the same order: `-m"$MSG"`
+	// is "-m", `"$MSG"` is "". It may be empty for a command not parsed from
+	// a shell word (a PowerShell command).
+	ExpandedArgPrefixes []string
 	// SplitArgs holds the indexes in Args of the expanded words the shell
 	// may turn into several words or none (see maySplit: `$X`, `"$@"`), so
 	// the rendered argument may stand for any number of arguments. A
@@ -713,12 +718,13 @@ func callCommand(call *syntax.CallExpr, vars map[string]string) Command {
 		}
 	}
 	for i, w := range call.Args[1:] {
-		t, e := wordText(w, vars)
+		t, prefix, e := renderWord(w, vars)
 		c.Args = append(c.Args, t)
 		c.HasExpansion = c.HasExpansion || e
 		if e {
 			c.ExpandedArgs = append(c.ExpandedArgs, t)
 			c.ExpandedArgIndexes = append(c.ExpandedArgIndexes, i)
+			c.ExpandedArgPrefixes = append(c.ExpandedArgPrefixes, prefix)
 		}
 		if e && maySplit(w) {
 			c.SplitArgs = append(c.SplitArgs, i)
@@ -943,11 +949,24 @@ func assignText(a *syntax.Assign, vars map[string]string) (name, text string, ha
 // text for callers to interpret. A plain parameter named in vars renders as
 // its value (see ParseWithVars).
 func wordText(w *syntax.Word, vars map[string]string) (string, bool) {
+	text, _, hasExpansion := renderWord(w, vars)
+	return text, hasExpansion
+}
+
+// renderWord is wordText that also returns the literal text of w before its
+// first expansion: `-m"$MSG"` is "-m", `"--message=$MSG"` is "--message=".
+// It is the whole text when w holds no expansion.
+func renderWord(w *syntax.Word, vars map[string]string) (text, prefix string, hasExpansion bool) {
 	if w == nil {
-		return "", false
+		return "", "", false
 	}
 	var b strings.Builder
-	hasExpansion := false
+	prefixLen := -1
+	expand := func() {
+		if prefixLen < 0 {
+			prefixLen = b.Len()
+		}
+	}
 	for _, part := range w.Parts {
 		switch p := part.(type) {
 		case *syntax.Lit:
@@ -955,8 +974,10 @@ func wordText(w *syntax.Word, vars map[string]string) (string, bool) {
 		case *syntax.SglQuoted:
 			if p.Dollar {
 				text, ok := decodeANSIC(p.Value)
+				if !ok {
+					expand()
+				}
 				b.WriteString(text)
-				hasExpansion = hasExpansion || !ok
 			} else {
 				b.WriteString(p.Value)
 			}
@@ -966,28 +987,30 @@ func wordText(w *syntax.Word, vars map[string]string) (string, bool) {
 				case *syntax.Lit:
 					b.WriteString(unescapeDoubleQuoted(dp.Value))
 				case *syntax.ParamExp:
+					expand()
 					b.WriteString(knownParam(dp, vars))
-					hasExpansion = true
 				case *syntax.CmdSubst:
+					expand()
 					b.WriteString(substOutput(dp))
-					hasExpansion = true
 				default:
-					hasExpansion = true
+					expand()
 				}
 			}
 		case *syntax.ParamExp:
+			expand()
 			b.WriteString(knownParam(p, vars))
-			hasExpansion = true
 		case *syntax.CmdSubst:
+			expand()
 			b.WriteString(substOutput(p))
-			hasExpansion = true
-		case *syntax.ArithmExp:
-			hasExpansion = true
 		default:
-			hasExpansion = true
+			expand()
 		}
 	}
-	return b.String(), hasExpansion
+	text = b.String()
+	if prefixLen < 0 {
+		return text, text, false
+	}
+	return text, text[:prefixLen], true
 }
 
 // leadingTilde reports whether w starts with an unquoted, unescaped ~, which

@@ -98,7 +98,7 @@ func (l *rewriteLine) ranGit(sc scannedCommand, args []string, target gitArgs, r
 	commit := !rewrites && target.sub == "commit"
 	var opts gitOpts
 	if commit {
-		opts = parseGitOpts(target.rest, commitSpec)
+		opts = parseGitOpts(markedArgs(sc, target.rest), commitSpec)
 	}
 	switch {
 	case !rewrites && gitReadOnly(target):
@@ -133,18 +133,60 @@ func directGit(sc scannedCommand, args []string, target gitArgs) bool {
 }
 
 // expansionsAreValues reports whether every argument of the direct git sc
-// built from an expansion is the separate value word of an option of its
-// subcommand (o, parsed from the arguments after the subcommand) and stays
-// one word (not cmdscan.Command.SplitArgs): `git commit -am "$MSG"`. Such a
-// value cannot become an option or an operand, so the command is what its
-// literal words say; `git commit -am $MSG` may split into `--amend`.
+// built from an expansion is the value of an option of its subcommand (o,
+// parsed from markedArgs) and stays one word (not cmdscan.Command.SplitArgs):
+// the separate value word (`git commit -am "$MSG"`), or a value attached to
+// its option in a word whose expansions all follow the option
+// (`--message="$MSG"`, `-m"$MSG"`). Such a value cannot become an option or
+// an operand, so the command is what its literal words say; `git commit -am
+// $MSG` or `-m$MSG` may split into `--amend`.
 func expansionsAreValues(sc scannedCommand, o gitOpts) bool {
 	if len(sc.SplitArgs) > 0 || len(sc.ExpandedArgIndexes) == 0 {
 		return false
 	}
-	return !slices.ContainsFunc(sc.ExpandedArgIndexes, func(i int) bool {
-		return !slices.Contains(o.valueArgs, i-1) // Args[0] is the subcommand
-	})
+	prefixes, known := expandedPrefixes(sc)
+	for k, i := range sc.ExpandedArgIndexes {
+		j := i - 1 // Args[0] is the subcommand
+		if slices.Contains(o.valueArgs, j) {
+			continue
+		}
+		start, attached := o.attachedValues[j]
+		if !known || !attached || start > len(prefixes[k]) {
+			return false
+		}
+	}
+	return true
+}
+
+// expansionMark stands in markedArgs for the value of an expansion: a NUL,
+// which no shell word holds.
+const expansionMark = "\x00"
+
+// markedArgs returns the arguments rest after the subcommand of the direct
+// git sc with each word built from an expansion cut to its literal text
+// before the expansion and expansionMark, so an expansion that may render as
+// nothing still reads as a value attached to its option (`-m"$MSG" -a` is
+// `-m<mark> -a`, not -m with the value -a). It returns rest itself when the
+// scan does not know the literal text of each expanded word.
+func markedArgs(sc scannedCommand, rest []string) []string {
+	prefixes, known := expandedPrefixes(sc)
+	if !known || len(rest) != len(sc.Args)-1 {
+		return rest
+	}
+	marked := slices.Clone(rest)
+	for k, i := range sc.ExpandedArgIndexes {
+		if i >= 1 {
+			marked[i-1] = prefixes[k] + expansionMark
+		}
+	}
+	return marked
+}
+
+// expandedPrefixes returns the literal text before the first expansion of
+// each expanded argument of sc (cmdscan.Command.ExpandedArgPrefixes), and
+// whether the scan recorded it for every one.
+func expandedPrefixes(sc scannedCommand) ([]string, bool) {
+	return sc.ExpandedArgPrefixes, len(sc.ExpandedArgPrefixes) == len(sc.ExpandedArgIndexes)
 }
 
 // branchedHere returns the branch the git command target creates at HEAD

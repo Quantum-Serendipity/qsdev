@@ -1,6 +1,8 @@
 package profile
 
 import (
+	"bytes"
+	"os"
 	"strings"
 	"testing"
 
@@ -10,6 +12,8 @@ import (
 	"github.com/Quantum-Serendipity/qsdev/pkg/ecosystem"
 	_ "github.com/Quantum-Serendipity/qsdev/pkg/ecosystem/modules" // registers every module
 	"github.com/Quantum-Serendipity/qsdev/pkg/ecosystem/modules/nixlang"
+	"github.com/Quantum-Serendipity/qsdev/pkg/fileutil"
+	"github.com/Quantum-Serendipity/qsdev/pkg/types"
 )
 
 // parsedJob is the subset of a GitHub Actions job the ecosystem-ci tests
@@ -23,11 +27,12 @@ type parsedJob struct {
 		} `yaml:"run"`
 	} `yaml:"defaults"`
 	Steps []struct {
-		Name  string         `yaml:"name"`
-		Uses  string         `yaml:"uses"`
-		Shell string         `yaml:"shell"`
-		Run   string         `yaml:"run"`
-		With  map[string]any `yaml:"with"`
+		Name  string            `yaml:"name"`
+		Uses  string            `yaml:"uses"`
+		Shell string            `yaml:"shell"`
+		Run   string            `yaml:"run"`
+		With  map[string]any    `yaml:"with"`
+		Env   map[string]string `yaml:"env"`
 	} `yaml:"steps"`
 }
 
@@ -88,8 +93,11 @@ func TestEcosystemCIJob_RunsModuleCommandsInPhaseOrder(t *testing.T) {
 	var sawNix, sawDevenv, sawCheckout bool
 	for _, s := range job.Steps {
 		switch {
-		case s.Uses == cigeneration.ActionInstallNix.String():
+		case s.Run == installNixRun:
 			sawNix = true
+			if !sawCheckout {
+				t.Error("Nix is installed before the checkout that holds the installer")
+			}
 		case s.Uses == cigeneration.ActionCheckout.String():
 			sawCheckout = true
 			if s.With["persist-credentials"] != false {
@@ -97,6 +105,9 @@ func TestEcosystemCIJob_RunsModuleCommandsInPhaseOrder(t *testing.T) {
 			}
 		case s.Name == "Install devenv":
 			sawDevenv = true
+			if !sawNix {
+				t.Error("devenv is installed before Nix")
+			}
 			if s.Shell != "bash" {
 				t.Errorf("Install devenv shell = %q, want bash (devenv is not installed yet)", s.Shell)
 			}
@@ -155,6 +166,95 @@ func TestEcosystemCIJob_AbsentWithoutCommands(t *testing.T) {
 
 	if _, ok := renderJobs(t, ConsultingDefault, ProjectInputs{})["ecosystem-ci"]; ok {
 		t.Error("ecosystem-ci job generated for a project without ecosystem CI commands")
+	}
+
+	// The installer files follow the job: none without CI commands, and none
+	// for a profile that generates no security-scan workflow at all.
+	noScan := *ConsultingDefault
+	noScan.Scanning.Vulnerability = VulnScannerNone
+	noScan.Scanning.CIProtection = CIProtectionNone
+	ci := ciGroups(ecosystem.CICommand{Name: "t", Command: "true", Phase: ecosystem.CIPhaseTest})
+	for name, tc := range map[string]struct {
+		p  *InfraProfile
+		in ProjectInputs
+	}{
+		"no CI commands":     {ConsultingDefault, ProjectInputs{}},
+		"profile without CI": {&noScan, ProjectInputs{CI: ci}},
+	} {
+		files, err := tc.p.ConfigFiles(tc.in)
+		if err != nil {
+			t.Fatalf("%s: ConfigFiles: %v", name, err)
+		}
+		for _, f := range files {
+			if f.Path == cigeneration.InstallNixScriptPath || f.Path == cigeneration.NixReleasePinsPath {
+				t.Errorf("%s: ConfigFiles emits %s without an ecosystem-ci job", name, f.Path)
+			}
+		}
+	}
+}
+
+// TestEcosystemCIJob_InstallsCheckedNix covers the ecosystem-ci job's Nix
+// install: the official release, SHA-256-verified by the generated
+// installer script against the generated pins, with no third-party action.
+// Wave 1 emitted a third-party Nix action, which the Actions allowlist does
+// not admit, so every generated workflow ended in startup_failure.
+func TestEcosystemCIJob_InstallsCheckedNix(t *testing.T) {
+	t.Parallel()
+
+	in := ProjectInputs{CI: ciGroups(ecosystem.CICommand{Name: "t", Command: "true", Phase: ecosystem.CIPhaseTest})}
+	job := renderJobs(t, ConsultingDefault, in)["ecosystem-ci"]
+
+	catalog := make(map[string]bool)
+	for _, ref := range cigeneration.AllActionRefs() {
+		catalog[ref.String()] = true
+	}
+	nixSteps := 0
+	for _, s := range job.Steps {
+		if s.Uses != "" && !catalog[s.Uses] {
+			t.Errorf("step %q uses %s, which is not a catalog action", s.Name, s.Uses)
+		}
+		if s.Run != installNixRun {
+			continue
+		}
+		nixSteps++
+		if s.Uses != "" || s.Shell != "bash" {
+			t.Errorf("Install Nix step: uses %q, shell %q; want a bash run step with no action", s.Uses, s.Shell)
+		}
+		if s.Env["GITHUB_TOKEN"] != "${{ github.token }}" {
+			t.Errorf("Install Nix step env = %v, want GITHUB_TOKEN from github.token", s.Env)
+		}
+	}
+	if nixSteps != 1 {
+		t.Fatalf("ecosystem-ci has %d steps running %q, want 1", nixSteps, installNixRun)
+	}
+
+	files, err := ConsultingDefault.ConfigFiles(in)
+	if err != nil {
+		t.Fatalf("ConfigFiles: %v", err)
+	}
+	want := map[string]struct {
+		content []byte
+		mode    os.FileMode
+		pinLF   bool
+	}{
+		cigeneration.InstallNixScriptPath: {cigeneration.InstallNixScript(), fileutil.ModeExecutable, false},
+		cigeneration.NixReleasePinsPath:   {cigeneration.NixReleasePins(), fileutil.ModeReadWrite, true},
+	}
+	for _, f := range files {
+		w, ok := want[f.Path]
+		if !ok {
+			continue
+		}
+		delete(want, f.Path)
+		if !bytes.Equal(f.Content, w.content) {
+			t.Errorf("%s differs from the catalog embed", f.Path)
+		}
+		if f.Mode != w.mode || f.Strategy != types.Overwrite || f.PinLF != w.pinLF {
+			t.Errorf("%s: mode %o, strategy %v, PinLF %v; want %o, Overwrite, %v", f.Path, f.Mode, f.Strategy, f.PinLF, w.mode, w.pinLF)
+		}
+	}
+	for p := range want {
+		t.Errorf("ConfigFiles does not emit %s", p)
 	}
 }
 

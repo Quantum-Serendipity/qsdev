@@ -1,4 +1,4 @@
-.PHONY: build build-all test lint vet archtest bench clean completions
+.PHONY: build build-all test lint vet archtest bench clean completions dogfood dev-install
 
 MODULE  := github.com/Quantum-Serendipity/qsdev
 VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
@@ -42,6 +42,18 @@ bench:
 lint: vet archtest
 	golangci-lint run
 
+# Check and regenerate a `git archive HEAD` copy of this repository with a
+# source-built qsdev; fail on any failed check or drift (the CI dogfood job).
+# See CONTRIBUTING.md, "Dogfooding".
+dogfood:
+	bash scripts/dogfood.sh
+
+# Install a plain source build into $GOPATH/bin. Inside devenv that directory
+# precedes the system qsdev on PATH, so the .mcp.json `qsdev mcp serve`
+# servers run the code in this tree.
+dev-install:
+	GOWORK=off go install -mod=vendor ./cmd/qsdev
+
 completions: build
 	@mkdir -p dist_share/completions
 	./bin/qsdev completion bash > dist_share/completions/qsdev.bash
@@ -49,4 +61,4 @@ completions: build
 	./bin/qsdev completion fish > dist_share/completions/qsdev.fish
 
 clean:
-	rm -rf bin/ dist/ dist_share/
+	rm -rf bin/ dist/ dist_share/ qsdev

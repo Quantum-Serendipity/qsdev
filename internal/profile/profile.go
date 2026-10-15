@@ -45,11 +45,17 @@ func (p *InfraProfile) CredentialEnvVars() []string {
 // ConfigFiles returns generated configuration files implied by the profile's
 // update-tool selection (e.g., renovate.json or .github/dependabot.yml),
 // CI vulnerability scanning workflow, and security documentation. in carries
-// the project facts (such as its package ecosystems) the files depend on.
+// the project facts (such as its package ecosystems) the files depend on. A
+// project that configures a different update bot itself gets no update-bot
+// config, so it never runs two bots.
 func (p *InfraProfile) ConfigFiles(in ProjectInputs) ([]types.GeneratedFile, error) {
 	var files []types.GeneratedFile
 
-	switch p.Updates.Type {
+	updateTool := p.Updates.Type
+	if in.projectManagedUpdateTool(updateTool) != "" {
+		updateTool = ""
+	}
+	switch updateTool {
 	case UpdateToolRenovate:
 		files = append(files, p.generateRenovateJSON(in))
 	case UpdateToolDependabot:
@@ -67,6 +73,9 @@ func (p *InfraProfile) ConfigFiles(in ProjectInputs) ([]types.GeneratedFile, err
 			return nil, err
 		}
 		files = append(files, f)
+	}
+	if p.generatesEcosystemCI(in) {
+		files = append(files, nixInstallerFiles()...)
 	}
 
 	// Security documentation

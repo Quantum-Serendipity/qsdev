@@ -1,10 +1,16 @@
 name: Tool pins
 
-# Keeps .github/tool-versions.env current: the CI and release tools no
-# Dependabot ecosystem covers (goreleaser, golangci-lint, gotestsum,
-# govulncheck). scripts/bump-tool-pins.sh takes a newer exact release only
-# once it is at least 3 days old, the catalog's baseline age gate, and opens
-# or updates one PR (U26-02, Decision D9).
+# Keeps the CI pin files current: .github/tool-versions.env, the CI and
+# release tools no Dependabot ecosystem covers (goreleaser, golangci-lint,
+# gotestsum, govulncheck), and the Nix release pins, whose source is the CI
+# pin catalog's internal/cigeneration/nix-release.env and whose generated
+# copy is .github/nix-release.env. All three files are bumped in one run, so
+# the source and its copy always move together, and the copy's digest in
+# .qsdev-generated.sha256 moves with it, so qsdev check and the dogfood gate
+# still read it as generated. scripts/bump-tool-pins.sh
+# takes a newer exact release only once it is at least 3 days old, the
+# catalog's baseline age gate, and opens or updates one PR (U26-02, Decision
+# D9).
 #
 # Trust boundary: runs only on its schedule or by hand, never on an event a
 # contributor controls. GITHUB_TOKEN stays read-only. The PR is opened with
@@ -50,4 +56,8 @@ jobs:
       - name: Bump tool pins
         env:
           GH_TOKEN: ${{ secrets.TOOL_PINS_TOKEN }}
-        run: scripts/bump-tool-pins.sh --open-pr
+        run: >-
+          scripts/bump-tool-pins.sh --open-pr
+          .github/tool-versions.env
+          internal/cigeneration/nix-release.env
+          .github/nix-release.env

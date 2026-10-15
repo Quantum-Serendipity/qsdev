@@ -18,8 +18,11 @@ type SecurityDocData struct {
 	BehavioralTool string
 	CIProtection   string
 	UpdateTool     string
-	AgeGatingDays  int
-	SBOMGenerator  string
+	// ProjectManagedUpdateTool is set when the update bot is the project's
+	// own (UpdateTool then names it); qsdev knows none of its settings.
+	ProjectManagedUpdateTool bool
+	AgeGatingDays            int
+	SBOMGenerator            string
 	// RegistryProxy, NixCache and BuildCache describe the infrastructure
 	// actually applied (endpoints included), or state that it is not.
 	RegistryProxy string
@@ -53,6 +56,11 @@ func (p *InfraProfile) generateSecurityDoc(in ProjectInputs) (types.GeneratedFil
 		NixCache:       nixCacheSummary(in.Infrastructure),
 		BuildCache:     p.buildCacheSummary(in.Infrastructure),
 		Credentials:    p.CredentialEnvVars(),
+	}
+	if bot := in.projectManagedUpdateTool(p.Updates.Type); bot != "" {
+		data.UpdateTool = string(bot) + ", configured by the project"
+		data.ProjectManagedUpdateTool = true
+		data.AgeGatingDays = 0
 	}
 
 	var buf bytes.Buffer

@@ -382,3 +382,60 @@ func TestJoin_PHPManifestListsTrackedComposerConfig(t *testing.T) {
 		}
 	}
 }
+
+// assertGitignoreHasLocalStateEntries fails unless dir's .gitignore lists
+// every local-state entry, including the hook audit log and logs directory,
+// which can hold credentials from hook input.
+func assertGitignoreHasLocalStateEntries(t *testing.T, dir string) {
+	t.Helper()
+	got := readProjectFile(t, dir, ".gitignore")
+	lines := strings.Split(got, "\n")
+	for _, entry := range projectGitignoreEntries() {
+		if !slices.Contains(lines, entry) {
+			t.Errorf(".gitignore lacks %q:\n%s", entry, got)
+		}
+	}
+}
+
+// curatedGitignore is a .gitignore that already ignores every local-state
+// path qsdev writes but deliberately omits the language defaults (*.exe,
+// .env, *.pem, *.key, dist/, vendor/), as a project that commits a public
+// test key or its vendor directory would.
+func curatedGitignore() string {
+	return "/bin/\n" + strings.Join(projectGitignoreEntries(), "\n") + "\n"
+}
+
+// TestJoin_AddsLocalStateGitignoreEntries checks that joining a project whose
+// .gitignore predates the hook audit log adds every local-state entry, not
+// only the local config, and keeps the project's own lines.
+func TestJoin_AddsLocalStateGitignoreEntries(t *testing.T) {
+	src := initLifecycleProject(t)
+	dst := cloneCommitted(t, src, branding.Get().ConfigFile, "go.mod")
+	writeProjectFile(t, dst, ".gitignore", "/bin/\n")
+
+	if out, err := executeInitCmd(t, dst, "--mode", "join", "--yes"); err != nil {
+		t.Fatalf("join: %v\n%s", err, out)
+	}
+	assertGitignoreHasLocalStateEntries(t, dst)
+	if !strings.HasPrefix(readProjectFile(t, dst, ".gitignore"), "/bin/\n") {
+		t.Error("join dropped the project's own .gitignore entries")
+	}
+}
+
+// TestJoin_CuratedGitignoreUnchanged checks that join ensures only the
+// local-state entries: a .gitignore that has them but omits the language
+// defaults stays byte-identical, as on base, so a language default the
+// project removed never comes back on a teammate's join.
+func TestJoin_CuratedGitignoreUnchanged(t *testing.T) {
+	src := initLifecycleProject(t)
+	dst := cloneCommitted(t, src, branding.Get().ConfigFile, "go.mod")
+	want := curatedGitignore()
+	writeProjectFile(t, dst, ".gitignore", want)
+
+	if out, err := executeInitCmd(t, dst, "--mode", "join", "--yes"); err != nil {
+		t.Fatalf("join: %v\n%s", err, out)
+	}
+	if got := readProjectFile(t, dst, ".gitignore"); got != want {
+		t.Errorf("join rewrote the project's .gitignore:\n--- got\n%s--- want\n%s", got, want)
+	}
+}

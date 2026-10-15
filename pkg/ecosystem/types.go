@@ -258,6 +258,13 @@ func (f *WizardFieldType) UnmarshalText(text []byte) error {
 // Confirm answers are stored as "true" or "false", multi-select answers as a
 // comma-separated list. Placeholder is the example shown in an empty
 // FieldTypeInput.
+//
+// Committable opts an extras field in to being a committed setting: a
+// languages[].extras entry of .qsdev.yaml, which is then the setting's single
+// source of truth (see CommittableFields). Only a setting whose every value
+// is safe for the team to share belongs there; a field that can weaken a
+// control (an allowlist, a build tool that decides which checks run) must not
+// opt in.
 type WizardField struct {
 	Key         string          `yaml:"key"         json:"key"`
 	Label       string          `yaml:"label"       json:"label"`
@@ -267,6 +274,7 @@ type WizardField struct {
 	Default     string          `yaml:"default"     json:"default"`
 	Placeholder string          `yaml:"placeholder" json:"placeholder"`
 	Required    bool            `yaml:"required"    json:"required"`
+	Committable bool            `yaml:"committable" json:"committable"`
 }
 
 // WizardOption is a single selectable option within a WizardField.

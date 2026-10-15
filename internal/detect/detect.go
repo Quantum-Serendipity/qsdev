@@ -7,12 +7,15 @@ import (
 	"context"
 	"log/slog"
 	"os/user"
+	"path/filepath"
 	"time"
 
 	"github.com/Quantum-Serendipity/qsdev/internal/container"
+	"github.com/Quantum-Serendipity/qsdev/internal/profile"
 	"github.com/Quantum-Serendipity/qsdev/internal/sysinfo"
 	"github.com/Quantum-Serendipity/qsdev/pkg/ecosystem"
 	_ "github.com/Quantum-Serendipity/qsdev/pkg/ecosystem/modules"
+	"github.com/Quantum-Serendipity/qsdev/pkg/fileutil"
 	"github.com/Quantum-Serendipity/qsdev/pkg/types"
 )
 
@@ -85,6 +88,7 @@ func Detect(ctx context.Context, projectRoot string, opts ...Option) types.Detec
 	registry := ecosystem.DefaultRegistry()
 	summary := registry.DetectWithEnvironment(projectRoot)
 
+	summary.Project.UpdateBotConfigs = detectUpdateBotConfigs(projectRoot)
 	summary.Project.ContainerRuntime = detectContainerRuntime(ctx, o)
 
 	if osInfo := o.detectOS(); osInfo != nil {
@@ -101,6 +105,18 @@ func Detect(ctx context.Context, projectRoot string, opts ...Option) types.Detec
 		"has_container", summary.Project.HasDockerfile,
 		"container_runtime", summary.Project.ContainerRuntime)
 	return summary.Project
+}
+
+// detectUpdateBotConfigs returns the dependency-update bot config files
+// (profile.UpdateBotConfigPaths) present under projectRoot, sorted.
+func detectUpdateBotConfigs(projectRoot string) []string {
+	var found []string
+	for _, rel := range profile.UpdateBotConfigPaths() {
+		if fileutil.FileExists(projectRoot, filepath.FromSlash(rel)) {
+			found = append(found, rel)
+		}
+	}
+	return found
 }
 
 // detectContainerRuntime returns the active container runtime name, or "" when

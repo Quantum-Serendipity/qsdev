@@ -166,7 +166,7 @@ module's default), and every answer is stored under the key the module reads:
 
 | Language | Wizard settings (stored as) |
 |---|---|
-| Go | Go version (`version`) |
+| Go | Go version (`version`), Go source (`extras: go_source=go-overlay\|nixpkgs`) |
 | JavaScript/TypeScript | Node.js version (`version`), package manager (`package_manager`), TypeScript (`extras: typescript`) |
 | Python | Python version (`version`), package manager (`package_manager`: `pip`, `uv`, `poetry`) |
 | Rust | channel (`extras: channel=stable\|beta\|nightly`) |
@@ -188,6 +188,68 @@ explicit `package_manager` takes precedence over the `package_manager` extra
 that older configurations and detection record; likewise for Java, where
 `package_manager` (also set by `--java-build-tool` and project-type profiles)
 takes precedence over the `build_tool` extra.
+
+#### Committed settings
+
+`.qsdev.yaml` does not record the extras detection and the wizard produce
+(detection re-derives them on every run). A few settings are instead
+committed: a `languages:` entry records them as `extras`, and for them the
+committed file is the single source of truth:
+
+```yaml
+languages:
+  - name: go
+    version: 1.26.9
+    extras:
+      - go_source=nixpkgs
+```
+
+Only a setting the language's module marks committable can be recorded, to
+a value that setting accepts. A setting that decides which checks run, or
+that relaxes an allowlist, is never committable. `qsdev check` rejects any
+other key, including the extras detection records (`directory`,
+`manifests`, `toolchain`, ...), the other wizard settings and a misspelled
+key, and any other value; `qsdev init` warns about each one and ignores it.
+
+- Creating a project records a committable setting chosen in the wizard or
+  an answers file when it differs from the default.
+- `qsdev init` (create over an existing file, join and `--update`) sets each
+  committable setting from `.qsdev.yaml`; one the file does not record goes
+  back to its default. Edit `.qsdev.yaml` and run `qsdev init --update` to
+  change one; the saved answers never override it.
+- Day-2 commands (`enable`, `devenv add-*`, re-creating the project) keep the
+  committed extras as they are.
+- `.qsdev.local.yaml` cannot set extras: they are ignored there with a
+  warning.
+
+The committable settings are:
+
+<!-- committable-settings:begin -->
+| Language | Extra | Values |
+|---|---|---|
+| `go` | `go_source` | `go-overlay` (default), `nixpkgs` |
+<!-- committable-settings:end -->
+
+`extras` needs a qsdev release that knows the key: earlier releases reject
+it as an unknown field when they parse `.qsdev.yaml`. The schema `version`
+is unchanged, so raise `qsdev_version` if teammates may run an older qsdev.
+
+`go_source` says where the devenv shell's Go comes from. devenv sets
+`GOTOOLCHAIN=local`, so the shell's Go must be at least the release go.mod
+requires (the newer of its `go` and `toolchain` lines, or `version`):
+
+- `go-overlay` keeps nixpkgs' `pkgs.go` when it is new enough and otherwise
+  selects that exact release from the `github:purpleclay/go-overlay` flake
+  input, which devenv.yaml then declares (`languages.go.version`).
+- `nixpkgs` declares that the project's nixpkgs, with its registered
+  `overlays`, supplies a new enough Go, for example an overlay that raises
+  `go_1_26`. devenv.yaml gets no go-overlay input, and devenv.nix sets
+  `languages.go.package` to `pkgs.go` guarded by the required release: if
+  `pkgs.go` is older, evaluating the shell fails with
+  `qsdev: .qsdev.yaml declares go_source=nixpkgs, but pkgs.go is <version>, older than the required Go <release>; ...`
+  rather than giving a Go that cannot build the module. The line has
+  priority 999 (`lib.mkOverride 999`), so a `languages.go.package` set in
+  `devenv.local.nix` still takes precedence.
 
 ### Git settings
 
@@ -1031,6 +1093,7 @@ Key contents:
 - `require_version: ">=2.1"` -- Minimum devenv version
 - `inputs.nixpkgs.url: "github:NixOS/nixpkgs/nixpkgs-unstable"` -- Nixpkgs input
 - `inputs.git-hooks.url: "github:cachix/git-hooks.nix"` -- Pre-commit hook framework (when hooks are needed)
+- `inputs.go-overlay.url: "github:purpleclay/go-overlay"` -- Exact Go releases, for a Go project whose release is known, unless it commits `go_source=nixpkgs` (see [Committed settings](#committed-settings))
 - `impure: false` -- Prevents impure builds
 - `allow_unfree: false` -- Blocks unfree packages
 - `allow_broken: false` -- Blocks broken packages
@@ -2134,7 +2197,16 @@ does not record is taken from detection when the workflow is generated, so
 recorded it.
 See [Security Architecture](security-architecture.md#generated-workflows).
 
-Every step is pinned immutably: actions to a full commit SHA, and the Snyk step to a container image digest (`uses: docker://snyk/snyk@sha256:...`, running `snyk test --all-projects` with `SNYK_TOKEN`). The Snyk step does not use `snyk/actions`, because that action runs the `snyk/snyk:node` image by its mutable tag, so a SHA pin on the action would not pin the code that receives the token. The image comes from the `node` variant, which carries Node.js but not the other ecosystems' build tools; Snyk's `--all-projects` needs those tools to resolve some manifests (for example `go.mod`). The language-specific variants are not used because their entrypoint installs the scanned project's dependencies (for example `pip install -r requirements.txt` or `mvn install`) before scanning, which would run the repository's install hooks with `SNYK_TOKEN` in the environment. qsdev bumps these pins in new releases; `qsdev init --update` picks them up.
+The `ecosystem-ci` job installs Nix with no third-party action: it runs the
+generated `.github/scripts/install-nix.sh` on the generated
+`.github/nix-release.env`, which downloads the official Nix release and checks
+it against the pinned SHA-256 before anything from it runs. Both files come
+with the job (merge strategy `overwrite`; the pin file is pinned to LF line
+endings in `.gitattributes`), and `qsdev init --update` moves them to newer
+pins.
+
+Every step is pinned immutably: actions to a full commit SHA, the Nix release
+to its tarball SHA-256, and the Snyk step to a container image digest (`uses: docker://snyk/snyk@sha256:...`, running `snyk test --all-projects` with `SNYK_TOKEN`). The Snyk step does not use `snyk/actions`, because that action runs the `snyk/snyk:node` image by its mutable tag, so a SHA pin on the action would not pin the code that receives the token. The image comes from the `node` variant, which carries Node.js but not the other ecosystems' build tools; Snyk's `--all-projects` needs those tools to resolve some manifests (for example `go.mod`). The language-specific variants are not used because their entrypoint installs the scanned project's dependencies (for example `pip install -r requirements.txt` or `mvn install`) before scanning, which would run the repository's install hooks with `SNYK_TOKEN` in the environment. qsdev bumps these pins in new releases; `qsdev init --update` picks them up.
 
 ---
 

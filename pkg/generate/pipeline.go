@@ -27,8 +27,8 @@ const SidecarSuffix = ".new"
 // existingContent), so no caller can accidentally overwrite user content by
 // omitting a merge option. An existing file holding the generated content as
 // a CRLF checkout (Git's core.autocrlf) is that content and is left alone,
-// and every generated script is pinned to LF line endings in .gitattributes
-// (see scriptAttributeLines).
+// and every generated script, and every file with PinLF, is pinned to LF
+// line endings in .gitattributes (see lfAttributeLines).
 func WriteFiles(files []types.GeneratedFile, opts PipelineOptions) (WriteResult, error) {
 	if !filepath.IsAbs(opts.ProjectRoot) {
 		return WriteResult{}, fmt.Errorf("project root must be absolute: %q", opts.ProjectRoot)
@@ -43,9 +43,9 @@ func WriteFiles(files []types.GeneratedFile, opts PipelineOptions) (WriteResult,
 	}
 
 	if !opts.DryRun {
-		// Before the scripts are written, so a partial write never leaves
+		// Before the files are written, so a partial write never leaves
 		// one to be committed without its line-ending pin.
-		pinScriptLineEndings(opts.ProjectRoot, files)
+		pinLFLineEndings(opts.ProjectRoot, files)
 	}
 
 	w := &fileWriter{opts: opts}

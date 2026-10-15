@@ -3,6 +3,7 @@ package config
 import (
 	"maps"
 	"slices"
+	"strings"
 
 	"github.com/Quantum-Serendipity/qsdev/pkg/types"
 )
@@ -17,6 +18,7 @@ const (
 	reasonLocalPermission    = "a local override can only tighten the permission level"
 	reasonLocalCredVend      = "credential vending can only be configured in the committed config"
 	reasonLocalPermissions   = "claude_code.permissions is team policy and can only be set in the committed config"
+	reasonLocalExtras        = "language extras can only be set in the committed config"
 )
 
 // sanitizeLocal returns the part of the developer's local layer that only
@@ -115,11 +117,20 @@ func permissionViolation(attempted, floor string) FloorViolation {
 }
 
 // sanitizeLocalLanguages copies the local languages, clearing a package
-// manager that would replace the one base commits for the same language.
+// manager that would replace the one base commits for the same language, and
+// any extras: only the committed config declares them.
 func sanitizeLocalLanguages(base, local []types.LanguageConfig) ([]types.LanguageConfig, []FloorViolation) {
 	out := slices.Clone(local)
 	var violations []FloorViolation
 	for i, lang := range out {
+		if len(lang.Extras) > 0 {
+			violations = append(violations, FloorViolation{
+				Field:     "languages." + lang.Name + ".extras",
+				Attempted: strings.Join(lang.Extras, ", "),
+				Reason:    reasonLocalExtras,
+			})
+			out[i].Extras = nil
+		}
 		j := slices.IndexFunc(base, func(b types.LanguageConfig) bool { return b.Name == lang.Name })
 		if j < 0 || lang.PackageManager == "" || base[j].PackageManager == "" || lang.PackageManager == base[j].PackageManager {
 			continue

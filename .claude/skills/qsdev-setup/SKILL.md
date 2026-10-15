@@ -9,7 +9,7 @@ allowed-tools: Bash(qsdev *) Read Grep Glob
 
 ## Current Environment
 
-!`qsdev devenv doctor --json 2>/dev/null | jq '{checks: [.checks[] | select(.status != "PASS")]}' 2>/dev/null || qsdev devenv doctor --json 2>/dev/null || echo '{"installed": false}'`
+!`qsdev devenv doctor --json 2>/dev/null | jq '{checks: [.checks[] | select(.status != "PASS")]}' 2>/dev/null || qsdev devenv doctor --json 2>/dev/null || echo "ERROR: 'qsdev devenv doctor --json' exited with status $?. Any output above may be partial; do not treat missing data as empty."`
 
 ## Instructions
 

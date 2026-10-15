@@ -25,7 +25,7 @@ This environment implements a defense-in-depth strategy with six infrastructure 
 - **Behavioral Analysis**: {{ .BehavioralTool }}
 - **CI Protection**: {{ .CIProtection }}
 - **Update Tool**: {{ .UpdateTool }}
-- **Dependency update PR delay**: {{ if gt .AgeGatingDays 0 }}{{ .UpdateTool }} waits {{ .AgeGatingDays }} day(s) after a release before proposing it{{ else }}none ({{ .UpdateTool }} proposes releases immediately){{ end }}. This delays update PRs only; it is separate from the install-time age gate above.
+- **Dependency update PR delay**: {{ if .ProjectManagedUpdateTool }}set by the project's own configuration, which qsdev does not generate or check{{ else if gt .AgeGatingDays 0 }}{{ .UpdateTool }} waits {{ .AgeGatingDays }} day(s) after a release before proposing it{{ else }}none ({{ .UpdateTool }} proposes releases immediately){{ end }}. This delays update PRs only; it is separate from the install-time age gate above.
 - **SBOM Generator**: {{ .SBOMGenerator }}
 - **Registry proxy**: {{ .RegistryProxy }}
 - **Nix binary cache**: {{ .NixCache }}

@@ -445,6 +445,21 @@ All notable changes to qsdev are recorded in this file. The format is based on
 
 ### Fixed
 
+- Generated Claude Code settings no longer read-deny the data files of a
+  source package named `secrets` (U26-WS1). The nested secrets rules now
+  deny the data formats (`*.json`, `*.yaml`, `*.yml`, `*.toml`, `*.txt`)
+  only as direct children of a directory named `secrets`
+  (`Read(/**/secrets/*.json)`), so `internal/secrets/testdata/cases.json`
+  is readable while `infra/secrets/sa.json` stays denied. This narrows the
+  coverage: a data file in a subdirectory of a nested `secrets` directory,
+  such as `infra/secrets/prod/sa.json` or `k8s/secrets/staging/db.yaml`, is
+  no longer read-denied. Keep such files directly inside the `secrets`
+  directory or under the top-level `secrets/`. Secret material
+  (dotenv files, keys, certificates, keystores, `*.gpg`, `*.age`) is still
+  denied at any depth below a `secrets` directory, and the top-level
+  `secrets/` is still denied as a whole. `qsdev check` now also requires
+  the nested secrets rules, so `deny_rules_present` fails when one is
+  deleted. Run `qsdev init --update` to pick up the new rules.
 - The credential-scan hook judges an assignment or connection string by its
   credential value, not by the whole match (U17-08). A placeholder word in a
   key or host no longer hides a real secret, so

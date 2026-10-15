@@ -53,6 +53,13 @@ type LanguageConfig struct {
 	Name           string `yaml:"name"`
 	Version        string `yaml:"version,omitempty"`
 	PackageManager string `yaml:"package_manager,omitempty"`
+	// Extras are the language's committed settings ("key=value"), such as
+	// go_source=nixpkgs. Only a setting the language's module opts in as
+	// committable (ecosystem.CommittableFields) may be set; for those keys
+	// this list is the single source of truth, recorded from a non-default
+	// answer when the project is created. Detected extras, which detection
+	// re-derives on every run, are never recorded here.
+	Extras []string `yaml:"extras,omitempty"`
 }
 
 // ServiceConfig specifies a development service (database, cache, etc.) in .qsdev.yaml.

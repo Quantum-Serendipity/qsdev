@@ -24,7 +24,11 @@ type hostProber struct {
 // start a host probe for every project it initializes.
 var host = hostProber{prerequisites: CheckPrerequisites}
 
-// detectProject runs project detection with the host prober's probes.
+// detectProject runs project detection with the host prober's probes, then
+// decides which detected update-bot configs the project manages itself
+// (see projectUpdateBots), which needs the recorded state detection lacks.
 func (h hostProber) detectProject(ctx context.Context, projectRoot string) types.DetectedProject {
-	return detect.Detect(ctx, projectRoot, h.detectOptions...)
+	d := detect.Detect(ctx, projectRoot, h.detectOptions...)
+	d.ProjectUpdateBots = projectUpdateBots(projectRoot, d.UpdateBotConfigs)
+	return d
 }

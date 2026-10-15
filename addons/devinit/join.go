@@ -58,10 +58,10 @@ func runJoin(cmd *cobra.Command, opts InitOptions, projectRoot string) error {
 		return writeLocalConfigTemplate(projectRoot, answers, true, cmd.OutOrStdout())
 	}
 
-	// 5. Gitignore the local config, then create it from the template if the
-	// developer has none. It is human-owned, so it is never tracked in state.
-	localCfg := branding.Get().LocalConfig
-	if err := EnsureGitignoreEntry(projectRoot, localCfg); err != nil {
+	// 5. Ignore the local-state paths (the local config among them), then
+	// create the local config from the template if the developer has none.
+	// It is human-owned, so it is never tracked in state.
+	if err := ensureLocalStateGitignore(projectRoot); err != nil {
 		return fmt.Errorf("updating .gitignore: %w", err)
 	}
 	localOut := cmd.OutOrStdout()
@@ -166,10 +166,12 @@ func buildJoinAnswers(cmd *cobra.Command, opts InitOptions, projectRoot string) 
 	answers.ProjectName = qsdevconfig.ProjectNameFor(policy.Committed, projectRoot)
 	answers.Detected = detected
 	answers.Confirmed = true
-	// .qsdev.yaml records no module extras (a JavaScript UI in frontend/,
-	// Yarn Classic, TypeScript), so complete each language from detection as
-	// the create path does; otherwise the joiner would regenerate devenv.nix,
-	// hooks and hardening files for the wrong directory or package manager.
+	// .qsdev.yaml records no detected module extras (a JavaScript UI in
+	// frontend/, Yarn Classic, TypeScript), so complete each language from
+	// detection as the create path does; otherwise the joiner would
+	// regenerate devenv.nix, hooks and hardening files for the wrong
+	// directory or package manager. policy.Apply then sets the committable
+	// settings (go_source) from .qsdev.yaml alone.
 	for i := range answers.Languages {
 		answers.Languages[i] = detected.WithSuggested(answers.Languages[i])
 	}
@@ -179,7 +181,7 @@ func buildJoinAnswers(cmd *cobra.Command, opts InitOptions, projectRoot string) 
 		return types.WizardAnswers{}, fmt.Errorf("loading catalog for defaults: %w", err)
 	}
 	applyJoinDefaults(&answers, cat, registry)
-	policy.Apply(&answers)
+	policy.Apply(&answers, committableSettings())
 
 	// Validate answers.
 	if err := ValidateAnswers(answers); err != nil {
@@ -218,6 +220,9 @@ func applyJoinDefaults(a *types.WizardAnswers, defaults types.DefaultsProvider, 
 	filled.FillDefaults(a.Detected, defaults)
 
 	a.Hooks = filled.Hooks
+	// .qsdev.yaml does not record semble's mode, so a joiner gets the default
+	// every other path resolves it to; replaying tools.enabled keeps it.
+	a.AgentTools.SembleMode = filled.AgentTools.SembleMode
 	if toolsRecorded {
 		restoreToolToggles(a, registry)
 		return

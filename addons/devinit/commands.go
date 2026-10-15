@@ -455,6 +455,7 @@ func projectGitignoreEntries() []string {
 
 func finalizeProject(cmd *cobra.Command, opts InitOptions, answers types.WizardAnswers, projectRoot string, accResult accumulatorResult) error {
 	qsdevCfg := qsdevconfig.AnswersToConfig(answers, version.Info().Version)
+	qsdevconfig.RecordCommittableSettings(&qsdevCfg, answers, committableSettings())
 	qsdevCfgPath := filepath.Join(projectRoot, branding.Get().ConfigFile)
 	committed, err := qsdevconfig.ParseQsdevConfig(qsdevCfgPath)
 	switch {
@@ -474,24 +475,43 @@ func finalizeProject(cmd *cobra.Command, opts InitOptions, answers types.WizardA
 	return nil
 }
 
-// ensureProjectGitignore adds the qsdev state directories and the
-// language-specific entries to .gitignore. Failures are logged, not fatal.
+// ensureProjectGitignore is the create path's .gitignore setup: the
+// local-state entries plus the language-specific entries. Only create adds
+// the language entries; join and update must not re-add a line the project
+// removed on purpose (a committed dist/ or vendor/). Failures are logged,
+// not fatal.
 func ensureProjectGitignore(projectRoot string, answers types.WizardAnswers) {
-	for _, entry := range projectGitignoreEntries() {
-		if err := EnsureGitignoreEntry(projectRoot, entry); err != nil {
-			slog.Warn("could not update .gitignore", "entry", entry, "error", err)
-		}
+	if err := ensureLocalStateGitignore(projectRoot); err != nil {
+		slog.Warn("could not update .gitignore", "error", err)
 	}
 
 	var langNames []string
 	for _, lc := range answers.Languages {
 		langNames = append(langNames, lc.Name)
 	}
-	for _, entry := range gitignoreEntriesForLanguages(langNames) {
+	if err := ensureGitignoreEntries(projectRoot, gitignoreEntriesForLanguages(langNames)); err != nil {
+		slog.Warn("could not update .gitignore", "error", err)
+	}
+}
+
+// ensureLocalStateGitignore adds only projectGitignoreEntries, the paths
+// qsdev itself writes and that must never be committed. Create, join and
+// update all call it, so a project whose .gitignore predates an entry (the
+// hook audit log) gains it while every other line stays the project's own.
+func ensureLocalStateGitignore(projectRoot string) error {
+	return ensureGitignoreEntries(projectRoot, projectGitignoreEntries())
+}
+
+// ensureGitignoreEntries adds each entry to .gitignore, keeping the
+// project's own lines. It returns every entry it could not add.
+func ensureGitignoreEntries(projectRoot string, entries []string) error {
+	var errs []error
+	for _, entry := range entries {
 		if err := EnsureGitignoreEntry(projectRoot, entry); err != nil {
-			slog.Warn("could not update .gitignore", "entry", entry, "error", err)
+			errs = append(errs, fmt.Errorf("adding %s: %w", entry, err))
 		}
 	}
+	return errors.Join(errs...)
 }
 
 // runRepair delegates to the full repair command logic, which computes its

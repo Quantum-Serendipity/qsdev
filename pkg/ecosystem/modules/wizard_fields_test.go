@@ -89,6 +89,21 @@ func TestWizardFields_WellFormed(t *testing.T) {
 	}
 }
 
+// versionExample returns the Placeholder of mod's version wizard field, or ""
+// when it declares none.
+func versionExample(mod ecosystem.EcosystemModule) string {
+	provider, ok := mod.(ecosystem.WizardFieldProvider)
+	if !ok {
+		return ""
+	}
+	for _, f := range provider.WizardFields() {
+		if f.Key == types.SettingVersion {
+			return f.Placeholder
+		}
+	}
+	return ""
+}
+
 // answerValue is one answer to try for a field; set is false for "no answer".
 type answerValue struct {
 	label, value string
@@ -120,11 +135,17 @@ func answerValues(t *testing.T, field ecosystem.WizardField) []answerValue {
 }
 
 // moduleOutput renders everything the module generates for a language whose
-// only setting is key=value (or nothing when !set): the result of every
-// method that takes a ModuleConfig, so no generator is missed.
+// only setting is key=value (or nothing when !set), besides the version the
+// module's own version field gives as its example: a setting can act only
+// once a version is known (go_source decides how the required Go release is
+// provided). It is the result of every method that takes a ModuleConfig, so
+// no generator is missed.
 func moduleOutput(t *testing.T, mod ecosystem.EcosystemModule, set bool, key, value string) string {
 	t.Helper()
 	lc := types.LanguageChoice{Name: mod.Name()}
+	if key != types.SettingVersion {
+		lc.Version = versionExample(mod)
+	}
 	if set {
 		lc = lc.WithSetting(key, value)
 	}

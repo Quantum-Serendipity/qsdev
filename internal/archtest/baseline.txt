@@ -30,7 +30,7 @@ context-background	pkg/aiframework/contracttest	16
 context-background	pkg/generate	2
 ecosystem-defaultregistry	addons/claudecode	5
 ecosystem-defaultregistry	addons/devenv	5
-ecosystem-defaultregistry	addons/devinit	4
+ecosystem-defaultregistry	addons/devinit	1
 ecosystem-defaultregistry	internal/check	3
 ecosystem-defaultregistry	internal/detect	1
 ecosystem-defaultregistry	internal/gitworkflow	1

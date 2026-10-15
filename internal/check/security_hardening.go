@@ -299,7 +299,8 @@ func checkSecurityConfigSettings(projectRoot string, lang types.LanguageConfig, 
 // detectedModuleConfig returns the ModuleConfig generation uses for lang: the
 // configured version and package manager completed from what the module
 // detects in projectRoot, the same merge types.DetectedProject.WithSuggested
-// applies. The checks therefore inspect the files generation actually wrote,
+// applies, with its committable settings taken from lang's extras alone. The
+// checks therefore inspect the files generation actually wrote,
 // such as a subproject's frontend/.npmrc or a Yarn Classic .yarnrc, against
 // the release-age gates of the compliance window minReleaseAge, as
 // ecosystem.ToGenerationConfig passes it, and with the registry proxy infra
@@ -314,6 +315,19 @@ func detectedModuleConfig(projectRoot string, mod ecosystem.EcosystemModule, lan
 			cfg.PackageManager = det.SuggestedConfig.PackageManager
 		}
 		cfg.Extras = maps.Clone(det.SuggestedConfig.Extras)
+	}
+	// mod's committable settings come from the committed extras alone, as
+	// config.ProjectPolicy.Apply sets them; no other committed key applies.
+	fields := ecosystem.CommittableFields(mod)
+	committed := ecosystem.CommittableSettings{lang.Name: fields}.Committed(lang.Name, lang.Extras)
+	for _, f := range fields {
+		delete(cfg.Extras, f.Key)
+	}
+	if len(committed) > 0 {
+		if cfg.Extras == nil {
+			cfg.Extras = make(map[string]string, len(committed))
+		}
+		maps.Copy(cfg.Extras, committed)
 	}
 	// After the merge: the proxy key can depend on the package manager.
 	cfg.RegistryProxy = ecosystem.ResolveRegistryProxy(lang.Name, cfg, infra)

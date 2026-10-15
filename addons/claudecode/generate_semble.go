@@ -21,9 +21,15 @@ func generateSembleConfig(answers types.WizardAnswers) (*sembleResult, error) {
 		return nil, nil
 	}
 
+	// FillDefaults records the catalog's default mode; resolve an empty one
+	// the same way, so every path generates the same files.
 	mode := answers.AgentTools.SembleMode
 	if mode == "" {
-		mode = "mcp"
+		cat, err := catalog.Default()
+		if err != nil {
+			return nil, fmt.Errorf("loading catalog for semble mode: %w", err)
+		}
+		mode = cat.DefaultSembleMode()
 	}
 
 	result := &sembleResult{}

@@ -21,6 +21,7 @@ import (
 	"github.com/Quantum-Serendipity/qsdev/internal/check"
 	"github.com/Quantum-Serendipity/qsdev/internal/claudesettings"
 	"github.com/Quantum-Serendipity/qsdev/internal/posture"
+	"github.com/Quantum-Serendipity/qsdev/internal/secrets"
 	"github.com/Quantum-Serendipity/qsdev/internal/shebang"
 	"github.com/Quantum-Serendipity/qsdev/internal/state"
 	"github.com/Quantum-Serendipity/qsdev/internal/toolreg"
@@ -265,16 +266,23 @@ func TestCheckDenyRules_GeneratedSettingsPass(t *testing.T) {
 	}
 }
 
-// TestCheckDenyRules_HomeCredentialDenyDeleted deletes, one at a time, each
-// canon Read deny and each shell-read tripwire rule from generated settings:
+// TestCheckDenyRules_CanonReadDenyDeleted deletes, one at a time, each home
+// credential Read deny, each shell-read tripwire rule and each nested
+// secrets rule of the secrets canon from generated settings:
 // deny_rules_present must fail and name the deleted rule at every preset.
-func TestCheckDenyRules_HomeCredentialDenyDeleted(t *testing.T) {
+func TestCheckDenyRules_CanonReadDenyDeleted(t *testing.T) {
 	t.Parallel()
 	cat, err := catalog.Default()
 	if err != nil {
 		t.Fatal(err)
 	}
-	home := claudecode.HomeCredentialDenyRules()
+	var nested []string
+	for _, p := range secrets.SecretMaterialPatterns() {
+		nested = append(nested, "Read(/**/secrets/**/"+p+")")
+	}
+	for _, p := range secrets.SecretDataPatterns() {
+		nested = append(nested, "Read(/**/secrets/"+p+")")
+	}
 	for _, preset := range cat.PermissionPresets() {
 		t.Run(preset, func(t *testing.T) {
 			t.Parallel()
@@ -283,8 +291,12 @@ func TestCheckDenyRules_HomeCredentialDenyDeleted(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
+			canon := claudecode.HomeCredentialDenyRules()
+			if slices.Contains(deny, "Read(/secrets/**)") {
+				canon = append(canon, nested...)
+			}
 			path := filepath.Join(dir, ".claude", "settings.json")
-			for _, rule := range home {
+			for _, rule := range canon {
 				kept := slices.DeleteFunc(slices.Clone(deny), func(r string) bool { return r == rule })
 				if len(kept) == len(deny) {
 					t.Errorf("generated settings lack %q", rule)

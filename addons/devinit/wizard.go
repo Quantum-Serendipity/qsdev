@@ -15,7 +15,6 @@ import (
 	"github.com/Quantum-Serendipity/qsdev/internal/catalog"
 	"github.com/Quantum-Serendipity/qsdev/internal/termutil"
 	"github.com/Quantum-Serendipity/qsdev/internal/toolreg"
-	"github.com/Quantum-Serendipity/qsdev/pkg/ecosystem"
 	"github.com/Quantum-Serendipity/qsdev/pkg/types"
 )
 
@@ -137,6 +136,7 @@ func newFormState(detected types.DetectedProject, defaults, partial types.Wizard
 	if len(partial.Languages) > 0 {
 		seedLangs = partial.Languages
 	}
+	cat := catalog.MustDefault()
 	fs := &formState{
 		partial:              partial,
 		quickChoice:          "yes",
@@ -144,10 +144,10 @@ func newFormState(detected types.DetectedProject, defaults, partial types.Wizard
 		direnv:               true,
 		claudeCode:           true,
 		permissionLevel:      "standard",
-		mcpServers:           catalog.MustDefault().DefaultMCPServers(),
+		mcpServers:           cat.DefaultMCPServers(),
 		agentVersionSentinel: hasVSSupportedLanguage(seedLangs),
 		agentSemble:          pythonVersionAtLeast(detected.PythonVersion, 3, 10),
-		agentSembleMode:      "mcp",
+		agentSembleMode:      cat.DefaultSembleMode(),
 	}
 
 	// Explicit flags already answer part of the quick-setup question, so
@@ -156,7 +156,7 @@ func newFormState(detected types.DetectedProject, defaults, partial types.Wizard
 		fs.quickChoice = "customize"
 	}
 
-	fs.moduleFields = newModuleFields(ecosystem.DefaultRegistry(),
+	fs.moduleFields = newModuleFields(ecosystems(),
 		knownLanguageChoices(defaults.Languages, partial.Languages), detected)
 	seedFromPartial(fs, partial, flagSet)
 	return fs

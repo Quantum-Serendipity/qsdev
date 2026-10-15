@@ -1,5 +1,7 @@
 package secrets
 
+import "slices"
+
 // CredentialStore is one per-user credential store.
 type CredentialStore struct {
 	// Rel is the store's path relative to the home directory, slash-separated
@@ -99,15 +101,23 @@ func projectStores(f func(CredentialStore) string) []string {
 	return out
 }
 
-// SecretFilePatterns returns the base-name globs of secret-material files:
-// dotenv files, private keys and certificates with their keys, keystores,
-// encrypted secrets, and the config and text formats secrets are stored in.
-// It is the single definition of what a secrets directory is guarded for, so
-// the generated Claude Code deny rules read-deny these files inside a
-// directory named secrets at any depth while source code in such a directory
-// (internal/secrets/*.go) stays readable. Each call returns a new slice, so
-// callers may modify the result.
+// SecretFilePatterns returns the base-name globs of the files a secrets
+// directory is guarded for: the union of SecretMaterialPatterns and
+// SecretDataPatterns. It is the single definition of what a secrets
+// directory is guarded for, so the generated Claude Code deny rules
+// read-deny these files inside a directory named secrets while source code
+// in such a directory (internal/secrets/*.go) stays readable. Each call
+// returns a new slice, so callers may modify the result.
 func SecretFilePatterns() []string {
+	return slices.Concat(SecretMaterialPatterns(), SecretDataPatterns())
+}
+
+// SecretMaterialPatterns returns the base-name globs of files that are
+// secret material by format wherever they sit: dotenv files, private keys
+// and certificates with their keys, keystores and encrypted secrets. The
+// generated deny rules read-deny them at any depth below a directory named
+// secrets. Each call returns a new slice, so callers may modify the result.
+func SecretMaterialPatterns() []string {
 	return []string{
 		".env",
 		".env.*",
@@ -120,6 +130,16 @@ func SecretFilePatterns() []string {
 		"*.keystore",
 		"*.gpg",
 		"*.age",
+	}
+}
+
+// SecretDataPatterns returns the base-name globs of the config and text
+// formats secrets are stored in. These formats are ordinary data elsewhere
+// (a source package's testdata/cases.json), so the generated deny rules
+// read-deny them only as direct children of a directory named secrets.
+// Each call returns a new slice, so callers may modify the result.
+func SecretDataPatterns() []string {
+	return []string{
 		"*.json",
 		"*.yaml",
 		"*.yml",

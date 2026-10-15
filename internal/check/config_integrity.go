@@ -56,6 +56,7 @@ func CheckConfigIntegrity(ctx CheckContext) []CheckResult {
 		ProfileNames: ctx.ProfileNames,
 		ToolNames:    ctx.ToolNames,
 		MCPToolNames: ctx.MCPToolNames,
+		Settings:     ctx.Settings,
 	}
 	invalidFields := make(map[string]bool)
 	if errs := config.ValidateQsdevConfig(ctx.QsdevConfig, opts); len(errs) > 0 {

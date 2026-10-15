@@ -158,6 +158,17 @@ type DetectedProject struct {
 	HasEnvrc          bool `yaml:"has_envrc"           json:"has_envrc"`
 	HasMcpJson        bool `yaml:"has_mcp_json"        json:"has_mcp_json"`
 
+	// UpdateBotConfigs are the dependency-update bot config files present
+	// in the repository (slash-separated, sorted), whoever wrote them.
+	UpdateBotConfigs []string `yaml:"update_bot_configs,omitempty" json:"update_bot_configs,omitempty"`
+	// ProjectUpdateBots names the update tools ("dependabot", "renovate")
+	// the project configures itself rather than through qsdev, sorted. The
+	// generators never add a different bot's config next to one of them.
+	// Detection alone cannot tell qsdev's output from the project's, so
+	// init, join and update (addons/devinit) set it from UpdateBotConfigs
+	// and the recorded state; elsewhere it is empty.
+	ProjectUpdateBots []string `yaml:"project_update_bots,omitempty" json:"project_update_bots,omitempty"`
+
 	IsGitRepo   bool `yaml:"is_git_repo"   json:"is_git_repo"`
 	HasGitHooks bool `yaml:"has_git_hooks" json:"has_git_hooks"`
 	// RemoteURL is the origin remote with any embedded credentials removed
@@ -218,6 +229,11 @@ type GeneratedFile struct {
 	// declares the flake inputs devenv.nix's options read, so writing one
 	// without the other would split the pair.
 	HeldWith string `yaml:"-" json:"-"`
+	// PinLF pins the file to LF line endings in the project's .gitattributes
+	// although its content is not a script (scripts, content starting with
+	// "#!", are always pinned): a file a CI script parses line by line, such
+	// as a pin file, must not be checked out with CR line endings.
+	PinLF bool `yaml:"-" json:"-"`
 	// BaseContent, when non-nil, is the generator's own output for a file
 	// whose Content holds the merged bytes written to disk. State recording
 	// keeps it as the three-way merge base instead of Content. Generators

@@ -28,7 +28,12 @@ type CIWorkflowData struct {
 	ActionCheckout     cigeneration.ActionRef
 	ActionOSVScanner   cigeneration.ActionRef
 	ActionGrype        cigeneration.ActionRef
-	ActionInstallNix   cigeneration.ActionRef
+
+	// InstallNixRun is the ecosystem-ci job's Nix install command: the
+	// generated installer script (nixInstallerFiles) run on the generated
+	// pins. It replaces a third-party Nix action, which the Actions allowlists
+	// projects run under do not admit.
+	InstallNixRun string
 
 	// ImageSnyk is run as a digest-pinned container step rather than through
 	// snyk/actions, whose action.yml runs a mutable image tag.
@@ -96,6 +101,11 @@ func validateEcosystemCI(groups []ecosystem.CIPhaseGroup) error {
 	return nil
 }
 
+// installNixRun is the command the ecosystem-ci job installs Nix with: the
+// official release, SHA-256-verified against the pins before anything from
+// it runs (see cigeneration.InstallNixScript).
+const installNixRun = cigeneration.InstallNixScriptPath + " " + cigeneration.NixReleasePinsPath
+
 // generatesSecurityScanWorkflow reports whether the profile's scanning
 // settings call for the CI security-scan workflow.
 func (p *InfraProfile) generatesSecurityScanWorkflow() bool {
@@ -120,7 +130,7 @@ func (p *InfraProfile) generateSecurityScanWorkflow(in ProjectInputs) (types.Gen
 		ActionCheckout:     cigeneration.ActionCheckout,
 		ActionOSVScanner:   cigeneration.ActionOSVScanner,
 		ActionGrype:        cigeneration.ActionGrype,
-		ActionInstallNix:   cigeneration.ActionInstallNix,
+		InstallNixRun:      installNixRun,
 		ImageSnyk:          cigeneration.ImageSnyk,
 
 		LockChecks:  ecosystem.GroupedManifestLockfiles(),
@@ -138,4 +148,32 @@ func (p *InfraProfile) generateSecurityScanWorkflow(in ProjectInputs) (types.Gen
 		Mode:     fileutil.ModeReadWrite,
 		Strategy: types.Overwrite,
 	}, nil
+}
+
+// generatesEcosystemCI reports whether the security-scan workflow carries the
+// ecosystem-ci job, and so needs the Nix installer files.
+func (p *InfraProfile) generatesEcosystemCI(in ProjectInputs) bool {
+	return p.generatesSecurityScanWorkflow() && len(in.CI) > 0
+}
+
+// nixInstallerFiles returns the files the ecosystem-ci job's Nix install
+// step runs (installNixRun): the installer script and the release pins, both
+// the CI catalog's copies. The pins are pinned to LF line endings, since the
+// script reads them line by line.
+func nixInstallerFiles() []types.GeneratedFile {
+	return []types.GeneratedFile{
+		{
+			Path:     cigeneration.InstallNixScriptPath,
+			Content:  cigeneration.InstallNixScript(),
+			Mode:     fileutil.ModeExecutable,
+			Strategy: types.Overwrite,
+		},
+		{
+			Path:     cigeneration.NixReleasePinsPath,
+			Content:  cigeneration.NixReleasePins(),
+			Mode:     fileutil.ModeReadWrite,
+			Strategy: types.Overwrite,
+			PinLF:    true,
+		},
+	}
 }

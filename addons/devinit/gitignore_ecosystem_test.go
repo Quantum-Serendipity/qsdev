@@ -1,6 +1,8 @@
 package devinit
 
 import (
+	"slices"
+	"strings"
 	"testing"
 
 	"github.com/Quantum-Serendipity/qsdev/pkg/ecosystem"
@@ -10,14 +12,12 @@ func TestGitignoreEntriesForLanguages_JavaScript(t *testing.T) {
 	entries := gitignoreEntriesForLanguages([]string{"javascript"})
 
 	want := map[string]bool{
-		"node_modules/":          true,
-		"dist/":                  true,
-		".env":                   true,
-		".env.*":                 true,
-		"*.pem":                  true,
-		"*.key":                  true,
-		".claude/logs/":          true,
-		".claude/hook-audit.log": true,
+		"node_modules/": true,
+		"dist/":         true,
+		".env":          true,
+		".env.*":        true,
+		"*.pem":         true,
+		"*.key":         true,
 	}
 
 	if len(entries) != len(want) {
@@ -74,9 +74,31 @@ func TestGitignoreEntriesForLanguages_UnknownLanguage(t *testing.T) {
 	if !entrySet["*.pem"] {
 		t.Error("missing *.pem for unknown language")
 	}
-	for _, want := range []string{".claude/logs/", ".claude/hook-audit.log"} {
-		if !entrySet[want] {
-			t.Errorf("missing hook audit log entry %q", want)
+}
+
+// TestGitignoreEntries_HookAuditOwnedByOneList checks that the hook audit
+// entries have one owner, projectGitignoreEntries, which create, join and
+// update all ensure. A second copy among the language entries once left both
+// ".claude/hook-audit.log" and ".claude/hook-audit.log*" in a created
+// project's .gitignore.
+func TestGitignoreEntries_HookAuditOwnedByOneList(t *testing.T) {
+	t.Parallel()
+	project := projectGitignoreEntries()
+	var langs []string
+	for name := range ecosystemGitignoreEntries {
+		langs = append(langs, name)
+	}
+	for _, e := range gitignoreEntriesForLanguages(langs) {
+		if strings.HasPrefix(e, ".claude/") {
+			t.Errorf("language entries list %q; .claude/ entries belong to projectGitignoreEntries", e)
+		}
+		if slices.Contains(project, e) {
+			t.Errorf("entry %q is listed by both projectGitignoreEntries and the language entries", e)
+		}
+	}
+	for _, want := range []string{".claude/logs/", ".claude/hook-audit.log*"} {
+		if !slices.Contains(project, want) {
+			t.Errorf("projectGitignoreEntries lacks hook audit entry %q", want)
 		}
 	}
 }

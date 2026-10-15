@@ -243,11 +243,25 @@ func TestNoRenovateConfig(t *testing.T) {
 }
 
 // toolVersionsFile is the single source of the CI tool versions that no
-// Dependabot ecosystem covers (U26-02).
+// Dependabot ecosystem covers (U26-02), apart from Nix.
 var toolVersionsFile = filepath.Join(".github", "tool-versions.env")
 
+// pinFiles are this repository's CI pin files: tool-versions.env and the
+// generated copy of the catalog's Nix release pins, which install-nix.sh
+// reads. No key may be defined in more than one of them.
+var pinFiles = []string{toolVersionsFile, filepath.FromSlash(NixReleasePinsPath)}
+
+// bumpedPinFiles are the files tool-pins.yml has bump-tool-pins.sh keep
+// current: both pin files and the catalog's Nix source, so a pin bump moves
+// the source and its generated copy together.
+var bumpedPinFiles = []string{
+	".github/tool-versions.env",
+	"internal/cigeneration/nix-release.env",
+	NixReleasePinsPath,
+}
+
 var (
-	// toolVersionLineRe is one KEY=value assignment in tool-versions.env.
+	// toolVersionLineRe is one KEY=value assignment in a pin file.
 	toolVersionLineRe = regexp.MustCompile(`^([A-Z][A-Z0-9_]*)=(.*)$`)
 	// toolSourceLineRe is the "# source:" annotation bump-tool-pins.sh reads;
 	// it captures the source kind and its target.
@@ -270,22 +284,49 @@ var (
 )
 
 // repoScriptsDir holds the scripts workflows run; they may read pins from
-// tool-versions.env but must not carry versions of their own.
+// the pin files but must not carry versions of their own.
 var repoScriptsDir = filepath.Join(repoRoot, ".github", "scripts")
 
-// readToolVersions parses tool-versions.env. Workflows append its assignment
-// lines to $GITHUB_ENV, which rejects anything but NAME=value, so every
-// non-comment line must be one, defined once, with a "# source:" line
-// directly above it for the updater and a value of the shape that source
-// yields: an exact vX.Y.Z release, an exact X.Y.Z Nix release, or the SHA-256
-// of that Nix release's tarball for one system.
-func readToolVersions(t *testing.T) map[string]string {
+// pinSet is the pins of one or more pin files.
+type pinSet struct {
+	values map[string]string // key -> pinned value
+	files  map[string]string // key -> the pin file defining it
+}
+
+// readPinFiles reads and checks each pin file under the repository root
+// (parsePinFile) and merges their pins, failing on a key that more than one
+// file defines.
+func readPinFiles(t *testing.T, rels ...string) pinSet {
 	t.Helper()
 
-	b, err := os.ReadFile(filepath.Join(repoRoot, toolVersionsFile))
-	if err != nil {
-		t.Fatalf("reading %s: %v", toolVersionsFile, err)
+	pins := pinSet{values: map[string]string{}, files: map[string]string{}}
+	for _, rel := range rels {
+		b, err := os.ReadFile(filepath.Join(repoRoot, rel))
+		if err != nil {
+			t.Fatalf("reading %s: %v", rel, err)
+		}
+		name := filepath.ToSlash(rel)
+		for key, value := range parsePinFile(t, name, b) {
+			if other, dup := pins.files[key]; dup {
+				t.Errorf("%s: %s is also defined in %s; each pin has one source", name, key, other)
+			}
+			pins.values[key] = value
+			pins.files[key] = name
+		}
 	}
+	return pins
+}
+
+// parsePinFile parses one pin file's content; name labels its errors.
+// Workflows append tool-versions.env's assignment lines to $GITHUB_ENV, which
+// rejects anything but NAME=value, and install-nix.sh parses its pins the
+// same way, so every non-comment line must be one, defined once, with a
+// "# source:" line directly above it for the updater and a value of the shape
+// that source yields: an exact vX.Y.Z release, an exact X.Y.Z Nix release, or
+// the SHA-256 of that Nix release's tarball for one system.
+func parsePinFile(t *testing.T, name string, b []byte) map[string]string {
+	t.Helper()
+
 	versions := map[string]string{}
 	prev := ""
 	nixRelease := false
@@ -293,9 +334,9 @@ func readToolVersions(t *testing.T) map[string]string {
 		switch m := toolVersionLineRe.FindStringSubmatch(line); {
 		case line == "" || strings.HasPrefix(line, "#"):
 		case m == nil:
-			t.Errorf("%s:%d: %q is neither a comment nor KEY=value", toolVersionsFile, i+1, line)
+			t.Errorf("%s:%d: %q is neither a comment nor KEY=value", name, i+1, line)
 		default:
-			where := fmt.Sprintf("%s:%d", toolVersionsFile, i+1)
+			where := fmt.Sprintf("%s:%d", name, i+1)
 			if _, dup := versions[m[1]]; dup {
 				t.Errorf("%s: %s is defined twice", where, m[1])
 			}
@@ -310,7 +351,7 @@ func readToolVersions(t *testing.T) map[string]string {
 		prev = line
 	}
 	if len(versions) == 0 {
-		t.Fatalf("%s defines no tool versions", toolVersionsFile)
+		t.Fatalf("%s defines no pins", name)
 	}
 	return versions
 }
@@ -434,10 +475,10 @@ func readRepoWorkflows(t *testing.T) map[string]workflowFile {
 	return out
 }
 
-// loadsToolVersions reports whether a step appends tool-versions.env to
+// loadsPinFile reports whether a step appends the pin file (a slash path) to
 // $GITHUB_ENV, which makes its keys visible as env.* to later steps.
-func loadsToolVersions(s workflowStep) bool {
-	return strings.Contains(s.Run, filepath.ToSlash(toolVersionsFile)) && strings.Contains(s.Run, "GITHUB_ENV")
+func loadsPinFile(s workflowStep, file string) bool {
+	return strings.Contains(s.Run, file) && strings.Contains(s.Run, "GITHUB_ENV")
 }
 
 // stepText is every expression-bearing field of a step.
@@ -452,10 +493,9 @@ func stepText(s workflowStep) string {
 	return b.String()
 }
 
-// markScriptPins marks the tool-versions keys each CI script in scripts
-// names as used, and fails on a pin-shaped name a script reads that
-// tool-versions.env does not define.
-func markScriptPins(t *testing.T, scripts map[string]bool, versions map[string]string, used map[string]bool) {
+// markScriptPins marks the pin keys each CI script in scripts names as used,
+// and fails on a pin-shaped name a script reads that no pin file defines.
+func markScriptPins(t *testing.T, scripts map[string]bool, pins pinSet, used map[string]bool) {
 	t.Helper()
 
 	for rel := range scripts {
@@ -465,32 +505,39 @@ func markScriptPins(t *testing.T, scripts map[string]bool, versions map[string]s
 			continue
 		}
 		for _, name := range scriptPinKeyRe.FindAllString(string(b), -1) {
-			if _, ok := versions[name]; ok {
+			if _, ok := pins.values[name]; ok {
 				used[name] = true
 			} else {
-				t.Errorf("%s reads %s, which %s does not define", rel, name, toolVersionsFile)
+				t.Errorf("%s reads %s, which no pin file (%v) defines", rel, name, pinFiles)
 			}
 		}
 	}
 }
 
 // TestToolVersionsSingleSource is the U26-02 regression test for the tool
-// pins no Dependabot ecosystem covers. Their versions live only in
-// tool-versions.env, which tool-pins.yml keeps current with a cooldown: no
-// `go install` or action `version:` input may carry a literal version, every
-// ${{ env.X }} must resolve (a tool-versions key only after the job loaded
-// the file), and every key must be used somewhere, by a workflow or by a
-// .github/scripts script a workflow runs.
+// pins no Dependabot ecosystem covers. Their versions live only in the pin
+// files, which tool-pins.yml keeps current with a cooldown: no `go install`
+// or action `version:` input may carry a literal version, every ${{ env.X }}
+// must resolve (a pin key only after the job loaded its file), and every key
+// must be used somewhere, by a workflow or by a .github/scripts script a
+// workflow runs. The Nix pins live only in the catalog's nix-release.env and
+// its generated copy, never in tool-versions.env, and install-nix.sh reads
+// every one of them.
 func TestToolVersionsSingleSource(t *testing.T) {
 	t.Parallel()
 
-	versions := readToolVersions(t)
+	pins := readPinFiles(t, pinFiles...)
+	for key, file := range pins.files {
+		if strings.HasPrefix(key, "NIX_") && file != NixReleasePinsPath {
+			t.Errorf("%s defines %s; the Nix pins live only in %s", file, key, NixReleasePinsPath)
+		}
+	}
 	used := map[string]bool{}
 	scripts := map[string]bool{}
 	for file, wf := range readRepoWorkflows(t) {
 		for jobName, job := range wf.Jobs {
 			where := file + " job " + jobName
-			loaded := false
+			loaded := map[string]bool{}
 			for i, s := range job.Steps {
 				step := fmt.Sprintf("%s step %d (%s)", where, i+1, s.Name)
 				for _, script := range workflowScriptRe.FindAllString(s.Run, -1) {
@@ -498,13 +545,13 @@ func TestToolVersionsSingleSource(t *testing.T) {
 				}
 				for _, m := range goInstallRe.FindAllStringSubmatch(s.Run, -1) {
 					ref := toolEnvRefRe.FindStringSubmatch(m[1])
-					if ref == nil || versions[ref[1]] == "" {
+					if ref == nil || pins.values[ref[1]] == "" {
 						t.Errorf("%s: go install version %q, want ${{ env.KEY }} with KEY from %s", step, m[1], toolVersionsFile)
 					}
 				}
 				if v, ok := s.With["version"]; ok && s.Uses != "" {
 					ref := toolEnvRefRe.FindStringSubmatch(v)
-					if ref == nil || versions[ref[1]] == "" {
+					if ref == nil || pins.values[ref[1]] == "" {
 						t.Errorf("%s: %s version %q, want ${{ env.KEY }} with KEY from %s", step, s.Uses, v, toolVersionsFile)
 					}
 				}
@@ -513,27 +560,30 @@ func TestToolVersionsSingleSource(t *testing.T) {
 					_, inStep := s.Env[name]
 					_, inJob := job.Env[name]
 					_, inWorkflow := wf.Env[name]
-					_, isTool := versions[name]
+					pinFile, isTool := pins.files[name]
 					switch {
-					case isTool && !loaded:
-						t.Errorf("%s: uses env.%s before any step loads %s into $GITHUB_ENV", step, name, toolVersionsFile)
+					case isTool && !loaded[pinFile]:
+						t.Errorf("%s: uses env.%s before any step loads %s into $GITHUB_ENV", step, name, pinFile)
 					case isTool:
 						used[name] = true
 					case !inStep && !inJob && !inWorkflow:
 						t.Errorf("%s: env.%s is defined nowhere", step, name)
 					}
 				}
-				loaded = loaded || loadsToolVersions(s)
+				for _, rel := range pinFiles {
+					f := filepath.ToSlash(rel)
+					loaded[f] = loaded[f] || loadsPinFile(s, f)
+				}
 			}
 		}
 	}
-	markScriptPins(t, scripts, versions, used)
-	for key := range versions {
+	markScriptPins(t, scripts, pins, used)
+	for key, file := range pins.files {
 		if !used[key] {
-			t.Errorf("%s: %s is used by no workflow; remove it", toolVersionsFile, key)
+			t.Errorf("%s: %s is used by no workflow; remove it", file, key)
 		}
 	}
-	assertNoLiteralToolVersions(t, versions)
+	assertNoLiteralToolVersions(t, pins)
 }
 
 // literalVersionRe matches version (vX.Y.Z) anywhere in text, with or
@@ -546,7 +596,7 @@ func literalVersionRe(version string) *regexp.Regexp {
 // script for the pinned tool versions and digests, so a literal pin outside
 // the structural checks (`go run pkg@v1.2.3`, a release download URL, an env
 // value, a hard-coded checksum) still fails.
-func assertNoLiteralToolVersions(t *testing.T, versions map[string]string) {
+func assertNoLiteralToolVersions(t *testing.T, pins pinSet) {
 	t.Helper()
 
 	var files []string
@@ -570,20 +620,39 @@ func assertNoLiteralToolVersions(t *testing.T, versions map[string]string) {
 			t.Fatalf("reading %s: %v", path, err)
 		}
 		name := filepath.ToSlash(strings.TrimPrefix(path, repoRoot+string(filepath.Separator)))
-		for key, version := range versions {
+		for key, version := range pins.values {
 			re := literalVersionRe(version)
 			for i, line := range strings.Split(string(b), "\n") {
 				if re.MatchString(line) {
 					t.Errorf("%s:%d contains %s's pin %s literally; read %s from %s",
-						name, i+1, key, version, key, toolVersionsFile)
+						name, i+1, key, version, key, pins.files[key])
 				}
 			}
 		}
 	}
 }
 
-// bumpMinAgeRe captures the cooldown bump-tool-pins.sh applies.
-var bumpMinAgeRe = regexp.MustCompile(`(?m)^readonly MIN_AGE_DAYS=(\d+)$`)
+var (
+	// bumpMinAgeRe captures the cooldown bump-tool-pins.sh applies.
+	bumpMinAgeRe = regexp.MustCompile(`(?m)^readonly MIN_AGE_DAYS=(\d+)$`)
+	// bumpDefaultRe captures the pin files bump-tool-pins.sh bumps when it
+	// is given none.
+	bumpDefaultRe = regexp.MustCompile(`(?m)^\s*set -- (\S.*)$`)
+)
+
+// bumpArgs returns the pin files a run script passes to bump-tool-pins.sh:
+// the words after the script name on its (continued) line, without flags.
+func bumpArgs(run string) []string {
+	_, after, _ := strings.Cut(strings.ReplaceAll(run, "\\\n", " "), "scripts/bump-tool-pins.sh")
+	line, _, _ := strings.Cut(after, "\n")
+	var files []string
+	for _, w := range strings.Fields(line) {
+		if !strings.HasPrefix(w, "-") {
+			files = append(files, w)
+		}
+	}
+	return files
+}
 
 // TestToolPinsWorkflowScope pins the scope of the tool pin updater. It holds
 // a PAT that can push branches and open PRs, so it runs only on its schedule
@@ -620,6 +689,9 @@ func TestToolPinsWorkflowScope(t *testing.T) {
 			}
 			if strings.Contains(s.Run, "scripts/bump-tool-pins.sh") {
 				runsScript = true
+				if got := bumpArgs(s.Run); !slices.Equal(got, bumpedPinFiles) {
+					t.Errorf("job %s bumps %v, want %v: the Nix source and its generated copy must move together", name, got, bumpedPinFiles)
+				}
 			}
 		}
 	}
@@ -630,6 +702,11 @@ func TestToolPinsWorkflowScope(t *testing.T) {
 	b, err := os.ReadFile(filepath.Join(repoRoot, "scripts", "bump-tool-pins.sh"))
 	if err != nil {
 		t.Fatalf("reading bump-tool-pins.sh: %v", err)
+	}
+	if m := bumpDefaultRe.FindSubmatch(b); m == nil {
+		t.Error("bump-tool-pins.sh has no `set -- <default pin files>` line")
+	} else if got := strings.Fields(string(m[1])); !slices.Equal(got, bumpedPinFiles) {
+		t.Errorf("bump-tool-pins.sh default pin files = %v, want %v", got, bumpedPinFiles)
 	}
 	m := bumpMinAgeRe.FindSubmatch(b)
 	if m == nil {
@@ -664,6 +741,357 @@ func TestLiteralVersionRe(t *testing.T) {
 	for _, tc := range tests {
 		if got := re.MatchString(tc.line); got != tc.want {
 			t.Errorf("literalVersionRe(v1.3.0).MatchString(%q) = %v, want %v", tc.line, got, tc.want)
+		}
+	}
+}
+
+// TestDogfoodJob guards the CI job that runs scripts/dogfood.sh (U26-WS1):
+// qsdev check and a join regeneration of a `git archive HEAD` copy of this
+// repository must pass with no drift. The job uses the same SHA-pinned
+// harden-runner, checkout and setup-go steps as its siblings, with the
+// catalog's pins where the catalog has one, and does not persist the token.
+// It is not yet a required gate: no other job needs it, and it does not hide
+// a failure behind continue-on-error.
+func TestDogfoodJob(t *testing.T) {
+	t.Parallel()
+
+	var wf workflowFile
+	readRepoYAML(t, filepath.Join(".github", "workflows", "ci.yml"), &wf)
+	job, ok := wf.Jobs["dogfood"]
+	if !ok {
+		t.Fatal("ci.yml has no dogfood job")
+	}
+	if !slices.Equal(job.RunsOn, stringList{"ubuntu-latest"}) {
+		t.Errorf("dogfood runs-on = %v, want [ubuntu-latest]", job.RunsOn)
+	}
+	if job.ContinueOnError != "" {
+		t.Errorf("dogfood continue-on-error = %q; a drift must show as a failed job", job.ContinueOnError)
+	}
+	for name, other := range wf.Jobs {
+		if slices.Contains(other.Needs, "dogfood") {
+			t.Errorf("job %s needs dogfood; the dogfood gate is not required yet", name)
+		}
+	}
+
+	pins := map[string]ActionRef{}
+	for _, ref := range AllActionRefs() {
+		pins[ref.Owner+"/"+ref.Repo] = ref
+	}
+	var uses []string
+	runsDogfood := false
+	for i, s := range job.Steps {
+		step := fmt.Sprintf("dogfood step %d (%s)", i+1, s.Name)
+		if strings.TrimSpace(s.Run) == "make dogfood" {
+			runsDogfood = true
+		}
+		if s.Uses == "" {
+			continue
+		}
+		if !shaPinnedUsesRe.MatchString(s.Uses) {
+			t.Errorf("%s: uses %q is not pinned to a commit SHA", step, s.Uses)
+			continue
+		}
+		path, sha, _ := strings.Cut(s.Uses, "@")
+		uses = append(uses, path)
+		if ref, ok := pins[path]; ok && ref.SHA != sha {
+			t.Errorf("%s: %s@%s, want the catalog pin %s", step, path, sha, ref.SHA)
+		}
+		if path == "actions/checkout" && s.With["persist-credentials"] != "false" {
+			t.Errorf("%s: checkout persist-credentials = %q, want false", step, s.With["persist-credentials"])
+		}
+		if path == "actions/setup-go" && s.With["go-version-file"] != "go.mod" {
+			t.Errorf("%s: setup-go go-version-file = %q, want go.mod", step, s.With["go-version-file"])
+		}
+	}
+	wantUses := []string{"step-security/harden-runner", "actions/checkout", "actions/setup-go"}
+	if !slices.Equal(uses, wantUses) {
+		t.Errorf("dogfood actions = %v, want %v", uses, wantUses)
+	}
+	if !runsDogfood {
+		t.Error("no dogfood step runs `make dogfood`")
+	}
+}
+
+// readDogfoodScript returns scripts/dogfood.sh.
+func readDogfoodScript(t *testing.T) string {
+	t.Helper()
+
+	b, err := os.ReadFile(filepath.Join(repoRoot, "scripts", "dogfood.sh"))
+	if err != nil {
+		t.Fatalf("reading scripts/dogfood.sh: %v", err)
+	}
+	return strings.ReplaceAll(string(b), "\r\n", "\n")
+}
+
+// scriptIndex returns the offset of the first line of script, ignoring
+// comments, that contains want, or -1.
+func scriptIndex(script, want string) int {
+	off := 0
+	for _, line := range strings.SplitAfter(script, "\n") {
+		if !strings.HasPrefix(strings.TrimSpace(line), "#") {
+			if i := strings.Index(line, want); i >= 0 {
+				return off + i
+			}
+		}
+		off += len(line)
+	}
+	return -1
+}
+
+// dogfoodResetRe matches dogfood.sh's loop over the three-way-merged JSON
+// files it resets to exactly what qsdev generates.
+var dogfoodResetRe = regexp.MustCompile(`(?m)^for merged in ([^;]+); do$`)
+
+// TestDogfoodScript_ResetsMergedJSON pins that scripts/dogfood.sh resets the
+// three-way-merged JSON files after the join and before its drift check.
+// join keeps entries it no longer generates in those files as user content
+// and qsdev check accepts them, so without the reset a stale hook or allow
+// rule (U26-01) would pass the gate.
+func TestDogfoodScript_ResetsMergedJSON(t *testing.T) {
+	t.Parallel()
+
+	script := readDogfoodScript(t)
+	m := dogfoodResetRe.FindStringSubmatchIndex(script)
+	if m == nil {
+		t.Fatal("dogfood.sh has no `for merged in ...; do` reset loop")
+	}
+	files := strings.Fields(script[m[2]:m[3]])
+	for _, want := range []string{".claude/settings.json", ".mcp.json"} {
+		if !slices.Contains(files, want) {
+			t.Errorf("dogfood.sh does not reset %s (resets %v)", want, files)
+		}
+	}
+	if !strings.Contains(script[m[0]:], `qsdev repair --reset --file "$merged"`) {
+		t.Error("dogfood.sh's reset loop does not run `qsdev repair --reset --file \"$merged\"`")
+	}
+	join := scriptIndex(script, "qsdev init --mode join --quiet")
+	drift := scriptIndex(script, "git status --porcelain")
+	if join < 0 || drift < 0 || join >= m[0] || m[0] >= drift {
+		t.Errorf("dogfood.sh must reset the merged files after the join (at %d) and before the drift check (at %d); reset at %d", join, drift, m[0])
+	}
+
+	// The reset files are human-edited (three-way-merge), so the committed
+	// manifest of machine-owned files, when there is one, must not list them.
+	manifest, err := os.ReadFile(filepath.Join(repoRoot, ".qsdev-generated.sha256"))
+	if err != nil && !errors.Is(err, fs.ErrNotExist) {
+		t.Fatal(err)
+	}
+	for _, f := range files {
+		if _, err := os.Stat(filepath.Join(repoRoot, filepath.FromSlash(f))); err != nil {
+			t.Errorf("dogfood.sh resets %s, which the repository does not have: %v", f, err)
+		}
+		if strings.Contains(string(manifest), "  "+f+"\n") {
+			t.Errorf("dogfood.sh resets %s, but it is machine-owned (in the manifest), not three-way-merged", f)
+		}
+	}
+}
+
+// TestDogfoodScript_NormalizesReleaseCutoffs pins that scripts/dogfood.sh
+// does not report the .mcp.json release cutoffs as drift. Generation writes
+// them relative to the day it runs (mcpregistry.HardenedLauncherSpec: an npx
+// launcher's env npm_config_before, a uvx launcher's --exclude-newer= arg), so
+// a join on a later day rewrites them; qsdev check validates the committed
+// ones. After the resets and before the porcelain drift check, the script
+// compares .mcp.json with HEAD's under a jq normalisation of both cutoff
+// forms and restores the committed file only when the two are equal, so any
+// other change is still drift. Without jq it fails before doing any work.
+func TestDogfoodScript_NormalizesReleaseCutoffs(t *testing.T) {
+	t.Parallel()
+
+	script := readDogfoodScript(t)
+
+	jq, mk := scriptIndex(script, "command -v jq"), scriptIndex(script, `tmp=$(mktemp -d)`)
+	if jq < 0 || mk < 0 || jq > mk {
+		t.Errorf("dogfood.sh must check `command -v jq` before creating its directory (jq at %d, mktemp at %d)", jq, mk)
+	} else if !strings.Contains(script[jq:mk], "exit 1") {
+		t.Error("dogfood.sh's jq check does not `exit 1` when jq is missing")
+	}
+
+	for _, want := range []string{"npm_config_before", "--exclude-newer=", "jq "} {
+		if scriptIndex(script, want) < 0 {
+			t.Errorf("dogfood.sh's cutoff normalisation does not handle %q", want)
+		}
+	}
+	if !strings.Contains(script, "mcpregistry.HardenedLauncherSpec") {
+		t.Error("dogfood.sh does not name mcpregistry.HardenedLauncherSpec as the source of the cutoffs")
+	}
+
+	const restore = "git checkout -- .mcp.json"
+	if n := strings.Count(script, restore); n != 1 {
+		t.Fatalf("dogfood.sh has %d %q commands, want exactly one (the conditional restore)", n, restore)
+	}
+	checkout := scriptIndex(script, restore)
+	reset := dogfoodResetRe.FindStringIndex(script)
+	drift := scriptIndex(script, "git status --porcelain")
+	if reset == nil || checkout < 0 || drift < 0 || reset[0] >= checkout || checkout >= drift {
+		t.Fatalf("dogfood.sh must restore .mcp.json after the resets and before the drift check (reset %v, restore %d, drift %d)", reset, checkout, drift)
+	}
+
+	// The restore must be guarded by the normalised compare with HEAD's file.
+	ifStart := strings.LastIndex(script[:checkout], "if ")
+	if ifStart < 0 || ifStart < reset[0] {
+		t.Fatal("dogfood.sh restores .mcp.json outside an `if` comparing it with HEAD's")
+	}
+	cond := script[ifStart:checkout]
+	for _, want := range []string{"git show HEAD:.mcp.json", `= "$committed"`, "then"} {
+		if !strings.Contains(cond, want) {
+			t.Errorf("dogfood.sh's .mcp.json restore condition has no %q:\n%s", want, cond)
+		}
+	}
+	if n := strings.Count(cond, "mcp_cutoffs"); n < 2 {
+		t.Errorf("dogfood.sh's .mcp.json restore condition normalises %d side(s) with mcp_cutoffs, want both:\n%s", n, cond)
+	}
+}
+
+// TestDogfoodScript_CanonicalOrigin pins how scripts/dogfood.sh picks the
+// origin remote of its copy. Generated files derive from it
+// (.cosign/policy.yaml names the image repository and signing identity), so
+// a copy without the canonical origin would report drift, or pass with a
+// non-enforcing policy. The order is DOGFOOD_ORIGIN, the upstream remote (a
+// fork's checkout), then origin, and with none the script fails before it
+// builds anything.
+func TestDogfoodScript_CanonicalOrigin(t *testing.T) {
+	t.Parallel()
+
+	script := readDogfoodScript(t)
+	steps := []string{
+		`origin=${DOGFOOD_ORIGIN:-}`,
+		`remote get-url upstream`,
+		`remote get-url origin`,
+		`if [ -z "$origin" ]; then`,
+		`exit 1`,
+		`mktemp -d`,
+		`git remote add origin "$origin"`,
+		`qsdev check`,
+	}
+	from, prevStep := 0, "the start"
+	for _, step := range steps {
+		i := scriptIndex(script[from:], step)
+		if i < 0 {
+			t.Errorf("dogfood.sh has no %q after %q", step, prevStep)
+			continue
+		}
+		from, prevStep = from+i+len(step), step
+	}
+}
+
+// dogfoodRmRe matches a command line that removes files.
+var dogfoodRmRe = regexp.MustCompile(`(^|[\s;&|(])rm\s`)
+
+// TestDogfoodScript_CleanupScopedToMktemp pins that scripts/dogfood.sh
+// removes nothing but its own mktemp directory, from its EXIT trap, and keeps
+// that directory when DOGFOOD_KEEP=1 (for inspecting a failure, and for agents
+// that may not delete files).
+func TestDogfoodScript_CleanupScopedToMktemp(t *testing.T) {
+	t.Parallel()
+
+	script := readDogfoodScript(t)
+	if scriptIndex(script, `tmp=$(mktemp -d)`) < 0 {
+		t.Error("dogfood.sh does not create its directory with `tmp=$(mktemp -d)`")
+	}
+	var removals []string
+	for _, line := range strings.Split(script, "\n") {
+		code := strings.TrimSpace(line)
+		if !strings.HasPrefix(code, "#") && dogfoodRmRe.MatchString(code) {
+			removals = append(removals, code)
+		}
+	}
+	if want := []string{`rm -rf -- "$tmp"`}; !slices.Equal(removals, want) {
+		t.Errorf("dogfood.sh removal commands = %q, want exactly %q", removals, want)
+	}
+
+	start := scriptIndex(script, "cleanup() {")
+	if start < 0 {
+		t.Fatal("dogfood.sh has no cleanup() function")
+	}
+	end := strings.Index(script[start:], "\n}\n")
+	if end < 0 {
+		t.Fatal("dogfood.sh's cleanup() function is not closed")
+	}
+	body := script[start : start+end]
+	keep, rm := strings.Index(body, `"${DOGFOOD_KEEP:-}" = 1`), strings.Index(body, `rm -rf -- "$tmp"`)
+	if keep < 0 || rm < 0 || keep > rm {
+		t.Errorf("dogfood.sh's cleanup() must test DOGFOOD_KEEP=1 before removing $tmp:\n%s", body)
+	}
+	trap, mk := scriptIndex(script, "trap cleanup EXIT"), scriptIndex(script, `tmp=$(mktemp -d)`)
+	if trap < 0 || trap < mk {
+		t.Error("dogfood.sh must set `trap cleanup EXIT` after creating $tmp")
+	}
+}
+
+// makeTargetRe matches a Makefile rule line and captures its target.
+var makeTargetRe = regexp.MustCompile(`^([A-Za-z0-9_.-]+):`)
+
+// readMakeRecipes returns each Makefile target's prerequisites and recipe
+// lines (without the leading tab), in order.
+func readMakeRecipes(t *testing.T) map[string][]string {
+	t.Helper()
+
+	b, err := os.ReadFile(filepath.Join(repoRoot, "Makefile"))
+	if err != nil {
+		t.Fatalf("reading Makefile: %v", err)
+	}
+	recipes := map[string][]string{}
+	target := ""
+	for _, line := range strings.Split(strings.ReplaceAll(string(b), "\r\n", "\n"), "\n") {
+		switch m := makeTargetRe.FindStringSubmatch(line); {
+		case m != nil:
+			target = m[1]
+			recipes[target] = append(recipes[target], strings.Fields(line[len(m[0]):])...)
+		case strings.HasPrefix(line, "\t") && target != "":
+			recipes[target] = append(recipes[target], strings.TrimPrefix(line, "\t"))
+		case !strings.HasPrefix(line, "\t"):
+			target = ""
+		}
+	}
+	return recipes
+}
+
+// TestMakefileTargets pins the maintainer entry points U26-WS1 adds, next to
+// the existing on-demand bench target:
+// `make dogfood` runs the CI gate's script, `make dev-install` installs a
+// plain source build from the vendored tree (into devenv's $GOPATH/bin, ahead
+// of the system qsdev the .mcp.json servers would otherwise run), and
+// `make clean` also removes the root-level binary `go build ./cmd/qsdev`
+// leaves behind.
+func TestMakefileTargets(t *testing.T) {
+	t.Parallel()
+
+	recipes := readMakeRecipes(t)
+	contains := func(target string, want ...string) {
+		t.Helper()
+		body, ok := recipes[target]
+		if !ok {
+			t.Errorf("Makefile has no %s target", target)
+			return
+		}
+		text := strings.Join(body, "\n")
+		for _, w := range want {
+			if !strings.Contains(text, w) {
+				t.Errorf("make %s recipe %q does not contain %q", target, text, w)
+			}
+		}
+	}
+	contains("dogfood", "scripts/dogfood.sh")
+	contains("dev-install", "GOWORK=off", "go install", "-mod=vendor", "./cmd/qsdev")
+	contains("bench", "go test", "-bench")
+
+	var removed []string
+	for _, line := range recipes["clean"] {
+		if f := strings.Fields(line); len(f) > 0 && f[0] == "rm" {
+			for _, arg := range f[1:] {
+				removed = append(removed, strings.TrimSuffix(strings.TrimPrefix(arg, "./"), "/"))
+			}
+		}
+	}
+	for _, want := range []string{"qsdev", "bin", "dist"} {
+		if !slices.Contains(removed, want) {
+			t.Errorf("make clean removes %v, want it to include %s", removed, want)
+		}
+	}
+	for _, target := range []string{"bench", "dogfood", "dev-install"} {
+		if !slices.Contains(recipes[".PHONY"], target) {
+			t.Errorf(".PHONY = %v, want it to include %s", recipes[".PHONY"], target)
 		}
 	}
 }

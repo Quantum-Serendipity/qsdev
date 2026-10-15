@@ -270,14 +270,18 @@ func TestMutatingCommandsAsk(t *testing.T) {
 // project's top-level secrets/ directory without also blocking every nested
 // directory named secrets (such as internal/secrets/ source code), judged by
 // denyutil.MatchesPathRule, which models Claude Code's path-rule semantics.
-// Inside a secrets directory at any depth, the secret-material files of the
-// internal/secrets canon are denied too, while source code stays readable.
+// Below a nested secrets directory, secret material is denied at any depth
+// and the canon's data formats only as direct children, while source code
+// stays readable. depthLimitFiles pins the documented limit
+// (docs/security-architecture.md, claim nested-secret-data-depth-limit): a
+// data file in a subdirectory of a nested secrets directory is not denied.
 func TestSecretsRuleAnchored(t *testing.T) {
 	t.Parallel()
 	cat, presets := generatedPresetPermissions(t)
 	secretFiles := []string{
 		"secrets/prod.env",
 		"secrets/x",
+		"secrets/prod/sa.json",
 		"services/api/secrets/prod.env",
 		"deploy/secrets/tls.key",
 		"deploy/secrets/tls/server.pem",
@@ -290,12 +294,24 @@ func TestSecretsRuleAnchored(t *testing.T) {
 		"infra/secrets/values.yml",
 		"infra/secrets/creds.toml",
 		"infra/secrets/token.txt",
+		"deploy/secrets/nested/tls.key",
+		"apps/secrets/sub/.env",
 	}
 	sourceFiles := []string{
 		"internal/secrets/known_vars.go",
 		"internal/secrets/patterns.go",
 		"internal/secrets/secretstest/samples.go",
 		"pkg/secrets/README.md",
+		"internal/secrets/testdata/canon.json",
+		"internal/secrets/testdata/cases.yaml",
+		"internal/secrets/testdata/x.txt",
+		"internal/secrets/secretstest/fixtures/a.toml",
+	}
+	depthLimitFiles := []string{
+		"internal/secrets/testdata/cases.json",
+		"infra/secrets/prod/sa.json",
+		"k8s/secrets/staging/db.yaml",
+		"infra/secrets/prod/token.txt",
 	}
 	for preset, p := range presets {
 		def, ok := cat.PermissionPreset(preset)
@@ -320,23 +336,36 @@ func TestSecretsRuleAnchored(t *testing.T) {
 					t.Errorf("ask rule %s blocks %s", r, f)
 				}
 			}
+			for _, f := range depthLimitFiles {
+				if r, ok := firstPathMatch(p.deny, f); ok {
+					t.Errorf("deny rule %s blocks %s; update the documented depth limit if this is intended", r, f)
+				}
+			}
 		})
 	}
 }
 
 // TestNestedSecretRules_FromCanon pins that the nested secrets rules are
 // derived from the secrets canon, not a second list: every preset that
-// denies the top-level secrets/ directory denies each canon pattern inside
-// a secrets directory at any depth, and every such rule validates.
+// denies the top-level secrets/ directory denies each secret-material
+// pattern inside a secrets directory at any depth and each secret-data
+// pattern as a direct child of a secrets directory, and every such rule
+// validates.
 func TestNestedSecretRules_FromCanon(t *testing.T) {
 	t.Parallel()
+	var rules []string
+	for _, pat := range secrets.SecretMaterialPatterns() {
+		rules = append(rules, "Read(/**/secrets/**/"+pat+")")
+	}
+	for _, pat := range secrets.SecretDataPatterns() {
+		rules = append(rules, "Read(/**/secrets/"+pat+")")
+	}
 	_, presets := generatedPresetPermissions(t)
 	for preset, p := range presets {
 		if !slices.Contains(p.deny, "Read(/secrets/**)") {
 			continue
 		}
-		for _, pat := range secrets.SecretFilePatterns() {
-			rule := "Read(/**/secrets/**/" + pat + ")"
+		for _, rule := range rules {
 			if !slices.Contains(p.deny, rule) {
 				t.Errorf("preset %s lacks %s", preset, rule)
 			}

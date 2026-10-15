@@ -288,7 +288,13 @@ func envAssignment(c cmdscan.Command, match func(string) bool) string {
 
 // gitInvocation returns the arguments of the git program the words run.
 func gitInvocation(words []string) ([]string, bool) {
-	return programInvocation(words, func(name string) bool { return path.Base(name) == "git" })
+	return programInvocation(words, programNamed("git"))
+}
+
+// programNamed returns a predicate that accepts a command word running one
+// of names (by base name, so /usr/bin/find counts).
+func programNamed(names ...string) func(word string) bool {
+	return func(word string) bool { return slices.Contains(names, path.Base(word)) }
 }
 
 // programInvocation returns the arguments of the program the words run when

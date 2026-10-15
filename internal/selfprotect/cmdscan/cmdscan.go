@@ -217,41 +217,201 @@ func IsSafeReadCommand(c Command) bool {
 	return false
 }
 
-// gitReadOnlySubcommands are git subcommands that only inspect the repository.
-// Everything else (rm, mv, checkout, restore, reset, clean, apply, am, stash,
-// worktree, filter-branch, config, ...) can mutate the working tree.
+// gitReadOnlySubcommands are git subcommands that only inspect the repository,
+// whatever their arguments (GitReadOnly still vetoes an option that writes a
+// file or runs a program). branch, tag, remote, stash, reflog, worktree,
+// notes and symbolic-ref read only in some forms (gitListForms, GitReadOnly);
+// everything else (rm, mv, checkout, restore, reset, clean, apply, am,
+// filter-branch, config, ...) can mutate the repository or the working tree.
+// ls-remote and `remote show` are left out: they contact a remote, which may
+// run a transport program (--upload-pack, an ext:: URL).
 var gitReadOnlySubcommands = map[string]bool{
 	"status": true, "diff": true, "log": true, "show": true, "grep": true,
-	"ls-files": true, "blame": true, "rev-parse": true,
+	"ls-files": true, "blame": true, "rev-parse": true, "ls-tree": true,
+	"cat-file": true, "describe": true, "shortlog": true, "rev-list": true,
+	"for-each-ref": true, "merge-base": true, "name-rev": true, "show-ref": true,
+	"count-objects": true, "var": true, "check-ignore": true, "whatchanged": true,
+	"range-diff": true,
+}
+
+// gitReadSubcommands are, for a git subcommand that dispatches to
+// subcommands of its own, those that only read. reflog and notes run their
+// listing subcommand when given no argument at all (`git reflog`, `git
+// notes`); any other first word (an option, a revision, a writing
+// subcommand such as `reflog expire` or `worktree add`) is not proven a read.
+var gitReadSubcommands = map[string]map[string]bool{
+	"reflog":   {"show": true, "list": true, "exists": true},
+	"worktree": {"list": true},
+	"notes":    {"list": true, "show": true},
+}
+
+// gitListForm describes the list form of a git subcommand that otherwise
+// creates, deletes or changes refs (branch, tag): the arguments it accepts
+// while it only lists.
+type gitListForm struct {
+	// flags are the listing options that take no value, written whole.
+	flags map[string]bool
+	// shortFlags are the letters of the value-less short listing options a
+	// cluster (-av) may combine.
+	shortFlags string
+	// valued are the listing options that take a value, attached with '=' or
+	// as the next word.
+	valued map[string]bool
+	// lines reports that -n<num> (tag: print annotation lines) is accepted.
+	lines bool
+}
+
+// gitListOptions are the filter and format options branch and tag share in
+// their list form; each takes a value.
+var gitListOptions = map[string]bool{
+	"--sort": true, "--format": true, "--contains": true, "--no-contains": true,
+	"--merged": true, "--no-merged": true, "--points-at": true,
+}
+
+// gitListForms are the list forms of branch and tag. -v is a listing option
+// of branch but tag's --verify, which runs gpg, so tag does not accept it.
+var gitListForms = map[string]gitListForm{
+	"branch": {
+		flags: map[string]bool{
+			"--all": true, "--remotes": true, "--list": true, "--verbose": true,
+			"--show-current": true, "--column": true, "--no-column": true,
+			"--color": true, "--no-color": true, "--abbrev": true, "--ignore-case": true,
+		},
+		shortFlags: "arlvi",
+		valued:     gitListOptions,
+	},
+	"tag": {
+		flags:      map[string]bool{"--list": true, "--column": true, "--no-column": true, "--ignore-case": true},
+		shortFlags: "li",
+		valued:     gitListOptions,
+		lines:      true,
+	},
+}
+
+// GitReadOnly reports whether `git <sub> <args>` only reads the repository,
+// judged by subcommand and form: an always-read-only subcommand
+// (gitReadOnlySubcommands), branch or tag in their list form
+// (gitListForm.readOnly), remote listing or printing a URL (`remote`,
+// `remote -v`, `remote get-url o`), `stash list|show`, a read subcommand of
+// reflog, worktree or notes (gitReadSubcommands), or symbolic-ref printing
+// one ref (symbolicRefReads). Whatever the form,
+// an option that writes a file (--output) or runs a program (grep -O,
+// --open-files-in-pager) makes it a write (gitWritingOption). Anything not
+// proven read-only, including an unknown option, is a write.
+func GitReadOnly(sub string, args []string) bool {
+	if slices.ContainsFunc(argsBeforeDashDash(args), gitWritingOption) {
+		return false
+	}
+	if form, ok := gitListForms[sub]; ok {
+		return form.readOnly(args)
+	}
+	switch sub {
+	case "remote":
+		if len(args) == 0 {
+			return true
+		}
+		return args[0] == "get-url" || len(args) == 1 && (args[0] == "-v" || args[0] == "--verbose")
+	case "stash":
+		return len(args) > 0 && (args[0] == "list" || args[0] == "show")
+	case "symbolic-ref":
+		return symbolicRefReads(args)
+	}
+	if reads, ok := gitReadSubcommands[sub]; ok {
+		if len(args) == 0 {
+			return sub != "worktree"
+		}
+		return reads[args[0]]
+	}
+	return gitReadOnlySubcommands[sub]
+}
+
+// symbolicRefReads reports whether `git symbolic-ref <args>` only prints
+// what a symbolic ref points to: one ref name and only the printing options
+// (-q, --short, --[no-]recurse). A second operand sets the ref, and -d
+// deletes it.
+func symbolicRefReads(args []string) bool {
+	operands := 0
+	for _, a := range args {
+		switch a {
+		case "-q", "--quiet", "--short", "--recurse", "--no-recurse":
+		default:
+			if strings.HasPrefix(a, "-") {
+				return false
+			}
+			operands++
+		}
+	}
+	return operands == 1
+}
+
+// readOnly reports whether args keep the subcommand in its list form: every
+// argument is a listing option of form (or the value of one), and a
+// positional (a pattern) appears only when -l/--list selects the list mode.
+// A positional without it names a ref to create, and `--` ends the options,
+// so whatever follows it is a positional.
+func (form gitListForm) readOnly(args []string) bool {
+	list, positional := false, false
+	for i := 0; i < len(args); i++ {
+		a := args[i]
+		switch {
+		case a == "--":
+			positional = positional || i+1 < len(args)
+			i = len(args)
+		case a == "-l" || a == "--list":
+			list = true
+		case !strings.HasPrefix(a, "-") || a == "-":
+			positional = true
+		case form.valued[a]:
+			i++ // the value is the next word, if any (--contains defaults to HEAD)
+		case strings.HasPrefix(a, "--"):
+			name, _, _ := strings.Cut(a, "=")
+			if !form.flags[name] && !form.valued[name] {
+				return false
+			}
+		case form.lines && strings.HasPrefix(a, "-n") && strings.Trim(a[2:], "0123456789") == "":
+		default:
+			cluster := a[1:]
+			if strings.Trim(cluster, form.shortFlags) != "" {
+				return false
+			}
+			list = list || strings.ContainsRune(cluster, 'l')
+		}
+	}
+	return list || !positional
+}
+
+// argsBeforeDashDash returns the arguments before a `--`, which are the only
+// ones git reads as options.
+func argsBeforeDashDash(args []string) []string {
+	if i := slices.Index(args, "--"); i >= 0 {
+		return args[:i]
+	}
+	return args
+}
+
+// gitWritingOption reports whether a git argument writes a file or runs a
+// program: --output writes the diff/log to a file, and grep's
+// -O/--open-files-in-pager runs a program. Long options match any
+// abbreviation git accepts, and a short-option cluster containing 'O' (-nO)
+// is treated as -O.
+func gitWritingOption(a string) bool {
+	if name, ok := strings.CutPrefix(a, "--"); ok {
+		name, _, _ = strings.Cut(name, "=")
+		return isLongOptionPrefix(name, "output") || isLongOptionPrefix(name, "open-files-in-pager")
+	}
+	return len(a) > 1 && a[0] == '-' && strings.ContainsRune(a[1:], 'O')
 }
 
 // gitArgsReadOnly reports whether a git invocation is a read-only subcommand
-// with no option that writes a file or runs a program. The subcommand must be
-// the first argument: a global option before it (`-c alias.x=!sh`, `-C dir`,
-// `--exec-path`) could redefine what runs, so it fails closed.
+// form (GitReadOnly). The subcommand must be the first argument, after any
+// --no-pager or -P, which only stop git paging its output: any other global
+// option before it (`-c alias.x=!sh`, `-C dir`, `--exec-path`) could redefine
+// what runs, so it fails closed.
 func gitArgsReadOnly(args []string) bool {
-	if len(args) == 0 || !gitReadOnlySubcommands[args[0]] {
-		return false
+	for len(args) > 0 && (args[0] == "--no-pager" || args[0] == "-P") {
+		args = args[1:]
 	}
-	for _, a := range args[1:] {
-		// --output writes the diff/log to a file; grep -O/--open-files-in-pager
-		// runs a program. Long options match any abbreviation git accepts, and
-		// a short-option cluster containing 'O' (-nO) is treated as -O.
-		if a == "--" {
-			break
-		}
-		if name, ok := strings.CutPrefix(a, "--"); ok {
-			name, _, _ = strings.Cut(name, "=")
-			if isLongOptionPrefix(name, "output") || isLongOptionPrefix(name, "open-files-in-pager") {
-				return false
-			}
-			continue
-		}
-		if len(a) > 1 && a[0] == '-' && strings.ContainsRune(a[1:], 'O') {
-			return false
-		}
-	}
-	return true
+	return len(args) > 0 && GitReadOnly(args[0], args[1:])
 }
 
 // sortArgsReadOnly reports whether a sort invocation writes only to stdout:

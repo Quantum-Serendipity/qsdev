@@ -37,6 +37,12 @@ func runWithOrgConfig(m *testing.M) int {
 		fmt.Fprintf(os.Stderr, "creating home dir: %v\n", err)
 		return 1
 	}
+	// A startup file in HOME, so a glob that names it there has a file to
+	// expand to (TestShellRewritesFile_GlobLocation).
+	if err := os.WriteFile(filepath.Join(home, ".bashrc"), []byte("# test home\n"), 0o644); err != nil {
+		fmt.Fprintf(os.Stderr, "creating home .bashrc: %v\n", err)
+		return 1
+	}
 	for _, v := range []string{"HOME", "USERPROFILE"} {
 		if err := os.Setenv(v, home); err != nil {
 			fmt.Fprintf(os.Stderr, "setting %s: %v\n", v, err)

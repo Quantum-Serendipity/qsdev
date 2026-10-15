@@ -3,6 +3,7 @@ package rules
 import (
 	"path/filepath"
 	"slices"
+	"strings"
 	"testing"
 
 	"github.com/Quantum-Serendipity/qsdev/internal/selfprotect/cmdscan"
@@ -89,6 +90,13 @@ func TestGitControl_HookVerdicts(t *testing.T) {
 		{"GIT_DIR=.git git log --output=.git/hooks/pre-commit", ""},
 		{"GIT_DIR=.git git log > .git/hooks/pre-commit", ""},
 		{"GIT_DIR=.git; rm $GIT_DIR/hooks/pre-commit", ""},
+		// git status rewrites the index GIT_INDEX_FILE names, and git writes
+		// objects into GIT_OBJECT_DIRECTORY (as on w1-s5).
+		{"GIT_INDEX_FILE=.claude/hooks/x git status", ""},
+		{"GIT_INDEX_FILE=.claude/hooks/guard.py git status", ""},
+		{"GIT_INDEX_FILE=.git/hooks/pre-commit git status", ""},
+		{"GIT_OBJECT_DIRECTORY=.claude/hooks git log", ""},
+		{"GIT_TRACE=.claude/hooks/x git log", ""},
 		{"rm .g{i,x}t/hooks/pre-commit", ""},
 		{"mv .git .g", `Move-Item .git .g`},
 		{"mv .git .g && rm .g/hooks/pre-commit && mv .g .git", `Move-Item .git .g; Remove-Item .g\hooks\pre-commit`},
@@ -147,6 +155,29 @@ func TestGitControl_HookVerdicts(t *testing.T) {
 		"GIT_DIR=../other/.git git log --oneline -5",
 		"env GIT_DIR=../other/.git git log",
 		"GIT_DIR=../other/.git GIT_WORK_TREE=../other git status",
+		// Every read-only subcommand form (cmdscan.GitReadOnly), as its
+		// `git --git-dir=<dir>` form is.
+		"GIT_DIR=../other/.git git branch",
+		"GIT_DIR=../other/.git git branch -a",
+		"GIT_DIR=../other/.git git tag",
+		"GIT_DIR=../other/.git git tag -l 'v*'",
+		"GIT_DIR=../other/.git git remote -v",
+		"GIT_DIR=../other/.git git stash list",
+		"GIT_DIR=../other/.git git rev-list HEAD",
+		"GIT_DIR=../other/.git git cat-file -p HEAD",
+		"GIT_DIR=../other/.git git describe --always",
+		"GIT_DIR=../other/.git git for-each-ref",
+		"GIT_DIR=../other/.git git shortlog -s HEAD",
+		"GIT_DIR=../other/.git git ls-tree HEAD",
+		"GIT_DIR=.git git branch",
+		"env GIT_DIR=../other/.git git branch",
+		"GIT_DIR=../other/.git GIT_WORK_TREE=../other git tag",
+		"git --git-dir=../other/.git branch -a",
+		// A write-target pin whose value names no protected path, and a
+		// common-dir pin (parity with w1-s5).
+		"GIT_INDEX_FILE=../other/.git/index git status",
+		"GIT_COMMON_DIR=../other/.git git log",
+		"GIT_OBJECT_DIRECTORY=.git/objects git log",
 		"git status",
 		"git log",
 		"git diff",
@@ -190,6 +221,41 @@ func TestGitControl_HookVerdicts(t *testing.T) {
 				}
 			})
 		}
+	}
+
+	// A variable-pinned git that is not a read stays denied, and the reason
+	// names the --git-dir form the guard judges, unless the git itself names
+	// a git-control file, which that form would not clear.
+	pinnedWrites := []struct {
+		command    string
+		workaround bool
+	}{
+		{"GIT_DIR=../other/.git git branch newb", true},
+		{"GIT_DIR=.git git tag v1", true},
+		{"env GIT_DIR=../other/.git git branch -D x", true},
+		{"GIT_DIR=../other/.git GIT_WORK_TREE=../other git stash drop", true},
+		{"GIT_DIR=.git git log --output=.git/hooks/pre-commit", false},
+		{"GIT_DIR=.git git log > .claude/settings.json", false},
+		{"GIT_DIR=.git GIT_EXTERNAL_DIFF=/tmp/x git diff", false},
+		// A write-target pin naming a protected path: --git-dir would not
+		// clear it.
+		{"GIT_INDEX_FILE=.claude/hooks/x git status", false},
+		{"GIT_DIR=.git GIT_INDEX_FILE=.claude/hooks/x git branch newb", false},
+	}
+	for _, tt := range pinnedWrites {
+		t.Run("Bash deny pinned write "+tt.command, func(t *testing.T) {
+			t.Parallel()
+			ctx := EvalContext{ToolName: "Bash", Command: tt.command, CWD: project, Ctx: t.Context(), gitRunner: rewriteRepo(project, false).run}
+			got, matches := Tier1Rules.EvaluateAll(&ctx)
+			i := slices.IndexFunc(matches, func(m RuleMatch) bool { return m.Rule.ID == "SP-007" })
+			if got != Deny || i < 0 {
+				t.Fatalf("EvaluateAll(%q) = %v (matches %v), want an SP-007 Deny", tt.command, got, matchIDs(matches))
+			}
+			reason := matches[i].Reason
+			if named := strings.Contains(reason, "git --git-dir=<dir>") && strings.Contains(reason, "GIT_DIR"); named != tt.workaround {
+				t.Errorf("EvaluateAll(%q) reason = %q; names GIT_DIR and the git --git-dir=<dir> workaround: %v, want %v", tt.command, reason, named, tt.workaround)
+			}
+		})
 	}
 }
 

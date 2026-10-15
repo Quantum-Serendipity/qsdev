@@ -409,36 +409,59 @@ func parseWorktreeRewrite(sub string, rest []string) (worktreeRewrite, bool) {
 var cleanLong = []string{"dry-run", "no-dry-run", "force", "no-force", "interactive", "quiet", "no-quiet", "exclude"}
 
 // parseClean returns what `git clean` removes: the untracked files its
-// options select (-d, -x, -X, -f, -e) under its pathspec. -f counts (twice
-// also removes nested repositories) and -e repeats, so the options are read
-// here rather than by parseGitOpts. A dry run (-n, unless a later
-// --no-dry-run) removes nothing; an interactive one removes what the listing
-// names, at most.
+// options select (-d, -x, -X, -f, -e) under its pathspec. A dry run (-n,
+// unless a later --no-dry-run) removes nothing; an interactive one removes
+// what the listing names, at most.
 func parseClean(rest []string) (worktreeRewrite, bool) {
-	var opts gitrepo.CleanOptions
-	var paths []string
-	dryRun := false
+	s := scanClean(rest)
+	if s.dryRun {
+		return worktreeRewrite{}, false
+	}
+	// Without -f git refuses unless clean.requireForce is off; judge it as
+	// the forced clean it may be.
+	s.opts.Force = max(s.opts.Force, 1)
+	return worktreeRewrite{clean: &s.opts, paths: s.paths}, true
+}
+
+// cleanScan is git clean's arguments read: the options, the pathspec, whether
+// it is a dry run, and the positions in its arguments of the words that only
+// carry -e/--exclude patterns (the option word and a separate value).
+type cleanScan struct {
+	opts     gitrepo.CleanOptions
+	paths    []string
+	dryRun   bool
+	patterns []int
+}
+
+// scanClean reads git clean's arguments rest. -f counts (twice also removes
+// nested repositories) and -e repeats, so the options are read here rather
+// than by parseGitOpts.
+func scanClean(rest []string) cleanScan {
+	var s cleanScan
+	opts := &s.opts
 	for i := 0; i < len(rest); i++ {
 		a := rest[i]
 		switch {
 		case a == "--":
-			paths = append(paths, rest[i+1:]...)
+			s.paths = append(s.paths, rest[i+1:]...)
 			i = len(rest)
 		case strings.HasPrefix(a, "--"):
 			name, val, hasVal := strings.Cut(a[2:], "=")
 			switch abbreviatedOption(name, cleanLong) {
 			case "dry-run":
-				dryRun = true
+				s.dryRun = true
 			case "no-dry-run":
-				dryRun = false
+				s.dryRun = false
 			case "force":
 				opts.Force++
 			case "no-force":
 				opts.Force = 0
 			case "exclude":
+				s.patterns = append(s.patterns, i)
 				if !hasVal && i+1 < len(rest) {
 					i++
 					val = rest[i]
+					s.patterns = append(s.patterns, i)
 				}
 				opts.Excludes = append(opts.Excludes, val)
 			}
@@ -446,7 +469,7 @@ func parseClean(rest []string) (worktreeRewrite, bool) {
 			for k := 1; k < len(a); k++ {
 				switch a[k] {
 				case 'n':
-					dryRun = true
+					s.dryRun = true
 				case 'f':
 					opts.Force++
 				case 'd':
@@ -456,26 +479,48 @@ func parseClean(rest []string) (worktreeRewrite, bool) {
 				case 'X':
 					opts.OnlyIgnored = true
 				case 'e':
+					s.patterns = append(s.patterns, i)
 					val := a[k+1:]
 					if val == "" && i+1 < len(rest) {
 						i++
 						val = rest[i]
+						s.patterns = append(s.patterns, i)
 					}
 					opts.Excludes = append(opts.Excludes, val)
 					k = len(a)
 				}
 			}
 		default:
-			paths = append(paths, a)
+			s.paths = append(s.paths, a)
 		}
 	}
-	if dryRun {
-		return worktreeRewrite{}, false
+	return s
+}
+
+// cleanPatternArgs returns the positions in sc.Args of the words that only
+// carry the -e/--exclude patterns of a git clean (scanClean), or nil when sc
+// runs no git clean. An exclude selects what the clean keeps; SP-007 judges
+// it by git's own dry run with the same excludes, so it names no target.
+// That dry run sees only the words on the line, so under a wrapper that
+// appends arguments from its input (cmdscan.ArgsFromInput: `xargs git clean
+// -fdx -e .claude -e < list`, where list may hold `!.claude`) the excludes
+// stay operands, as any other word naming a protected path does.
+func cleanPatternArgs(sc scannedCommand) []int {
+	words := append([]string{sc.Name}, sc.Args...)
+	args, ok := gitInvocation(words)
+	if !ok || cmdscan.ArgsFromInput(words) {
+		return nil
 	}
-	// Without -f git refuses unless clean.requireForce is off; judge it as
-	// the forced clean it may be.
-	opts.Force = max(opts.Force, 1)
-	return worktreeRewrite{clean: &opts, paths: paths}, true
+	g := splitGitArgs(args)
+	if g.sub != "clean" {
+		return nil
+	}
+	patterns := scanClean(g.rest).patterns
+	offset := len(sc.Args) - len(g.rest) // g.rest is a suffix of sc.Args
+	for i := range patterns {
+		patterns[i] += offset
+	}
+	return patterns
 }
 
 // parseSparseCheckout returns what `git sparse-checkout <sub>` writes. set,
@@ -876,18 +921,13 @@ func firstOr(s []string, def string) string {
 	return def
 }
 
-// gitReadOnlySubcommands only read the repository, so one may precede a
-// rewrite on its line without changing what the rewrite copies.
-var gitReadOnlySubcommands = map[string]bool{
-	"status": true, "log": true, "show": true, "diff": true, "rev-parse": true, "ls-files": true,
-	"ls-tree": true, "cat-file": true, "describe": true, "blame": true, "grep": true, "shortlog": true,
-}
-
-// gitReadOnly reports whether the git command only reads the repository: a
-// read-only subcommand, or git apply checking or listing a patch (`git apply
-// --check fix.patch && git apply fix.patch`).
+// gitReadOnly reports whether the git command only reads the repository, so
+// it may precede a rewrite on its line without changing what the rewrite
+// copies: a read-only subcommand form (cmdscan.GitReadOnly, so `git branch`
+// but not `git branch newb`), or git apply checking or listing a patch (`git
+// apply --check fix.patch && git apply fix.patch`).
 func gitReadOnly(target gitArgs) bool {
-	return gitReadOnlySubcommands[target.sub] || target.sub == "apply" && patchListing(parseGitOpts(target.rest, applySpec))
+	return cmdscan.GitReadOnly(target.sub, target.rest) || target.sub == "apply" && patchListing(parseGitOpts(target.rest, applySpec))
 }
 
 // isLocationChange reports whether a scanned command only changes the
@@ -898,35 +938,62 @@ func isLocationChange(name string) bool {
 
 // isRepoPinVar reports whether the variable chooses the repository, index or
 // work tree git uses, so a query run from the command's directory would ask
-// another repository.
+// another repository: a location pin or a write-target pin.
 func isRepoPinVar(name string) bool {
+	return isLocationPinVar(name) || isWriteTargetPinVar(name)
+}
+
+// isLocationPinVar reports whether the variable only names where git looks
+// (`GIT_DIR=<dir>` as `--git-dir=<dir>`), so a read git runs under it writes
+// nothing that `git --git-dir=<dir> --work-tree=<dir>` would not also write.
+func isLocationPinVar(name string) bool {
 	switch name {
-	case "GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE", "GIT_COMMON_DIR", "GIT_OBJECT_DIRECTORY":
+	case "GIT_DIR", "GIT_WORK_TREE", "GIT_COMMON_DIR":
 		return true
 	}
 	return false
 }
 
+// isWriteTargetPinVar reports whether the variable names a file or directory
+// git writes even for a read: status, diff and describe --dirty refresh and
+// rewrite the index GIT_INDEX_FILE names, and git stores objects (cached
+// textconv output) in GIT_OBJECT_DIRECTORY.
+func isWriteTargetPinVar(name string) bool {
+	return name == "GIT_INDEX_FILE" || name == "GIT_OBJECT_DIRECTORY"
+}
+
 // repoPinnedRead reports whether sc runs a read-only git command
-// (cmdscan.IsSafeReadCommand: a read subcommand with no option that writes a
-// file or runs a program) in a repository chosen only by repo-pin variables
-// (isRepoPinVar), set as prefix assignments or through env: `GIT_DIR=<dir>
-// git log` and `env GIT_DIR=<dir> git status` read as `git --git-dir=<dir>
-// log` does. The variable's value is then no write target, and a prefix
+// (cmdscan.IsSafeReadCommand: a read-only subcommand form, cmdscan.GitReadOnly,
+// with no option that writes a file or runs a program) in a repository chosen
+// only by repo-pin variables (repoPinnedGit): `GIT_DIR=<dir> git branch` and
+// `env GIT_DIR=<dir> git status` read as `git --git-dir=<dir> branch` does.
+// A write-target pin's value then names no protected path, and a prefix
 // assignment changes nothing a later command runs.
 func repoPinnedRead(sc scannedCommand) bool {
+	args, pins := repoPinnedGit(sc)
+	return len(pins) > 0 && cmdscan.IsSafeReadCommand(cmdscan.Command{Name: "git", Args: args})
+}
+
+// repoPinnedGit returns the arguments of the git command sc runs and the
+// repo-pin variables (isRepoPinVar) it sets, when those variables, set as
+// prefix assignments or through env (`GIT_DIR=<dir> git ...`, `env
+// GIT_DIR=<dir> git ...`), are the only ones it sets. It returns no pins for
+// any other command, or when sc sets another variable, sets one dynamically,
+// uses an expansion, or sets a pin to a protected path
+// (assignValueProtected), which the pinned-write workaround would not clear.
+func repoPinnedGit(sc scannedCommand) (args, pins []string) {
 	if program := path.Base(sc.Name); program != "git" && program != "env" || sc.AssignsDynamic || sc.HasExpansion {
-		return false
+		return nil, nil
 	}
 	if slices.ContainsFunc(sc.Assigns, func(name string) bool { return !isRepoPinVar(name) }) {
-		return false
+		return nil, nil
 	}
 	words := append([]string{sc.Name}, sc.Args...)
 	args, ok := gitInvocation(words)
 	if !ok {
-		return false
+		return nil, nil
 	}
-	pins := len(sc.Assigns)
+	pins = slices.Clone(sc.Assigns)
 	// Only NAME=value words may stand between env and git: an option (-i,
 	// -u, -C) or another wrapper changes more than the repository.
 	var between []string
@@ -936,11 +1003,84 @@ func repoPinnedRead(sc scannedCommand) bool {
 	for _, w := range between {
 		name, _, isAssign := strings.Cut(w, "=")
 		if !isAssign || !isRepoPinVar(name) {
-			return false
+			return nil, nil
 		}
-		pins++
+		pins = append(pins, name)
 	}
-	return pins > 0 && cmdscan.IsSafeReadCommand(cmdscan.Command{Name: "git", Args: args})
+	if slices.ContainsFunc(sc.AssignTexts, func(a string) bool { return assignValueProtected(sc, a) }) ||
+		slices.ContainsFunc(between, func(a string) bool { return assignValueProtected(sc, a) }) {
+		return nil, nil
+	}
+	return args, pins
+}
+
+// assignValueProtected reports whether the rendered assignment (`NAME=value`)
+// of a git command sets a variable to a protected path. A location pin
+// (isLocationPinVar) is judged as the option naming the same location is
+// (`--git-dir=<value>`, `--work-tree=<value>`: refersProtected), so
+// `GIT_DIR=.claude git status` counts as `git --git-dir=.claude status` does
+// and `GIT_DIR=../other/.git` does not. Any other value is judged as an
+// operand is, a git-control holder included (gitControlHolder):
+// `GIT_INDEX_FILE=.claude/hooks/x git status` rewrites that file.
+func assignValueProtected(sc scannedCommand, assign string) bool {
+	name, value, _ := strings.Cut(assign, "=")
+	return refersProtected(sc, value) || !isLocationPinVar(name) && gitControlHolder(sc, value)
+}
+
+// prefixedGitJudged reports whether sc runs git directly with prefix
+// assignments only (cmdscan.Command.PrefixAssignsOnly: `LC_ALL=C git log`)
+// that SP-007 judges through the command they prefix, as it judges `env
+// NAME=value git ...`: git is then not proven read-only, so each of its
+// operands counts as a mutation target (isMutating, mutationTargets). It
+// holds when no value names a protected path (assignValueProtected), none of
+// the variables makes git run another program (isGitEnvVar, which GIT-001
+// also judges: `GIT_EXTERNAL_DIFF=x git diff` stays a mutation here) and,
+// when one of them pins the repository (isRepoPinVar), the git is a read
+// (`TZ=UTC GIT_DIR=../other/.git git log`), as a variable-pinned git is judged
+// only for reads (see pinnedGitWriteReason).
+func prefixedGitJudged(sc scannedCommand) bool {
+	if path.Base(sc.Name) != "git" || !sc.PrefixAssignsOnly() || slices.ContainsFunc(sc.Assigns, isGitEnvVar) ||
+		slices.ContainsFunc(sc.AssignTexts, func(a string) bool { return assignValueProtected(sc, a) }) {
+		return false
+	}
+	return !slices.ContainsFunc(sc.Assigns, isRepoPinVar) ||
+		cmdscan.IsSafeReadCommand(cmdscan.Command{Name: "git", Args: sc.Args})
+}
+
+// pinnedGitWriteReason returns why a line that runs git in a repository
+// pinned only by variables (repoPinnedGit) is denied when that git is not a
+// read (`GIT_DIR=../o/.git git branch newb`): such a git is judged only for
+// reads, and the --git-dir and --work-tree options name the repository in a
+// form the guard judges. It returns "" when no command on the line is such a
+// git, or when that git names a protected path or git-control file itself
+// (`GIT_DIR=.git git log --output=.git/hooks/pre-commit`), which the
+// workaround would not clear.
+func pinnedGitWriteReason(scs []scannedCommand) string {
+	for _, sc := range scs {
+		args, pins := repoPinnedGit(sc)
+		if len(pins) == 0 || repoPinnedRead(sc) || anyRefersProtected(sc, sc.WriteRedirects) ||
+			slices.ContainsFunc(args, func(w string) bool { return namesGitControl(sc, w) }) {
+			continue
+		}
+		slices.Sort(pins)
+		return "git runs in a repository named through " + strings.Join(slices.Compact(pins), " and ") +
+			", and a variable-pinned git is judged only for reads; name the repository with" +
+			" git --git-dir=<dir> [--work-tree=<dir>] instead"
+	}
+	return ""
+}
+
+// namesGitControl reports whether a git argument names a protected path
+// (argRefersProtected) or a git-control holder, as an operand or as the
+// value of a long option (`--output=.git/hooks/pre-commit`).
+func namesGitControl(sc scannedCommand, arg string) bool {
+	if argRefersProtected(sc, arg) {
+		return true
+	}
+	if name, value, ok := strings.Cut(arg, "="); ok && strings.HasPrefix(name, "--") {
+		arg = value
+	}
+	return !isFlag(arg) && gitControlHolder(sc, arg)
 }
 
 // worktreeRewriteReason returns why a shell command's git would overwrite a
@@ -1091,12 +1231,16 @@ func (ctx *EvalContext) checkRewrite(sc scannedCommand, target gitArgs, rw workt
 		return what + " applies a patch that git apply cannot read in advance (am also takes a Maildir), so the files it writes cannot be checked; save the patch as a file and apply that file"
 	case err != nil:
 		return "" // not a repository or an unknown revision: git itself fails
+	case verdict.tracked != "" && rw.clean != nil:
+		return what + " removes untracked files after another command on the same line, which may change what it removes, in a repository that tracks protected " + verdict.tracked + "; run it in its own call so the files it removes can be checked"
 	case verdict.tracked != "":
 		return what + " rewrites working-tree files after another command on the same line, which may change what it copies, in a repository that tracks protected " + verdict.tracked + "; run it in its own call so the files it writes can be checked"
 	case verdict.sparse != "":
 		return what + " changes which tracked files stay in the working tree, and may remove protected " + verdict.sparse + " that the repository tracks; a person must change the sparse-checkout patterns"
 	case verdict.overwritten != "":
 		return what + " would overwrite protected " + verdict.overwritten + " in the working tree"
+	case verdict.removed != "" && target.sub == "clean":
+		return what + " would remove protected " + verdict.removed + " from the working tree, which the index does not track; limit it with a pathspec (git clean -fdx -- build dist) or exclude the protected path (for example -e .claude)"
 	case verdict.removed != "":
 		return what + " would remove protected " + verdict.removed + " from the working tree, which the index does not track"
 	}

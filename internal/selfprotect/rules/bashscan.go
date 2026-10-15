@@ -126,7 +126,8 @@ func (st *dirState) apply(sc scannedCommand) {
 	default:
 		return
 	}
-	operands := nonFlagArgs(sc.Args)
+	// `-` is an operand here, the previous directory, not an option.
+	operands := slices.DeleteFunc(slices.Clone(sc.Args), func(a string) bool { return isFlag(a) && a != "-" })
 	target := "~"
 	if len(operands) > 0 {
 		target = operands[0]
@@ -769,11 +770,17 @@ func isPatternOption(verb, opt string) bool {
 }
 
 // operandArgs returns sc's arguments without pattern options and their values,
-// so `--exclude=.claude` is not mistaken for an operand.
+// so `--exclude=.claude` is not mistaken for an operand. Besides tar's and
+// rsync's (isPatternOption), these are the -e/--exclude patterns of a git
+// clean (cleanPatternArgs).
 func operandArgs(sc scannedCommand) []string {
 	out := make([]string, 0, len(sc.Args))
+	cleanPatterns := cleanPatternArgs(sc)
 	for i := 0; i < len(sc.Args); i++ {
 		a := sc.Args[i]
+		if slices.Contains(cleanPatterns, i) {
+			continue
+		}
 		if eq := strings.IndexByte(a, '='); eq > 0 && strings.HasPrefix(a, "--") && isPatternOption(sc.Name, a[:eq]) {
 			continue
 		}
@@ -954,7 +961,9 @@ func relativeWriteTarget(sc scannedCommand) bool {
 //     GIT_EXTERNAL_DIFF can make a read-only command word run arbitrary code,
 //     and the assigned value is not analysed. A read-only git whose prefix
 //     assignments only pin the repository (`GIT_DIR=<dir> git log`,
-//     repoPinnedRead) is judged as `git --git-dir=<dir> log` is.
+//     repoPinnedRead) is judged as `git --git-dir=<dir> log` is, and any
+//     other git with prefix assignments only (`LC_ALL=C git log`,
+//     prefixedGitJudged) as `env LC_ALL=C git log` is: by its operands.
 //
 // Non-destructive copies (cp, rsync) and the other copy-family verbs are
 // exempt from the input rule: their exfiltration semantics are modelled by
@@ -962,7 +971,7 @@ func relativeWriteTarget(sc scannedCommand) bool {
 func protectedMutation(scs []scannedCommand) bool {
 	upstreamProtected := make(map[int]bool)
 	for _, sc := range scs {
-		if len(sc.Assigns) > 0 && !repoPinnedRead(sc) {
+		if len(sc.Assigns) > 0 && !repoPinnedRead(sc) && !prefixedGitJudged(sc) {
 			return true
 		}
 		if anyArgRefersProtected(sc, mutationTargets(sc)) || anyRefersProtected(sc, sc.WriteRedirects) {

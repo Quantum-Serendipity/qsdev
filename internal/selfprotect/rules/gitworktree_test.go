@@ -11,6 +11,7 @@ import (
 	"testing"
 
 	"github.com/Quantum-Serendipity/qsdev/internal/gitrepo"
+	"github.com/Quantum-Serendipity/qsdev/internal/procexec"
 	"github.com/Quantum-Serendipity/qsdev/internal/selfprotect/cmdscan"
 )
 
@@ -316,6 +317,12 @@ func TestWorktreeRewriteWithTrackedProtected(t *testing.T) {
 		{"second rewrite on the line, evil", "Bash", "git checkout -- src/x.go && git reset --hard evil", top, evilRepo(), Deny, tracksOwnCall},
 		{"commit then benign switch, evil", "Bash", "git add -A && git commit -m x && git switch main", top, evilRepo(), Deny, tracksOwnCall},
 		{"stash around a benign switch, evil", "Bash", "git stash && git switch main && git stash pop", top, evilRepo(), Deny, tracksOwnCall},
+		// A branch or tag creation changes what a later checkout copies; a
+		// read-only form (cmdscan.GitReadOnly) does not.
+		{"branch creation first, evil", "Bash", "git branch newb && git checkout newb", top, evilRepo(), Deny, tracksOwnCall},
+		{"tag creation first, evil", "Bash", "git tag v1 && git checkout -- src/x.go", top, evilRepo(), Deny, tracksOwnCall},
+		{"ls-tree first, evil", "Bash", "git ls-tree HEAD; git checkout -- src/x.go", top, evilRepo(), Allow, ""},
+		{"branch listing first, evil", "Bash", "git branch -a; git stash list && git checkout -- src/x.go", top, evilRepo(), Allow, ""},
 		{"index replaced first, clean", "Bash", "cp /tmp/i .git/index && git checkout-index -a -f", top, rewriteRepo(top, false), Allow, ""},
 		{"fetch first, clean", "Bash", "git fetch o && git reset --hard FETCH_HEAD", top, rewriteRepo(top, false), Allow, ""},
 		{"echo first, clean", "Bash", "echo hi; git reset --hard HEAD", top, rewriteRepo(top, false), Allow, ""},
@@ -340,6 +347,8 @@ func TestWorktreeRewriteWithTrackedProtected(t *testing.T) {
 		// (A .git component on the line would let the generic mutation rule
 		// deny the assignment first.)
 		{"repository chosen by variable", "Bash", "GIT_DIR=/tmp/x.git git reset --hard evil", top, rewriteRepo(top, false), Deny, "repository"},
+		// A write-target pin still chooses what a rewrite reads (as on base).
+		{"index chosen by variable", "Bash", "GIT_INDEX_FILE=x git checkout evil -- .", top, rewriteRepo(top, false), Deny, "repository chosen by option or variable"},
 		{"checkout-index with a prefix", "Bash", "git checkout-index -a --prefix=out/", top, rewriteRepo(top, false), Deny, "prefix"},
 		{"timeout", "Bash", "git reset --hard evil", top, &fakeGit{err: fmt.Errorf("%w: slow", gitrepo.ErrTimeout)}, Deny, "in time"},
 		// PowerShell: the same verdicts in its dialect, and a location
@@ -978,6 +987,12 @@ func cleanRepo(top string, evil bool) *fakeGit {
 	git.answers["clean -x -f --"] = ignored
 	git.answers["clean -d -f -- src"] = ""
 	git.answers["clean -d -f --exclude=keep --"] = "Would remove build/\n"
+	// An exclude that matches .claude keeps it; one that does not (or
+	// only negates) leaves the listing as it was.
+	git.answers["clean -d -x -f --exclude=.claude --"] = "Would remove build/\nWould remove x.log\n"
+	git.answers["clean -d -x -f --exclude=src --"] = dirs + ignored
+	git.answers["clean -d -x -f --exclude=!.claude --"] = dirs + ignored
+	git.answers["clean -d -x -f -- .claude"] = "Would remove .claude/\n"
 	return git
 }
 
@@ -1023,6 +1038,21 @@ func TestWorktreeRewrite_CleanAndSparse(t *testing.T) {
 		{"clean with ignored build output", "git clean -fdx", cleanRepo(top, false), Allow, ""},
 		{"clean of a subdirectory", "git clean -fd -- src", cleanRepo(top, true), Allow, ""},
 		{"clean with an exclude pattern", "git clean -fd -e keep", cleanRepo(top, true), Allow, ""},
+		// W1D-RESIDUAL item 4: the reason names the ways to proceed, an
+		// exclude is a pattern judged by the dry run with the same
+		// excludes, and a preceded clean removes rather than copies.
+		{"clean names a pathspec", "git clean -fdx", cleanRepo(top, true), Deny, "git clean -fdx -- build dist"},
+		{"clean names an exclude", "git clean -fdx", cleanRepo(top, true), Deny, "-e .claude"},
+		{"clean excluding .claude", "git clean -fdx -e .claude", cleanRepo(top, true), Allow, ""},
+		{"clean excluding .claude, attached", "git clean -fdx -e.claude", cleanRepo(top, true), Allow, ""},
+		{"clean excluding .claude, long", "git clean -fdx --exclude=.claude", cleanRepo(top, true), Allow, ""},
+		{"clean excluding .claude, long separate", "git clean -fdx --exclude .claude", cleanRepo(top, true), Allow, ""},
+		{"clean excluding .claude, in a cluster", "git clean -fdxe .claude", cleanRepo(top, true), Allow, ""},
+		{"clean excluding .claude, -C", "git -C . clean -fdx -e .claude", cleanRepo(top, true), Allow, ""},
+		{"clean excluding something else", "git clean -fdx -e src", cleanRepo(top, true), Deny, removed},
+		{"clean with a negated exclude", "git clean -fdx -e '!.claude'", cleanRepo(top, true), Deny, removed},
+		{"clean of .claude itself", "git clean -fdx .claude", cleanRepo(top, true), Deny, ""},
+		{"preceded clean removes", "git read-tree --empty; git clean -fd", cleanRepo(top, true), Deny, "may change what it removes"},
 		{"stash with untracked build output", "git stash -u", cleanRepo(top, false), Allow, ""},
 		{"sparse set", "git sparse-checkout set x", rewriteRepo(top, true), Deny, sparse},
 		{"sparse init", "git sparse-checkout init --no-cone", rewriteRepo(top, true), Deny, sparse},
@@ -1046,8 +1076,16 @@ func TestWorktreeRewrite_CleanAndSparse(t *testing.T) {
 			if tt.want == Deny && !strings.Contains(reason, tt.reason) {
 				t.Errorf("%q: SP-007 reason = %q, want it to contain %q", command, reason, tt.reason)
 			}
+			if strings.Contains(command, "clean") && strings.Contains(reason, "copies") {
+				t.Errorf("%q: SP-007 reason = %q, want a clean to remove, not copy", command, reason)
+			}
 		})
 	}
+
+	t.Run("real git", func(t *testing.T) {
+		t.Parallel()
+		cleanRealGit(t)
+	})
 
 	for _, command := range []string{
 		"git clean -n -fd",
@@ -1065,6 +1103,144 @@ func TestWorktreeRewrite_CleanAndSparse(t *testing.T) {
 			}
 			if n := git.callCount(); n != 0 {
 				t.Errorf("git spawned %d times, want none: %v", n, git.calls)
+			}
+		})
+	}
+}
+
+// cleanRealGit judges git clean against a real repository (skipped without
+// git) whose .claude/logs/ is ignored and untracked: the clean is denied with
+// a reason naming a pathspec and an exclude, an exclude that keeps .claude is
+// allowed because git's own dry run with that exclude removes nothing
+// protected, and an exclude that does not keep it, or a pathspec naming it,
+// stays denied.
+func cleanRealGit(t *testing.T) {
+	t.Helper()
+	if _, err := procexec.LookPath("git"); err != nil {
+		t.Skip("git not available")
+	}
+	env := append(gitrepo.ScopedEnv(os.Environ()),
+		"GIT_CONFIG_GLOBAL="+filepath.Join(t.TempDir(), "gitconfig"),
+		"GIT_CONFIG_NOSYSTEM=1",
+	)
+	repo := t.TempDir()
+	git := func(args ...string) {
+		t.Helper()
+		full := append([]string{"-c", "user.name=test", "-c", "user.email=test@example.com", "-c", "commit.gpgsign=false"}, args...)
+		cmd := procexec.Command("git", full...)
+		cmd.Dir = repo
+		cmd.Env = env
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("git %v: %v\n%s", args, err, out)
+		}
+	}
+	for rel, content := range map[string]string{
+		".gitignore":            ".claude/logs/\nbuild/\n",
+		".claude/settings.json": "{}\n",
+		".claude/logs/a.log":    "log\n",
+		"src/x.go":              "package x\n",
+		"build/out":             "out\n",
+	} {
+		p := filepath.Join(repo, filepath.FromSlash(rel))
+		if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(p, []byte(content), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	git("init", "-q", "-b", "main")
+	git("add", ".gitignore", ".claude/settings.json", "src/x.go")
+	git("commit", "-q", "-m", "init")
+	runner := func(ctx context.Context, c gitrepo.Call) ([]byte, error) {
+		c.Env = append(slices.Clone(env), c.Env...)
+		return gitrepo.ExecRunner(ctx, c)
+	}
+
+	tests := []struct {
+		command string
+		want    Verdict
+		reason  []string
+	}{
+		{"git clean -fdx", Deny, []string{"would remove protected .claude/logs/", "git clean -fdx -- build dist", "-e .claude"}},
+		{"git clean -fdx -e .claude", Allow, nil},
+		{"git clean -fdx -e.claude", Allow, nil},
+		{"git clean -fdx --exclude=.claude", Allow, nil},
+		{"git clean -fdx --exclude .claude", Allow, nil},
+		{"git clean -fdx -- build", Allow, nil},
+		{"git clean -fdx -e src", Deny, []string{"would remove protected .claude/logs/"}},
+		{"git clean -fdx -e '!.claude'", Deny, []string{"would remove protected .claude/logs/"}},
+		{"git clean -fdx .claude", Deny, nil},
+		{"git read-tree --empty; git clean -fd", Deny, []string{"may change what it removes"}},
+		// Denied as on w1-s5: a wrapper may append an exclude (`!.claude`)
+		// the dry run never sees.
+		{"xargs git clean -fdx -e .claude -e < list", Deny, nil},
+		{"xargs -a list git clean -fdx -e .claude", Deny, nil},
+		{"parallel git clean -fdx -e .claude ::: x", Deny, nil},
+	}
+	for _, tt := range tests {
+		ctx := EvalContext{ToolName: "Bash", Command: tt.command, CWD: repo, Ctx: t.Context(), gitRunner: runner}
+		got, matches := Tier1Rules.EvaluateAll(&ctx)
+		reason := ""
+		for _, m := range matches {
+			if m.Rule.ID == "SP-007" {
+				reason = m.Reason
+			}
+		}
+		if got != tt.want {
+			t.Errorf("%q: verdict = %v (matches %v, SP-007 %q), want %v", tt.command, got, matchIDs(matches), reason, tt.want)
+			continue
+		}
+		for _, want := range tt.reason {
+			if !strings.Contains(reason, want) {
+				t.Errorf("%q: SP-007 reason = %q, want it to contain %q", tt.command, reason, want)
+			}
+		}
+		if strings.Contains(reason, "copies") {
+			t.Errorf("%q: SP-007 reason = %q, want a clean to remove, not copy", tt.command, reason)
+		}
+	}
+	if _, err := os.Stat(filepath.Join(repo, ".claude", "logs", "a.log")); err != nil {
+		t.Errorf("judging removed .claude/logs/a.log: %v", err)
+	}
+}
+
+// TestOperandArgs_GitClean pins that the -e/--exclude values of a git clean
+// are patterns, not operands, in every spelling git accepts and after git's
+// global options, while tar's and rsync's pattern options are unchanged and
+// another subcommand's -e stays an operand.
+func TestOperandArgs_GitClean(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		command string
+		want    []string
+	}{
+		{"git clean -fdx -e .claude x", []string{"clean", "-fdx", "x"}},
+		{"git -C d clean --exclude=.claude", []string{"-C", "d", "clean"}},
+		{"git clean -fdx -e.claude --exclude .claude -- -e", []string{"clean", "-fdx", "--", "-e"}},
+		{"git clean -fdxe .claude", []string{"clean"}},
+		{"git clean --exc=.claude build", []string{"clean", "build"}},
+		{"env GIT_TRACE=0 git clean -e .claude", []string{"GIT_TRACE=0", "git", "clean"}},
+		{"git grep -e .claude", []string{"grep", "-e", ".claude"}},
+		{"git clean-x -e .claude", []string{"clean-x", "-e", ".claude"}},
+		// A wrapper that appends arguments from its input may add an exclude
+		// the dry run never sees, so the excludes stay operands.
+		{"xargs git clean -fdx -e .claude -e", []string{"git", "clean", "-fdx", "-e", ".claude", "-e"}},
+		{"xargs -a list git clean -fdx -e .claude", []string{"-a", "list", "git", "clean", "-fdx", "-e", ".claude"}},
+		{"parallel git clean -fdx -e .claude ::: x", []string{"git", "clean", "-fdx", "-e", ".claude", ":::", "x"}},
+		{"tar --exclude=.claude -cf a.tar .", []string{"-cf", "a.tar", "."}},
+		{"rsync -a --exclude .claude src/ dst/", []string{"-a", "src/", "dst/"}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.command, func(t *testing.T) {
+			t.Parallel()
+			ctx := EvalContext{ToolName: "Bash", Command: tt.command, CWD: t.TempDir()}
+			scs, err := ctx.scannedCommands()
+			if err != nil || len(scs) != 1 {
+				t.Fatalf("scannedCommands(%q) = %d commands, %v; want one", tt.command, len(scs), err)
+			}
+			if got := operandArgs(scs[0]); !slices.Equal(got, tt.want) {
+				t.Errorf("operandArgs(%q) = %q, want %q", tt.command, got, tt.want)
 			}
 		})
 	}
@@ -1097,6 +1273,78 @@ func TestRepoPinnedRead(t *testing.T) {
 		{"GIT_DIR=.git git checkout evil -- .", false},
 		{"GIT_DIR=$d git log", false},
 		{"GIT_DIR=.git cat x", false},
+		// Every read-only subcommand form, as cmdscan.GitReadOnly judges it.
+		{"GIT_DIR=../other/.git git branch", true},
+		{"GIT_DIR=../other/.git git branch -a", true},
+		{"GIT_DIR=../other/.git git tag", true},
+		{"GIT_DIR=../other/.git git tag -l 'v*'", true},
+		{"GIT_DIR=../other/.git git remote -v", true},
+		{"GIT_DIR=../other/.git git stash list", true},
+		{"GIT_DIR=../other/.git git rev-list HEAD", true},
+		{"GIT_DIR=../other/.git git cat-file -p HEAD", true},
+		{"GIT_DIR=../other/.git git describe --always", true},
+		{"GIT_DIR=../other/.git git for-each-ref", true},
+		{"GIT_DIR=../other/.git git shortlog -s HEAD", true},
+		{"GIT_DIR=../other/.git git ls-tree HEAD", true},
+		{"env GIT_DIR=../other/.git git branch", true},
+		{"GIT_DIR=../other/.git GIT_WORK_TREE=../other git tag", true},
+		{"GIT_DIR=../other/.git git branch newb", false},
+		{"GIT_DIR=../other/.git git tag v1", false},
+		{"GIT_DIR=../other/.git git stash drop", false},
+		// Still read as on w1-s5: the wider read set and a leading --no-pager
+		// or -P.
+		{"GIT_DIR=../other/.git git --no-pager log", true},
+		{"GIT_DIR=../other/.git git -P log", true},
+		{"GIT_DIR=../other/.git git --no-pager branch", true},
+		{"GIT_DIR=../other/.git git merge-base HEAD HEAD", true},
+		{"GIT_DIR=../other/.git git name-rev HEAD", true},
+		{"GIT_DIR=../other/.git git show-ref", true},
+		{"GIT_DIR=../other/.git git count-objects -v", true},
+		{"GIT_DIR=../other/.git git var -l", true},
+		{"GIT_DIR=../other/.git git check-ignore x", true},
+		{"GIT_DIR=../other/.git git whatchanged", true},
+		{"GIT_DIR=../other/.git git range-diff a...b", true},
+		{"GIT_DIR=../other/.git git reflog", true},
+		{"GIT_DIR=../other/.git git worktree list", true},
+		{"GIT_DIR=../other/.git git notes list", true},
+		{"GIT_DIR=../other/.git git symbolic-ref HEAD", true},
+		{"GIT_DIR=../other/.git git --no-pager branch newb", false},
+		{"GIT_DIR=../other/.git git reflog expire --all", false},
+		{"GIT_DIR=../other/.git git worktree add x", false},
+		{"GIT_DIR=../other/.git git symbolic-ref HEAD refs/heads/x", false},
+		// Location pins (GIT_DIR, GIT_WORK_TREE, GIT_COMMON_DIR) only name
+		// where git looks; a value is judged as --git-dir=<value> and
+		// --work-tree=<value> are, so a protected one does not count (as on
+		// w1-s5).
+		{"GIT_WORK_TREE=. git status", true},
+		{"GIT_WORK_TREE=. git checkout evil -- .", false},
+		{"GIT_COMMON_DIR=../o/.git git log", true},
+		{"GIT_COMMON_DIR=../o/.git git stash drop", false},
+		{"GIT_DIR=.claude git status", false},
+		{"GIT_WORK_TREE=.claude git status", false},
+		{"GIT_COMMON_DIR=.claude git log", false},
+		{"env GIT_DIR=.claude git status", false},
+		// Write-target pins: git status rewrites the index GIT_INDEX_FILE
+		// names, and git writes objects into GIT_OBJECT_DIRECTORY, so their
+		// value must name no protected path or git-control holder.
+		{"GIT_INDEX_FILE=../o/.git/index git status", true},
+		{"GIT_INDEX_FILE=.claude/hooks/x git status", false},
+		{"GIT_INDEX_FILE=.claude/hooks/guard.py git status", false},
+		{"GIT_INDEX_FILE=.git/hooks/pre-commit git status", false},
+		{"GIT_INDEX_FILE=.git git status", false},
+		{"GIT_INDEX_FILE=$f git status", false},
+		{"env GIT_INDEX_FILE=.claude/x git status", false},
+		{"GIT_DIR=.git GIT_INDEX_FILE=.claude/x git status", false},
+		{"GIT_OBJECT_DIRECTORY=.git/objects git log", true},
+		{"GIT_OBJECT_DIRECTORY=.claude/hooks git log", false},
+		{"env GIT_OBJECT_DIRECTORY=.claude/hooks git log", false},
+		// Every other variable changes more than the repository.
+		{"GIT_TRACE=x git log", false},
+		{"GIT_TRACE=.claude/hooks/x git log", false},
+		{"GIT_EXTERNAL_DIFF=x git diff", false},
+		{"GIT_CONFIG_COUNT=1 git log", false},
+		{"PATH=x git log", false},
+		{"GIT_NAMESPACE=x git log", false},
 	}
 	for _, tt := range tests {
 		t.Run(tt.command, func(t *testing.T) {
@@ -1108,6 +1356,76 @@ func TestRepoPinnedRead(t *testing.T) {
 			}
 			if got := repoPinnedRead(scs[0]); got != tt.want {
 				t.Errorf("repoPinnedRead(%q) = %v, want %v", tt.command, got, tt.want)
+			}
+		})
+	}
+}
+
+// TestSP007_PrefixedGit pins that SP-007 judges a git with prefix
+// assignments as it judges the same git behind env (`env LC_ALL=C git ...`):
+// by its operands and the values assigned, not by the assignment alone. The
+// --git-dir workaround the pinned-write reason names stays allowed with a
+// harmless variable in front (as on w1-s5), while a value or operand that
+// names a protected path, a pinned write, and a variable set for the rest of
+// the line still deny. A deny whose pin names a protected path does not
+// recommend the --git-dir workaround, which would be denied too.
+func TestSP007_PrefixedGit(t *testing.T) {
+	t.Parallel()
+	cwd := filepath.Join(homeDir(t), "project")
+	tests := []struct {
+		command string
+		want    Verdict
+	}{
+		// Allowed, as on w1-s5 and as the env form is.
+		{"LC_ALL=C git --git-dir=../other/.git log", Allow},
+		{"TZ=UTC git --git-dir=../other/.git branch", Allow},
+		{"GIT_PAGER=cat git --git-dir=../other/.git log", Allow},
+		{"GIT_TERMINAL_PROMPT=0 git --git-dir=../other/.git log", Allow},
+		{"LC_ALL=C GIT_DIR=../other/.git git log", Allow},
+		{"GIT_ALTERNATE_OBJECT_DIRECTORIES=../other/.git/objects git log", Allow},
+		{"env LC_ALL=C git --git-dir=../other/.git log", Allow},
+		// Judged by its operands, as `env LC_ALL=C git log -- .git` is: git
+		// with a prefix assignment is not proven read-only.
+		{"LC_ALL=C git log -- .git", Deny},
+		{"env LC_ALL=C git log -- .git", Deny},
+		{"LC_ALL=C git --git-dir=../other/.git log --output=.claude/settings.json", Deny},
+		// A value that names a protected path.
+		{"LC_ALL=.claude/settings.json git --git-dir=../other/.git log", Deny},
+		{"GIT_INDEX_FILE=.claude/hooks/x git status", Deny},
+		{"GIT_DIR=.claude git status", Deny},
+		{"GIT_WORK_TREE=.claude git status", Deny},
+		{"GIT_COMMON_DIR=.claude git log", Deny},
+		// A variable-pinned git is judged only for reads, whatever else is set.
+		{"LC_ALL=C GIT_DIR=../other/.git git branch newb", Deny},
+		{"GIT_DIR=../other/.git git -C ../other log", Deny},
+		// Variables set for the rest of the line, or on another command.
+		// A variable that makes git run another program (GIT-001's).
+		{"GIT_EXTERNAL_DIFF=/tmp/x git --git-dir=../other/.git diff", Deny},
+		{"GIT_CONFIG_COUNT=1 git --git-dir=../other/.git log", Deny},
+		{"export LC_ALL=C; git --git-dir=../other/.git log", Deny},
+		{"LC_ALL=C; git --git-dir=../other/.git log", Deny},
+		{"LD_PRELOAD=/tmp/x.so cat .claude/settings.json", Deny},
+	}
+	for _, tt := range tests {
+		t.Run(tt.command, func(t *testing.T) {
+			t.Parallel()
+			ctx := EvalContext{ToolName: "Bash", Command: tt.command, CWD: cwd}
+			if got, reason := sp007.Evaluate(&ctx); got != tt.want {
+				t.Errorf("sp007(%q) = %v %q, want %v", tt.command, got, reason, tt.want)
+			}
+		})
+	}
+
+	for _, command := range []string{
+		"GIT_DIR=../other/.git GIT_WORK_TREE=.claude git checkout -f HEAD",
+		"GIT_DIR=.claude git branch newb",
+	} {
+		t.Run("reason/"+command, func(t *testing.T) {
+			t.Parallel()
+			ctx := EvalContext{ToolName: "Bash", Command: command, CWD: cwd}
+			got, reason := sp007.Evaluate(&ctx)
+			if got != Deny || strings.Contains(reason, "--git-dir") {
+				t.Errorf("sp007(%q) = %v %q, want a deny that names no --git-dir workaround", command, got, reason)
 			}
 		})
 	}

@@ -4,6 +4,7 @@ import (
 	"os"
 	"os/user"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
@@ -123,6 +124,161 @@ func TestEnvFileRelocationVerdicts(t *testing.T) {
 			got, matches := Tier1Rules.EvaluateAll(&ctx)
 			if got != tt.want {
 				t.Errorf("verdict = %v (first: %s), want %v", got, firstRuleID(matches), tt.want)
+			}
+		})
+	}
+}
+
+// TestShellRewritesFile_GlobLocation pins the W1D-RESIDUAL precision of the
+// SP-015 shell-write check for a glob: the shell expands it on the entries
+// that exist in its directory, and one that matches nothing stays literal, so
+// a glob counts only where its directory holds a guarded file. A find that
+// only lists files writes none of its operands, while one with a mutating
+// action keeps matching its name patterns anywhere below its start points.
+// A glob whose directory is itself a glob or an expansion, or cannot be
+// resolved, or follows a command that may create files, is judged by name
+// alone (fail closed).
+func TestShellRewritesFile_GlobLocation(t *testing.T) {
+	t.Parallel()
+	mkFiles := func(t *testing.T, root string, rels ...string) {
+		t.Helper()
+		for _, rel := range rels {
+			p := filepath.Join(root, filepath.FromSlash(rel))
+			if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(p, []byte("x\n"), 0o644); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+	// guarded holds devenv.yaml at its root; bare holds no guarded file.
+	guarded, bare := t.TempDir(), t.TempDir()
+	mkFiles(t, guarded, "devenv.yaml", "src/main.go", "dist/app.js")
+	mkFiles(t, bare, "README.md", "src/main.go", "dist/app.js", "nested/src/devenv.yaml")
+	if _, err := os.Stat(filepath.Join(homeDir(t), ".bashrc")); err != nil {
+		t.Fatalf("TestMain's HOME holds no .bashrc: %v", err)
+	}
+
+	tests := []struct {
+		name string
+		cwd  string
+		cmd  string
+		want Verdict
+	}{
+		// The glob's directory holds no guarded file (s5 allowed these).
+		{"negated class in src", guarded, "rm -rf src/[!x]*", Allow},
+		{"negated class in dist", guarded, "rm -rf dist/[!k]*", Allow},
+		{"range class in dist", guarded, "rm -rf dist/[a-z]*", Allow},
+		{"negated class at a bare root", bare, "rm -rf ./[!.]*", Allow},
+		{"posix class at a bare root", bare, "rm -rf [[:alpha:]]*", Allow},
+		{"guarded-name glob in a directory without it", bare, "rm src/[d]evenv.yaml", Allow},
+		{"startup-file glob in HOME without it", guarded, "rm ~/.[z]shenv", Allow},
+		// A find that only lists files writes none of them.
+		{"find name negated class in src", guarded, "find src -name '[!.]*'", Allow},
+		{"find name negated class type f", guarded, "find . -name '[!.]*' -type f", Allow},
+		{"find yaml names", guarded, "find . -name '*.yaml'", Allow},
+		{"find name negated class at a bare root", bare, "find src -name '[!.]*'", Allow},
+		{"find yaml names at a bare root", bare, "find . -name '*.yaml'", Allow},
+		{"find yaml names counted", guarded, "find . -name '*.yaml' | wc -l", Allow},
+		{"two listing finds", guarded, "find . -name '*.yaml'; find . -name '*.go'", Allow},
+		// A cd joined by && in the line's own shell, to one existing directory
+		// that CDPATH cannot redirect, moves where the glob expands: a failed
+		// cd stops the line.
+		{"negated class after cd ./src", guarded, "cd ./src && rm -rf [!x]*", Allow},
+		{"bracket name after cd ./src", guarded, "cd ./src && rm -f [d]evenv.yaml", Allow},
+		{"bracket name after an absolute cd", guarded, "cd " + filepath.Join(guarded, "src") + " && rm -f [d]evenv.yaml", Allow},
+		{"bracket name after two cds", guarded, "cd ./src && cd .. && cd ./dist && rm -f [d]evenv.yaml", Allow},
+		{"bracket name after cd into a directory holding it", bare, "cd ./nested/src && rm -f [d]evenv.yaml", Deny},
+		// A `~` resolves with the hook's HOME, which TestMain's HOME does not
+		// hold devenv.yaml in. A prefix HOME of the cd itself changes nothing:
+		// the shell expands ~ before it applies it.
+		{"bracket name after cd ~", guarded, "cd ./src && cd ~ && rm [d]evenv.yaml", Allow},
+		{"bracket name after a prefix-HOME cd ~", guarded, "HOME=.. cd ~ && rm [d]evenv.yaml", Allow},
+
+		// The glob's directory holds the guarded file.
+		{"star suffix at the root", guarded, "rm -rf ./devenv.*", Deny},
+		{"bracket name at the root", guarded, "rm -rf [d]evenv.yaml", Deny},
+		{"negated class at the root", guarded, "rm -rf ./[!x]*", Deny},
+		{"posix class at the root", guarded, "rm -rf [[:alpha:]]*", Deny},
+		{"redirect to a bracket name at the root", guarded, "printf x > [d]evenv.yaml", Deny},
+		{"bracket name in a nested directory holding it", bare, "rm nested/src/[d]evenv.yaml", Deny},
+		{"startup-file glob in HOME holding it", guarded, "rm ~/.[b]ashrc", Deny},
+		// A find with a mutating action matches its patterns anywhere below.
+		{"find delete by name", guarded, "find . -name devenv.yaml -delete", Deny},
+		{"find delete yaml names", guarded, "find . -name '*.yaml' -delete", Deny},
+		{"find delete yaml names at a bare root", bare, "find . -name '*.yaml' -delete", Deny},
+		// Fail closed: where the glob expands is not known.
+		{"glob after an archive extraction", bare, "tar -xf a.tar; rm src/[d]evenv.yaml", Deny},
+		{"glob directory segment", bare, "rm */[d]evenv.yaml", Deny},
+		{"glob after cd to an expansion", bare, `cd "$X" && rm [d]evenv.yaml`, Deny},
+		{"glob behind an expansion", bare, `rm "$X"/[d]evenv.yaml`, Deny},
+		{"glob with an unknown working directory", "", "rm [d]evenv.yaml", Deny},
+		{"git pathspec glob", bare, "git rm -- '*devenv.yaml'", Deny},
+		// Fail closed, as on w1-s5: the line's directory model takes every cd
+		// as succeeding and persisting, but the shell may expand the glob in
+		// the root, where devenv.yaml lives.
+		{"glob after a cd that may fail, then ;", guarded, "cd nosuch; rm -f [d]evenv.yaml", Deny},
+		{"glob after a cd that may fail, then ||", guarded, "cd nosuch || rm -f [d]evenv.yaml", Deny},
+		{"glob after a subshell cd, then &&", guarded, "(cd src) && rm -f [d]evenv.yaml", Deny},
+		{"glob after a subshell cd, then ;", guarded, "(cd src); rm -f [d]evenv.yaml", Deny},
+		{"glob after a background cd", guarded, "cd src & rm -f [d]evenv.yaml", Deny},
+		{"glob after a pipeline cd", guarded, "cd src | rm -f [d]evenv.yaml", Deny},
+		{"glob after cd -", guarded, "cd src; cd -; rm -f [d]evenv.yaml", Deny},
+		{"glob after cd - joined by &&", guarded, "cd src && cd - && rm -f [d]evenv.yaml", Deny},
+		{"glob after a physical cd", guarded, "cd -P src && rm -f [d]evenv.yaml", Deny},
+		{"glob under ~- after cd", guarded, "cd src && rm -f ~-/[d]evenv.yaml", Deny},
+		{"glob under ~+", guarded, "rm -f ~+/[d]evenv.yaml", Deny},
+		// Fail closed, as on w1-s5: once the line may change HOME, a later `~`
+		// is not the hook's HOME. Each of these reaches the root devenv.yaml in
+		// a real shell.
+		{"glob after cd ~ with HOME=..", guarded, "HOME=..; cd ./src && cd ~ && rm [d]evenv.yaml", Deny},
+		{"glob after cd ~ with HOME=$PWD", guarded, "HOME=$PWD; cd ./src && cd ~ && rm [d]evenv.yaml", Deny},
+		{"glob after cd ~ with HOME set mid-line", guarded, "cd ./src && HOME=.. && cd ~ && rm [d]evenv.yaml", Deny},
+		{"edit after cd ~ with HOME=..", guarded, "HOME=..; cd ./src && cd ~ && sed -i s/a/b/ [d]evenv.yaml", Deny},
+		{"copy after cd ~ with HOME=..", guarded, "HOME=..; cd ./src && cd ~ && cp /tmp/x [d]evenv.yaml", Deny},
+		{"glob after cd ~ with an exported HOME", guarded, "export HOME=..; cd ./src && cd ~ && rm [d]evenv.yaml", Deny},
+		{"glob after cd ~ with a read HOME", guarded, "cd ./src && read HOME && cd ~ && rm [d]evenv.yaml", Deny},
+		{"glob under ~ with HOME=$PWD", guarded, "HOME=$PWD; rm ~/[d]evenv.yaml", Deny},
+		{"negated class under ~ with HOME=.", guarded, "HOME=.; rm -rf ~/[!x]*", Deny},
+		// Fail closed, as on w1-s5: the cd may land elsewhere than the model
+		// says. A bare name may follow CDPATH or zsh's cdpath, zsh's
+		// two-operand cd substitutes inside $PWD, and `cd +N` picks from the
+		// directory stack; each lands in the root here.
+		{"glob after a bare-name cd", guarded, "cd src && rm -f [d]evenv.yaml", Deny},
+		{"negated class after a bare-name cd", guarded, "cd src && rm -rf [!x]*", Deny},
+		{"glob after a two-operand cd", guarded, "cd ./src && cd src . && rm [d]evenv.yaml", Deny},
+		{"glob after a two-operand cd with an empty operand", guarded, "cd ./src && cd /src '' && rm [d]evenv.yaml", Deny},
+		{"edit after a two-operand cd", guarded, "cd ./src && cd src . && sed -i s/a/b/ [d]evenv.yaml", Deny},
+		{"redirect after a two-operand cd", guarded, "cd ./src && cd src . && cat /tmp/x > [d]evenv.yaml", Deny},
+		{"copy after a two-operand cd", guarded, "cd ./src && cd src . && cp /tmp/x [d]evenv.yaml", Deny},
+		{"glob after a directory-stack cd", guarded, "pushd ./src && cd +1 && rm [d]evenv.yaml", Deny},
+		{"glob after a directory-stack cd with -N", guarded, "pushd ./src && cd -1 && rm [d]evenv.yaml", Deny},
+		{"glob after a cdpath cd", guarded, "cdpath=(..); cd proj && rm [d]evenv.yaml", Deny},
+		{"glob after a cd to a missing directory", guarded, "cd ./nosuch && rm [d]evenv.yaml", Deny},
+		{"glob after a bare cd", guarded, "cd ./src && cd && rm [d]evenv.yaml", Deny},
+		{"redirect after a cd that may fail", guarded, "cd nosuch; printf x > [d]evenv.yaml", Deny},
+		{"copy after a cd that may fail", guarded, "cd nosuch; cp /dev/null [d]evenv.yaml", Deny},
+		{"move after a cd that may fail", guarded, "cd nosuch; mv src/main.go [d]evenv.yaml", Deny},
+		// A listing find whose output a writing command consumes.
+		{"find piped to xargs rm", guarded, "find . -name devenv.yaml | xargs rm", Deny},
+		{"find print0 piped to xargs -0 rm", guarded, "find . -maxdepth 1 -name '[d]evenv.yaml' -print0 | xargs -0 rm -f", Deny},
+		{"find list read by xargs rm", guarded, "find . -name devenv.yaml > list; xargs rm < list", Deny},
+		{"find in a substitution", guarded, "rm $(find . -name '[d]evenv.yaml')", Deny},
+		{"find piped to a while-read loop", guarded, `find . -name '[d]evenv.yaml' | while read f; do rm "$f"; done`, Deny},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			ctx := EvalContext{ToolName: "Bash", Command: tt.cmd, CWD: tt.cwd}
+			got, matches := Tier1Rules.EvaluateAll(&ctx)
+			if got != tt.want {
+				t.Errorf("verdict = %v (first: %s), want %v", got, firstRuleID(matches), tt.want)
+			}
+			// A deleting find may also reach a protected file (SP-003).
+			sp015 := slices.ContainsFunc(matches, func(m RuleMatch) bool { return m.Rule.ID == "SP-015" })
+			if tt.want == Deny && !sp015 {
+				t.Errorf("rules = %v, want SP-015 among them", matches)
 			}
 		})
 	}

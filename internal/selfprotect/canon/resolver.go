@@ -69,6 +69,9 @@ func (r *Resolver) Stat(path string) (fs.FileInfo, error) {
 	return remember(&r.stats, path, os.Stat)
 }
 
+// Lstat is os.Lstat, remembered per path.
+func (r *Resolver) Lstat(path string) (fs.FileInfo, error) { return r.lstat(path) }
+
 // lstat is os.Lstat, remembered per path.
 func (r *Resolver) lstat(path string) (fs.FileInfo, error) {
 	if r == nil {

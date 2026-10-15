@@ -6,6 +6,8 @@ tier: full
 languages:
     - name: go
       version: 1.26.9
+      extras:
+        - go_source=nixpkgs
 overlays:
     - ./nix/go-overlay.nix
 security:

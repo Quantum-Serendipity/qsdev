@@ -9,11 +9,6 @@ inputs:
         inputs:
             nixpkgs:
                 follows: nixpkgs
-    go-overlay:
-        url: github:purpleclay/go-overlay
-        inputs:
-            nixpkgs:
-                follows: nixpkgs
 impure: false
 nixpkgs:
     allowUnfree: true

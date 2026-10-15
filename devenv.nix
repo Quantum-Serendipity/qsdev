@@ -34,7 +34,7 @@
     # Go
     go = {
       enable = true;
-      version = lib.mkIf (!(lib.versionAtLeast pkgs.go.version "1.26.9")) "1.26.9";
+      package = if lib.versionAtLeast pkgs.go.version "1.26.9" then pkgs.go else throw "qsdev: .qsdev.yaml declares go_source=nixpkgs, but pkgs.go is ${pkgs.go.version}, older than the required Go 1.26.9; raise it through nixpkgs or a registered overlay, or remove go_source to fetch Go 1.26.9 from go-overlay";
 
       # LSP servers (qsdev-managed)
       lsp.enable = true;

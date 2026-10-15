@@ -381,6 +381,9 @@ func TestWorktreeRewriteWithTrackedProtected(t *testing.T) {
 		{"stash push", "Bash", "git stash", top, evilRepo(), Allow, ""},
 		{"stash push of untracked files", "Bash", "git stash -u", top, evilRepo(), Allow, ""},
 		// After HEAD moved to evil, a stash resets the work tree to it.
+		// A forced new branch discards the local changes to HEAD's version.
+		{"forced new branch after HEAD moved", "Bash", "git checkout -f -b feature", top, headMovedRepo(top), Deny, "git checkout " + overwrite},
+		{"new branch after HEAD moved", "Bash", "git checkout -b feature", top, headMovedRepo(top), Allow, ""},
 		{"stash push after HEAD moved", "Bash", "git stash", top, headMovedRepo(top), Deny, "git stash " + overwrite},
 		{"stash -u after HEAD moved", "Bash", "git stash -u", top, headMovedRepo(top), Deny, overwrite},
 		{"stash save after HEAD moved", "Bash", "git stash save wip", top, headMovedRepo(top), Deny, "git stash save " + overwrite},
@@ -460,6 +463,13 @@ func TestWorktreeRewrite_PrecedingCommands(t *testing.T) {
 		git.tracked = ".claude/settings.json\x00src/x.go\x00"
 		git.answers["clean -d -f --"] = ""
 		git.answers["clean -d -x -f --"] = ""
+		git.answers["tracked src/x.go"] = "src/x.go\x00"
+		return git
+	}
+	// wholeTree is tracked where `.` matches every tracked path.
+	wholeTree := func() *fakeGit {
+		git := tracked()
+		git.answers["tracked ."] = git.tracked
 		return git
 	}
 	// untracked also holds an untracked protected file a git add may track.
@@ -533,6 +543,47 @@ func TestWorktreeRewrite_PrecedingCommands(t *testing.T) {
 		{"fetch with a refmap then pop", "Bash", "git fetch --refmap=x origin main && git stash pop", tracked(), Deny, tracksOwnCall},
 		{"pop then pop", "Bash", "git stash pop && git stash pop", tracked(), Deny, tracksOwnCall},
 		{"stash then an older entry", "Bash", "git stash && git stash pop stash@{1}", tracked(), Deny, tracksOwnCall},
+
+		// A redirect that writes no file (W1 wave fix round 2).
+		{"commit with stderr discarded then switch", "Bash", "git commit -am x 2>/dev/null && git switch main", tracked(), Allow, ""},
+		{"read to /dev/null then switch", "Bash", "cat src/x.go > /dev/null && git switch main", tracked(), Allow, ""},
+		{"commit with output merged then switch", "Bash", "git commit -am x >/dev/null 2>&1 && git switch main", tracked(), Allow, ""},
+		{"commit logged to a file then switch", "Bash", "git commit -am x > log.txt && git switch main", tracked(), Deny, tracksOwnCall},
+		// A commit message from a variable: an option's value, one word.
+		{"commit with a quoted message variable then switch", "Bash", `git commit -am "$MSG" && git switch main`, tracked(), Allow, ""},
+		{"commit with a substituted message then switch", "Bash", `git commit -m "wip $(date)" && git switch main`, tracked(), Deny, tracksOwnCall},
+		{"commit with an unquoted message variable then switch", "Bash", "git commit -am $MSG && git switch main", tracked(), Deny, tracksOwnCall},
+		{"commit with a variable option then switch", "Bash", `git commit "$OPT" -m x && git switch main`, tracked(), Deny, tracksOwnCall},
+		{"commit with a variable message option then switch", "Bash", `git commit -m"$MSG" && git switch main`, tracked(), Deny, tracksOwnCall},
+		{"add with a variable then switch", "Bash", `git add "$F" && git switch main`, tracked(), Deny, tracksOwnCall},
+		// A branch created at HEAD keeps the commit a later rewrite reads,
+		// unless the rewrite names the branch or the previous one.
+		{"new branch, commit, switch back", "Bash", "git switch -c feat && git commit -am wip && git switch main", tracked(), Allow, ""},
+		{"checkout -b, commit, checkout back", "Bash", "git checkout -q -b feat && git commit -am wip && git checkout main", tracked(), Allow, ""},
+		{"new branch then switch to the previous", "Bash", "git switch -c feat && git switch -", tracked(), Deny, tracksOwnCall},
+		{"new branch then a checkout of it", "Bash", "git switch -c feat && git checkout feat -- .", tracked(), Deny, tracksOwnCall},
+		{"new branch then a reset to it", "Bash", "git checkout -b feat && git reset --hard heads/Feat~0", tracked(), Deny, tracksOwnCall},
+		{"tracking new branch then switch", "Bash", "git switch -c feat --track && git switch main", tracked(), Deny, tracksOwnCall},
+		{"branch reset then switch", "Bash", "git branch -f feat && git switch main", tracked(), Deny, tracksOwnCall},
+		// add --chmod stages a mode for the tracked paths it names.
+		{"chmod of a source file then switch", "Bash", "git add --chmod=+x src/x.go && git switch main", tracked(), Allow, ""},
+		{"chmod of a directory holding a protected file then checkout", "Bash", "git add --chmod=-x . && git checkout -- .", wholeTree(), Deny,
+			"git checkout would overwrite protected .claude/settings.json"},
+		{"chmod of everything then switch", "Bash", "git add -A --chmod=+x && git switch main", tracked(), Deny,
+			"git switch would overwrite protected .claude/settings.json"},
+		{"chmod from a pathspec file then switch", "Bash", "git add --chmod=+x --pathspec-from-file=list && git switch main", tracked(), Deny, tracksOwnCall},
+		// PowerShell commands that only read or print.
+		{"Write-Output then checkout in PowerShell", "PowerShell", "Write-Output start; git checkout -- src/x.go", tracked(), Allow, ""},
+		{"Get-Content then restore in PowerShell", "PowerShell", "Get-Content go.mod; git restore src/x.go", tracked(), Allow, ""},
+		{"Write-Output to a file then checkout in PowerShell", "PowerShell", "Write-Output x > idx; git checkout -- src/x.go", tracked(), Deny, tracksOwnCall},
+		{"Set-Content then checkout in PowerShell", "PowerShell", "Set-Content idx x; git checkout -- src/x.go", tracked(), Deny, tracksOwnCall},
+		// `cd -` returns to the directory the line's last cd left when that
+		// cd surely ran.
+		{"cd and back then switch", "Bash", "cd .. && cd - && git switch main", tracked(), Allow, ""},
+		{"cd back after a cd that may fail", "Bash", "cd ..; cd - && git switch main", tracked(), Deny, "directory that is not known"},
+		{"cd back after a subshell cd", "Bash", "(cd ..) && cd - && git switch main", tracked(), Deny, "directory that is not known"},
+		{"cd back with no cd before", "Bash", "cd - && git switch main", tracked(), Deny, "directory that is not known"},
+		{"cd back after OLDPWD is set", "Bash", "cd .. && OLDPWD=/tmp && cd - && git switch main", tracked(), Deny, "directory that is not known"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -717,6 +768,11 @@ func TestParseWorktreeRewrite(t *testing.T) {
 		{"checkout --pathspec-from-file=list evil", rev("evil"), true},
 		{"checkout -b feature", worktreeRewrite{}, false},
 		{"checkout --orphan feature", worktreeRewrite{}, false},
+		// A forced new branch with no start point resets the work tree to
+		// HEAD, as `checkout -f` does.
+		{"checkout -f -b feature", rev("HEAD"), true},
+		{"checkout -fB feature", rev("HEAD"), true},
+		{"checkout --force --orphan feature", rev("HEAD"), true},
 		// An unborn branch with a start point moves the work tree to it.
 		{"checkout --orphan x evil", between("evil"), true},
 		{"checkout -q --orphan=x evil", between("evil"), true},

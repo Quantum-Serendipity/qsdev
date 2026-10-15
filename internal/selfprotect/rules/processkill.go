@@ -643,9 +643,11 @@ func psAsCommands(cmds []cmdscan.PSCommand) []cmdscan.Command {
 	out := make([]cmdscan.Command, len(cmds))
 	for i, c := range cmds {
 		out[i] = cmdscan.Command{Name: c.Name, Args: c.Args}
-		for _, a := range c.Args {
+		for j, a := range c.Args {
 			if cmdscan.IsDynamicWord(a) || strings.HasPrefix(a, "@") {
 				out[i].ExpandedArgs = append(out[i].ExpandedArgs, a)
+				out[i].ExpandedArgIndexes = append(out[i].ExpandedArgIndexes, j)
+				out[i].SplitArgs = append(out[i].SplitArgs, j) // an array value passes each element
 			}
 		}
 	}

@@ -45,6 +45,14 @@ type rewriteLine struct {
 	// content into the index, and may start tracking an untracked file, or
 	// with --force (addedIgnored) an ignored one too.
 	added, addedIgnored bool
+	// chmods are the git add --chmod commands before them: each changes the
+	// mode of the tracked paths it names in the index alone.
+	chmods []chmodAdd
+	// branched are the branches a git switch -c or checkout -b before them
+	// created at HEAD and switched to (branchedHere): HEAD names the same
+	// commit, but the new branch and the branch-relative revisions
+	// (`@{-1}`, `@{u}`) name others.
+	branched []string
 	// stashPushed reports that a git stash push runs before them: it saves
 	// the local changes as stash@{0} and resets them, which its own check
 	// judged as a rewrite.
@@ -59,12 +67,20 @@ func (l *rewriteLine) changeAll() {
 	l.changed, l.stashChanged = true, true
 }
 
-// inertCommand reports whether sc, a command other than git, cannot change
-// what a later rewrite reads: a directory change, or a read-only command
-// (cmdscan.IsSafeReadCommand: echo, printf, true, test, cat, ...) that sets
-// no variable and writes no file through a redirect.
-func inertCommand(sc scannedCommand) bool {
-	return isLocationChange(sc.Name) || len(sc.WriteRedirects) == 0 && cmdscan.IsSafeReadCommand(sc.Command)
+// inertCommand reports whether sc, the i-th command of ctx's line and a
+// command other than git, cannot change what a later rewrite reads: a
+// directory change, or a read-only command (cmdscan.IsSafeReadCommand: echo,
+// printf, true, test, cat, ...) that sets no variable and writes no file
+// through a redirect. On a PowerShell line it is a command that only reads
+// (cmdscan.PSCommand.IsRead: Write-Output, Get-Content, Test-Path, ...).
+func (ctx *EvalContext) inertCommand(i int, sc scannedCommand) bool {
+	if isLocationChange(sc.Name) {
+		return true
+	}
+	if isPowerShell(ctx) {
+		return ctx.powerShell().cmds[i].IsRead()
+	}
+	return len(sc.WriteRedirects) == 0 && cmdscan.IsSafeReadCommand(sc.Command)
 }
 
 // ranGit records what the git command sc runs (args, split as target) may
@@ -72,25 +88,35 @@ func inertCommand(sc scannedCommand) bool {
 // the rewrite rw, already judged. A read-only git changes nothing. A git run
 // directly (directGit) is modelled: a stash push saves stash@{0}, a commit
 // and an add are recorded for the rewrites after them (ranCommit, ranAdd),
-// and any other git may change the index, HEAD, refs or the working tree,
-// but the stash only when it is not one of stashKeepingGit (keepsStash). A
-// stash pop, apply or branch also drops or shifts stash entries. A git behind
-// a wrapper, a variable, a redirect, an expansion or a global option may do
-// anything.
+// a branch created at HEAD is recorded (branchedHere), and any other git may
+// change the index, HEAD, refs or the working tree, but the stash only when
+// it is not one of stashKeepingGit (keepsStash). A stash pop, apply or branch
+// also drops or shifts stash entries. A git behind a wrapper, a variable, a
+// redirect, an expansion (but in a commit's option value) or a global option
+// may do anything.
 func (l *rewriteLine) ranGit(sc scannedCommand, args []string, target gitArgs, rw worktreeRewrite, rewrites bool) {
+	commit := !rewrites && target.sub == "commit"
+	var opts gitOpts
+	if commit {
+		opts = parseGitOpts(target.rest, commitSpec)
+	}
 	switch {
 	case !rewrites && gitReadOnly(target):
-	case !directGit(sc, args, target):
+	case !directGit(sc, args, target) || sc.HasExpansion && (!commit || !expansionsAreValues(sc, opts)):
 		l.changeAll()
 	case rewrites && rw.source == fromStash:
 		l.changeAll()
 	case rewrites && target.sub == "stash":
 		l.stashPushed = true
-	case !rewrites && target.sub == "commit":
-		l.ranCommit(parseGitOpts(target.rest, commitSpec))
+	case commit:
+		l.ranCommit(opts)
 	case !rewrites && (target.sub == "add" || target.sub == "stage"):
-		l.ranAdd(parseGitOpts(target.rest, addSpec))
+		l.ranAdd(sc, parseGitOpts(target.rest, addSpec))
 	default:
+		if branch, ok := branchedHere(target); ok && !rewrites {
+			l.branched = append(l.branched, branch)
+			return
+		}
 		l.changed = true
 		l.stashChanged = l.stashChanged || !keepsStash(target)
 	}
@@ -98,10 +124,80 @@ func (l *rewriteLine) ranGit(sc scannedCommand, args []string, target gitArgs, r
 
 // directGit reports whether sc runs git itself on the repository of its
 // directory, with nothing that changes what git does: no wrapper, variable,
-// write redirect, expansion or global option before the subcommand.
+// write redirect or global option before the subcommand, and no expansion
+// in the command word. An expansion in an argument is judged by the caller
+// (expansionsAreValues).
 func directGit(sc scannedCommand, args []string, target gitArgs) bool {
-	return path.Base(sc.Name) == "git" && len(args) > 0 && args[0] == target.sub && len(sc.Assigns) == 0 &&
-		!sc.AssignsDynamic && len(sc.WriteRedirects) == 0 && !sc.HasExpansion
+	return path.Base(sc.Name) == "git" && !sc.NameHasExpansion && len(args) > 0 && len(args) == len(sc.Args) &&
+		args[0] == target.sub && len(sc.Assigns) == 0 && !sc.AssignsDynamic && len(sc.WriteRedirects) == 0
+}
+
+// expansionsAreValues reports whether every argument of the direct git sc
+// built from an expansion is the separate value word of an option of its
+// subcommand (o, parsed from the arguments after the subcommand) and stays
+// one word (not cmdscan.Command.SplitArgs): `git commit -am "$MSG"`. Such a
+// value cannot become an option or an operand, so the command is what its
+// literal words say; `git commit -am $MSG` may split into `--amend`.
+func expansionsAreValues(sc scannedCommand, o gitOpts) bool {
+	if len(sc.SplitArgs) > 0 || len(sc.ExpandedArgIndexes) == 0 {
+		return false
+	}
+	return !slices.ContainsFunc(sc.ExpandedArgIndexes, func(i int) bool {
+		return !slices.Contains(o.valueArgs, i-1) // Args[0] is the subcommand
+	})
+}
+
+// branchedHere returns the branch the git command target creates at HEAD
+// and switches to, leaving the index and the working tree alone: `git
+// switch -c <name>` or `git checkout -b <name>` (or the -C / -B reset form)
+// with no start point, no path and no other option than quiet, progress
+// and --no-track. HEAD keeps its commit, so only revisions naming the new
+// branch or relative to the current one (namesBranched) change.
+func branchedHere(target gitArgs) (string, bool) {
+	var spec gitOptSpec
+	var create []string
+	switch target.sub {
+	case "switch":
+		spec, create = switchSpec, []string{"-c", "--create", "-C", "--force-create"}
+	case "checkout":
+		spec, create = checkoutSpec, []string{"-b", "-B"}
+	default:
+		return "", false
+	}
+	o := parseGitOpts(target.rest, spec)
+	branch := o.value(create...)
+	if branch == "" || len(o.operands) > 0 || o.dashdash {
+		return "", false
+	}
+	allowed := append(create, "-q", "--quiet", "--progress", "--no-progress", "--no-track")
+	for opt := range o.set {
+		if !slices.Contains(allowed, opt) {
+			return "", false
+		}
+	}
+	return branch, true
+}
+
+// namesBranched reports whether rev may name another commit after the line
+// created and switched to the branches l.branched: it names one of them
+// (`topic`, `heads/topic~1`, `main..topic`, case folded as on a
+// case-insensitive file system), or a branch-relative or reflog revision
+// (`@{-1}`, `@{u}`, `HEAD@{1}`).
+func (l rewriteLine) namesBranched(rev string) bool {
+	if strings.Contains(rev, "@{") {
+		return true
+	}
+	for _, part := range strings.Split(strings.ReplaceAll(rev, "...", ".."), "..") {
+		part = strings.TrimLeft(part, "^")
+		if i := strings.IndexAny(part, "~^:@"); i >= 0 {
+			part = part[:i]
+		}
+		part = strings.TrimPrefix(strings.TrimPrefix(part, "refs/"), "heads/")
+		if slices.ContainsFunc(l.branched, func(b string) bool { return strings.EqualFold(b, part) }) {
+			return true
+		}
+	}
+	return false
 }
 
 var (
@@ -146,20 +242,44 @@ func (l *rewriteLine) ranCommit(o gitOpts) {
 	}
 }
 
-// ranAdd records a git add with options o. A dry run stages nothing. --edit
-// and --interactive stage an edited patch, --chmod a mode and --renormalize
-// a converted content the working tree does not hold, so they count as an
-// unmodelled change. Any other add only copies working-tree content into the
-// index (added), of ignored files too with --force (addedIgnored).
-func (l *rewriteLine) ranAdd(o gitOpts) {
+// chmodAdd is a git add --chmod: it stages the mode it names for the tracked
+// paths that pathspec, relative to dir, matches, or for every tracked path
+// with all.
+type chmodAdd struct {
+	dir      string
+	pathspec []string
+	all      bool
+}
+
+// ranAdd records a git add sc with options o. A dry run stages nothing.
+// --edit and --interactive stage an edited patch and --renormalize a
+// converted content the working tree does not hold, so they count as an
+// unmodelled change. Any other add copies working-tree content into the
+// index (added), of ignored files too with --force (addedIgnored), and
+// --chmod also stages a mode the working tree may not have for the paths it
+// names (chmods), which a later rewrite may then write; it counts as an
+// unmodelled change when those paths are not known (--pathspec-from-file, an
+// unknown directory).
+func (l *rewriteLine) ranAdd(sc scannedCommand, o gitOpts) {
 	switch {
 	case o.has("-n", "--dry-run"):
-	case o.has("-e", "--edit", "-i", "--interactive", "--chmod", "--renormalize"):
+		return
+	case o.has("-e", "--edit", "-i", "--interactive", "--renormalize"):
 		l.changed = true
-	default:
-		l.added = true
-		l.addedIgnored = l.addedIgnored || o.has("-f", "--force")
+		return
 	}
+	l.added = true
+	l.addedIgnored = l.addedIgnored || o.has("-f", "--force")
+	if !o.has("--chmod") {
+		return
+	}
+	dir, ok := rewriteDir(sc, nil)
+	if !ok || o.has("--pathspec-from-file") {
+		l.changed = true
+		return
+	}
+	pathspec := append(slices.Clone(o.operands), o.paths...)
+	l.chmods = append(l.chmods, chmodAdd{dir: dir, pathspec: pathspec, all: len(pathspec) == 0})
 }
 
 // stashKeepingGit are the git subcommands that never change the stash list:
@@ -197,7 +317,8 @@ func keepsStash(target gitArgs) bool {
 // when it saved nothing, the entry it is now. A patch file changes with the
 // working tree, which a stash push resets. After a commit, a revision that
 // walks HEAD's history or reads a reflog names another commit
-// (movesWithCommit).
+// (movesWithCommit), and after a branch is created at HEAD, a revision naming
+// it or relative to the current branch (namesBranched).
 func (l rewriteLine) readsChanged(rw worktreeRewrite) bool {
 	switch rw.source {
 	case fromStash:
@@ -205,7 +326,9 @@ func (l rewriteLine) readsChanged(rw worktreeRewrite) bool {
 	case fromPatches:
 		return l.changed || l.stashPushed
 	}
-	return l.changed || l.committed && slices.ContainsFunc(rw.revisions(), movesWithCommit)
+	revs := rw.revisions()
+	return l.changed || l.committed && slices.ContainsFunc(revs, movesWithCommit) ||
+		len(l.branched) > 0 && slices.ContainsFunc(revs, l.namesBranched)
 }
 
 // localChanges is the comparison of what a commit records: the paths where
@@ -218,11 +341,13 @@ var localChanges = worktreeRewrite{source: fromRev, rev: "HEAD", also: []worktre
 // model cannot follow (readsChanged), or that a git add before it may start
 // tracking an untracked protected path (an ignored one only after add
 // --force), which a rewrite of tracked files then writes or removes (`git
-// add -A && git reset --hard`). Otherwise committed lists the paths a commit before it
-// records (localChanges): HEAD then differs from the HEAD git is asked about
-// in those paths, so a rewrite from a revision may write them too. A query
-// that fails other than by a timeout (an unborn HEAD) counts as preceded.
-func (ctx *EvalContext) precededBy(client gitrepo.Client, top, dir string, rw worktreeRewrite, line rewriteLine) (preceded bool, committed []string, err error) {
+// add -A && git reset --hard`). Otherwise also lists the paths whose index
+// entry the commands before it change in a way the rewrite may write: the
+// tracked paths a git add --chmod names (chmodded), and, for a rewrite from
+// a revision, the paths a commit before it records (localChanges), where
+// HEAD then differs from the HEAD git is asked about. A query that fails
+// other than by a timeout (an unborn HEAD) counts as preceded.
+func (ctx *EvalContext) precededBy(client gitrepo.Client, top, dir string, rw worktreeRewrite, line rewriteLine) (preceded bool, also []string, err error) {
 	if line.readsChanged(rw) {
 		return true, nil, nil
 	}
@@ -235,15 +360,40 @@ func (ctx *EvalContext) precededBy(client gitrepo.Client, top, dir string, rw wo
 		if err != nil || ctx.firstRemovedProtected(top, untracked) != "" {
 			return true, nil, nil
 		}
+		also, err = ctx.chmodded(client, top, line.chmods)
+		if errors.Is(err, gitrepo.ErrTimeout) {
+			return false, nil, err
+		}
+		if err != nil {
+			return true, nil, nil
+		}
 	}
 	if !line.committed || !rw.readsRevisions() {
-		return false, nil, nil
+		return false, also, nil
 	}
-	committed, err = rewrittenPaths(ctx.Ctx, client, dir, localChanges)
+	committed, err := rewrittenPaths(ctx.Ctx, client, dir, localChanges)
 	if errors.Is(err, gitrepo.ErrTimeout) {
 		return false, nil, err
 	}
-	return err != nil, committed, nil
+	return err != nil, append(also, committed...), nil
+}
+
+// chmodded returns the tracked paths, relative to the toplevel top, whose
+// mode the git add --chmod commands chmods stage.
+func (ctx *EvalContext) chmodded(client gitrepo.Client, top string, chmods []chmodAdd) ([]string, error) {
+	var paths []string
+	for _, c := range chmods {
+		dir, pathspec := c.dir, c.pathspec
+		if c.all {
+			dir, pathspec = top, nil
+		}
+		tracked, err := client.TrackedPaths(ctx.Ctx, dir, pathspec)
+		if err != nil {
+			return nil, err
+		}
+		paths = append(paths, tracked...)
+	}
+	return paths, nil
 }
 
 // readsTracking reports whether what rw writes depends on which paths the

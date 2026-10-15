@@ -349,8 +349,8 @@ func TestGitControl_CommandSubstitution(t *testing.T) {
 		`git rev-parse --git-path hooks/pre-commit | Remove-Item`,
 		`$d = git rev-parse --git-dir; Remove-Item $d/hooks/pre-commit`,
 		// Known false positives (docs: Git-directory false positives): on
-		// a line with any `$`, a git-directory query counts.
-		`git rev-parse --git-dir; Write-Output $PWD`,
+		// a line with any `$` that may write, a git-directory query counts.
+		`git rev-parse --git-dir; Set-Content out.txt $PWD`,
 		`$x = 1; git rev-parse --git-dir`,
 		`Get-Content "$(git rev-parse --git-dir)/HEAD"`,
 	}
@@ -400,8 +400,12 @@ func TestGitControl_CommandSubstitution(t *testing.T) {
 			})
 		}
 	}
-	// A PowerShell query whose output nothing takes only prints.
-	for _, command := range []string{"git rev-parse --git-dir", "git rev-parse --git-path hooks; Remove-Item build/out.o"} {
+	// A PowerShell query whose output nothing takes only prints, and so
+	// does a line that writes nothing (Write-Output only prints).
+	for _, command := range []string{
+		"git rev-parse --git-dir", "git rev-parse --git-path hooks; Remove-Item build/out.o",
+		"git rev-parse --git-dir; Write-Output $PWD",
+	} {
 		t.Run("PowerShell allow "+command, func(t *testing.T) {
 			t.Parallel()
 			ctx := EvalContext{ToolName: "PowerShell", Command: command, CWD: project, Ctx: t.Context(), gitRunner: rewriteRepo(project, false).run}

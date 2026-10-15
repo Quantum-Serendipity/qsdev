@@ -118,6 +118,9 @@ type gitOpts struct {
 	operands []string          // before "--"
 	paths    []string          // after "--"
 	dashdash bool
+	// valueArgs are the indexes in the parsed args of the words read as an
+	// option's value (`-m <msg>`), not as an option or an operand.
+	valueArgs []int
 }
 
 func (o gitOpts) has(names ...string) bool {
@@ -164,6 +167,7 @@ func parseGitOpts(args []string, spec gitOptSpec) gitOpts {
 			if !hasVal && spec.longValue[name] && i+1 < len(args) {
 				i++
 				val = args[i]
+				o.valueArgs = append(o.valueArgs, i)
 			}
 			o.set["--"+name] = val
 		case len(a) > 1 && a[0] == '-':
@@ -177,6 +181,7 @@ func parseGitOpts(args []string, spec gitOptSpec) gitOpts {
 				if val == "" && i+1 < len(args) {
 					i++
 					val = args[i]
+					o.valueArgs = append(o.valueArgs, i)
 				}
 				o.set[opt] = val
 				break
@@ -788,8 +793,12 @@ func parseCheckout(o gitOpts) (worktreeRewrite, bool) {
 	if o.has("-b", "-B", "--orphan") {
 		// A new branch: the work tree moves only to an explicit start point
 		// (an unborn --orphan branch too: git adjusts the index and work tree
-		// to it).
+		// to it), or, with --force, is reset to HEAD (`git checkout -f -b
+		// x` discards local changes as `git checkout -f` does).
 		if len(o.operands) == 0 {
+			if force {
+				return worktreeRewrite{source: fromRev, rev: "HEAD"}, true
+			}
 			return worktreeRewrite{}, false
 		}
 		return switchTo(o.operands[0], force), true
@@ -1142,7 +1151,7 @@ func worktreeRewriteReason(ctx *EvalContext) string {
 // is allowed only in a repository that tracks no protected file (askGit). A
 // shell script (`sh -c`, eval) is walked in the directory its shell runs in.
 func (ctx *EvalContext) rewriteWalk(scs []scannedCommand, line rewriteLine) string {
-	for _, sc := range scs {
+	for i, sc := range scs {
 		words := append([]string{sc.Name}, sc.Args...)
 		if run, ok := cmdscan.Script(words); ok && !isPowerShell(ctx) {
 			if reason := ctx.scriptRewriteReason(sc, run, line); reason != "" {
@@ -1156,7 +1165,7 @@ func (ctx *EvalContext) rewriteWalk(scs []scannedCommand, line rewriteLine) stri
 			if reason := unknownProgramRewrite(sc); reason != "" {
 				return reason
 			}
-			if !inertCommand(sc) {
+			if !ctx.inertCommand(i, sc) {
 				line.changeAll()
 			}
 			continue
@@ -1282,7 +1291,8 @@ type gitVerdict struct {
 // source an earlier command of its line may have changed in a way the line's
 // model cannot follow (precededBy) is known only in a repository that tracks
 // no protected file; any other rewrite is judged by the paths it would
-// write, with those an earlier commit recorded. When the first operand of an
+// write, with those an earlier commit recorded or an earlier add --chmod
+// staged a mode for. When the first operand of an
 // ambiguous checkout names no revision, git reads its operands as paths, and
 // so does askGit. A sparse-checkout pattern change is judged by whether the
 // repository tracks a protected path at all, and a clean (rw.clean) by the
@@ -1300,7 +1310,7 @@ func (ctx *EvalContext) askGit(dir string, rw worktreeRewrite, line rewriteLine)
 	if rw.remote != "" && !remoteIsRepo(rw.remote, dir, top) {
 		return gitVerdict{}, nil // a pull from another repository: the residual
 	}
-	preceded, committed, err := ctx.precededBy(client, top, dir, rw, line)
+	preceded, also, err := ctx.precededBy(client, top, dir, rw, line)
 	if err != nil {
 		return gitVerdict{}, err
 	}
@@ -1318,7 +1328,7 @@ func (ctx *EvalContext) askGit(dir string, rw worktreeRewrite, line rewriteLine)
 		if errors.Is(err, gitrepo.ErrGit) && rw.orPaths != nil {
 			paths, err = rewrittenPaths(ctx.Ctx, client, dir, worktreeRewrite{source: fromIndex, paths: rw.orPaths})
 		}
-		if first := firstProtected(top, append(paths, committed...)); err != nil || first != "" || rw.clean == nil {
+		if first := firstProtected(top, append(paths, also...)); err != nil || first != "" || rw.clean == nil {
 			return gitVerdict{overwritten: first}, err
 		}
 	}

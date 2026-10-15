@@ -64,12 +64,14 @@ type PSCommand struct {
 }
 
 // psReadVerbs are the cmdlets and aliases that only read the paths they are
-// given.
+// given, or only write their arguments to the output (Write-Output and its
+// alias write, Write-Host).
 var psReadVerbs = map[string]bool{
 	"get-content": true, "gc": true, "cat": true, "type": true,
 	"get-item": true, "gi": true, "get-childitem": true, "gci": true,
 	"ls": true, "dir": true, "select-string": true, "sls": true,
 	"test-path": true, "resolve-path": true,
+	"write-output": true, "write": true, "write-host": true,
 }
 
 // IsRead reports whether c only reads: a read verb, or a program whose

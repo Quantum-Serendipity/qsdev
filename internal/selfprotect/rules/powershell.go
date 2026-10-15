@@ -74,18 +74,20 @@ func (ctx *EvalContext) psScanned() []scannedCommand {
 		return line.scanned
 	}
 	line.scannedDone = true
-	st := dirState{cwd: ctx.CWD, inProtected: ctx.CWD != "" && isProtectedDir(ctx.CWD)}
+	st := dirState{workDir: startDir(ctx)}
 	for _, c := range line.cmds {
 		cmd := cmdscan.Command{Name: c.Name, WriteRedirects: make([]string, len(c.WriteRedirects))}
 		if verb, ok := psPOSIXVerbs[c.Name]; ok {
 			cmd.Name = verb
 		}
-		for _, a := range c.Args {
+		for i, a := range c.Args {
 			w, expanded := psPathWord(a)
 			cmd.Args = append(cmd.Args, w)
 			if expanded {
 				cmd.HasExpansion = true
 				cmd.ExpandedArgs = append(cmd.ExpandedArgs, w)
+				cmd.ExpandedArgIndexes = append(cmd.ExpandedArgIndexes, i)
+				cmd.SplitArgs = append(cmd.SplitArgs, i) // an array value passes each element
 			}
 		}
 		for i, r := range c.WriteRedirects {

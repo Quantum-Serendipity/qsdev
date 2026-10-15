@@ -507,6 +507,24 @@ All notable changes to qsdev are recorded in this file. The format is based on
 
 ### Security
 
+- SP-007 judges more of the commands before a same-line rewrite, so these
+  chains are allowed again in a repository that tracks `.claude/`, as on
+  w1-s5, unless the rewrite writes a protected path: a redirect to
+  `/dev/null` or `2>&1` writes no file (`git commit -am x 2>/dev/null &&
+  git switch topic`, `cat main.go > /dev/null && git switch topic`); a
+  commit message from a double-quoted variable (`git commit -am "$MSG" &&
+  git switch topic`); a branch created at HEAD (`git switch -c feat &&
+  git commit -am wip && git switch main`), unless a later revision names it
+  or the previous branch; `git add --chmod=+x main.go && git switch topic`,
+  judged with the paths the chmod names; PowerShell `Write-Output` and the
+  read cmdlets (`Write-Output start; git checkout -- main.go`); and `cd -`
+  after a `cd` joined by `&&` (`cd .. && cd - && git switch topic`), which
+  returns to the directory that `cd` left. Elsewhere `cd -` still lands in
+  an unknown directory. `git checkout -f -b <name>` (and `-B`, `--orphan`)
+  with no start point, which resets the working tree to HEAD as `git
+  checkout -f` does, is now judged as `git checkout -f` is; it was not
+  checked at all.
+
 - SP-007 no longer denies every working-tree rewrite that follows another
   command on its line in a repository that tracks `.claude/`. Each earlier
   command is now judged by what it can change for the rewrite: an inert

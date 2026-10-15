@@ -79,6 +79,7 @@ func mainShellDirs(ctx *EvalContext, scs []scannedCommand) []scannedCommand {
 	out := slices.Clone(scs)
 	for i := range out {
 		if out[i].Subshell {
+			st.noteOldPWD(out[i], st.workDir) // it still breaks a chain to a `cd -`
 			continue
 		}
 		st.place(&out[i])
@@ -90,10 +91,14 @@ func mainShellDirs(ctx *EvalContext, scs []scannedCommand) []scannedCommand {
 // newDirState returns the directory state at the start of ctx's line.
 func newDirState(ctx *EvalContext) dirState {
 	return dirState{
-		cwd:         ctx.CWD,
-		inProtected: ctx.CWD != "" && isProtectedDir(ctx.CWD),
-		cdpath:      strings.Contains(looseText(ctx.Command), "CDPATH"),
+		workDir: startDir(ctx),
+		cdpath:  strings.Contains(looseText(ctx.Command), "CDPATH"),
 	}
+}
+
+// startDir is the working directory ctx's line starts in.
+func startDir(ctx *EvalContext) workDir {
+	return workDir{cwd: ctx.CWD, inProtected: ctx.CWD != "" && isProtectedDir(ctx.CWD)}
 }
 
 // place records the directory state as the working directory sc runs in.
@@ -103,19 +108,55 @@ func (st *dirState) place(sc *scannedCommand) {
 
 // dirState tracks the working directory across the commands of one line.
 type dirState struct {
+	workDir
+	// cdpath reports that the line sets CDPATH, which makes cd search other
+	// directories for a bare relative target (`CDPATH=.claude cd hooks`).
+	cdpath bool
+	// prev is the directory the last directory change left, which `cd -`
+	// returns to (OLDPWD). prevSure reports that a `cd -` reached now
+	// surely runs after that change succeeded (see noteOldPWD); otherwise
+	// OLDPWD may still be what the line started with, which is not known.
+	prev     workDir
+	prevSure bool
+}
+
+// workDir is what dirState knows of one working directory.
+type workDir struct {
 	cwd         string
 	inProtected bool
 	unknown     bool
 	hint        string // see scannedCommand.cwdHint
-	// cdpath reports that the line sets CDPATH, which makes cd search other
-	// directories for a bare relative target (`CDPATH=.claude cd hooks`).
-	cdpath bool
+}
+
+// noteOldPWD records what sc, just applied after leaving the directory
+// left, does to OLDPWD and to whether a later `cd -` surely follows the
+// directory change that set it. A cd, pushd or popd sets OLDPWD to the
+// directory it leaves, and a `cd -` reached through && lists only (each
+// command after the change runs only when the one before it succeeded, see
+// cmdscan.GuardedByAnd) runs after that change succeeded. A change in a
+// subshell (`(cd src) && cd -`) leaves the line's shell alone, and a
+// change that may be skipped (`a || cd src && cd -`), a command after `;`
+// or `||`, or an assignment that may set OLDPWD breaks the chain.
+func (st *dirState) noteOldPWD(sc scannedCommand, left workDir) {
+	switch {
+	case slices.Contains(sc.Assigns, "OLDPWD") || sc.AssignsDynamic:
+		st.prevSure = false
+	case isLocationChange(sc.Name):
+		st.prev = left
+		st.prevSure = !sc.Subshell && sc.Guard != cmdscan.Guarded
+	case sc.Guard != cmdscan.GuardedByAnd:
+		st.prevSure = false
+	}
 }
 
 // apply updates the directory state for a cd/pushd/popd command. A subshell's
 // cd is treated as persisting, which errs toward treating later relative paths
-// as protected (fail closed).
+// as protected (fail closed). A `cd -` returns to the directory the line's
+// last directory change left when it surely ran (noteOldPWD); otherwise its
+// destination is not known.
 func (st *dirState) apply(sc scannedCommand) {
+	left := st.workDir
+	defer st.noteOldPWD(sc, left)
 	switch sc.Name {
 	case "cd", "pushd":
 	case "popd":
@@ -131,6 +172,11 @@ func (st *dirState) apply(sc scannedCommand) {
 	target := "~"
 	if len(operands) > 0 {
 		target = operands[0]
+	}
+	if target == "-" && sc.Name == "cd" && len(operands) == 1 && st.prevSure && sc.Guard == cmdscan.GuardedByAnd &&
+		len(sc.Assigns) == 0 && !sc.AssignsDynamic {
+		st.workDir = st.prev // OLDPWD, which the line set
+		return
 	}
 	if sc.HasExpansion || target == "-" || hasGlobMeta(target) || unresolvedTilde(target) ||
 		(sc.Name == "pushd" && (len(operands) == 0 || strings.HasPrefix(target, "+"))) ||

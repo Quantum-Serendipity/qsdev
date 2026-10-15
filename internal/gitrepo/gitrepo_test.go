@@ -248,8 +248,8 @@ func TestStashPaths(t *testing.T) {
 }
 
 // TestTrackedPaths proves the index listing: tracked paths only (not an
-// untracked file), relative to the directory, and ErrNotRepo outside a
-// repository.
+// untracked file), relative to the top level, limited to a pathspec read
+// from the directory, and ErrNotRepo outside a repository.
 func TestTrackedPaths(t *testing.T) {
 	requireGit(t)
 	t.Parallel()
@@ -258,14 +258,30 @@ func TestTrackedPaths(t *testing.T) {
 	c := client(t)
 	ctx := context.Background()
 
-	got, err := c.TrackedPaths(ctx, repo)
+	got, err := c.TrackedPaths(ctx, repo, nil)
 	if err != nil {
 		t.Fatalf("TrackedPaths: %v", err)
 	}
 	if !slices.Contains(got, ".claude/settings.json") || slices.Contains(got, "untracked.txt") {
 		t.Errorf("TrackedPaths = %q, want the tracked .claude/settings.json and not untracked.txt", got)
 	}
-	if _, err := c.TrackedPaths(ctx, t.TempDir()); !errors.Is(err, ErrNotRepo) {
+	src := filepath.Join(repo, "src")
+	for _, tt := range []struct {
+		pathspec []string
+		want     []string
+	}{
+		{nil, []string{"src/x.go"}},
+		{[]string{"."}, []string{"src/x.go"}},
+		{[]string{".."}, []string{".claude/settings.json", "src/x.go"}},
+		{[]string{":/.claude"}, []string{".claude/settings.json"}},
+		{[]string{"nosuch"}, nil},
+	} {
+		got, err := c.TrackedPaths(ctx, src, tt.pathspec)
+		if err != nil || !slices.Equal(got, tt.want) {
+			t.Errorf("TrackedPaths(src, %q) = %q, %v; want %q", tt.pathspec, got, err, tt.want)
+		}
+	}
+	if _, err := c.TrackedPaths(ctx, t.TempDir(), nil); !errors.Is(err, ErrNotRepo) {
 		t.Errorf("TrackedPaths(non-repo) error = %v, want ErrNotRepo", err)
 	}
 }
@@ -513,7 +529,7 @@ func TestQueryTimeout(t *testing.T) {
 		"HooksDir":     func() error { _, err := c.HooksDir(ctx, "/r"); return err },
 		"ChangedPaths": func() error { _, err := c.ChangedPaths(ctx, "/r", "HEAD", "", nil); return err },
 		"StashPaths":   func() error { _, err := c.StashPaths(ctx, "/r", "stash@{0}"); return err },
-		"TrackedPaths": func() error { _, err := c.TrackedPaths(ctx, "/r"); return err },
+		"TrackedPaths": func() error { _, err := c.TrackedPaths(ctx, "/r", nil); return err },
 		"CommitPaths":  func() error { _, err := c.CommitPaths(ctx, "/r", []string{"evil"}); return err },
 		"PatchPaths":   func() error { _, err := c.PatchPaths(ctx, "/r", []string{"x.patch"}, "", ""); return err },
 	}
@@ -571,8 +587,11 @@ func TestCallShapes(t *testing.T) {
 		{"StashPaths", func() { _, _ = c.StashPaths(ctx, dir, "stash@{1}") },
 			[][]string{{"--no-optional-locks", "stash", "show", "--name-only", "-z", "--no-renames", "--include-untracked",
 				"--end-of-options", "stash@{1}"}}},
-		{"TrackedPaths", func() { _, _ = c.TrackedPaths(ctx, dir) },
-			[][]string{{"--no-optional-locks", "-c", "core.fsmonitor=false", "ls-files", "-z"}}},
+		{"TrackedPaths", func() { _, _ = c.TrackedPaths(ctx, dir, nil) },
+			[][]string{{"--no-optional-locks", "-c", "core.fsmonitor=false", "ls-files", "-z", "--full-name", "--"}}},
+		// The pathspec follows "--", so one named like an option is a path.
+		{"TrackedPaths pathspec", func() { _, _ = c.TrackedPaths(ctx, dir, []string{"-x", "."}) },
+			[][]string{{"--no-optional-locks", "-c", "core.fsmonitor=false", "ls-files", "-z", "--full-name", "--", "-x", "."}}},
 		// The options follow --dry-run, an exclude is bound to its option and
 		// the pathspec follows "--"; -f is passed at most twice.
 		{"CleanPaths", func() {

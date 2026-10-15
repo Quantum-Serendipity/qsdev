@@ -507,6 +507,14 @@ All notable changes to qsdev are recorded in this file. The format is based on
 
 ### Security
 
+- SP-007 now judges `git rm` as a working-tree rewrite. A recursive
+  `git rm` that does not name `.claude` (`git rm -r .`,
+  `git rm -r -q -- .`) deleted every tracked protected file and was
+  allowed; it is now denied when the tracked paths its pathspec matches
+  (`git ls-files -- <pathspec>`) include a protected one, and a pathspec
+  read from a file is judged as the whole index. `git rm --cached` and
+  `git rm -n` stay allowed, as does a `git rm` of other paths.
+
 - SP-015 and the gate-dodge rules now judge the values of the git
   variables that write a file or run a program, as SP-007 does for
   protected paths. `GIT_INDEX_FILE=devenv.yaml git read-tree HEAD` replaced

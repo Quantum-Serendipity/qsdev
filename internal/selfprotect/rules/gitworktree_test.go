@@ -17,11 +17,12 @@ import (
 
 // fakeGit is a gitrepo.Runner that answers from canned output keyed by the
 // query (fakeKey) and records every call, so the worktree-rewrite rule can be
-// judged without a repository and its git spawns counted.
+// judged without a repository and its git spawns counted. An ls-files with a
+// pathspec is answered from answers.
 type fakeGit struct {
 	top     string            // the toplevel rev-parse prints; "" means not a repository
 	answers map[string]string // fakeKey -> NUL-separated paths
-	tracked string            // the NUL-separated paths ls-files prints
+	tracked string            // the NUL-separated paths ls-files prints without a pathspec
 	err     error             // returned for every query when set
 	// fetchHead is the FETCH_HEAD file `rev-parse --git-path FETCH_HEAD`
 	// prints; "" makes that query fail.
@@ -32,7 +33,7 @@ type fakeGit struct {
 }
 
 // fakeKey names a query by the arguments that matter to it: "toplevel",
-// "fetch-head", "tracked", "clean <options> -- [<pathspec>...]" (its answer
+// "fetch-head", "tracked [<pathspec>...]", "clean <options> -- [<pathspec>...]" (its answer
 // is git clean --dry-run's text), "diff <from> [<to>] -- [<pathspec>...]", "stash
 // <ref>", "log <rev>... --" or "apply [-p<n>] [--directory=<d>] -- <file>..."
 // (the forward and the reverse (-R) read of a patch share a key and an
@@ -44,7 +45,7 @@ func fakeKey(args []string) string {
 	case slices.Contains(args, "rev-parse"):
 		return "toplevel"
 	case slices.Contains(args, "ls-files"):
-		return "tracked"
+		return keyAfter("tracked", args, "--")
 	case slices.Contains(args, "clean"):
 		return keyAfter("clean", args, "--dry-run")
 	case slices.Contains(args, "stash"):
@@ -170,6 +171,11 @@ func rewriteRepo(top string, evil bool) *fakeGit {
 		"apply -- x.mbox":                      numstat(changed),
 		"apply -p0 --directory=sub -- x.patch": numstat(changed),
 		"apply -- fix.patch":                   numstat("src/x.go\x00"),
+		// git rm: the tracked paths each pathspec matches.
+		"tracked .":          changed,
+		"tracked :/":         changed,
+		"tracked .claude/..": changed,
+		"tracked src":        "src/x.go\x00",
 	}}
 }
 
@@ -377,6 +383,19 @@ func TestWorktreeRewriteWithTrackedProtected(t *testing.T) {
 		{"outside a repository", "Bash", "git reset --hard evil", top, &fakeGit{}, Allow, ""},
 		{"unknown revision", "Bash", "git reset --hard nosuch", top, evilRepo(), Allow, ""},
 		{"read-only git after a rewrite", "Bash", "git switch main && git log", top, evilRepo(), Allow, ""},
+		// git rm deletes every tracked path its pathspec matches from the
+		// working tree (W1 wave fix); --cached only untracks them, and a dry
+		// run removes nothing.
+		{"rm of the whole tree", "Bash", "git rm -r .", top, evilRepo(), Deny, "git rm would delete protected .claude/settings.json from the working tree"},
+		{"rm of the whole tree after --", "Bash", "git rm -r -q -- .", top, evilRepo(), Deny, "would delete protected .claude/settings.json"},
+		{"rm through a parent of .claude", "Bash", "git rm -r -- .claude/..", top, evilRepo(), Deny, ""},
+		{"rm of a pathspec read from a file", "Bash", "git rm --pathspec-from-file=list", top, evilRepo(), Deny, "would delete protected .claude/settings.json"},
+		{"powershell rm of the whole tree", "PowerShell", "git rm -r .", top, evilRepo(), Deny, "would delete protected .claude/settings.json"},
+		{"rm of the whole tree, clean", "Bash", "git rm -r .", top, rewriteRepo(top, false), Allow, ""},
+		{"rm of a source directory", "Bash", "git rm -r src", top, evilRepo(), Allow, ""},
+		{"rm --cached of the whole tree", "Bash", "git rm --cached -r .", top, evilRepo(), Allow, ""},
+		{"rm dry run of the whole tree", "Bash", "git rm -n -r .", top, evilRepo(), Allow, ""},
+		{"rm dry run, long", "Bash", "git rm -r --dry-run .", top, evilRepo(), Allow, ""},
 	}
 	for _, tt := range rows {
 		t.Run(tt.name, func(t *testing.T) {
@@ -513,11 +532,25 @@ func TestParseWorktreeRewrite(t *testing.T) {
 	// unchecked is a rewrite denied outright.
 	unchecked := worktreeRewrite{unchecked: "any"}
 
+	rm := func(paths ...string) worktreeRewrite { return worktreeRewrite{source: removesTracked, paths: paths} }
+
 	tests := []struct {
 		command string
 		want    worktreeRewrite
 		ok      bool
 	}{
+		// rm deletes the tracked paths its pathspec matches, unless it only
+		// untracks them or is a dry run.
+		{"rm -r .", rm("."), true},
+		{"rm -rf -- . src", rm(".", "src"), true},
+		{"rm -q --ignore-unmatch x", rm("x"), true},
+		{"rm --pathspec-from-file=list", rm(":/"), true},
+		{"rm --pathspec-from-file list -r", rm(":/"), true},
+		{"rm --cached -r .", worktreeRewrite{}, false},
+		{"rm --cac -r .", worktreeRewrite{}, false},
+		{"rm -rn .", worktreeRewrite{}, false},
+		{"rm --dry-run -r .", worktreeRewrite{}, false},
+		{"rm -r", worktreeRewrite{}, false},
 		// checkout-index
 		{"checkout-index -a -f", idx(), true},
 		{"checkout-index -af", idx(), true},

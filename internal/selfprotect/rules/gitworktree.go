@@ -55,6 +55,9 @@ const (
 	// add, init, reapply): any tracked path may leave the working tree, and
 	// which ones cannot be told in advance.
 	sparseRules
+	// removesTracked deletes the tracked paths a pathspec matches (git rm):
+	// the files go from the working tree as well as from the index.
+	removesTracked
 )
 
 // emptyTree is git's (SHA-1) empty tree, which git knows without storing it:
@@ -255,6 +258,13 @@ var (
 			"ignore-skip-worktree-bits",
 		},
 	}
+	rmSpec = gitOptSpec{
+		long: []string{
+			"force", "dry-run", "cached", "ignore-unmatch", "sparse", "quiet", "pathspec-from-file",
+			"pathspec-file-nul",
+		},
+		longValue: map[string]bool{"pathspec-from-file": true},
+	}
 	stashSpec     = gitOptSpec{long: []string{"index", "quiet"}}
 	stashPushSpec = gitOptSpec{
 		long: []string{
@@ -401,8 +411,30 @@ func parseWorktreeRewrite(sub string, rest []string) (worktreeRewrite, bool) {
 		return parseClean(rest)
 	case "sparse-checkout":
 		return parseSparseCheckout(rest)
+	case "rm":
+		return parseRm(parseGitOpts(rest, rmSpec))
 	}
 	return worktreeRewrite{}, false
+}
+
+// parseRm returns what `git rm` deletes from the working tree: every tracked
+// path its pathspec matches (`git rm -r .` takes .claude/ with it). --cached
+// only untracks the paths and a dry run (-n) removes nothing; a pathspec read
+// from a file may match any tracked path, so it is judged as the whole
+// index (":/"). Without -r git refuses a directory it would have to recurse
+// into, so judging the pathspec as if -r were given only adds paths.
+func parseRm(o gitOpts) (worktreeRewrite, bool) {
+	if o.has("--cached", "-n", "--dry-run") {
+		return worktreeRewrite{}, false
+	}
+	if o.has("--pathspec-from-file") {
+		return worktreeRewrite{source: removesTracked, paths: []string{":/"}}, true
+	}
+	paths := append(slices.Clone(o.operands), o.paths...)
+	if len(paths) == 0 {
+		return worktreeRewrite{}, false // git rm requires a pathspec
+	}
+	return worktreeRewrite{source: removesTracked, paths: paths}, true
 }
 
 // cleanLong are git clean's long options.
@@ -1237,6 +1269,8 @@ func (ctx *EvalContext) checkRewrite(sc scannedCommand, target gitArgs, rw workt
 		return what + " rewrites working-tree files after another command on the same line, which may change what it copies, in a repository that tracks protected " + verdict.tracked + "; run it in its own call so the files it writes can be checked"
 	case verdict.sparse != "":
 		return what + " changes which tracked files stay in the working tree, and may remove protected " + verdict.sparse + " that the repository tracks; a person must change the sparse-checkout patterns"
+	case verdict.overwritten != "" && rw.source == removesTracked:
+		return what + " would delete protected " + verdict.overwritten + " from the working tree; name the paths to remove, or untrack them only with git rm --cached"
 	case verdict.overwritten != "":
 		return what + " would overwrite protected " + verdict.overwritten + " in the working tree"
 	case verdict.removed != "" && target.sub == "clean":
@@ -1277,7 +1311,7 @@ func (ctx *EvalContext) askGit(dir string, rw worktreeRewrite, preceded bool) (g
 		return gitVerdict{}, nil // a pull from another repository: the residual
 	}
 	if preceded || rw.source == sparseRules {
-		tracked, err := client.TrackedPaths(ctx.Ctx, top)
+		tracked, err := client.TrackedPaths(ctx.Ctx, top, nil)
 		first := firstProtected(top, tracked)
 		if rw.source == sparseRules {
 			return gitVerdict{sparse: first}, err
@@ -1387,6 +1421,8 @@ func sourcePaths(ctx context.Context, client gitrepo.Client, dir string, rw work
 		return paths, nil
 	case fromCommits:
 		return client.CommitPaths(ctx, dir, rw.revs)
+	case removesTracked:
+		return client.TrackedPaths(ctx, dir, rw.paths)
 	case fromPatches:
 		paths, err := client.PatchPaths(ctx, dir, rw.patches, rw.strip, rw.directory)
 		if err != nil && !errors.Is(err, gitrepo.ErrTimeout) {

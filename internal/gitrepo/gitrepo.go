@@ -287,12 +287,15 @@ func (c Client) PatchPaths(ctx context.Context, dir string, files []string, stri
 	return paths, nil
 }
 
-// TrackedPaths lists the paths the index tracks under dir, relative to dir;
-// run from the top level it lists the whole index.
-func (c Client) TrackedPaths(ctx context.Context, dir string) ([]string, error) {
-	out, err := c.run(ctx, c.queryTimeoutOrDefault(), Call{Dir: dir, Args: []string{
-		"--no-optional-locks", "-c", "core.fsmonitor=false", "ls-files", "-z",
-	}})
+// TrackedPaths lists the paths, relative to the top level, that the index
+// tracks and pathspec, read from dir, matches (what `git rm -r <pathspec>`
+// removes); with no pathspec it lists those under dir, so run from the top
+// level it lists the whole index. The explicit "--" keeps a pathspec named
+// like an option a pathspec.
+func (c Client) TrackedPaths(ctx context.Context, dir string, pathspec []string) ([]string, error) {
+	out, err := c.run(ctx, c.queryTimeoutOrDefault(), Call{Dir: dir, Args: slices.Concat([]string{
+		"--no-optional-locks", "-c", "core.fsmonitor=false", "ls-files", "-z", "--full-name", "--",
+	}, pathspec)})
 	if err != nil {
 		return nil, err
 	}

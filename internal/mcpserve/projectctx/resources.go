@@ -103,14 +103,14 @@ func (pc *ProjectContext) readState(_ context.Context, _ *spi.ToolCallContext, _
 }
 
 // readMCPServers serializes the MCP registry snapshot as JSON.
-func (pc *ProjectContext) readMCPServers(_ context.Context, _ *spi.ToolCallContext, _ *spi.ResourceRequest) (*spi.ResourceResult, error) {
+func (pc *ProjectContext) readMCPServers(ctx context.Context, _ *spi.ToolCallContext, _ *spi.ResourceRequest) (*spi.ResourceResult, error) {
 	defs := pc.mcpReg.All()
 	snapshot := make([]map[string]any, 0, len(defs))
 	for _, d := range defs {
 		snapshot = append(snapshot, map[string]any{
 			"name": d.Name, "display_name": d.DisplayName,
 			"category": string(d.Category), "transport": string(d.Transport),
-			"grade": mcpregistry.GradeServer(d).Level.String(), "source": string(d.Source),
+			"grade": mcpregistry.GradeServer(ctx, d).Level.String(), "source": string(d.Source),
 			"command": d.Command, "args": d.Args, "url": d.URL,
 		})
 	}

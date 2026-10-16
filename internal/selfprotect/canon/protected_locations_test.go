@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/Quantum-Serendipity/qsdev/internal/pathmatch"
+	"github.com/Quantum-Serendipity/qsdev/pkg/branding"
 )
 
 // TestIsProtected_ControlFilesAnyLocation pins the location-independent
@@ -72,7 +73,8 @@ func TestIsProtected_ControlFilesAnyLocation(t *testing.T) {
 // TestProtectedSegmentsCoveredByCommandScan keeps the Write/Edit table and the
 // Bash raw-command scan consistent: every location IsProtected guards must also
 // be recognized by ContainsProtectedPath, or a Bash command could reach a file
-// the Write tool cannot.
+// the Write tool cannot. The git-control locations, matched structurally
+// rather than by segment, are checked by representative examples.
 func TestProtectedSegmentsCoveredByCommandScan(t *testing.T) {
 	t.Parallel()
 
@@ -88,6 +90,7 @@ func TestProtectedSegmentsCoveredByCommandScan(t *testing.T) {
 			}
 		})
 	}
+	t.Run("git-control", checkGitControlCoveredByCommandScan)
 }
 
 // TestIsProtected_CaseInsensitiveFilesystems verifies that on a case-folding
@@ -172,6 +175,106 @@ func TestContainsProtectedPath_ClaudeJSON(t *testing.T) {
 				t.Errorf("ContainsProtectedPath(%q) = %v, want %v", tt.input, got, tt.want)
 			}
 		})
+	}
+}
+
+// TestIsProtected_ComposerConfigFiles pins that the tracked Composer home
+// keeps its policy files (config.json and the nested .gitignore) protected
+// once they leave the protected .qsdev/ tree, under every spelling, while the
+// rest of the directory (the auth.json link, cache, vendored plugins) stays
+// writable for composer.
+func TestIsProtected_ComposerConfigFiles(t *testing.T) {
+	t.Parallel()
+
+	resetProtectedPaths(t)
+
+	dir := "/work/repo/" + branding.Get().ComposerHomeDir()
+	fold := pathmatch.Options{FoldCase: true}
+	win := pathmatch.Options{FoldCase: true, WindowsAliases: true}
+	exact := pathmatch.Options{}
+
+	tests := []struct {
+		name     string
+		rel      string
+		opts     pathmatch.Options
+		wantProt bool
+	}{
+		{"config.json", "/config.json", exact, true},
+		{".gitignore", "/.gitignore", exact, true},
+		{"folded config.json", "/CONFIG.JSON", fold, true},
+		{"folded .gitignore", "/.GitIgnore", fold, true},
+		{"windows trailing dot", "/config.json.", win, true},
+		{"windows ADS suffix", "/config.json::$DATA", win, true},
+		{"windows ADS on .gitignore", "/.gitignore:x", win, true},
+		{"auth.json link stays writable", "/auth.json", exact, false},
+		{"cache stays writable", "/cache/x", exact, false},
+		{"vendor stays writable", "/vendor/x", exact, false},
+		{"directory itself stays writable", "", exact, false},
+		{"config backup", "/config.json.bak", exact, false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			p := filepath.FromSlash(dir + tt.rel)
+			got, cat := isProtected(p, tt.opts)
+			if got != tt.wantProt {
+				t.Errorf("isProtected(%q, %+v) = %v, want %v", p, tt.opts, got, tt.wantProt)
+			}
+			if got && cat != "config" {
+				t.Errorf("isProtected(%q) category = %q, want %q", p, cat, "config")
+			}
+		})
+	}
+}
+
+// TestContainsProtectedPath_ComposerFilesOnly pins that the raw-command scan
+// covers the Composer policy files but not the rest of the Composer home, so
+// ordinary composer cache and vendor commands are not mistaken for protected
+// writes.
+func TestContainsProtectedPath_ComposerFilesOnly(t *testing.T) {
+	t.Parallel()
+
+	dir := branding.Get().ComposerHomeDir()
+	tests := []struct {
+		input string
+		want  bool
+	}{
+		{"rm " + dir + "/config.json", true},
+		{"echo '*' > " + dir + "/.gitignore", true},
+		{"ls " + dir + "/cache", false},
+		{"cat " + dir + "/auth.json", false},
+		{"rm -rf " + dir + "/vendor/x", false},
+		// The directory itself, which a whole-tree operation removes with
+		// its policy files, in spellings only the raw text shows.
+		{"rm -rf " + dir, true},
+		{"rm -rf " + dir + "/", true},
+		{"rm -rf ./" + dir + "/./", true},
+		{"D=" + dir + "; rm -rf $D", true},
+		{`python3 -c "shutil.rmtree('` + dir + `')"`, true},
+		{`python3 -c "os.remove('` + dir + `/'+'config.json')"`, true},
+		{"rm " + dir + "/*", true},
+		{"rm " + dir + "/conf*", true},
+		{"rm " + dir + "/.git*", true},
+		{"rm -rf " + dir + "/cach*", false},
+		{"rm -rf " + dir + "/./cache", false},
+		{"rm -rf " + dir + "-old", false},
+		{"rm -rf x" + dir, false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.input, func(t *testing.T) {
+			t.Parallel()
+			if got := ContainsProtectedPath(tt.input); got != tt.want {
+				t.Errorf("ContainsProtectedPath(%q) = %v, want %v", tt.input, got, tt.want)
+			}
+		})
+	}
+	// The directory protects only its policy files, so it is not a
+	// directory whose every entry is protected.
+	if ContainsProtectedDirName(dir) {
+		t.Errorf("ContainsProtectedDirName(%q) = true, want false", dir)
+	}
+	if !ContainsProtectedDirName(".claude") {
+		t.Error(`ContainsProtectedDirName(".claude") = false, want true`)
 	}
 }
 

@@ -1,9 +1,73 @@
 package drift
 
 import (
+	"errors"
 	"path/filepath"
+	"strings"
 	"testing"
+
+	"github.com/Quantum-Serendipity/qsdev/internal/catalog"
+	"github.com/Quantum-Serendipity/qsdev/internal/toolreg"
+	"github.com/Quantum-Serendipity/qsdev/pkg/types"
 )
+
+// TestExpectedMarkersRegistryError: when the tool registry cannot be built
+// the expected markers are unknown, so the error is returned rather than an
+// empty set that would report every expected marker as present.
+func TestExpectedMarkersRegistryError(t *testing.T) {
+	t.Parallel()
+	errBuild := errors.New("registry build failed")
+	got, err := expectedClaudeMDMarkers(func() (*toolreg.Registry, error) { return nil, errBuild },
+		map[string]bool{"semgrep": true})
+	if !errors.Is(err, errBuild) {
+		t.Fatalf("expectedClaudeMDMarkers() error = %v, want %v", err, errBuild)
+	}
+	if got != nil {
+		t.Errorf("expectedClaudeMDMarkers() = %v, want nil on error", got)
+	}
+}
+
+// TestDetectBrokenCatalogNoPanic: with a project defaults file the catalog
+// rejects, drift detection (MCP status tier 2) reports the unknown expected
+// markers as one Warning finding instead of panicking in the tool registry.
+// The catalog and tool registry are process globals, so this test does not
+// run in parallel.
+func TestDetectBrokenCatalogNoPanic(t *testing.T) {
+	dir := t.TempDir()
+	writeFile(t, filepath.Join(dir, "CLAUDE.md"), "# CLAUDE.md\n<!-- qsdev:semgrep -->\nx\n<!-- /qsdev:semgrep -->\n")
+	writeFile(t, catalog.ProjectConfigPath(dir), "keep_vars: [AWS_SECRET_ACCESS_KEY]\n")
+	catalog.ResetDefault()
+	toolreg.ResetDefaultRegistry()
+	t.Cleanup(func() {
+		catalog.ResetDefault()
+		toolreg.ResetDefaultRegistry()
+	})
+	if err := catalog.SetProjectRoot(dir); err != nil {
+		t.Fatal(err)
+	}
+
+	report := Detect(dir, types.GeneratedState{}, map[string]bool{"semgrep": true})
+
+	var markers *Category
+	for i := range report.Categories {
+		if report.Categories[i].Name == categoryMarkerIntegrity {
+			markers = &report.Categories[i]
+		}
+	}
+	if markers == nil {
+		t.Fatalf("no %q category in report", categoryMarkerIntegrity)
+	}
+	if len(markers.Findings) != 1 {
+		t.Fatalf("marker findings = %+v, want one warning", markers.Findings)
+	}
+	f := markers.Findings[0]
+	if f.Severity != Warning || !strings.Contains(f.Description, "Unable to determine the expected section markers") {
+		t.Errorf("finding = %+v, want a Warning naming the unknown expected markers", f)
+	}
+	if !strings.Contains(f.Description, "may only add or tighten") {
+		t.Errorf("finding description %q does not carry the catalog error", f.Description)
+	}
+}
 
 func TestDetectMarkerIntegrity_AllIntact(t *testing.T) {
 	dir := t.TempDir()

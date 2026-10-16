@@ -5,6 +5,7 @@ import (
 	"path"
 	"path/filepath"
 	"slices"
+	"strconv"
 	"strings"
 
 	"github.com/Quantum-Serendipity/qsdev/internal/pathmatch"
@@ -56,6 +57,62 @@ func replacesOperands(sc scannedCommand) bool {
 	return false
 }
 
+// ancestorCommands returns the commands the ancestor checks judge
+// (replacesProtectedAncestor, modeClearsProtectedAncestor): each command of
+// scs and of the scripts they run (withScriptCommands) as the program its
+// wrappers run (`env chmod -R a-x .`, `nice rm -rf ~` are chmod and rm).
+func (ctx *EvalContext) ancestorCommands(scs []scannedCommand) []scannedCommand {
+	all := ctx.withScriptCommands(scs, 0)
+	out := make([]scannedCommand, 0, len(all))
+	for _, sc := range all {
+		out = append(out, programCommand(sc))
+	}
+	return out
+}
+
+// withScriptCommands returns scs, each followed by the commands of the
+// script it runs through a shell, eval or a wrapper (`bash -c 'chmod -R a-x
+// .'`), placed from the directory that shell starts in, to maxScriptDepth.
+// A script that does not parse adds nothing; a PowerShell line runs no
+// POSIX script.
+func (ctx *EvalContext) withScriptCommands(scs []scannedCommand, depth int) []scannedCommand {
+	out := make([]scannedCommand, 0, len(scs))
+	for _, sc := range scs {
+		out = append(out, sc)
+		run, ok := cmdscan.Script(append([]string{sc.Name}, sc.Args...))
+		if !ok || isPowerShell(ctx) || depth >= maxScriptDepth {
+			continue
+		}
+		sub := ctx.scriptContext(sc, run)
+		if inner, err := sub.scannedCommands(); err == nil {
+			out = append(out, sub.withScriptCommands(inner, depth+1)...)
+		}
+	}
+	return out
+}
+
+// programCommand returns sc as the program its wrappers and a multi-call
+// binary run (appletIndex): its name as the program word names it
+// (programVerb: `/bin/rm` and `busybox rm` are rm) and its arguments after
+// that word, with TildeWords renumbered. A command that runs no named
+// program is returned unchanged.
+func programCommand(sc scannedCommand) scannedCommand {
+	words := append([]string{sc.Name}, sc.Args...)
+	i := appletIndex(words, cmdscan.Program(words))
+	if i < 0 {
+		return sc
+	}
+	sc.Name, sc.Args = programVerb(words[i]), words[i+1:]
+	var tildes []int
+	for _, w := range sc.TildeWords {
+		if w >= i {
+			tildes = append(tildes, w-i)
+		}
+	}
+	sc.TildeWords = tildes
+	return sc
+}
+
 // replacesProtectedAncestor reports whether a command deletes, moves or
 // replaces a directory that holds a home- or system-anchored protected
 // location (canon.ProtectedLocations): `rm -rf ~/.config`,
@@ -63,7 +120,9 @@ func replacesOperands(sc scannedCommand) bool {
 // org overlay in one call. A copy or move into an existing directory writes
 // an entry below it, so only that entry is checked and `cp notes.txt ~` stays
 // allowed. Location-independent entries (.claude, the state directory) have
-// no fixed ancestor and are not considered.
+// no fixed ancestor and are not considered, except the git-control
+// locations, whose holder is any git directory (gitControlHolder):
+// `mv .git .g` or `rm -rf .git` removes the hooks in one call.
 func replacesProtectedAncestor(scs []scannedCommand) bool {
 	for _, sc := range scs {
 		if !replacesOperands(sc) {
@@ -76,6 +135,210 @@ func replacesProtectedAncestor(scs []scannedCommand) bool {
 		}
 	}
 	return false
+}
+
+// modeClearsProtectedAncestor reports whether a chmod can clear an owner
+// read, write or execute bit of a directory at or above a protected location
+// (W1bN-17): a home- or system-anchored one (wordReachesProtectedAncestor),
+// or a project's git directory or .claude (holdsProjectProtected). Clearing
+// the owner's x below the project stops the hooks running (`chmod -R a-x .`),
+// and clearing its r or w locks the agent's settings from the CLI that
+// regenerates them. A mode the scan cannot read (--reference, an expansion)
+// may clear any bit. Adding bits and changing only the group's or others'
+// bits stay allowed, as does a directory that holds no protected location.
+func modeClearsProtectedAncestor(scs []scannedCommand) bool {
+	for _, sc := range scs {
+		if sc.Name != "chmod" {
+			continue
+		}
+		mode, files, known := chmodOperands(sc)
+		if known && !clearsOwnerBit(mode) {
+			continue
+		}
+		recursive := chmodRecursive(sc)
+		for _, f := range files {
+			if wordReachesProtectedAncestor(sc, f) || holdsProjectProtected(sc, f) {
+				return true
+			}
+			// An operand the scan cannot render (`"$PWD"`, `"$(pwd)"`, `$d`)
+			// may be the working directory; recursing below it reaches the
+			// hooks.
+			if recursive && f == "" && slices.Contains(sc.ExpandedArgs, f) && holdsProjectProtected(sc, ".") {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// chmodRecursive reports whether a chmod changes the modes of whole trees
+// (-R, --recursive, also in a short option cluster).
+func chmodRecursive(sc scannedCommand) bool {
+	for _, a := range sc.Args {
+		switch {
+		case a == "--":
+			return false
+		case a == "--recursive":
+			return true
+		case isFlag(a) && !strings.HasPrefix(a, "--") && strings.Trim(a[1:], "cfvR") == "" && strings.Contains(a, "R"):
+			return true
+		}
+	}
+	return false
+}
+
+// chmodOperands splits a chmod's arguments into its mode and its file
+// operands, as GNU chmod reads them: a dash word that is not an option is a
+// mode (`-x`, `-x+X`), several are joined, and without one the first operand
+// is the mode. known is false when the mode is not on the line: given by
+// --reference, or built from an expansion.
+func chmodOperands(sc scannedCommand) (mode string, files []string, known bool) {
+	var dashModes, positionals []string
+	reference, endOfOpts := false, false
+	args := sc.Args
+	for i := 0; i < len(args); i++ {
+		a := args[i]
+		switch {
+		case endOfOpts || !isFlag(a) || a == "-":
+			positionals = append(positionals, a)
+		case a == "--":
+			endOfOpts = true
+		case a == "--reference":
+			reference = true
+			i++
+		case strings.HasPrefix(a, "--reference="):
+			reference = true
+		case strings.HasPrefix(a, "--"):
+		case strings.Trim(a[1:], "cfvR") == "":
+		default:
+			dashModes = append(dashModes, a)
+		}
+	}
+	switch {
+	case reference:
+		return "", positionals, false
+	case len(dashModes) > 0:
+		return strings.Join(dashModes, ","), positionals, true
+	case len(positionals) == 0:
+		return "", nil, true
+	}
+	mode = positionals[0]
+	return mode, positionals[1:], !slices.Contains(sc.ExpandedArgs, mode)
+}
+
+// clearsOwnerBit reports whether the chmod mode can clear an owner r, w or
+// x bit: an octal mode whose owner digit lacks one, or a symbolic clause for
+// the owner (who u, a or empty) that removes r, w, x or X, or assigns a set
+// without r, w or x (X keeps x on a directory). A clause the scan cannot
+// read, such as one copying another class's bits (`u=g`), may clear one.
+func clearsOwnerBit(mode string) bool {
+	for clause := range strings.SplitSeq(mode, ",") {
+		if v, err := strconv.ParseUint(clause, 8, 32); err == nil {
+			if (v>>6)&7 != 7 {
+				return true
+			}
+			continue
+		}
+		if symbolicClearsOwner(clause) {
+			return true
+		}
+	}
+	return false
+}
+
+// symbolicClearsOwner is clearsOwnerBit for one symbolic clause:
+// [ugoa]*([-+=][rwxXst]*|[-+=][ugo])+.
+func symbolicClearsOwner(clause string) bool {
+	ops := strings.TrimLeft(clause, "ugoa")
+	who := clause[:len(clause)-len(ops)]
+	owner := who == "" || strings.ContainsAny(who, "ua")
+	if ops == "" {
+		return true // no operator: not a mode chmod accepts
+	}
+	for ops != "" {
+		op := ops[0]
+		if op != '+' && op != '-' && op != '=' {
+			return true
+		}
+		end := strings.IndexAny(ops[1:], "+-=") + 1
+		if end == 0 {
+			end = len(ops)
+		}
+		perms := ops[1:end]
+		ops = ops[end:]
+		switch {
+		case !owner || op == '+':
+		case strings.Trim(perms, "rwxXst") != "":
+			return true // another class's bits, or not a mode
+		case op == '-' && strings.ContainsAny(perms, "rwxX"),
+			op == '=' && (!strings.Contains(perms, "r") || !strings.Contains(perms, "w") || !strings.ContainsAny(perms, "xX")):
+			return true
+		}
+	}
+	return false
+}
+
+// holdsProjectProtected reports whether word, a path operand of sc, names a
+// directory that holds a git directory or the first component of a location
+// canon protects wherever it appears (canon.Segments: .claude, the state
+// directory), or that is an ancestor of the directory sc runs in with such a
+// directory between them. A relative word after a cd whose target is not
+// known may name any of them. Lookups go through sc.fs.
+func holdsProjectProtected(sc scannedCommand, word string) bool {
+	variants, ok := expandBraces(word)
+	if !ok {
+		return true
+	}
+	for _, v := range variants {
+		if v == "" || hasGlobMeta(v) {
+			continue
+		}
+		dir, known := resolveWord(sc, v)
+		if !known {
+			return true
+		}
+		if !isRooted(dir) || !isDir(sc.fs, dir) {
+			continue
+		}
+		for _, d := range dirsDownTo(dir, sc.cwd) {
+			if holdsProtectedEntry(sc.fs, d) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// dirsDownTo returns dir and, when cwd lies below it, each directory from
+// dir down to cwd.
+func dirsDownTo(dir, cwd string) []string {
+	out := []string{dir}
+	rel, err := filepath.Rel(dir, cwd)
+	if err != nil || rel == "." || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) || filepath.IsAbs(rel) {
+		return out
+	}
+	for _, seg := range strings.Split(rel, string(filepath.Separator)) {
+		dir = filepath.Join(dir, seg)
+		out = append(out, dir)
+	}
+	return out
+}
+
+// holdsProtectedEntry reports whether directory d holds a .git entry (a
+// directory, or the file of a linked worktree or submodule) or the first
+// component of a canon.Segments location.
+func holdsProtectedEntry(fs *canon.Resolver, d string) bool {
+	names := []string{".git"}
+	for _, seg := range canon.Segments() {
+		first, _, _ := strings.Cut(seg, "/")
+		if !slices.Contains(names, first) {
+			names = append(names, first)
+		}
+	}
+	return slices.ContainsFunc(names, func(name string) bool {
+		_, err := fs.Stat(filepath.Join(d, name))
+		return err == nil
+	})
 }
 
 // ancestorCandidates returns the words of sc whose paths are removed or
@@ -139,13 +402,17 @@ func isDir(fs *canon.Resolver, p string) bool {
 }
 
 // wordReachesProtectedAncestor reports whether word p, used by sc, can name a
-// directory that is, or holds, a home- or system-anchored protected location,
-// after brace and glob expansion and cwd resolution. A word built from an
+// directory that is, or holds, a home- or system-anchored protected location
+// or a git-control location (gitControlHolder), after brace and glob
+// expansion and cwd resolution. A word built from an
 // expansion the scan cannot render, a word starting with a tilde form it
 // cannot resolve (see unresolvedTilde), and a relative word after a cd whose
 // target it could not resolve, may start at a home directory, so their
 // literal tail is checked too (see tailReachesAncestor).
 func wordReachesProtectedAncestor(sc scannedCommand, p string) bool {
+	if gitControlHolder(sc, p) {
+		return true
+	}
 	variants, ok := expandBraces(p)
 	if !ok {
 		return true
@@ -171,6 +438,53 @@ func wordReachesProtectedAncestor(sc scannedCommand, p string) bool {
 	}
 	return false
 }
+
+// gitControlHolder reports whether word p, used by sc, can name a directory
+// that holds git-control locations (canon.GitControlReach): a .git
+// directory, its modules or worktrees directory or a nested git dir, after
+// brace and glob expansion (`.gi?`, `.[g]it`), as written or resolved
+// against the directory sc runs in (`cd .git && rm -rf .`). Deleting, moving
+// or replacing one, or changing the mode of everything below it, removes or
+// disables the hooks without naming them; a file directly in it
+// (.git/index.lock) is not a holder.
+func gitControlHolder(sc scannedCommand, p string) bool {
+	variants, ok := expandBraces(p)
+	if !ok {
+		return true
+	}
+	for _, v := range variants {
+		if v == "" {
+			continue
+		}
+		key := pathmatch.Key(filepath.Clean(expandTilde(v)))
+		if hasGlobMeta(v) {
+			if _, holder := canon.GitControlReach(key, shellSegMatch); holder {
+				return true
+			}
+			continue
+		}
+		if _, holder := canon.GitControlReach(key, sameName); holder {
+			return true
+		}
+		if resolved, known := resolveWord(sc, v); known {
+			if _, holder := canon.GitControlReach(pathmatch.Key(resolved), sameName); holder {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// anyGitControlHolder reports whether one of the operand words (not options)
+// is a gitControlHolder.
+func anyGitControlHolder(sc scannedCommand, words []string) bool {
+	return slices.ContainsFunc(words, func(w string) bool {
+		return !isFlag(w) && gitControlHolder(sc, w)
+	})
+}
+
+// sameName is the canon.GitControlReach matcher of a literal path.
+func sameName(component, name string) bool { return component == name }
 
 // rootedReachesAncestor reports whether p, once a leading ~ is expanded, is
 // an absolute path or glob that can name a directory at or above a home- or

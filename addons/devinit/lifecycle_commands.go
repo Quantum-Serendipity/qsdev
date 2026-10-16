@@ -75,13 +75,19 @@ managed files are kept, and --force is refused.`, branding.Get().AppName),
 	return cmdutil.MarkSensitive(cmd, cmdutil.Sensitivity{Args: securityToolNames})
 }
 
-// securityToolNames returns the catalog's security-category tools.
-func securityToolNames() []string {
+// securityToolNames returns the catalog's security-category tools. When the
+// tool registry cannot be built it returns the error, and the human gate and
+// the self-protection hook then treat every disable as sensitive.
+func securityToolNames() ([]string, error) {
+	reg, err := toolreg.Default()
+	if err != nil {
+		return nil, fmt.Errorf("loading the tool registry for disable's security tools: %w", err)
+	}
 	var names []string
-	for _, t := range toolreg.DefaultRegistry().ByCategory(toolreg.CategorySecurity) {
+	for _, t := range reg.ByCategory(toolreg.CategorySecurity) {
 		names = append(names, t.Name)
 	}
-	return names
+	return names, nil
 }
 
 // listCmd creates the `qsdev list` command.

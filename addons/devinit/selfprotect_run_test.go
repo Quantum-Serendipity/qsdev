@@ -17,6 +17,7 @@ import (
 
 	"github.com/Quantum-Serendipity/qsdev/internal/selfprotect/hookio"
 	"github.com/Quantum-Serendipity/qsdev/internal/selfprotect/rules"
+	"github.com/Quantum-Serendipity/qsdev/internal/testutil"
 )
 
 func executeSelfprotect(t *testing.T, stdin string) (string, error) {
@@ -268,8 +269,8 @@ func TestSelfprotect_TooManySimpleCommandsDenies(t *testing.T) {
 func TestSelfprotect_AdversarialInputsUnderBudget(t *testing.T) {
 	t.Parallel()
 
-	budget := 2 * time.Second * raceScale
-	deadline := hookio.EvalDeadline * raceScale
+	budget := 2 * time.Second * testutil.RaceScale
+	deadline := hookio.EvalDeadline * testutil.RaceScale
 	tests := []struct {
 		name    string
 		command string

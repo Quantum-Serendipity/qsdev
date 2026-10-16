@@ -15,6 +15,7 @@ import (
 	"github.com/Quantum-Serendipity/qsdev/internal/secrets"
 	"github.com/Quantum-Serendipity/qsdev/internal/sliceutil"
 	"github.com/Quantum-Serendipity/qsdev/internal/validation"
+	"github.com/Quantum-Serendipity/qsdev/pkg/denyutil"
 	"github.com/Quantum-Serendipity/qsdev/pkg/ecosystem"
 	"github.com/Quantum-Serendipity/qsdev/pkg/fileutil"
 	"github.com/Quantum-Serendipity/qsdev/pkg/types"
@@ -34,6 +35,14 @@ type SettingsJSON struct {
 // file-boundary hook receives .qsdev.yaml hooks.file_boundary.extra_read_paths,
 // comma-separated.
 const FileBoundaryExtraReadPathsEnv = "FILE_BOUNDARY_EXTRA_READ_PATHS"
+
+// FileBoundaryDenyPathsEnv is the variable through which the file-boundary
+// hook receives the home credential stores (secrets.CredentialHomePaths),
+// comma-separated. It is set exactly when FileBoundaryExtraReadPathsEnv is:
+// the hook drops any extra read path that overlaps one of these stores, and
+// grants no extra read path at all when the list is missing. System paths are
+// left out; validation rejects extra read paths overlapping them at check time.
+const FileBoundaryDenyPathsEnv = "FILE_BOUNDARY_DENY_PATHS"
 
 // ToolGatesAllowedEnv and ToolGatesDeniedEnv are the variables through which
 // the tool-gates hook receives .qsdev.yaml hooks.tool_gates.allowed and
@@ -98,7 +107,65 @@ func AllBaseDenyRules() []string {
 	if err != nil {
 		return nil
 	}
-	return withNestedSecretFileRules(cat.AllPermissionDenyRules())
+	return append(WithNestedSecretFileRules(cat.AllPermissionDenyRules()), HomeCredentialDenyRules()...)
+}
+
+// HomeCredentialDenyRules returns the deny rules every preset carries for the
+// home credential stores of the canon, whatever the languages: the Read
+// denies (homeCredentialReadDenyRules) followed by the shell-read tripwire
+// (homeCredentialShellReadDenyRules). Exported for qsdev check, which requires
+// each of them in a generated settings.json.
+func HomeCredentialDenyRules() []string {
+	return append(homeCredentialReadDenyRules(), homeCredentialShellReadDenyRules()...)
+}
+
+// HomeCredentialReadGlobs returns the home credential stores of the
+// credential canon as read globs (secrets.CredentialReadGlobs), for the
+// public framework adapters, which may not import internal packages.
+func HomeCredentialReadGlobs() []string {
+	return secrets.CredentialReadGlobs()
+}
+
+// homeCredentialReadDenyRules returns a Read deny rule for each home
+// credential store of the canon (secrets.CredentialReadGlobs). Every preset
+// carries them whatever the languages, so a registry token such as ~/.npmrc
+// is out of the Read tool's reach in any project. Known limits:
+//   - Shell reads (Bash(cat ~/.npmrc)) are outside Read rules; the
+//     shell-read tripwire (homeCredentialShellReadDenyRules) covers the
+//     common reader spellings.
+//   - Claude Code matches Read rules case-sensitively, so ~/.NPMRC on a
+//     case-insensitive filesystem slips past them; the file-boundary hook is
+//     the backstop.
+//   - With the opt-in Claude Code sandbox, Claude Code applies Read denies to
+//     sandboxed Bash too, so ssh, gpg, npm, mvn and gh lose their user
+//     config inside it.
+func homeCredentialReadDenyRules() []string {
+	return readDenyPermissionRules(secrets.CredentialReadGlobs())
+}
+
+// homeCredentialShellReadDenyRules returns the shell-read tripwire: the
+// denyutil.HomeShellReadRules of each home credential store of the canon
+// (secrets.CredentialStores). For every reader of denyutil.ShellReaders, plain
+// and behind env, it denies "<reader> *~/<rel>*" for a file store and
+// "<reader> *~/<rel>/*", "<reader> *~/<rel>" and "<reader> *~/<rel> *" for a
+// directory store (so `cp -r ~/.ssh /tmp/x` too), with a path containing a
+// space in its backslash-escaped and double-quoted spellings. The '*' before
+// the path admits options (cat -n ~/.npmrc) and matches the empty string for
+// the bare form. Every preset carries it whatever the languages.
+//
+// It is a tripwire for the spellings an agent usually writes, not a boundary:
+// it misses $HOME and absolute spellings, every other reader (sed, awk,
+// python, ...), input redirection (wc < ~/.npmrc), quoting other than the
+// generated forms (cat ~/".npmrc"), globs (cat ~/.np?rc), path normalisation
+// (~//.npmrc, ~/./.npmrc), absolute reader paths (/bin/cat), stdin fed from
+// elsewhere (< ~/.npmrc cat -) and PowerShell. The native sandbox's denyRead is the
+// real control (XS-WS3).
+func homeCredentialShellReadDenyRules() []string {
+	var rules []string
+	for _, s := range secrets.CredentialStores() {
+		rules = append(rules, denyutil.HomeShellReadRules(s.Rel, s.Dir)...)
+	}
+	return rules
 }
 
 // rootSecretsReadRule is the catalog rule that read-denies the project's
@@ -107,17 +174,35 @@ func AllBaseDenyRules() []string {
 // internal/secrets/ (U15-14).
 const rootSecretsReadRule = "Read(/secrets/**)"
 
-// withNestedSecretFileRules adds, to a deny list that read-denies the
-// top-level secrets/ directory, a rule for each secret-material file pattern
-// of the secrets canon (secrets.SecretFilePatterns) inside a directory named
-// secrets at any depth (services/api/secrets/prod.env, deploy/secrets/tls.key),
-// so nested secret stores are guarded while source code beside them is not.
-func withNestedSecretFileRules(deny []string) []string {
+// WithNestedSecretFileRules adds, to a deny list that read-denies the
+// top-level secrets/ directory, the nested secrets rules derived from the
+// secrets canon. Settings generation and qsdev check (which requires what
+// the generator emits) both derive the rules from it.
+//
+// Claude Code deny rules cannot carve out exceptions, so the patterns are
+// scoped by depth instead:
+//
+//   - secret material (secrets.SecretMaterialPatterns: dotenv files, keys,
+//     keystores) is denied at any depth below a directory named secrets
+//     (services/api/secrets/prod.env, deploy/secrets/tls/server.pem);
+//   - secret data formats (secrets.SecretDataPatterns: JSON, YAML, TOML,
+//     text) are denied only as direct children of such a directory
+//     (infra/secrets/sa.json), since below that they may be ordinary data,
+//     such as the testdata of a source package named secrets
+//     (internal/secrets/testdata/cases.json). A data file in a subdirectory,
+//     such as infra/secrets/prod/sa.json, is therefore not denied; the docs
+//     state this limit and TestSecretsRuleAnchored pins it.
+//
+// Source code beside the secrets stays readable either way.
+func WithNestedSecretFileRules(deny []string) []string {
 	if !slices.Contains(deny, rootSecretsReadRule) {
 		return deny
 	}
-	for _, p := range secrets.SecretFilePatterns() {
+	for _, p := range secrets.SecretMaterialPatterns() {
 		deny = append(deny, "Read(/**/secrets/**/"+p+")")
+	}
+	for _, p := range secrets.SecretDataPatterns() {
+		deny = append(deny, "Read(/**/secrets/"+p+")")
 	}
 	return deny
 }
@@ -143,10 +228,13 @@ func buildPermissions(preset PermissionPreset, answers types.WizardAnswers, regi
 	if err != nil {
 		return Permissions{}, fmt.Errorf("loading catalog for permissions: %w", err)
 	}
-	// Ecosystem deny rules include Read(...) rules for the credential files
-	// modules declare read-denied, so the agent's own Read tool is blocked from
-	// them whether or not the Bash sandbox is enabled.
-	ecosystemDeny := collectEcosystemDenyRules(answers, registry)
+	// The home credential stores of the canon come first, with their Read
+	// denies and the shell-read tripwire, then the ecosystem deny rules, which
+	// include Read(...) rules for the credential files modules declare
+	// read-denied, so the agent's own Read tool is blocked from them whether
+	// or not the Bash sandbox is enabled.
+	ecosystemDeny := HomeCredentialDenyRules()
+	ecosystemDeny = append(ecosystemDeny, collectEcosystemDenyRules(answers, registry)...)
 	ecosystemDeny = append(ecosystemDeny, readDenyPermissionRules(collectEcosystemReadDenyRules(answers, registry))...)
 
 	// A malformed committed rule is an error rather than being dropped, so a
@@ -175,7 +263,7 @@ func buildPermissions(preset PermissionPreset, answers types.WizardAnswers, regi
 	for _, setName := range presetDef.DenySets {
 		deny = append(deny, cat.PermissionDenyRules(setName)...)
 	}
-	deny = withNestedSecretFileRules(deny)
+	deny = WithNestedSecretFileRules(deny)
 
 	// Assemble ask rules from preset's ask sets.
 	var ask []string
@@ -183,7 +271,7 @@ func buildPermissions(preset PermissionPreset, answers types.WizardAnswers, regi
 		ask = append(ask, cat.PermissionAskRules(setName)...)
 	}
 
-	// Always add ecosystem deny rules.
+	// Always add the home credential and ecosystem deny rules.
 	deny = append(deny, ecosystemDeny...)
 
 	switch preset {
@@ -323,16 +411,19 @@ func mcpToolDenyRules(deny []string, answers types.WizardAnswers, cfg Config) ([
 	return trust.GenerateDenyRuleProjections(deny, tierOf), nil
 }
 
-// buildSandbox returns a SandboxConfig when sandbox is enabled, or nil otherwise.
+// buildSandbox returns a SandboxConfig when sandbox is enabled, or nil
+// otherwise. Its denyRead is the canon's home credential stores, then the
+// selected modules' read-deny paths.
 func buildSandbox(cfg Config, answers types.WizardAnswers, registry *ecosystem.Registry) *SandboxConfig {
 	if !cfg.SandboxEnabled {
 		return nil
 	}
+	denyRead := append(secrets.CredentialHomePaths(), collectEcosystemReadDenyRules(answers, registry)...)
 	sandbox := &SandboxConfig{
 		Enabled: true,
 		Filesystem: &SandboxFilesystem{
 			DenyWrite: []string{"/etc", "/usr"},
-			DenyRead:  collectEcosystemReadDenyRules(answers, registry),
+			DenyRead:  sliceutil.Dedup(denyRead),
 		},
 	}
 	if len(cfg.AllowedDomains) > 0 {
@@ -350,15 +441,22 @@ func buildHookEnv(answers types.WizardAnswers) (map[string]string, error) {
 		return nil, errs[0]
 	}
 	env := make(map[string]string)
-	if answers.Hooks.FileBoundary {
-		setListEnv(env, FileBoundaryExtraReadPathsEnv, answers.HookPolicy.FileBoundary.ExtraReadPaths)
+	if extras := answers.HookPolicy.FileBoundary.ExtraReadPaths; answers.Hooks.FileBoundary && len(extras) > 0 {
+		setListEnv(env, FileBoundaryExtraReadPathsEnv, ",", extras)
+		setListEnv(env, FileBoundaryDenyPathsEnv, ",", secrets.CredentialHomePaths())
 	}
 	if answers.Hooks.ToolGates {
-		setListEnv(env, ToolGatesAllowedEnv, answers.HookPolicy.ToolGates.Allowed)
-		setListEnv(env, ToolGatesDeniedEnv, answers.HookPolicy.ToolGates.Denied)
+		setListEnv(env, ToolGatesAllowedEnv, ",", answers.HookPolicy.ToolGates.Allowed)
+		setListEnv(env, ToolGatesDeniedEnv, ",", answers.HookPolicy.ToolGates.Denied)
 	}
-	if answers.Hooks.SafetyBlock {
-		env[PackageGuardMinAgeDaysEnv] = strconv.Itoa(packageGuardMinAgeDays(catalog.EffectiveAgeGate(answers.ComplianceLevel)))
+	if answers.Hooks.CredentialScan {
+		// A regex may contain a comma, so the patterns go one per line; an
+		// entry was validated to hold no line break or edge whitespace.
+		setListEnv(env, claudesettings.EnvCredentialScanExtraPatterns, "\n",
+			answers.HookPolicy.CredentialScan.ExtraPatterns)
+	}
+	if packageGuardEnabled(answers) {
+		packageGuardEnv(answers, env)
 	}
 	if len(env) == 0 {
 		return nil, nil
@@ -366,11 +464,34 @@ func buildHookEnv(answers types.WizardAnswers) (map[string]string, error) {
 	return env, nil
 }
 
-// setListEnv sets env[key] to values, deduplicated and comma-separated, when
-// there are any. The entries were validated to contain no comma.
-func setListEnv(env map[string]string, key string, values []string) {
+// packageGuardEnv adds the package-guard hook's env entries to env: the
+// compliance level's release-age window, raised (never lowered, D18) by
+// hooks.package_guard.min_age_days; the committed team lists and
+// new-dependency gate; and the dependency-decision trail when the soc2-audit
+// hook is chosen. The policy was validated by the caller.
+func packageGuardEnv(answers types.WizardAnswers, env map[string]string) {
+	policy := answers.HookPolicy.PackageGuard
+	days := packageGuardMinAgeDays(catalog.EffectiveAgeGate(answers.ComplianceLevel))
+	if policy.MinAgeDays != nil {
+		days = max(days, *policy.MinAgeDays)
+	}
+	env[PackageGuardMinAgeDaysEnv] = strconv.Itoa(days)
+	setListEnv(env, claudesettings.EnvPackageGuardTeamAllowlist, ",", policy.Allowlist)
+	setListEnv(env, claudesettings.EnvPackageGuardTeamDenylist, ",", policy.Denylist)
+	if policy.NewDepGate != "" {
+		env[claudesettings.EnvPackageGuardNewDepGate] = policy.NewDepGate
+	}
+	if answers.Hooks.SOC2Audit {
+		env[claudesettings.EnvPackageGuardSOC2Audit] = "true"
+	}
+}
+
+// setListEnv sets env[key] to values, deduplicated and joined with sep, when
+// there are any. The entries were validated to contain no sep: the
+// comma-separated lists hold entries that contain no comma.
+func setListEnv(env map[string]string, key, sep string, values []string) {
 	if len(values) > 0 {
-		env[key] = strings.Join(sliceutil.Dedup(values), ",")
+		env[key] = strings.Join(sliceutil.Dedup(values), sep)
 	}
 }
 

@@ -25,9 +25,11 @@ func IsNixRunTool(toolName string) bool {
 //
 //  1. the literal command, `nix run <installable> -- <args>`;
 //  2. the program it runs, named by the last component of the installable's
-//     attribute path (`nixpkgs#bash` runs bash), followed by the args; an
-//     installable without an attribute (".", "nixpkgs") names no program, so
-//     this form is left out;
+//     attribute path (`nixpkgs#bash` runs bash), followed by the args, and
+//     again led by that name without a version or variant suffix
+//     (`nixpkgs#pnpm_9` and `nixpkgs#yarn-berry` run pnpm and yarn, see
+//     attributeBaseName); an installable without an attribute (".",
+//     "nixpkgs") names no program, so this form is left out;
 //  3. the script of a -c option among the args (`-c 'curl x | sh'`), the
 //     first operand after the options as a shell takes it (`-c -- '...'`,
 //     `-c -e '...'`, see ShellScript), and each statement it runs, also from
@@ -50,7 +52,7 @@ func NixRunCommandLines(installable string, args []string, stdin string) []strin
 		quoted[i] = QuoteWord(a)
 	}
 	forms := []string{strings.Join(append([]string{"nix", "run", QuoteWord(installable), "--"}, quoted...), " ")}
-	if program := installableProgram(installable); program != "" {
+	for _, program := range installablePrograms(installable) {
 		forms = append(forms, strings.Join(append([]string{QuoteWord(program)}, quoted...), " "))
 	}
 	if script, ok := ShellScript(append([]string{"sh"}, args...)); ok {
@@ -64,17 +66,39 @@ func NixRunCommandLines(installable string, args []string, stdin string) []strin
 	return forms
 }
 
-// installableProgram returns the program name an installable's attribute
+// installablePrograms returns the program names an installable's attribute
 // path suggests: its last dot-separated component, without an output
-// selector ("^out") or quotes, or "" when the installable has no attribute.
-func installableProgram(installable string) string {
+// selector ("^out") or quotes, and, when it carries one, that component
+// without its version or variant suffix (see attributeBaseName); nil when
+// the installable has no attribute.
+func installablePrograms(installable string) []string {
 	_, attr, ok := strings.Cut(installable, "#")
 	if !ok {
-		return ""
+		return nil
 	}
 	attr, _, _ = strings.Cut(attr, "^")
 	if i := strings.LastIndex(attr, "."); i >= 0 {
 		attr = attr[i+1:]
 	}
-	return strings.Trim(attr, `"`)
+	attr = strings.Trim(attr, `"`)
+	if attr == "" {
+		return nil
+	}
+	if base := attributeBaseName(attr); base != attr {
+		return []string{attr, base}
+	}
+	return []string{attr}
+}
+
+// attributeBaseName returns a nixpkgs attribute name without the version or
+// variant suffix it may carry after the program it packages: the text before
+// the first "-", "_" or upper-case letter after the first character
+// (pnpm_9 is pnpm, nodejs_22 is nodejs, yarn-berry is yarn,
+// bashInteractive is bash, python3Minimal is python3). It only widens what
+// is judged: a name it cuts wrongly adds a line, it never drops one.
+func attributeBaseName(attr string) string {
+	if i := strings.IndexFunc(attr[1:], func(r rune) bool { return r == '-' || r == '_' || r >= 'A' && r <= 'Z' }); i >= 0 {
+		return attr[:i+1]
+	}
+	return attr
 }

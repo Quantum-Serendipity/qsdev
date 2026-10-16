@@ -13,6 +13,10 @@ type ServerConfig struct {
 	Env         map[string]string
 	Headers     map[string]string
 	RequiredEnv []string
+	// Dir is the directory a stdio server is started in, as Claude Code
+	// starts it: the project root holding .mcp.json. A relative command path
+	// or file argument is relative to it. Empty means the current directory.
+	Dir string
 	// ExpandEnv permits expanding references in URL and Headers values, which
 	// sends host environment values to the remote endpoint. Only a trust gate
 	// (mcpregistry.PlanProbes) sets it; the zero value keeps them literal.

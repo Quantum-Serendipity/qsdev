@@ -69,6 +69,8 @@ func TestForbidExec(t *testing.T) {
 		{"npx launcher forbidden", true, []string{"npx", "-y", "@socketsecurity/mcp"}, true},
 		{"version with extra arg forbidden", true, []string{"node", "--version", "x"}, true},
 		{"git fetch forbidden", true, []string{"git", "-C", "d", "fetch"}, true},
+		{"git diff --output forbidden", true, []string{"git", "diff", "--output", "x"}, true},
+		{"git -c x diff forbidden", true, []string{"git", "-c", "x", "diff"}, true},
 		{"git -C without dir forbidden", true, []string{"git", "-C"}, true},
 		{"go list forbidden", true, []string{"go", "list", "-m", "-u", "all"}, true},
 		{"devenv update forbidden", true, []string{"devenv", "update"}, true},
@@ -109,6 +111,65 @@ func TestForbidExec(t *testing.T) {
 				}
 				if tt.panics && !strings.Contains(msg, strings.Join(tt.argv, " ")) {
 					t.Errorf("%s: panic message %q does not name argv %q", ctor, msg, tt.argv)
+				}
+			}
+		})
+	}
+}
+
+// TestLocalProbes_GitDiffShapes pins the exact read-only diff, stash-show,
+// log, apply --numstat and clean --dry-run argv prefixes internal/gitrepo
+// runs. A diff that writes a file (--output), carries caller config (-c
+// before the subcommand) or drops the hardening flags is not a probe, nor is
+// an apply or am that applies or a clean that removes.
+func TestLocalProbes_GitDiffShapes(t *testing.T) {
+	diff := []string{"git", "--no-optional-locks", "-c", "core.fsmonitor=false", "diff",
+		"--name-only", "-z", "--no-relative", "--no-renames", "--no-ext-diff", "--no-textconv", "--end-of-options"}
+	stash := []string{"git", "--no-optional-locks", "stash", "show",
+		"--name-only", "-z", "--no-renames", "--include-untracked", "--end-of-options"}
+	log := []string{"git", "--no-optional-locks", "log", "--format=", "--name-only", "-z", "--no-relative",
+		"--no-renames", "--no-show-signature", "--no-walk", "--diff-merges=separate", "--end-of-options"}
+	numstat := []string{"git", "--no-optional-locks", "apply", "--numstat", "-z"}
+	tests := []struct {
+		name   string
+		argv   []string
+		panics bool
+	}{
+		{"diff index vs worktree", diff, false},
+		{"diff rev vs worktree with pathspec", append(slices.Clone(diff), "evil", "--", ".claude"), false},
+		{"diff rev vs rev", append(slices.Clone(diff), "HEAD", "evil", "--"), false},
+		{"stash show", append(slices.Clone(stash), "stash@{0}"), false},
+		{"git diff --output forbidden", []string{"git", "diff", "--output", "x"}, true},
+		{"git -c x diff forbidden", []string{"git", "-c", "x", "diff", "--name-only"}, true},
+		{"diff without hardening forbidden", []string{"git", "--no-optional-locks", "diff", "--name-only", "-z"}, true},
+		{"diff with fsmonitor left on forbidden", slices.Concat([]string{"git", "--no-optional-locks", "diff"}, diff[5:]), true},
+		{"ls-files", []string{"git", "--no-optional-locks", "-c", "core.fsmonitor=false", "ls-files", "-z"}, false},
+		{"ls-files with a pathspec forbidden", []string{"git", "--no-optional-locks", "-c", "core.fsmonitor=false", "ls-files", "-z", "--", "x"}, true},
+		{"ls-files without hardening forbidden", []string{"git", "ls-files", "-z"}, true},
+		{"stash pop forbidden", []string{"git", "--no-optional-locks", "stash", "pop"}, true},
+		{"stash show without end-of-options forbidden", []string{"git", "--no-optional-locks", "stash", "show", "--name-only", "-z", "--include-untracked", "--output=x"}, true},
+		{"diff hiding renames forbidden", []string{"git", "--no-optional-locks", "-c", "core.fsmonitor=false", "diff",
+			"--name-only", "-z", "--no-relative", "--no-ext-diff", "--no-textconv", "--end-of-options"}, true},
+		{"log of commits", append(slices.Clone(log), "main..evil", "--"), false},
+		{"log without hardening forbidden", []string{"git", "log", "--name-only", "evil"}, true},
+		{"log -p forbidden", []string{"git", "--no-optional-locks", "log", "-p", "evil"}, true},
+		{"apply --numstat", append(slices.Clone(numstat), "-R", "-p1", "--directory=sub", "--", "x.patch"), false},
+		{"apply forbidden", []string{"git", "--no-optional-locks", "apply", "x.patch"}, true},
+		{"apply --index forbidden", []string{"git", "apply", "--index", "--numstat", "-z", "x.patch"}, true},
+		{"am forbidden", []string{"git", "--no-optional-locks", "am", "x.mbox"}, true},
+		{"clean --dry-run", []string{"git", "--no-optional-locks", "-c", "core.fsmonitor=false", "-c", "core.quotePath=false",
+			"clean", "--dry-run", "-d", "-x", "-f", "-f", "--exclude=*.log", "--", "."}, false},
+		{"clean forbidden", []string{"git", "--no-optional-locks", "-c", "core.fsmonitor=false", "-c", "core.quotePath=false",
+			"clean", "-f", "-d"}, true},
+		{"clean without hardening forbidden", []string{"git", "clean", "--dry-run", "-d"}, true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Setenv(ForbidExecEnv, "1")
+			for _, ctor := range slices.Sorted(maps.Keys(constructors)) {
+				msg := guardPanic(t, constructors[ctor], tt.argv[0], tt.argv[1:]...)
+				if got := msg != ""; got != tt.panics {
+					t.Errorf("%s argv %q: panicked=%v (%q), want %v", ctor, tt.argv, got, msg, tt.panics)
 				}
 			}
 		})
@@ -274,6 +335,48 @@ func TestLocalProbes_DeclaredOnce(t *testing.T) {
 	}
 	if literals != 1 {
 		t.Errorf("found %d []localProbe literals, want exactly 1 (localProbes)", literals)
+	}
+}
+
+// TestLocalProbeNames: with no kinds every allowlisted binary is named once,
+// in order; with kinds, exactly those whose every probe is of one of them.
+// Every probe declares its kind.
+func TestLocalProbeNames(t *testing.T) {
+	t.Parallel()
+	for i, p := range localProbes {
+		if p.Kind < ProbeVersion || p.Kind > ProbeQuery {
+			t.Errorf("localProbes[%d] (%s %q) declares no kind", i, p.Name, p.Args)
+		}
+	}
+	tests := []struct {
+		name  string
+		kinds []ProbeKind
+	}{
+		{name: "all"},
+		{name: "version and syntax", kinds: []ProbeKind{ProbeVersion, ProbeSyntax}},
+		{name: "query", kinds: []ProbeKind{ProbeQuery}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			var want []string
+			for _, p := range localProbes {
+				ofKinds := len(tt.kinds) == 0 || !slices.ContainsFunc(localProbes, func(q localProbe) bool {
+					return q.Name == p.Name && !slices.Contains(tt.kinds, q.Kind)
+				})
+				if ofKinds && !slices.Contains(want, p.Name) {
+					want = append(want, p.Name)
+				}
+			}
+			slices.Sort(want)
+			if got := LocalProbeNames(tt.kinds...); !slices.Equal(got, want) {
+				t.Errorf("LocalProbeNames(%v) = %q, want %q", tt.kinds, got, want)
+			}
+		})
+	}
+	// The binaries a hermetic test may stub: probed for nothing it parses.
+	if got, want := LocalProbeNames(ProbeVersion, ProbeSyntax), []string{"bash", "ghc", "nix-instantiate"}; !slices.Equal(got, want) {
+		t.Errorf("LocalProbeNames(version, syntax) = %q, want %q", got, want)
 	}
 }
 

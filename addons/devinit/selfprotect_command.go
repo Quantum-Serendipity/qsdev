@@ -14,7 +14,6 @@ import (
 	"github.com/Quantum-Serendipity/qsdev/internal/projectctx"
 	"github.com/Quantum-Serendipity/qsdev/internal/selfprotect/canon"
 	"github.com/Quantum-Serendipity/qsdev/internal/selfprotect/cmdscan"
-	"github.com/Quantum-Serendipity/qsdev/internal/selfprotect/gatedodge"
 	"github.com/Quantum-Serendipity/qsdev/internal/selfprotect/hookio"
 	"github.com/Quantum-Serendipity/qsdev/internal/selfprotect/judge"
 	"github.com/Quantum-Serendipity/qsdev/internal/selfprotect/rules"
@@ -102,30 +101,18 @@ func evaluateSelfprotect(ctx context.Context, stdin io.Reader, stderr io.Writer,
 	evalCtx := buildSelfprotectContext(call, &input)
 	evalCtx.ToolInput = call.ToolInput
 	evalCtx.SensitiveCommands = sensitive
+	evalCtx.Ctx = ctx
 
 	if d, denied := judge.Evaluate(evalCtx); denied {
 		return writeDenial(stderr, d)
 	}
 	if cmdscan.IsNixRunTool(call.ToolName) {
-		if err := judgeNixRun(call, evalCtx.CWD, sensitive, stderr); err != nil {
+		if err := judgeNixRun(ctx, call, evalCtx.CWD, sensitive, stderr); err != nil {
 			return err
 		}
 	}
 
-	if edited := input.EditedContent(); isWriteOrEditTool(call.ToolName) && edited != "" {
-		if blocked, ruleID, reason := gatedodge.Detect(input.FilePath, edited); blocked {
-			hookio.WriteDeny(stderr, ruleID, reason)
-			return errSelfprotectDeny
-		}
-	}
-
-	if isWriteOrEditTool(call.ToolName) {
-		if blocked, ruleID, reason := gatedodge.DetectChange(input.FilePath, evalCtx.FileChange); blocked {
-			hookio.WriteDeny(stderr, ruleID, reason)
-			return errSelfprotectDeny
-		}
-	}
-	if blocked, ruleID, reason := detectResultGateDodge(call.ToolName, input, evalCtx.CanonicalPath); blocked {
+	if blocked, ruleID, reason := detectGuardedFileChange(call.ToolName, input, evalCtx.CanonicalPath); blocked {
 		hookio.WriteDeny(stderr, ruleID, reason)
 		return errSelfprotectDeny
 	}
@@ -149,15 +136,15 @@ func writeDenial(stderr io.Writer, d judge.Denial) error {
 // call to the same checks before running it; judging it here as well keeps
 // the decision in the hook Claude Code consults for every tool. A tool_input
 // that cannot be read is denied.
-func judgeNixRun(call *hookio.ToolCall, cwd string, sensitive []cmdscan.CommandSpec, stderr io.Writer) error {
+func judgeNixRun(ctx context.Context, call *hookio.ToolCall, cwd string, sensitive []cmdscan.CommandSpec, stderr io.Writer) error {
 	in, err := hookio.ParseNixRunInput(call.ToolInput)
 	if err != nil {
 		hookio.WriteError(stderr, err.Error())
 		return errSelfprotectDeny
 	}
 	for _, line := range cmdscan.NixRunCommandLines(in.Installable, in.Args, in.Stdin) {
-		ctx := &rules.EvalContext{ToolName: "Bash", Command: line, CWD: cwd, SensitiveCommands: sensitive}
-		if d, denied := judge.Evaluate(ctx); denied {
+		lineCtx := &rules.EvalContext{ToolName: "Bash", Command: line, CWD: cwd, SensitiveCommands: sensitive, Ctx: ctx}
+		if d, denied := judge.Evaluate(lineCtx); denied {
 			return writeDenial(stderr, d)
 		}
 	}

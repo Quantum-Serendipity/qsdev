@@ -185,3 +185,30 @@ func TestValidateMountPath(t *testing.T) {
 		})
 	}
 }
+
+// TestValidateMountPath_ErrorWording pins the two rejection messages: a path
+// on or under a deny entry "overlaps" it, and an ancestor of one "would
+// re-expose" it. Both name the deny entry, so the author knows which store
+// the mount collided with.
+func TestValidateMountPath_ErrorWording(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name string
+		path string
+		want string
+	}{
+		{"descendant", "/etc/sudoers.d/custom", `mount path "/etc/sudoers.d/custom" is denied: overlaps sensitive path "/etc/sudoers.d"`},
+		{"entry itself", "/etc/shadow", `mount path "/etc/shadow" is denied: overlaps sensitive path "/etc/shadow"`},
+		{"ancestor", "/etc", `mount path "/etc" is denied: would re-expose sensitive path "/etc/shadow"`},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			err := ValidateMountPath(tt.path)
+			if err == nil || err.Error() != tt.want {
+				t.Errorf("ValidateMountPath(%q) = %v, want %q", tt.path, err, tt.want)
+			}
+		})
+	}
+}

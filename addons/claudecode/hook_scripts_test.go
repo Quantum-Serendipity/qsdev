@@ -19,19 +19,23 @@ import (
 	"time"
 
 	claudecode "github.com/Quantum-Serendipity/qsdev/addons/claudecode"
+	"github.com/Quantum-Serendipity/qsdev/internal/secrets"
 	"github.com/Quantum-Serendipity/qsdev/pkg/types"
 )
 
 // hookEnv returns the environment a test runs a hook with: the test's own,
 // with bytecode writing off and HOME, USERPROFILE, CLAUDE_PROJECT_DIR and
 // CLAUDE_AUDIT_DIR pointed at fresh temp dirs, so no hook writes to the
-// developer's real ~/.claude or into the templates tree. extra entries
-// override these defaults (the last value of a variable wins).
+// developer's real ~/.claude or into the templates tree. Hook policy a
+// developer's shell may carry (CREDENTIAL_SCAN_EXTRA_PATTERNS) is cleared, so
+// it cannot change a test's verdict. extra entries override these defaults
+// (the last value of a variable wins).
 func hookEnv(t *testing.T, extra ...string) []string {
 	t.Helper()
 	home := t.TempDir()
 	env := append(os.Environ(), "PYTHONDONTWRITEBYTECODE=1", "HOME="+home, "USERPROFILE="+home,
-		"CLAUDE_PROJECT_DIR="+t.TempDir(), "CLAUDE_AUDIT_DIR="+t.TempDir())
+		"CLAUDE_PROJECT_DIR="+t.TempDir(), "CLAUDE_AUDIT_DIR="+t.TempDir(),
+		"CREDENTIAL_SCAN_EXTRA_PATTERNS=")
 	return append(env, extra...)
 }
 
@@ -345,6 +349,47 @@ func TestBlockDestructive_WrapperIndirection(t *testing.T) {
 	}
 }
 
+// TestBlockDestructive_ParallelArgumentCommands guards W1N-08: GNU parallel
+// with no command word runs each ::: argument as a command line.
+func TestBlockDestructive_ParallelArgumentCommands(t *testing.T) {
+	t.Parallel()
+	env := []string{"CLAUDE_PROJECT_DIR=/qsdev-hook-test/project"} // HOME: a fresh temp dir
+	cases := []struct {
+		command string
+		want    string
+	}{
+		{`parallel ::: 'rm -rf ~'`, "deny"},
+		{`parallel -j2 ::: ls 'rm -rf ~'`, "deny"},
+		{`parallel --will-cite ::: 'rm -rf ~'`, "deny"},
+		{`parallel rm -rf ::: ~`, "deny"},
+		{`parallel ::: rm ::: -rf ::: ~`, "deny"},
+		{`parallel ::: 'rm -rf' ::: ~`, "deny"},
+		{`parallel {} ::: 'rm -rf ~'`, "deny"},
+		{`parallel sh -c ::: 'rm -rf ~'`, "deny"},
+		{`parallel --env X ::: 'rm -rf ~'`, "deny"},
+		{`parallel echo {1} ::: a ::: b`, "allow"},
+		// Each combination is judged alone too, which over-reports.
+		{`parallel echo ::: 'rm -rf ~'`, "deny"},
+		{`parallel echo ::: a`, "allow"},
+		{`parallel ::: ls 'echo hi'`, "allow"},
+		// Jobs read from stdin or a file are not known; as on base, no
+		// error (the most common use of parallel).
+		{`cat jobs.txt | parallel`, "allow"},
+		{`parallel < jobs.txt`, "allow"},
+		{`parallel -j4 < jobs.txt`, "allow"},
+		{`parallel --version`, "allow"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.command, func(t *testing.T) {
+			t.Parallel()
+			payload := map[string]any{"tool_name": "Bash", "tool_input": map[string]any{"command": tc.command}}
+			if got := runHookScript(t, "block-destructive.py", payload, env...); got != tc.want {
+				t.Errorf("decision = %q, want %q", got, tc.want)
+			}
+		})
+	}
+}
+
 // TestBlockDestructive_TimeoutDuration guards R1: timeout's DURATION is any
 // one word, not only one that starts with a digit. GNU timeout takes a
 // fraction, a sign, inf/infinity and leading blanks, and options may come
@@ -622,8 +667,11 @@ func TestFileBoundaryHook_ExtraReadPaths(t *testing.T) {
 		"FILE_BOUNDARY_SAFE_PATHS=/tmp/qsdev-safe-path-test", "FILE_BOUNDARY_STRICT_MODE=",
 		"GOPATH=", "GOMODCACHE=", "GOROOT=", "CARGO_HOME=", "RUSTUP_HOME=",
 	}
-	extra := []string{"FILE_BOUNDARY_EXTRA_READ_PATHS=" + sdk + ", ~/sdks/android"}
-	only := func(v string) []string { return []string{"FILE_BOUNDARY_EXTRA_READ_PATHS=" + v} }
+	// The deny list settings.json carries beside the extra read paths
+	// (buildHookEnv); the unset and empty cases below leave it out.
+	denyPaths := claudecode.FileBoundaryDenyPathsEnv + "=" + strings.Join(secrets.CredentialHomePaths(), ",")
+	extra := []string{"FILE_BOUNDARY_EXTRA_READ_PATHS=" + sdk + ", ~/sdks/android", denyPaths}
+	only := func(v string) []string { return []string{"FILE_BOUNDARY_EXTRA_READ_PATHS=" + v, denyPaths} }
 	outside := "/etc/qsdev-file-boundary-test"
 	homeLink := filepath.Join(t.TempDir(), "home-link")
 	if err := os.Symlink(home, homeLink); err != nil {
@@ -659,6 +707,17 @@ func TestFileBoundaryHook_ExtraReadPaths(t *testing.T) {
 		// The hook runs in this package's directory, so "templates" would
 		// cover the target if a relative entry were resolved against it.
 		{"relative ignored", only("templates"), "Read", map[string]any{"file_path": relTarget}, "deny"},
+		// An extra that equals, contains or lies inside a credential store is
+		// dropped, compared case-insensitively on every OS.
+		{"credential store dropped", only("~/.config/gh"), "Read", map[string]any{"file_path": filepath.Join(home, ".config", "gh", "hosts.yml")}, "deny"},
+		{"credential store case variant dropped", only("~/.CONFIG/GH"), "Read", map[string]any{"file_path": filepath.Join(home, ".CONFIG", "GH", "hosts.yml")}, "deny"},
+		{"inside credential store dropped", only("~/.ssh/keys"), "Read", map[string]any{"file_path": filepath.Join(home, ".ssh", "keys", "id_ed25519")}, "deny"},
+		{"ancestor of credential store dropped", only("~/.config"), "Read", map[string]any{"file_path": filepath.Join(home, ".config", "gh", "hosts.yml")}, "deny"},
+		{"other extra kept beside dropped one", only("~/.config/gh, " + sdk), "Read", map[string]any{"file_path": filepath.Join(sdk, "x.h")}, "allow"},
+		{"credential name prefix kept", only("~/.sshfoo"), "Read", map[string]any{"file_path": filepath.Join(home, ".sshfoo", "x")}, "allow"},
+		// Without the deny list no extra can be checked, so none is granted.
+		{"deny list unset grants nothing", []string{"FILE_BOUNDARY_EXTRA_READ_PATHS=" + sdk}, "Read", map[string]any{"file_path": filepath.Join(sdk, "x.h")}, "deny"},
+		{"deny list empty grants nothing", []string{"FILE_BOUNDARY_EXTRA_READ_PATHS=" + sdk, claudecode.FileBoundaryDenyPathsEnv + "= , "}, "Read", map[string]any{"file_path": filepath.Join(sdk, "x.h")}, "deny"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -756,9 +815,7 @@ func TestScanSecretsHook_Formats(t *testing.T) {
 	akia := "AKIA" + "Q3EGRXZ5T7WLM2PB"
 	password := "hunter2" + "Xq9vLp4"
 
-	cases := []struct {
-		name, file, content, want string
-	}{
+	cases := []scanFormatCase{
 		{"json password", "config.json", `{"db": {"password": "` + password + `"}}`, "deny"},
 		{"yaml unquoted password", "config.yaml", "db:\n  password: " + password + "\n", "deny"},
 		{"dotenv unquoted password", ".env", "DB_PASSWORD=" + password + "\n", "deny"},
@@ -784,6 +841,7 @@ func TestScanSecretsHook_Formats(t *testing.T) {
 		{"kubernetes secret reference", "deploy.yaml", "tls:\n  - secretName: tls-cert-production\n", "allow"},
 		{"openapi token url", "openapi.yaml", "tokenUrl: https://auth.example.com/oauth/token\n", "allow"},
 	}
+	cases = append(cases, scanSecretsValueCases()...)
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
@@ -793,6 +851,174 @@ func TestScanSecretsHook_Formats(t *testing.T) {
 			}
 		})
 	}
+}
+
+// scanFormatCase is one TestScanSecretsHook_Formats case: a Write of content
+// to file and the decision the hook must reach.
+type scanFormatCase struct {
+	name, file, content, want string
+}
+
+// scanSecretsValueCases are the U17-08 cases: an assignment or connection
+// string is judged by its credential value, not by the key or host around it.
+// They also pin what must keep working as before: documentation tokens, a
+// token shape written as an assignment's value (judged by the token's own
+// pattern), $-led passwords and placeholder-then-real connection-string lists.
+func scanSecretsValueCases() []scanFormatCase {
+	awsReal := "wJalrXUtnFEMI/K7MDENG" + "bPxRfiCY" + strings.Repeat("z", 12)
+	awsDoc := "wJalrXUtnFEMI/K7MDENG/" + "bPxRfiCYEXAMPLEKEY"
+	realPW := "Zq8Lp4" + "Vw2Xk"
+	ghpReal := "ghp_" + strings.Repeat(realPW, 4)
+	ghpDoc := "ghp_" + strings.Repeat("x", 36)
+	stripeDoc := "sk_live_" + "EXAMPLEKEY1234567890ab"
+	vaultDoc := "hvs." + "YOUR_VAULT_TOKEN_HERE_123456789"
+	return []scanFormatCase{
+		// The placeholder word sits in the host, not in the password.
+		{"dsn todo host", "a.py", `DB = "postgres://app:` + "Pa55w0rd" + `Real@todo-db.prod.internal:5432/todo"`, "deny"},
+		{"indicator inside a real password", "a.py", `password = "` + "SampleCorp" + `Prod2024!"`, "deny"},
+		{"aws quoted key", "a.py", `aws_secret_access_key = "` + awsReal + `"`, "deny"},
+		{"aws json key", "a.json", `{"aws_secret_access_key": "` + awsReal + `"}`, "deny"},
+		{"aws dotenv key", ".env", "AWS_SECRET_ACCESS_KEY=" + awsReal + "\n", "deny"},
+		{"changeme password", "a.py", `password = "changeme"`, "allow"},
+		{"env template password", "a.py", `password = "${DB_PASSWORD}"`, "allow"},
+		{"angle template password", "a.py", `password = "<your-password>"`, "allow"},
+		{"aws doc key", "a.py", `aws_secret_access_key = "` + awsDoc + `"`, "allow"},
+		{"dsn changeme password", "a.py", `U = "postgres://user:changeme@localhost:5432/db"`, "allow"},
+		// Documentation tokens: token shapes keep the whole-match test.
+		{"readme ghp placeholder", "README.md", ghpDoc, "allow"},
+		{"readme akia placeholder", "README.md", "AKIA" + strings.Repeat("X", 16), "allow"},
+		{"readme sendgrid placeholder", "README.md", "SG." + strings.Repeat("x", 22) + "." + strings.Repeat("x", 43), "allow"},
+		{"readme slack webhook placeholder", "README.md", "https://hooks.slack.com/services/T00000000/B00000000/" + strings.Repeat("X", 24), "allow"},
+		{"readme stripe example", "README.md", stripeDoc, "allow"},
+		{"readme vault placeholder", "README.md", vaultDoc, "allow"},
+		// A token shape as an assignment's value is judged by its own pattern.
+		{"api key stripe example", "a.py", `api_key = "` + stripeDoc + `"`, "allow"},
+		{"api key akia placeholder", "a.py", `api_key = "AKIA` + strings.Repeat("X", 16) + `"`, "allow"},
+		{"token vault placeholder", "a.py", `token = "` + vaultDoc + `"`, "allow"},
+		{"token ghp placeholder", "a.py", `token = "` + ghpDoc + `"`, "allow"},
+		{"token ghp real", "a.py", `token = "` + ghpReal + `"`, "deny"},
+		// A $ is not a template: only ${...} is.
+		{"dollar-led password", "a.py", `password = "$hunter2` + `realpass"`, "deny"},
+		{"dollar-led mixed case", "a.py", `password = "$` + realPW + `"`, "deny"},
+		{"dollar-led upper case", "a.py", `password = "$` + strings.ToUpper(realPW) + `"`, "deny"},
+		{"repeated word password", "a.py", `password = "hunter2` + `hunter2"`, "deny"},
+		{"yaml real password", "config.yaml", "password: " + realPW + "\n", "deny"},
+		{"yaml changeme password", "config.yaml", "password: changeme_now\n", "allow"},
+		// A placeholder connection string must not hide a real one after it.
+		{"dsn list in source", "a.py", `URLS = "postgres://u:${PW}@h1.local/db;mysql://root:` + realPW + `@db2.prod/x"`, "deny"},
+		{"dsn list in dotenv", ".env", "DATABASE_URLS=postgres://app:" + "${PG_PW}@primary.local/db,postgres://app:" + realPW + "@replica.prod/db\n", "deny"},
+		{"mongo list in dotenv", ".env", "MONGO=mongodb://u:$MONGO_PW@h1.local/db,mongodb://u:" + realPW + "@h2.prod/db\n", "deny"},
+		// Intended narrowing: an indicator glued into a camel-case value is
+		// part of the value, as in SampleCorpProd2024! above.
+		{"camel-case example password", "a.py", `password = "MyExample` + `Password"`, "deny"},
+		{"yaml camel-case sample password", "config.yaml", "password: SampleCorp" + "Prod2024\n", "deny"},
+	}
+}
+
+// TestScanSecretsHook_ExtraPatterns covers CREDENTIAL_SCAN_EXTRA_PATTERNS
+// (U17-09): one regex per line, so a quantifier's comma stays in its pattern;
+// CRs, blanks and blank lines are dropped; a (?P<secret>) group gets the
+// value placeholder test; a pattern that does not compile blocks the call,
+// naming the entry; and a pattern that matches the empty string neither
+// denies nor spins until the deadline (which would block with "error").
+func TestScanSecretsHook_ExtraPatterns(t *testing.T) {
+	t.Parallel()
+	corp := "corp_" + "abcdefghijklmnopqrstuvwx"
+	cases := []struct {
+		name, patterns, content, want string
+	}{
+		{"comma quantifier", `corp_[a-z0-9]{20,40}`, "k = '" + corp + "'", "deny"},
+		{"crlf first entry", "x_[0-9]+\r\n\ncorp_[a-z0-9]{20,40}\r", "v = x_12345", "deny"},
+		{"crlf last entry", "x_[0-9]+\r\n\ncorp_[a-z0-9]{20,40}\r", "k = '" + corp + "'", "deny"},
+		{"no extra match", "x_[0-9]+\r\n\ncorp_[a-z0-9]{20,40}\r", "hello world", "allow"},
+		{"grouped placeholder", `(?i)corp_(?P<secret>[a-z0-9_]{20,})`, "k = 'corp_your_token_" + "here_123456'", "allow"},
+		{"grouped real value", `(?i)corp_(?P<secret>[a-z0-9_]{20,})`, "k = '" + corp + "'", "deny"},
+		{"word boundary", `\b`, "hello world", "allow"},
+		{"empty star", `a*`, "hello world", "allow"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			res := runScanSecretsExtra(t, tc.patterns, tc.content)
+			if res.code != 0 || res.decision != tc.want {
+				t.Errorf("exit %d, decision %q, want exit 0, %q (stderr %q)", res.code, res.decision, tc.want, res.stderr)
+			}
+		})
+	}
+
+	invalid := []struct {
+		name, patterns, entry string
+	}{
+		{"unclosed class", `corp_[`, "entry 1"},
+		{"bad second entry after a blank line", "ok_[0-9]+\n\ncorp_[", "entry 2"},
+	}
+	for _, tc := range invalid {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			res := runScanSecretsExtra(t, tc.patterns, "hello world")
+			if res.code != 2 {
+				t.Errorf("exit %d, want 2 (stderr %q)", res.code, res.stderr)
+			}
+			if want := "invalid CREDENTIAL_SCAN_EXTRA_PATTERNS " + tc.entry + ":"; !strings.Contains(res.stderr, want) {
+				t.Errorf("stderr %q lacks %q", res.stderr, want)
+			}
+			if !strings.Contains(res.audit, `"event": "invalid_extra_pattern"`) {
+				t.Errorf("audit log %q lacks an invalid_extra_pattern event", res.audit)
+			}
+		})
+	}
+}
+
+// scanExtraResult is what one scan-secrets run with extra patterns did.
+type scanExtraResult struct {
+	code                    int
+	decision, stderr, audit string
+}
+
+// runScanSecretsExtra runs scan-secrets.py on a Write of content to a.py with
+// CREDENTIAL_SCAN_EXTRA_PATTERNS set to patterns, and returns its exit code,
+// decision ("allow" when it printed nothing), stderr and the audit log it
+// wrote under its own project directory.
+func runScanSecretsExtra(t *testing.T, patterns, content string) scanExtraResult {
+	t.Helper()
+	python, hook := scanSecretsHook(t)
+	project := t.TempDir()
+	in, err := json.Marshal(map[string]any{
+		"tool_name":  "Write",
+		"tool_input": map[string]string{"file_path": "a.py", "content": content},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	cmd := exec.Command(python, hook)
+	cmd.Env = hookEnv(t, "CLAUDE_PROJECT_DIR="+project, "CREDENTIAL_SCAN_EXTRA_PATTERNS="+patterns)
+	cmd.Stdin = bytes.NewReader(in)
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout, cmd.Stderr = &stdout, &stderr
+	res := scanExtraResult{decision: "allow"}
+	if err := cmd.Run(); err != nil {
+		exitErr, ok := errors.AsType[*exec.ExitError](err)
+		if !ok {
+			t.Fatalf("running hook: %v", err)
+		}
+		res.code = exitErr.ExitCode()
+	}
+	res.stderr = stderr.String()
+	if out := bytes.TrimSpace(stdout.Bytes()); len(out) > 0 {
+		var resp struct {
+			HookSpecificOutput struct {
+				PermissionDecision string `json:"permissionDecision"`
+			} `json:"hookSpecificOutput"`
+		}
+		if err := json.Unmarshal(out, &resp); err != nil {
+			t.Fatalf("hook output %q is not JSON: %v", out, err)
+		}
+		res.decision = resp.HookSpecificOutput.PermissionDecision
+	}
+	if audit, err := os.ReadFile(filepath.Join(project, ".claude", "logs", "hook-audit.jsonl")); err == nil {
+		res.audit = string(audit)
+	}
+	return res
 }
 
 // TestPythonHooks_LoadOnPython39 guards the Python hooks against syntax the
@@ -852,7 +1078,7 @@ func TestHookMatchersCoverScriptTools(t *testing.T) {
 	}{
 		{"file-boundary", "file-boundary.py", "sorted(m.PATH_KEYS)"},
 		{"credential-scan", "scan-secrets.py", "sorted(m.SCANNED_TOOLS)"},
-		{"package-guard", "package-guard.py", "sorted(m.SHELL_TOOLS)"},
+		{"package-guard", "package-guard.py", "sorted(list(m.SHELL_TOOLS) + [m.NIX_RUN_MATCHER])"},
 		{"destructive-prevention", "block-destructive.py", "sorted(m.SHELL_TOOLS)"},
 	}
 	defs := claudecode.ExportDefaultHookRegistry().Definitions()

@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/Quantum-Serendipity/qsdev/internal/testutil"
 	"github.com/Quantum-Serendipity/qsdev/pkg/fileutil"
 )
 
@@ -232,5 +233,61 @@ func TestCreateBackup_RefusesSymlinkedBackupDir(t *testing.T) {
 	}
 	if entries, _ := os.ReadDir(outside); len(entries) != 0 {
 		t.Errorf("backup created outside the project: %v", entries)
+	}
+}
+
+// TestCheckBackupDirRefusesGitRedirect verifies a committed symlink for the
+// project's dot-directory cannot redirect backups into .git, which lies inside
+// the project but holds repository metadata.
+func TestCheckBackupDirRefusesGitRedirect(t *testing.T) {
+	t.Parallel()
+	root := t.TempDir()
+	store := filepath.Join(root, ".git", "store")
+	if err := os.MkdirAll(store, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "config.yaml"), []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	testutil.SymlinkOrSkip(t, filepath.Join(".git", "store"), filepath.Dir(backupDir(root)))
+
+	if err := checkBackupDir(root, backupDir(root)); !errors.Is(err, fileutil.ErrRedirectsIntoGit) {
+		t.Errorf("checkBackupDir err = %v, want ErrRedirectsIntoGit", err)
+	}
+	if _, err := createBackup(root, "config.yaml"); !errors.Is(err, fileutil.ErrRedirectsIntoGit) {
+		t.Errorf("createBackup err = %v, want ErrRedirectsIntoGit", err)
+	}
+	if entries, _ := os.ReadDir(store); len(entries) != 0 {
+		t.Errorf("backup created inside .git: %v", entries)
+	}
+}
+
+// TestPruneBackupsRefusesGitRedirect verifies pruning never deletes through a
+// committed symlink that redirects the project's dot-directory into .git.
+func TestPruneBackupsRefusesGitRedirect(t *testing.T) {
+	t.Parallel()
+	root := t.TempDir()
+	victimDir := filepath.Join(root, ".git", "store", "backups")
+	if err := os.MkdirAll(victimDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	var victims []string
+	for i := range 3 {
+		ts := time.Date(2025, 1, 1, i, 0, 0, 0, time.UTC).Format(backupTimestampLayout)
+		p := filepath.Join(victimDir, "a.txt."+ts+".bak")
+		if err := os.WriteFile(p, []byte("data"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		victims = append(victims, p)
+	}
+	testutil.SymlinkOrSkip(t, filepath.Join(".git", "store"), filepath.Dir(backupDir(root)))
+
+	if err := pruneBackups(root, "a.txt", 1); !errors.Is(err, fileutil.ErrRedirectsIntoGit) {
+		t.Errorf("pruneBackups err = %v, want ErrRedirectsIntoGit", err)
+	}
+	for _, p := range victims {
+		if _, err := os.Stat(p); err != nil {
+			t.Errorf("%s was removed: %v", p, err)
+		}
 	}
 }

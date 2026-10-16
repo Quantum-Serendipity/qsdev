@@ -143,15 +143,33 @@ func interspersedPatterns(prefix, op string) []string {
 //   - a trailing " *" (or ":*") that is the rule's only wildcard also matches
 //     the bare command;
 //   - the space before a trailing `*` is literal, so "ls *" does not match
-//     "lsof".
+//     "lsof";
+//   - a bare tool rule ("Bash", no parentheses) matches every command.
 //
 // Unlike Shadows, which deliberately widens a trailing " *" to a
 // token-boundary prefix, this matcher answers what Claude Code itself would
 // match, so tests can assert both what a rule blocks and what it leaves
 // allowed.
 func MatchesBashRule(rule, command string) bool {
-	tool, pattern := ParseToolPattern(rule)
-	return tool == "Bash" && matchesCommandPattern(pattern, command)
+	return matchesToolRule(rule, "Bash", command, false)
+}
+
+// matchesToolRule reports whether rule, a permission rule for tool, matches
+// command: a bare tool rule (no parentheses) matches every command, as in
+// Claude Code, and otherwise the pattern inside the parentheses applies
+// (matchesCommandPattern), with case folded when fold is set.
+func matchesToolRule(rule, tool, command string, fold bool) bool {
+	t, pattern := ParseToolPattern(rule)
+	switch {
+	case t != tool:
+		return false
+	case !strings.Contains(rule, "("):
+		return true
+	case fold:
+		return matchesCommandPattern(strings.ToLower(pattern), strings.ToLower(command))
+	default:
+		return matchesCommandPattern(pattern, command)
+	}
 }
 
 // FirstMatchingBashRule returns the first of rules that matches any of cmds
@@ -175,10 +193,10 @@ func FirstMatchingBashRule(rules []string, cmds ...string) (string, bool) {
 // ("Matching is case-insensitive"), pattern and command are compared with
 // case folded. Claude Code also canonicalizes common aliases (gci, ls, dir
 // for Get-ChildItem) before matching; that is not modelled, so callers must
-// write the cmdlet name in both the rule and the command.
+// write the cmdlet name in both the rule and the command. A bare
+// "PowerShell" rule matches every command.
 func MatchesPowerShellRule(rule, command string) bool {
-	tool, pattern := ParseToolPattern(rule)
-	return tool == "PowerShell" && matchesCommandPattern(strings.ToLower(pattern), strings.ToLower(command))
+	return matchesToolRule(rule, "PowerShell", command, true)
 }
 
 // FirstMatch returns the first of rules that matches op, a tool call written

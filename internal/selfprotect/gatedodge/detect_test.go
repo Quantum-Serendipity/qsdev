@@ -1,12 +1,44 @@
 package gatedodge
 
 import (
-	"errors"
 	"strings"
 	"testing"
 )
 
-// changeCase is one before/after file change checked by DetectChange.
+// checkChange runs the Change check of the entry guarding file, as the hook
+// does: a reason or an error blocks. A file with no entry or no Change check
+// is allowed.
+func checkChange(file, before, after string) (blocked bool, ruleID, reason string) {
+	for _, g := range Lookup(file) {
+		if g.Change == nil {
+			continue
+		}
+		reason, err := g.Change(before, after)
+		if err != nil {
+			reason = "cannot verify change to security configuration: " + err.Error()
+		}
+		if reason != "" {
+			return true, g.RuleID, reason
+		}
+	}
+	return false, "", ""
+}
+
+// checkIntroduced runs the Introduced check of the entry guarding file. A
+// file with no entry or no Introduced check is allowed.
+func checkIntroduced(file, content string) (blocked bool, ruleID, reason string) {
+	for _, g := range Lookup(file) {
+		if g.Introduced == nil {
+			continue
+		}
+		if reason := g.Introduced(content); reason != "" {
+			return true, g.RuleID, reason
+		}
+	}
+	return false, "", ""
+}
+
+// changeCase is one before/after file change checked by an entry's Change.
 type changeCase struct {
 	name          string
 	before, after string
@@ -18,8 +50,7 @@ func runChangeCases(t *testing.T, file, ruleID string, cases []changeCase) {
 	for _, tt := range cases {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
-			change := func() (string, string, error) { return tt.before, tt.after, nil }
-			blocked, gotID, reason := DetectChange(file, change)
+			blocked, gotID, reason := checkChange(file, tt.before, tt.after)
 			if blocked != tt.blocked {
 				t.Errorf("blocked = %v, want %v (reason: %s)", blocked, tt.blocked, reason)
 			}
@@ -143,19 +174,23 @@ func replaceOnce(s, old, replacement string) string {
 	return strings.Replace(s, old, replacement, 1)
 }
 
+// TestDetectChange_FailsClosedAndSkipsOtherFiles pins that .qsdev.yaml and
+// devenv.nix have a Change check, so the hook reconstructs their change and
+// fails closed when it cannot (devinit TestDetectGuardedFileChange covers an
+// unreadable current file), and that an unrelated file has no check at all.
 func TestDetectChange_FailsClosedAndSkipsOtherFiles(t *testing.T) {
 	t.Parallel()
 
-	failing := func() (string, string, error) { return "", "", errors.New("unreadable") }
 	for _, file := range []string{"/project/.qsdev.yaml", "/project/devenv.nix"} {
-		if blocked, _, _ := DetectChange(file, failing); !blocked {
-			t.Errorf("DetectChange(%s) with an unverifiable change = allow, want blocked", file)
+		if got := Lookup(file); len(got) != 1 || got[0].Change == nil {
+			t.Errorf("Lookup(%s) = %v, want one entry with a Change check", file, names(got))
 		}
 	}
-	called := false
-	change := func() (string, string, error) { called = true; return "", "", nil }
-	if blocked, _, _ := DetectChange("/project/main.go", change); blocked || called {
-		t.Errorf("DetectChange(main.go) blocked=%v called=%v; want no check", blocked, called)
+	if blocked, _, reason := checkChange("/project/.qsdev.yaml", "", "security: ["); !blocked || !strings.Contains(reason, "cannot verify") {
+		t.Errorf("unparseable .qsdev.yaml = (%v, %q), want blocked as unverifiable", blocked, reason)
+	}
+	if got := Lookup("/project/main.go"); len(got) != 0 {
+		t.Errorf("Lookup(main.go) = %v; want no check", names(got))
 	}
 }
 
@@ -185,7 +220,7 @@ func TestDetect_PrecommitConfig(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
-			blocked, ruleID, reason := Detect("/project/.pre-commit-config.yaml", tt.content)
+			blocked, ruleID, reason := checkIntroduced("/project/.pre-commit-config.yaml", tt.content)
 			if blocked != tt.blocked {
 				t.Errorf("blocked = %v, want %v (reason: %s)", blocked, tt.blocked, reason)
 			}
@@ -226,7 +261,7 @@ func TestDetect_Npmrc(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
-			blocked, ruleID, reason := Detect("/project/.npmrc", tt.content)
+			blocked, ruleID, reason := checkIntroduced("/project/.npmrc", tt.content)
 			if blocked != tt.blocked {
 				t.Errorf("blocked = %v, want %v (reason: %s)", blocked, tt.blocked, reason)
 			}
@@ -280,7 +315,7 @@ func TestDetect_ClaudeMD(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
-			blocked, ruleID, reason := Detect("/project/CLAUDE.md", tt.content)
+			blocked, ruleID, reason := checkIntroduced("/project/CLAUDE.md", tt.content)
 			if blocked != tt.blocked {
 				t.Errorf("blocked = %v, want %v (reason: %s)", blocked, tt.blocked, reason)
 			}
@@ -319,7 +354,7 @@ func TestDetect_UnrelatedFile(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
-			blocked, ruleID, reason := Detect(tt.file, tt.content)
+			blocked, ruleID, reason := checkIntroduced(tt.file, tt.content)
 			if blocked {
 				t.Errorf("expected allow but got blocked: ruleID=%q reason=%q", ruleID, reason)
 			}
@@ -347,7 +382,7 @@ func TestDetect_EmptyContent(t *testing.T) {
 	for _, file := range files {
 		t.Run(file, func(t *testing.T) {
 			t.Parallel()
-			blocked, ruleID, reason := Detect(file, "")
+			blocked, ruleID, reason := checkIntroduced(file, "")
 			if blocked {
 				t.Errorf("expected allow for empty content but got blocked: ruleID=%q reason=%q", ruleID, reason)
 			}

@@ -6,7 +6,7 @@ import (
 )
 
 func TestConsultingAgentToolsRegistered(t *testing.T) {
-	reg := DefaultRegistry()
+	reg := mustDefault(t)
 
 	agentNames := []string{
 		"consulting-agent-security-reviewer",
@@ -49,7 +49,7 @@ func TestConsultingAgentToolsRegistered(t *testing.T) {
 }
 
 func TestConsultingAgentToolsOptIn(t *testing.T) {
-	reg := DefaultRegistry()
+	reg := mustDefault(t)
 
 	for _, tool := range reg.All() {
 		if !strings.HasPrefix(tool.Name, "consulting-agent-") {
@@ -62,7 +62,7 @@ func TestConsultingAgentToolsOptIn(t *testing.T) {
 }
 
 func TestConsultingAgentToolsLifecycleOnly(t *testing.T) {
-	reg := DefaultRegistry()
+	reg := mustDefault(t)
 	var names []string
 	for _, tool := range reg.All() {
 		if strings.HasPrefix(tool.Name, "consulting-agent-") {

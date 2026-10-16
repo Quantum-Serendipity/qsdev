@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"slices"
 
+	"github.com/Quantum-Serendipity/qsdev/internal/pathmatch"
 	"github.com/Quantum-Serendipity/qsdev/internal/sandbox"
 	"github.com/Quantum-Serendipity/qsdev/internal/sandbox/denylist"
 )
@@ -73,7 +74,7 @@ func checkGuardrails(path, role, projectDir string) error {
 	for _, g := range sandbox.GuardrailPaths(projectDir) {
 		for _, guard := range denylist.CandidatePaths(g) {
 			for _, candidate := range denylist.CandidatePaths(path) {
-				if denylist.Overlaps(candidate, guard) {
+				if pathmatch.Within(candidate, guard) {
 					return fmt.Errorf("writable mount %s %q overlaps project guardrail %q, which hooks may only read", role, path, g)
 				}
 			}
@@ -97,25 +98,15 @@ func allowedMountRoots(projectDir string) []string {
 func checkAllowlist(path, role string, roots []string) error {
 	for _, candidate := range denylist.CandidatePaths(path) {
 		for _, rt := range runtimeDirs {
-			if denylist.Overlaps(candidate, rt) {
+			if pathmatch.Within(candidate, rt) {
 				return fmt.Errorf("mount %s %q is under runtime directory %s, which holds host sockets", role, path, rt)
 			}
 		}
-		if !withinAny(candidate, roots) {
+		if !slices.ContainsFunc(roots, func(root string) bool { return pathmatch.Within(candidate, root) }) {
 			return fmt.Errorf("mount %s %q is outside the project directory and %s", role, path, nixStore)
 		}
 	}
 	return nil
-}
-
-// withinAny reports whether path equals or descends from one of roots.
-func withinAny(path string, roots []string) bool {
-	for _, root := range roots {
-		if denylist.Overlaps(path, root) {
-			return true
-		}
-	}
-	return false
 }
 
 // checkSourceType rejects a mount source that is a socket, named pipe or
@@ -136,21 +127,15 @@ func checkSourceType(source string) error {
 }
 
 // checkDenyList checks a single path against the shared deny list, using both
-// the cleaned path and its symlink-resolved form.
+// the cleaned path and its symlink-resolved form (denylist.Conflict). It
+// rejects the deny path itself, any descendant of it, AND any ancestor of it:
+// binding e.g. $HOME (which contains ~/.ssh) or /etc (which contains
+// /etc/shadow) would otherwise re-expose the sensitive descendant inside the
+// sandbox.
 func checkDenyList(path, role string) error {
-	denyPaths := denylist.ExpandedDenyPaths()
-	for _, candidate := range denylist.CandidatePaths(path) {
-		for _, deny := range denyPaths {
-			// Reject the deny path itself, any descendant of it, AND any ancestor
-			// of it. Rejecting ancestors prevents binding e.g. $HOME (which
-			// contains ~/.ssh) or /etc (which contains /etc/shadow), which would
-			// otherwise re-expose the sensitive descendant inside the sandbox.
-			if denylist.Overlaps(candidate, deny) || denylist.IsStrictAncestor(candidate, deny) {
-				return fmt.Errorf("mount %s %q overlaps sensitive path %q", role, path, deny)
-			}
-		}
+	if deny, _, ok := denylist.Conflict(path); ok {
+		return fmt.Errorf("mount %s %q overlaps sensitive path %q", role, path, deny)
 	}
-
 	return nil
 }
 

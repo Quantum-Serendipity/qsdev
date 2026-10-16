@@ -77,7 +77,22 @@
   git-hooks.hooks = {
     # Always-on hooks (less any tiered above the security level)
 {{- range .SecurityHooks}}
+{{- with $.SecurityHookScope . }}
+    {{ nixHookID .ID }} = {
+      enable = true;
+{{- if .TypesOr }}
+      types_or = {{ nixStringList .TypesOr }};
+{{- end }}
+{{- if .ExcludeTypes }}
+      exclude_types = {{ nixStringList .ExcludeTypes }};
+{{- end }}
+{{- if .Excludes }}
+      excludes = {{ nixStringList .Excludes }};
+{{- end }}
+    };
+{{- else }}
     {{ nixHookID . }}.enable = true;
+{{- end }}
 {{- end}}
     # Enhanced hooks (language-aware, from ecosystem modules)
 {{- range .BuiltInHooks}}
@@ -100,14 +115,6 @@
 {{- else }}
     {{ nixHookID .ID }}.enable = true;
 {{- end }}
-{{- end}}
-{{- range .HookOverrides}}
-{{- if .TypesOr}}
-    {{ nixHookID .ID }}.types_or = {{ nixStringList .TypesOr }};
-{{- end}}
-{{- if .ExcludeTypes}}
-    {{ nixHookID .ID }}.exclude_types = {{ nixStringList .ExcludeTypes }};
-{{- end}}
 {{- end}}
     # Specialized hooks (custom definitions)
     # Each package is set at priority 999: a devenv language module that sets

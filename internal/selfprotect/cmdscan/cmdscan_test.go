@@ -113,6 +113,45 @@ func TestParse_RedirectOpSplit(t *testing.T) {
 	}
 }
 
+// TestParse_RedirectsWritingNoFile pins the output redirects that write no
+// file, which WriteRedirects leaves out (writesNoFile), and the near
+// spellings that still name one.
+func TestParse_RedirectsWritingNoFile(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		command string
+		want    []string
+	}{
+		{"git commit -am x 2>/dev/null", nil},
+		{"cat main.go > /dev/null", nil},
+		{"make &>/dev/null", nil},
+		{"make >/dev/null 2>&1", nil},
+		{"echo x >&2", nil},
+		{"echo x 3>&-", nil},
+		{"echo x > /dev/nullx", []string{"/dev/nullx"}},
+		{"echo x >&out.log", []string{"out.log"}},
+		{"echo x > 1", []string{"1"}},
+		{"N=/dev/null; echo x > $N", []string{""}},
+		{`echo x > "$F"`, []string{""}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.command, func(t *testing.T) {
+			t.Parallel()
+			cmds, err := Parse(tt.command)
+			if err != nil {
+				t.Fatalf("Parse(%q) error: %v", tt.command, err)
+			}
+			var writes []string
+			for _, c := range cmds {
+				writes = append(writes, c.WriteRedirects...)
+			}
+			if !slices.Equal(writes, tt.want) {
+				t.Errorf("Parse(%q) WriteRedirects = %q, want %q", tt.command, writes, tt.want)
+			}
+		})
+	}
+}
+
 func TestParse_HeredocBodies(t *testing.T) {
 	t.Parallel()
 

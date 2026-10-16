@@ -21,6 +21,7 @@ import (
 	"github.com/Quantum-Serendipity/qsdev/internal/check"
 	"github.com/Quantum-Serendipity/qsdev/internal/claudesettings"
 	"github.com/Quantum-Serendipity/qsdev/internal/posture"
+	"github.com/Quantum-Serendipity/qsdev/internal/secrets"
 	"github.com/Quantum-Serendipity/qsdev/internal/shebang"
 	"github.com/Quantum-Serendipity/qsdev/internal/state"
 	"github.com/Quantum-Serendipity/qsdev/internal/toolreg"
@@ -147,6 +148,170 @@ func TestRequiredDenyRules_MatchGeneratedSettings(t *testing.T) {
 			for _, rule := range required {
 				if !slices.Contains(settings.Permissions.Deny, rule) {
 					t.Errorf("check requires %q but generated settings.json does not contain it", rule)
+				}
+			}
+		})
+	}
+}
+
+// TestRequiredDenyRules_IncludesHomeCredentialDenies is the regression test
+// for `qsdev check` not noticing a deleted home credential deny: every preset,
+// supply-chain-only included, requires each canon Read deny and each rule of
+// the shell-read tripwire.
+func TestRequiredDenyRules_IncludesHomeCredentialDenies(t *testing.T) {
+	t.Parallel()
+	cat, err := catalog.Default()
+	if err != nil {
+		t.Fatal(err)
+	}
+	home := claudecode.HomeCredentialDenyRules()
+	if len(home) == 0 {
+		t.Fatal("HomeCredentialDenyRules() is empty")
+	}
+	cases := map[string]struct {
+		answers types.WizardAnswers
+		cfg     *types.QsdevConfig
+	}{
+		"no answers or config":         {},
+		"supply-chain-only from tier":  {cfg: &types.QsdevConfig{Tier: "supply-chain-only"}},
+		"supply-chain-only from level": {answers: types.WizardAnswers{PermissionLevel: "supply-chain-only"}},
+	}
+	for _, preset := range cat.PermissionPresets() {
+		cases["preset "+preset] = struct {
+			answers types.WizardAnswers
+			cfg     *types.QsdevConfig
+		}{answers: types.WizardAnswers{PermissionLevel: preset}}
+	}
+	for name, tt := range cases {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			required, err := requiredDenyRules(tt.answers, tt.cfg)
+			if err != nil {
+				t.Fatal(err)
+			}
+			set := make(map[string]bool, len(required))
+			for _, r := range required {
+				set[r] = true
+			}
+			for _, rule := range home {
+				if !set[rule] {
+					t.Errorf("required rules lack home credential deny %q", rule)
+				}
+			}
+		})
+	}
+}
+
+// generatedSettingsDir generates settings.json for preset into a fresh
+// project directory and returns the directory and the generated deny rules.
+func generatedSettingsDir(t *testing.T, preset string) (string, []string) {
+	t.Helper()
+	answers := types.WizardAnswers{ClaudeCode: true, PermissionLevel: preset}
+	file, err := claudecode.GenerateSettings(answers, ecosystem.DefaultRegistry(), claudecode.Config{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	dir := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(dir, ".claude"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, ".claude", "settings.json"), file.Content, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	settings, err := claudesettings.Parse(file.Content)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return dir, settings.Deny
+}
+
+// denyRuleResults runs the file-state check over dir with the rules preset
+// requires and returns its deny_rules_present pass, if any, and the rules it
+// reports missing.
+func denyRuleResults(t *testing.T, dir string, required []string) (passed bool, missing []string) {
+	t.Helper()
+	for _, r := range check.CheckFileState(check.CheckContext{ProjectRoot: dir, RequiredDenyRules: required}) {
+		switch r.Name {
+		case "deny_rules_present":
+			passed = passed || r.Status == check.StatusPass
+		case "deny_rule_missing":
+			if r.Status == check.StatusFail {
+				missing = append(missing, r.Metadata["rule"])
+			}
+		}
+	}
+	return passed, missing
+}
+
+// TestCheckDenyRules_GeneratedSettingsPass keeps, as on base, freshly
+// generated settings passing deny_rules_present at every preset.
+func TestCheckDenyRules_GeneratedSettingsPass(t *testing.T) {
+	t.Parallel()
+	cat, err := catalog.Default()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, preset := range cat.PermissionPresets() {
+		t.Run(preset, func(t *testing.T) {
+			t.Parallel()
+			dir, _ := generatedSettingsDir(t, preset)
+			required, err := requiredDenyRules(types.WizardAnswers{PermissionLevel: preset}, nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if passed, missing := denyRuleResults(t, dir, required); !passed || len(missing) > 0 {
+				t.Errorf("generated settings: deny_rules_present passed = %v, missing = %v", passed, missing)
+			}
+		})
+	}
+}
+
+// TestCheckDenyRules_CanonReadDenyDeleted deletes, one at a time, each home
+// credential Read deny, each shell-read tripwire rule and each nested
+// secrets rule of the secrets canon from generated settings:
+// deny_rules_present must fail and name the deleted rule at every preset.
+func TestCheckDenyRules_CanonReadDenyDeleted(t *testing.T) {
+	t.Parallel()
+	cat, err := catalog.Default()
+	if err != nil {
+		t.Fatal(err)
+	}
+	var nested []string
+	for _, p := range secrets.SecretMaterialPatterns() {
+		nested = append(nested, "Read(/**/secrets/**/"+p+")")
+	}
+	for _, p := range secrets.SecretDataPatterns() {
+		nested = append(nested, "Read(/**/secrets/"+p+")")
+	}
+	for _, preset := range cat.PermissionPresets() {
+		t.Run(preset, func(t *testing.T) {
+			t.Parallel()
+			dir, deny := generatedSettingsDir(t, preset)
+			required, err := requiredDenyRules(types.WizardAnswers{PermissionLevel: preset}, nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			canon := claudecode.HomeCredentialDenyRules()
+			if slices.Contains(deny, "Read(/secrets/**)") {
+				canon = append(canon, nested...)
+			}
+			path := filepath.Join(dir, ".claude", "settings.json")
+			for _, rule := range canon {
+				kept := slices.DeleteFunc(slices.Clone(deny), func(r string) bool { return r == rule })
+				if len(kept) == len(deny) {
+					t.Errorf("generated settings lack %q", rule)
+					continue
+				}
+				data, err := json.Marshal(map[string]any{"permissions": map[string]any{"deny": kept}})
+				if err != nil {
+					t.Fatal(err)
+				}
+				if err := os.WriteFile(path, data, 0o644); err != nil {
+					t.Fatal(err)
+				}
+				passed, missing := denyRuleResults(t, dir, required)
+				if passed || !slices.Contains(missing, rule) {
+					t.Errorf("without %q: deny_rules_present passed = %v, missing = %v", rule, passed, missing)
 				}
 			}
 		})
@@ -987,6 +1152,13 @@ func TestRunCheck_InvalidProjectDefaults_Human(t *testing.T) {
 // devenv.nix hand-edited to disable ripsecrets and keep
 // AWS_SECRET_ACCESS_KEY in the shell fails check, though file_state skips
 // devenv.nix (it is human-edited), while a hand-disabled formatter does not.
+// ripsecretsBlock is the always-on ripsecrets hook as generated: enabled,
+// skipping vendored trees (catalog security_hook_excludes).
+const (
+	ripsecretsEnabled = "ripsecrets = {\n      enable = true;"
+	ripsecretsBlock   = ripsecretsEnabled + "\n      excludes = [ \"(^|/)vendor/\" ];\n    };"
+)
+
 func TestRunCheck_WeakenedDevenvNixFails(t *testing.T) {
 	floorResult := func(t *testing.T, report check.CheckReport) check.CheckResult {
 		t.Helper()
@@ -1005,14 +1177,15 @@ func TestRunCheck_WeakenedDevenvNixFails(t *testing.T) {
 
 	path := filepath.Join(dir, "devenv.nix")
 	src := readProjectFile(t, dir, "devenv.nix")
-	for _, want := range []string{"ripsecrets.enable = true;", `"AWS_SECRET_ACCESS_KEY" `, "gofmt"} {
+	for _, want := range []string{ripsecretsBlock, `"AWS_SECRET_ACCESS_KEY" `, "gofmt"} {
 		if !strings.Contains(src, want) {
 			t.Fatalf("generated devenv.nix lacks %s:\n%s", want, src)
 		}
 	}
-	formatterOff := strings.Replace(src, "gofmt.enable = true;", "gofmt.enable = false;", 1)
+	gofmtEnabled := "gofmt = {\n      enable = true;"
+	formatterOff := strings.Replace(src, gofmtEnabled, "gofmt = {\n      enable = false;", 1)
 	if formatterOff == src {
-		t.Fatalf("generated devenv.nix has no gofmt.enable = true:\n%s", src)
+		t.Fatalf("generated devenv.nix has no %q:\n%s", gofmtEnabled, src)
 	}
 	if err := os.WriteFile(path, []byte(formatterOff), 0o644); err != nil {
 		t.Fatal(err)
@@ -1021,7 +1194,7 @@ func TestRunCheck_WeakenedDevenvNixFails(t *testing.T) {
 		t.Errorf("disabling the gofmt formatter: devenv_security_floor = %+v, want pass", r)
 	}
 
-	weakened := strings.Replace(src, "ripsecrets.enable = true;", "ripsecrets.enable = false;", 1)
+	weakened := strings.Replace(src, ripsecretsEnabled, "ripsecrets = {\n      enable = false;", 1)
 	weakened = strings.Replace(weakened, `"AWS_SECRET_ACCESS_KEY" `, "", 1)
 	if err := os.WriteFile(path, []byte(weakened), 0o644); err != nil {
 		t.Fatal(err)
@@ -1067,13 +1240,14 @@ func TestRunCheck_NeutralisedDevenvNixFails(t *testing.T) {
 		t.Fatal(err)
 	}
 	const unsetPrefix = "unsetEnvVars = options.unsetEnvVars.default ++ "
-	if !strings.Contains(src, unsetPrefix) || !strings.Contains(src, "ripsecrets.enable = true;") {
+	if !strings.Contains(src, unsetPrefix) || !strings.Contains(src, ripsecretsBlock) {
 		t.Fatalf("generated devenv.nix lacks the expected shapes:\n%s", src)
 	}
 	tests := []struct{ name, nix, wantInText string }{
 		{"imports a weakening module", strings.Replace(src, "  # Base packages", "  imports = [ ./weak.nix ];\n\n  # Base packages", 1), "imports"},
-		{"no-op entry", strings.Replace(src, "ripsecrets.enable = true;", "ripsecrets.enable = true;\n    ripsecrets.entry = \"true\";", 1), "git-hooks.hooks.ripsecrets.entry"},
-		{"exclude every file", strings.Replace(src, "ripsecrets.enable = true;", "ripsecrets.enable = true;\n    ripsecrets.excludes = [ \".*\" ];", 1), "git-hooks.hooks.ripsecrets.excludes"},
+		{"no-op entry", strings.Replace(src, ripsecretsEnabled, ripsecretsEnabled+"\n      entry = \"true\";", 1), "git-hooks.hooks.ripsecrets.entry"},
+		{"exclude every file", strings.Replace(src, ripsecretsBlock, ripsecretsEnabled+"\n      excludes = [ \".*\" ];\n    };", 1), "git-hooks.hooks.ripsecrets.excludes"},
+		{"widen the vendored exclude", strings.Replace(src, ripsecretsBlock, ripsecretsEnabled+"\n      excludes = [ \"(^|/)vendor/\" \"(^|/)src/\" ];\n    };", 1), "git-hooks.hooks.ripsecrets.excludes"},
 		{"filtered variables", strings.Replace(src, unsetPrefix, "unsetEnvVars = builtins.filter (v: v != \"AWS_SECRET_ACCESS_KEY\") ", 1), "builtins.filter"},
 	}
 	for _, tt := range tests {

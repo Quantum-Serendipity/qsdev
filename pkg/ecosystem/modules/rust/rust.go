@@ -28,7 +28,6 @@ var _ ecosystem.ManifestFileProvider = (*Module)(nil)
 var _ ecosystem.SASTModule = (*Module)(nil)
 var _ ecosystem.DevenvYamlInputProvider = (*Module)(nil)
 var _ ecosystem.PackageProvider = (*Module)(nil)
-var _ ecosystem.ReadDenyRuleProvider = (*Module)(nil)
 
 // Module is the stateless Rust ecosystem module.
 type Module struct{}
@@ -239,16 +238,6 @@ func (m *Module) DevenvPackages(config ecosystem.ModuleConfig) []string {
 		pkgs = append(pkgs, "sccache")
 	}
 	return pkgs
-}
-
-// ReadDenyRules returns the Cargo credential files, which hold crates.io and
-// alternate-registry tokens able to publish new versions of the user's crates.
-func (m *Module) ReadDenyRules(_ ecosystem.ModuleConfig) []string {
-	return []string{
-		"~/.cargo/credentials.toml",
-		// Cargo still reads the pre-1.39 name when the .toml file is absent.
-		"~/.cargo/credentials",
-	}
 }
 
 // PreCommitHooks returns pre-commit hook definitions for Rust.

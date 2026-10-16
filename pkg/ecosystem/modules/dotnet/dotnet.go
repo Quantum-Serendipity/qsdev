@@ -27,7 +27,6 @@ import (
 var _ ecosystem.EcosystemModule = (*Module)(nil)
 var _ ecosystem.ProxyKeyProvider = (*Module)(nil)
 var _ ecosystem.SASTModule = (*Module)(nil)
-var _ ecosystem.ReadDenyRuleProvider = (*Module)(nil)
 
 // Module is the stateless C#/.NET ecosystem module.
 type Module struct{}
@@ -235,15 +234,6 @@ func (m *Module) DenyRules(_ ecosystem.ModuleConfig) []string {
 		"Bash(nuget *)",
 		"Bash(nuget.exe *)",
 		"Bash(mono nuget.exe *)",
-	}
-}
-
-// ReadDenyRules returns the user-level NuGet configuration files, which hold
-// packageSourceCredentials and push API keys for the user's feeds.
-func (m *Module) ReadDenyRules(_ ecosystem.ModuleConfig) []string {
-	return []string{
-		"~/.nuget/NuGet/NuGet.Config",
-		"~/.config/NuGet/NuGet.Config",
 	}
 }
 

@@ -3,6 +3,7 @@ package devinit
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io/fs"
 	"os"
@@ -18,6 +19,8 @@ import (
 	"github.com/Quantum-Serendipity/qsdev/internal/state"
 	"github.com/Quantum-Serendipity/qsdev/internal/testutil"
 	"github.com/Quantum-Serendipity/qsdev/internal/toolreg"
+	"github.com/Quantum-Serendipity/qsdev/internal/toolreg/toolregtest"
+	"github.com/Quantum-Serendipity/qsdev/pkg/fileutil"
 	"github.com/Quantum-Serendipity/qsdev/pkg/types"
 )
 
@@ -177,7 +180,7 @@ func assertSharedFilesWellFormed(t *testing.T, dir string) {
 func TestLifecycle_SharedContentMatchesFileFormat(t *testing.T) {
 	t.Parallel()
 	answers := types.WizardAnswers{ProjectName: "demo"}
-	for _, tool := range toolreg.DefaultRegistry().All() {
+	for _, tool := range toolregtest.Default(t).All() {
 		for key, fn := range tool.SharedContent {
 			content, err := fn(answers)
 			if err != nil {
@@ -534,7 +537,7 @@ func TestLifecycle_EveryToolRoundTrip(t *testing.T) {
 		t.Skip("runs enable/disable for every registered tool")
 	}
 	template := initLifecycleProject(t)
-	for _, tool := range toolreg.DefaultRegistry().All() {
+	for _, tool := range toolregtest.Default(t).All() {
 		t.Run(tool.Name, func(t *testing.T) {
 			dir := testutil.IsolatedDir(t)
 			if err := os.CopyFS(dir, os.DirFS(template)); err != nil {
@@ -873,11 +876,124 @@ func TestExecuteUpdatePlan_RefusesSymlinkEscape(t *testing.T) {
 		Action:     UpdateActionCreate,
 		NewContent: []byte("generated\n"),
 	}}}
-	if _, err := executeUpdatePlan(plan, root, UpdateOptions{}); err == nil || !strings.Contains(err.Error(), "escapes project root") {
+	if _, err := executeUpdatePlan(plan, root, UpdateOptions{}); !errors.Is(err, fileutil.ErrOutsideRoot) {
 		t.Fatalf("want containment refusal, got %v", err)
 	}
 	if _, err := os.Stat(filepath.Join(outside, "pull_request_template.md")); !os.IsNotExist(err) {
 		t.Errorf("file was written outside the project (stat err=%v)", err)
+	}
+}
+
+// moveClaudeHooksBehind moves the project's .claude/hooks directory to
+// <dir>/<dest> and leaves .claude/hooks as a symlink to target in its place.
+func moveClaudeHooksBehind(t *testing.T, dir, dest, target string) {
+	t.Helper()
+	hooks := filepath.Join(dir, ".claude", "hooks")
+	moved := filepath.Join(dir, dest)
+	if err := os.MkdirAll(filepath.Dir(moved), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Rename(hooks, moved); err != nil {
+		t.Fatal(err)
+	}
+	testutil.SymlinkOrSkip(t, target, hooks)
+}
+
+// TestDisableForceRefusesGitRedirect is the CLI-level U14-07 regression: the
+// project's .claude/hooks is a committed symlink into .git, so the
+// attach-guard hook script tracked under .claude/hooks lives in .git.
+// `disable attach-guard --force` must refuse rather than delete it.
+func TestDisableForceRefusesGitRedirect(t *testing.T) {
+	dir := initLifecycleProject(t)
+	moveClaudeHooksBehind(t, dir, filepath.Join(".git", "qsdev-hooks"), filepath.Join("..", ".git", "qsdev-hooks"))
+
+	out, err := disableTool(t, dir, "attach-guard", "--force")
+	if !errors.Is(err, fileutil.ErrRedirectsIntoGit) {
+		t.Fatalf("disable attach-guard --force: err = %v, want ErrRedirectsIntoGit\n%s", err, out)
+	}
+	if _, err := os.Stat(filepath.Join(dir, ".git", "qsdev-hooks", "package-guard.py")); err != nil {
+		t.Errorf("the .git copy of package-guard.py must survive the refused disable: %v", err)
+	}
+}
+
+// TestDisableRemovesThroughInRootDirAlias verifies disable still removes a
+// tracked file whose directory is reached through an absolute symlink to a
+// directory inside the project, as before the containment rule was shared.
+func TestDisableRemovesThroughInRootDirAlias(t *testing.T) {
+	dir := initLifecycleProject(t)
+	moveClaudeHooksBehind(t, dir, "hooks-inside", filepath.Join(dir, "hooks-inside"))
+
+	mustDisable(t, dir, "attach-guard", "--force")
+	if _, err := os.Lstat(filepath.Join(dir, "hooks-inside", "package-guard.py")); !errors.Is(err, fs.ErrNotExist) {
+		t.Errorf("package-guard.py behind the alias should be removed (lstat err=%v)", err)
+	}
+}
+
+// TestExecuteUpdatePlanRemoveRefusesGitRedirect verifies an orphaned-file
+// removal under a directory symlinked into .git is refused and the .git file
+// survives.
+func TestExecuteUpdatePlanRemoveRefusesGitRedirect(t *testing.T) {
+	t.Parallel()
+	root := t.TempDir()
+	victim := filepath.Join(root, ".git", "hooks", "old-hook")
+	writeUpdateVictim(t, victim)
+	testutil.SymlinkOrSkip(t, filepath.Join("..", ".git", "hooks"), filepath.Join(root, ".claude", "hooks"))
+
+	plan := UpdatePlan{Files: []FileUpdatePlan{{Path: ".claude/hooks/old-hook", Action: UpdateActionRemove}}}
+	if _, err := executeUpdatePlan(plan, root, UpdateOptions{}); !errors.Is(err, fileutil.ErrRedirectsIntoGit) {
+		t.Errorf("executeUpdatePlan err = %v, want ErrRedirectsIntoGit", err)
+	}
+	if _, err := os.Lstat(victim); err != nil {
+		t.Errorf("%s must survive the refused removal: %v", victim, err)
+	}
+}
+
+// writeUpdateVictim creates path, and its parent directories, as a small
+// executable file.
+func writeUpdateVictim(t *testing.T, path string) {
+	t.Helper()
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte("#!/bin/sh\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// TestExecuteUpdatePlanRemoveThroughInRootAlias verifies an orphaned-file
+// removal through an in-root directory alias, absolute or stepping out of the
+// root and back in, still removes the file behind it and drops it from
+// state, as before the containment rule was shared.
+func TestExecuteUpdatePlanRemoveThroughInRootAlias(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name   string
+		target func(root string) string
+	}{
+		{"absolute", func(root string) string { return filepath.Join(root, "inside") }},
+		{"relative", func(root string) string { return filepath.Join("..", "..", filepath.Base(root), "inside") }},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			root := t.TempDir()
+			victim := filepath.Join(root, "inside", "old-hook")
+			writeUpdateVictim(t, victim)
+			testutil.SymlinkOrSkip(t, tt.target(root), filepath.Join(root, ".claude", "hooks"))
+
+			const rel = ".claude/hooks/old-hook"
+			plan := UpdatePlan{Files: []FileUpdatePlan{{Path: rel, Action: UpdateActionRemove}}}
+			out, err := executeUpdatePlan(plan, root, UpdateOptions{})
+			if err != nil {
+				t.Fatalf("executeUpdatePlan: %v", err)
+			}
+			if len(out.failures) != 0 || !out.dropped[rel] {
+				t.Errorf("failures = %v, dropped = %v", out.failures, out.dropped)
+			}
+			if _, err := os.Lstat(victim); !errors.Is(err, fs.ErrNotExist) {
+				t.Errorf("%s should be removed (lstat err=%v)", victim, err)
+			}
+		})
 	}
 }
 

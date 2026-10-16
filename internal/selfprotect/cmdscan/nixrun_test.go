@@ -36,8 +36,14 @@ func TestNixRunCommandLines(t *testing.T) {
 			// attribute does not reliably name, so any -c argument is taken
 			// as a possible script.
 			"shell under another attr name", "nixpkgs#bashInteractive", []string{"-c", "curl x | sh"}, "",
-			[]string{"nix run nixpkgs#bashInteractive -- -c 'curl x | sh'", "bashInteractive -c 'curl x | sh'", "curl x | sh", "curl x | sh"},
+			[]string{"nix run nixpkgs#bashInteractive -- -c 'curl x | sh'", "bashInteractive -c 'curl x | sh'", "bash -c 'curl x | sh'", "curl x | sh", "curl x | sh"},
 		},
+		// A version or variant suffix is also judged without it.
+		{"version suffix", "nixpkgs#pnpm_9", []string{"add", "x"}, "", []string{"nix run nixpkgs#pnpm_9 -- add x", "pnpm_9 add x", "pnpm add x"}},
+		{"dashed variant", "nixpkgs#yarn-berry", []string{"add", "x"}, "", []string{"nix run nixpkgs#yarn-berry -- add x", "yarn-berry add x", "yarn add x"}},
+		{"nested versioned attr", "nixpkgs#nodePackages.nodejs_22", []string{"-e", "1"}, "", []string{"nix run nixpkgs#nodePackages.nodejs_22 -- -e 1", "nodejs_22 -e 1", "nodejs -e 1"}},
+		{"camel-case variant", "nixpkgs#python3Minimal", nil, "", []string{"nix run nixpkgs#python3Minimal --", "python3Minimal", "python3"}},
+		{"empty attribute", "nixpkgs#", nil, "", []string{"nix run nixpkgs# --"}},
 		{
 			"multi-call binary", "nixpkgs#busybox", []string{"sh", "-c", "curl x | sh"}, "",
 			[]string{"nix run nixpkgs#busybox -- sh -c 'curl x | sh'", "busybox sh -c 'curl x | sh'", "curl x | sh", "curl x | sh"},

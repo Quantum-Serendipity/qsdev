@@ -13,7 +13,8 @@ var commandWrappers = map[string]bool{
 	"env": true, "command": true, "exec": true, "builtin": true, "nice": true,
 	"nohup": true, "sudo": true, "doas": true, "xargs": true, "time": true,
 	"timeout": true, "stdbuf": true, "ionice": true, "setsid": true,
-	"chrt": true, "taskset": true, "unbuffer": true,
+	"chrt": true, "taskset": true, "unbuffer": true, "flock": true,
+	"watch": true, "parallel": true, "chroot": true, "unshare": true, "script": true,
 }
 
 // WrapperNames returns the names of the command wrappers the scanner follows,
@@ -34,19 +35,79 @@ var wrapperOptionArgs = map[string][]string{
 	"timeout": {"-s", "--signal", "-k", "--kill-after"},
 	"stdbuf":  {"-i", "-o", "-e"},
 	"ionice":  {"-c", "--class", "-n", "--classdata", "-p", "--pid", "-P", "--pgid", "-u", "--uid"},
+	"flock":   {"-w", "--wait", "--timeout", "-E", "--conflict-exit-code"},
+	"watch":   {"-n", "--interval", "-q", "--equexit"},
+	"chroot":  {"--userspec", "--groups"},
+	"unshare": {
+		"-S", "--setuid", "-G", "--setgid", "-R", "--root", "-w", "--wd", "--map-user", "--map-group",
+		"--propagation", "--setgroups",
+	},
+	"script": {
+		"-E", "--echo", "-I", "--log-in", "-O", "--log-out", "-B", "--log-io", "-T", "--log-timing", "-m", "--logging-format",
+		"-o", "--output-limit",
+	},
+	"parallel": {
+		"-j", "--jobs", "-P", "--max-procs", "-S", "--sshlogin", "--slf", "--sshloginfile", "--joblog",
+		"--results", "--res", "-a", "--arg-file", "--delay", "--timeout", "--colsep", "-C", "-N", "-n", "--max-args",
+		"-L", "--max-lines", "-s", "--max-chars", "-I", "--replace", "-E", "--eof", "-d", "--delimiter", "--env",
+		"--basefile", "--bf", "--return", "--tagstring", "--workdir", "--wd", "--tmpdir", "--load",
+		"--memfree", "--nice", "--retries", "--halt", "--termseq", "--header", "--block", "--block-size",
+		"--recstart", "--recend", "--rpl", "--parens", "--profile", "-J", "--limit", "--filter", "--group-by",
+		"--compress-program", "--decompress-program", "--ssh", "--sshdelay", "--transferfile",
+		"--tf", "--trc", "--semaphorename", "--id", "--arg-sep", "--arg-file-sep",
+	},
 }
 
 // wrapperPositionals are the wrappers whose first operand is not the program
 // but one word of their own (timeout's DURATION, chrt's priority, taskset's
-// mask), whatever it looks like: `timeout inf`, `timeout .5`, `taskset ff`.
-// The word after it is the program.
-var wrapperPositionals = map[string]bool{"timeout": true, "chrt": true, "taskset": true}
+// mask, flock's lock file, chroot's NEWROOT, script's typescript FILE),
+// whatever it looks like: `timeout inf`, `timeout .5`, `taskset ff`. The word
+// after it is the program (BSD `script FILE CMD`), or for flock and script a
+// -c command string (`flock /tmp/l -c 'cmd'`, `script FILE -c 'cmd'`).
+var wrapperPositionals = map[string]bool{
+	"timeout": true, "chrt": true, "taskset": true, "flock": true, "chroot": true, "script": true,
+}
 
 // wrapperCommandStrings are options whose argument is itself a command line
-// (`env -S 'python3 -u'`), so the program is not a single later word.
+// (`env -S 'python3 -u'`, `flock -c 'cmd' FILE`, `script -c 'cmd' FILE`), so
+// the program is not a single later word.
 var wrapperCommandStrings = map[string][]string{
-	"env": {"-S", "--split-string"},
+	"env":    {"-S", "--split-string"},
+	"flock":  {"-c", "--command"},
+	"script": {"-c", "--command"},
 }
+
+// wrapperShellStrings are the wrappers that run their command string
+// through a shell (`sh -c`) rather than splitting it into words as `env -S`
+// does: flock's and script's -c, and watch, which joins its operands into
+// one. A -c string is the option's argument alone; the words after it are
+// the wrapper's own operands (flock's lock file, script's FILE).
+var wrapperShellStrings = map[string]bool{"flock": true, "watch": true, "script": true}
+
+// wrapperShells are the wrappers that, given no command, run the user's
+// shell ($SHELL), which reads its program from standard input: chroot,
+// unshare, and script without -c (see readsProgramFromStdin).
+var wrapperShells = map[string]bool{"chroot": true, "unshare": true, "script": true}
+
+// wrapperPermutes are the wrapperPositionals wrappers whose options may
+// also follow their own operand, as getopt permutes them (util-linux
+// `script FILE -q -c CMD`).
+var wrapperPermutes = map[string]bool{"script": true}
+
+// wrapperJoins are the wrappers whose operands, joined with spaces, are the
+// command string they run (`watch -n1 'curl … | sh'`).
+var wrapperJoins = map[string]bool{"watch": true}
+
+// wrapperArgInputs are the wrappers that build the arguments of the
+// program they run from their own standard input (xargs, and parallel when
+// it is not given --pipe or --pipepart), so the program's standard input is
+// not the line's (see programInput).
+var wrapperArgInputs = map[string]bool{"xargs": true, "parallel": true}
+
+// wrapperStdinPipes are the options with which a wrapperArgInputs wrapper
+// passes its standard input on to the program instead (`parallel --pipe
+// sh`).
+var wrapperStdinPipes = map[string][]string{"parallel": {"--pipe", "--pipepart"}}
 
 // wrapperLookups are options with which a wrapper only looks its operands up
 // instead of running them (`command -v git` prints where git is).
@@ -147,6 +208,16 @@ type ProgramRun struct {
 	CommandString bool
 	StringHead    string
 	StringRest    int
+	// StringShell is set when that command line runs through a shell
+	// (wrapperShellStrings: `flock -c`, watch), so it is a script that
+	// Script reports, rather than words split as `env -S` splits them.
+	StringShell bool
+	// StringOnly is set when the command line is a -c option's argument
+	// alone (flock -c, script -c), not operands joined into one (watch):
+	// in words as the shell passes them, the words from StringRest on are
+	// the wrapper's own operands (the lock file, the typescript FILE), and
+	// only in words split from unquoted text do they continue the string.
+	StringOnly bool
 	// LookupOnly is set when `command -v`/`-V` only looks its operands up,
 	// which tests whether they resolve.
 	LookupOnly bool
@@ -165,6 +236,11 @@ type ProgramRun struct {
 	// another working directory (see wrapperChdirs), so a relative program
 	// path resolves there.
 	DirChanged bool
+	// UserShell is set when Index is -1 because the last wrapper is given
+	// no command and so runs the user's shell (wrapperShells: `chroot /`,
+	// `unshare -r`, `script -q /dev/null`), which reads its program from
+	// standard input. No word names that shell.
+	UserShell bool
 }
 
 // RunsProgram reports whether the words run a program, named or not.
@@ -173,10 +249,11 @@ func (r ProgramRun) RunsProgram() bool { return r.Index >= 0 || r.CommandString 
 // Program describes the program the words run, following wrappers the way
 // ProgramWordIndex does. When Index is -1 and neither CommandString nor
 // LookupOnly is set, the words run no program at all: there are no words, or
-// a wrapper is given no command (`exec 2>/dev/null`, `timeout 30`).
+// a wrapper is given no command (`exec 2>/dev/null`, `timeout 30`), unless
+// UserShell says that wrapper then runs the user's shell.
 func Program(words []string) ProgramRun {
 	run := ProgramRun{ShellRuns: true}
-	i := 0
+	i, last := 0, ""
 	for i < len(words) {
 		name := wrapperName(words[i])
 		if !commandWrappers[name] {
@@ -187,7 +264,9 @@ func Program(words []string) ProgramRun {
 			run.Exec = true
 		}
 		run.ShellRuns = run.ShellRuns && shellRunWrappers[words[i]]
+		last = name
 		i++
+		positional := false // whether the wrapper's own operand was read
 	operands:
 		for i < len(words) {
 			w := words[i]
@@ -198,19 +277,25 @@ func Program(words []string) ProgramRun {
 			case isOptionWord(w):
 				opts, n := parseWrapperOption(name, words, i)
 				if k := slices.IndexFunc(opts, func(o WrapperOption) bool { return o.Is(wrapperCommandStrings[name]...) }); k >= 0 {
-					return ProgramRun{Index: -1, CommandString: true, Exec: run.Exec, StringHead: opts[k].Arg, StringRest: i + n}
+					return commandString(name, run, opts[k].Arg, i+n)
 				}
 				if slices.ContainsFunc(opts, func(o WrapperOption) bool { return o.Is(wrapperLookups[name]...) }) {
 					return ProgramRun{Index: -1, LookupOnly: true}
 				}
-				run.PathChanged = run.PathChanged || slices.ContainsFunc(opts, func(o WrapperOption) bool {
-					return o.Is(wrapperEnvResets[name]...) || o.Is(wrapperEnvUnsets[name]...) && o.Arg == "PATH"
-				})
+				run.PathChanged = run.PathChanged || optionsClearEnv(name, opts, func(v string) bool { return v == "PATH" })
 				run.DirChanged = run.DirChanged || slices.ContainsFunc(opts, func(o WrapperOption) bool { return o.Is(wrapperChdirs[name]...) })
 				i += n
-			case wrapperPositionals[name]:
+			case wrapperPositionals[name] && !positional:
 				i++ // the wrapper's own operand; the next word is the program
-				break operands
+				positional = true
+				if i+1 < len(words) && (WrapperOption{Name: words[i]}).Is(wrapperCommandStrings[name]...) {
+					return commandString(name, run, words[i+1], i+2) // `flock FILE -c CMD`
+				}
+				if !wrapperPermutes[name] {
+					break operands
+				}
+			case wrapperJoins[name]:
+				return commandString(name, run, w, i+1)
 			case w != "" && w[0] >= '0' && w[0] <= '9', isAssignment(w):
 				run.PathChanged = run.PathChanged || wrapperSetsEnv[name] && strings.HasPrefix(w, "PATH=")
 				i++
@@ -219,7 +304,18 @@ func Program(words []string) ProgramRun {
 			}
 		}
 	}
-	return ProgramRun{Index: -1}
+	return ProgramRun{Index: -1, UserShell: wrapperShells[last]}
+}
+
+// commandString is the ProgramRun of the wrapper name, reached as run
+// describes, taking the command line head followed by the words from index
+// rest on.
+func commandString(name string, run ProgramRun, head string, rest int) ProgramRun {
+	return ProgramRun{
+		Index: -1, CommandString: true, Exec: run.Exec,
+		StringHead: head, StringRest: rest, StringShell: wrapperShellStrings[name],
+		StringOnly: wrapperShellStrings[name] && !wrapperJoins[name],
+	}
 }
 
 // shellRunWrappers are the wrappers that are builtins running their operand
@@ -264,6 +360,26 @@ func WrapperOptions(wrapper string, args []string) []WrapperOption {
 		i += n
 	}
 	return out
+}
+
+// WrapperClearsEnv reports whether the wrapper program wrapper, given args,
+// the words after it, runs its command without a variable isName accepts:
+// with an empty environment (`env -i`, `env -`, `--ignore-environment`) or
+// with that variable unset (`env -u NAME`, `--unset=NAME`, `-uNAME`), in any
+// spelling WrapperOptions reads. A wrapper that cannot clear one (`sudo -u`
+// names a user) never does.
+func WrapperClearsEnv(wrapper string, args []string, isName func(string) bool) bool {
+	name := wrapperName(wrapper)
+	return optionsClearEnv(name, WrapperOptions(name, args), isName)
+}
+
+// optionsClearEnv reports whether opts, the options of the wrapper name,
+// start its command from an empty environment (wrapperEnvResets) or unset a
+// variable isName accepts (wrapperEnvUnsets).
+func optionsClearEnv(name string, opts []WrapperOption, isName func(string) bool) bool {
+	return slices.ContainsFunc(opts, func(o WrapperOption) bool {
+		return o.Is(wrapperEnvResets[name]...) || o.Is(wrapperEnvUnsets[name]...) && isName(o.Arg)
+	})
 }
 
 // isOptionWord reports whether w is an option word: it starts with "-" and
@@ -358,8 +474,16 @@ type ScriptRun struct {
 }
 
 // Script returns the script the words run through a shell's -c option
-// (`sh -c '...'`, `bash -ec '...'`) or eval.
+// (`sh -c '...'`, `bash -ec '...'`), eval, or a wrapper that runs its
+// command string through a shell (`flock FILE -c '...'`, `watch '...'`, see
+// ProgramRun.StringShell).
 func Script(words []string) (ScriptRun, bool) {
+	if run := Program(words); run.CommandString && run.StringShell {
+		if run.StringOnly {
+			return ScriptRun{Script: run.StringHead}, true
+		}
+		return ScriptRun{Script: strings.Join(append([]string{run.StringHead}, words[run.StringRest:]...), " ")}, true
+	}
 	for _, i := range CommandWordIndexes(words) {
 		name := wrapperName(words[i])
 		if name == "eval" {

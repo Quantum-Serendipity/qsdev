@@ -2,11 +2,10 @@ package check
 
 import (
 	"maps"
-	"os"
-	"path/filepath"
 	"slices"
 
-	"github.com/Quantum-Serendipity/qsdev/internal/surgery"
+	"github.com/Quantum-Serendipity/qsdev/internal/mcphealth"
+	"github.com/Quantum-Serendipity/qsdev/internal/mcpregistry"
 	"github.com/Quantum-Serendipity/qsdev/pkg/branding"
 )
 
@@ -90,29 +89,82 @@ func CheckRequiredTools(ctx CheckContext) []CheckResult {
 }
 
 // missingMCPServers returns a failure for each always-on tool whose server
-// ctx.RequiredMCPServers requires and the project's .mcp.json lacks.
+// ctx.RequiredMCPServers requires and the project's .mcp.json lacks, or
+// configures as a definition ctx.TrustedMCP does not vouch for.
 func missingMCPServers(ctx CheckContext) []CheckResult {
 	if len(ctx.RequiredMCPServers) == 0 {
 		return nil
 	}
-	// A missing or unreadable file configures no server; each required one
-	// is reported below.
-	content, _ := os.ReadFile(filepath.Join(ctx.ProjectRoot, MCPConfigRelPath))
+	// A missing, unreadable or unparseable file (mcpconfig also refuses keys
+	// that Claude Code and qsdev would read differently) configures no
+	// server; each required one is reported below.
+	servers, readErr := mcpregistry.ConfiguredServers(ctx.ProjectRoot, nil)
+	configured := make(map[string]mcphealth.ServerConfig, len(servers))
+	for _, s := range servers {
+		configured[s.Name] = s
+	}
 	var results []CheckResult
 	for _, tool := range slices.Sorted(maps.Keys(ctx.RequiredMCPServers)) {
 		server := ctx.RequiredMCPServers[tool]
-		if surgery.JSONHasMCPServer(content, server) {
+		cfg, ok := configured[server]
+		if ok {
+			if r, bad := untrustedMCPServer(ctx, tool, cfg); bad {
+				results = append(results, r)
+			}
 			continue
 		}
-		results = append(results, CheckResult{
-			Category: CategoryRequiredTools,
-			Name:     "tool_mcp_server_missing_" + tool,
-			Status:   StatusFail,
-			Severity: SeverityHigh,
-			Message:  "Always-on tool " + tool + " is enabled but its MCP server " + server + " is missing from " + MCPConfigRelPath,
-			Remediation: "Run `qsdev init --update` to restore the " + server + " server, or `qsdev disable " + tool +
-				" --force` to opt out explicitly",
-		})
+		results = append(results, missingMCPServer(tool, server, readErr))
 	}
 	return results
+}
+
+// missingMCPServer returns the failure for tool's required server, absent
+// from .mcp.json or, when readErr is set, in a file that could not be read.
+// `qsdev init --update` merges onto the file and keeps what it cannot read,
+// so an unreadable file is restored by overwriting it.
+func missingMCPServer(tool, server string, readErr error) CheckResult {
+	r := CheckResult{
+		Category: CategoryRequiredTools,
+		Name:     "tool_mcp_server_missing_" + tool,
+		Status:   StatusFail,
+		Severity: SeverityHigh,
+		Message:  "Always-on tool " + tool + " is enabled but its MCP server " + server + " is missing from " + MCPConfigRelPath,
+		Remediation: "Run `qsdev init --update` to restore the " + server + " server, or `qsdev disable " + tool +
+			" --force` to opt out explicitly",
+	}
+	if readErr != nil {
+		r.Message = "Always-on tool " + tool + " is enabled but its MCP server " + server + " cannot be read from " +
+			MCPConfigRelPath + ": " + readErr.Error()
+		r.Remediation = restoreMCPConfigRemediation(tool)
+	}
+	return r
+}
+
+// restoreMCPConfigRemediation is the remediation for a required server whose
+// .mcp.json entry must be replaced by the generated one.
+func restoreMCPConfigRemediation(tool string) string {
+	return "Run `qsdev update --configs-only --overwrite-modified` to restore the generated " + MCPConfigRelPath +
+		" (this discards other edits to managed files), or `qsdev disable " + tool + " --force` to opt out explicitly"
+}
+
+// untrustedMCPServer returns the failure for tool's required server when its
+// configured entry cfg is not a definition ctx.TrustedMCP vouches for, and
+// reports whether there is one. With ctx.TrustedMCP unknown there is none.
+func untrustedMCPServer(ctx CheckContext, tool string, cfg mcphealth.ServerConfig) (CheckResult, bool) {
+	if ctx.TrustedMCP == nil {
+		return CheckResult{}, false
+	}
+	diff := mcpregistry.TrustMismatch(cfg, ctx.TrustedMCP[cfg.Name])
+	if diff == "" {
+		return CheckResult{}, false
+	}
+	return CheckResult{
+		Category: CategoryRequiredTools,
+		Name:     "tool_mcp_server_untrusted_" + tool,
+		Status:   StatusFail,
+		Severity: SeverityHigh,
+		Message: "Always-on tool " + tool + " is enabled but its MCP server " + cfg.Name + " in " + MCPConfigRelPath +
+			" is not a definition qsdev trusts: " + diff,
+		Remediation: restoreMCPConfigRemediation(tool),
+	}, true
 }

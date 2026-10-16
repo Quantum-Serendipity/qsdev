@@ -15,7 +15,6 @@ import (
 	"github.com/Quantum-Serendipity/qsdev/internal/fileutil"
 	"github.com/Quantum-Serendipity/qsdev/pkg/branding"
 	pkgfileutil "github.com/Quantum-Serendipity/qsdev/pkg/fileutil"
-	"github.com/Quantum-Serendipity/qsdev/pkg/generate"
 )
 
 // backupTimestampLayout is fixed-width, so lexicographic order of backup names
@@ -96,7 +95,7 @@ func createBackup(projectRoot, relPath string) (string, error) {
 }
 
 // checkBackupDir refuses a backup directory that resolves, through symlinks,
-// outside projectRoot. Backups are created exclusively (never replacing an
+// outside projectRoot or into its .git. Backups are created exclusively (never replacing an
 // existing file), so they cannot go through fileutil.WriteFileAtomicInRoot;
 // this applies the same containment rule before the directory is created.
 func checkBackupDir(projectRoot, dir string) error {
@@ -104,8 +103,8 @@ func checkBackupDir(projectRoot, dir string) error {
 	if err != nil {
 		return fmt.Errorf("locating backup directory %s: %w", dir, err)
 	}
-	if err := generate.ValidateDestination(projectRoot, rel); err != nil {
-		return fmt.Errorf("backup directory %s: %w: %w", rel, pkgfileutil.ErrOutsideRoot, err)
+	if _, err := pkgfileutil.ResolveInRoot(projectRoot, rel); err != nil {
+		return fmt.Errorf("backup directory %s: %w", rel, err)
 	}
 	return nil
 }
@@ -158,9 +157,12 @@ func pruneBackups(projectRoot, relPath string, keep int) error {
 	// Remove the oldest entries (those at the beginning of the sorted slice).
 	toRemove := matches[:len(matches)-keep]
 	for _, name := range toRemove {
-		path := filepath.Join(dir, name)
-		if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
-			return fmt.Errorf("removing old backup %s: %w", path, err)
+		rel, err := filepath.Rel(projectRoot, filepath.Join(dir, name))
+		if err != nil {
+			return fmt.Errorf("locating backup %s: %w", name, err)
+		}
+		if err := pkgfileutil.RemoveInRoot(projectRoot, rel); err != nil && !errors.Is(err, fs.ErrNotExist) {
+			return fmt.Errorf("removing old backup %s: %w", rel, err)
 		}
 	}
 

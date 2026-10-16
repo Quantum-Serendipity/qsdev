@@ -6,6 +6,7 @@ import (
 	"regexp"
 	"strings"
 
+	"github.com/Quantum-Serendipity/qsdev/internal/pathmatch"
 	"github.com/Quantum-Serendipity/qsdev/internal/selfprotect/canon"
 )
 
@@ -65,12 +66,18 @@ func findMutatesProtected(sc scannedCommand) bool {
 
 // findProbesUnder returns the probes as find would print them below start:
 // every relative probe, and every absolute probe within the directory start
-// resolves to.
+// resolves to. When start is a git directory (gitControlHolder), the probes
+// inside a .git directory are also taken as lying directly below it
+// (`find .git -path '.git/hooks/*'`).
 func findProbesUnder(sc scannedCommand, start string, relative, absolute []string) []string {
 	prefix := strings.TrimSuffix(filepath.ToSlash(expandTilde(start)), "/")
+	gitDir := gitControlHolder(sc, start)
 	probes := make([]string, 0, len(relative))
 	for _, rel := range relative {
 		probes = append(probes, prefix+"/"+rel)
+		if inner, ok := strings.CutPrefix(rel, ".git/"); ok && gitDir {
+			probes = append(probes, prefix+"/"+inner)
+		}
 	}
 	dir, known := resolveWord(sc, start)
 	if !known {
@@ -152,9 +159,10 @@ func splitFindArgs(args []string) (starts, exprs []string) {
 // protected entry: it names one, it is the working directory or an ancestor of
 // it, it is an ancestor of the home directory or /etc, or it is at or above a
 // home- or system-anchored protected location (~/.config, say), also when an
-// expansion spells the home directory (see expandedReachesAncestor).
+// expansion spells the home directory (see expandedReachesAncestor), or it is
+// a git directory, which holds the git-control locations (gitControlHolder).
 func findStartCanReachProtected(sc scannedCommand, start string) bool {
-	if refersProtected(sc, start) || expandedReachesAncestor(sc, start) {
+	if refersProtected(sc, start) || expandedReachesAncestor(sc, start) || gitControlHolder(sc, start) {
 		return true
 	}
 	p, known := resolveWord(sc, start)
@@ -177,58 +185,70 @@ func findStartCanReachProtected(sc scannedCommand, start string) bool {
 // (fail closed).
 func compileFindPattern(pred, glob string) func(probe string) bool {
 	fold := strings.HasPrefix(pred, "-i")
-	if fold {
-		glob = strings.ToLower(glob)
-	}
 	norm := func(probe string) string {
 		if fold {
 			return strings.ToLower(probe)
 		}
 		return probe
 	}
+	// fnmatch reads brackets as the shell does (`[!x]`, `[[:upper:]]`). The
+	// rewrite comes before folding so a class's letters fold with the name.
+	pattern, ok := pathmatch.ShellPattern(glob)
+	if !ok {
+		return func(string) bool { return true }
+	}
+	pattern = norm(pattern)
 	if findNamePredicates[pred] {
 		return func(probe string) bool {
-			ok, err := path.Match(glob, path.Base(norm(probe)))
+			ok, err := path.Match(pattern, path.Base(norm(probe)))
 			return ok || err != nil
 		}
 	}
-	re, err := regexp.Compile("^" + globToRegexp(glob) + "$")
+	expr, ok := matchPatternToRegexp(pattern)
+	if !ok {
+		return func(string) bool { return true }
+	}
+	re, err := regexp.Compile("^" + expr + "$")
 	if err != nil {
 		return func(string) bool { return true }
 	}
 	return func(probe string) bool { return re.MatchString(norm(probe)) }
 }
 
-// globToRegexp converts a find -path glob to a regular expression in which *
-// and ? also match '/', as fnmatch without FNM_PATHNAME does.
-func globToRegexp(glob string) string {
+// matchPatternToRegexp converts a find -path glob, already in path.Match
+// syntax (pathmatch.ShellPattern), to a regular expression in which * and ?
+// also match '/', as fnmatch without FNM_PATHNAME does. A path.Match class is
+// valid regexp class syntax, so it is copied as written. ok is false for an
+// unterminated class.
+func matchPatternToRegexp(pattern string) (string, bool) {
 	var b strings.Builder
-	for i := 0; i < len(glob); i++ {
-		switch c := glob[i]; c {
+	for i := 0; i < len(pattern); i++ {
+		switch c := pattern[i]; c {
 		case '*':
-			b.WriteString(".*")
+			b.WriteString("(?s:.*)")
 		case '?':
-			b.WriteString(".")
+			b.WriteString("(?s:.)")
 		case '[':
-			end := strings.IndexByte(glob[i+1:], ']')
-			if end < 0 {
-				b.WriteString(`\[`)
-				continue
+			j := i + 1
+			for j < len(pattern) && pattern[j] != ']' {
+				if pattern[j] == '\\' {
+					j++
+				}
+				j++
 			}
-			class := glob[i+1 : i+1+end]
-			if strings.HasPrefix(class, "!") {
-				class = "^" + class[1:]
+			if j >= len(pattern) {
+				return "", false
 			}
-			b.WriteString("[" + strings.ReplaceAll(class, `\`, `\\`) + "]")
-			i += end + 1
+			b.WriteString(pattern[i : j+1])
+			i = j
 		case '\\':
-			if i+1 < len(glob) {
+			if i+1 < len(pattern) {
 				i++
-				b.WriteString(regexp.QuoteMeta(string(glob[i])))
+				b.WriteString(regexp.QuoteMeta(string(pattern[i])))
 			}
 		default:
 			b.WriteString(regexp.QuoteMeta(string(c)))
 		}
 	}
-	return b.String()
+	return b.String(), true
 }

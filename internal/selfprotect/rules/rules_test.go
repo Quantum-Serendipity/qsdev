@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/Quantum-Serendipity/qsdev/internal/selfprotect/cmdscan"
+	"github.com/Quantum-Serendipity/qsdev/pkg/branding"
 )
 
 func homeDir(t *testing.T) string {
@@ -943,10 +944,10 @@ func TestSP009_ProcessManagementBlock(t *testing.T) {
 			verdict: Deny,
 		},
 		{
-			name: "deny systemctl stop gdev",
+			name: "deny systemctl stop of the app",
 			ctx: EvalContext{
 				ToolName: "Bash",
-				Command:  "systemctl stop gdev",
+				Command:  "systemctl stop " + branding.Get().AppName,
 			},
 			verdict: Deny,
 		},
@@ -1498,40 +1499,62 @@ func TestINT001_BinaryModificationBlock(t *testing.T) {
 	}
 }
 
+// TestSP012_BypassCommandBlock pins that SP-012 judges the hook bypass
+// commands as the program runs them (cmdscan.InvokedSpecs over the reserved
+// spec), for every shell tool: quoted, escaped and computed spellings deny,
+// a mention in text denies as on base, and other hook subcommands stay open.
 func TestSP012_BypassCommandBlock(t *testing.T) {
 	t.Parallel()
-
 	tests := []struct {
-		name    string
-		ctx     EvalContext
-		verdict Verdict
+		tool, command string
+		verdict       Verdict
 	}{
-		{
-			name: "deny qsdev hook bypass",
-			ctx: EvalContext{
-				ToolName: "Bash",
-				Command:  "qsdev hook bypass preToolUse",
-			},
-			verdict: Deny,
-		},
-		{
-			name: "allow qsdev hook run",
-			ctx: EvalContext{
-				ToolName: "Bash",
-				Command:  "qsdev hook run preToolUse",
-			},
-			verdict: Allow,
-		},
+		{"", "qsdev hook bypass preToolUse", Deny},
+		{"", "qsdev hook bypass-next", Deny},
+		{"", `"qsdev" hook bypass-next`, Deny},
+		{"", `q''sdev hook bypass-next`, Deny},
+		{"", "Q=qsdev; $Q hook bypass preToolUse", Deny},
+		{"", "qsdev --debug hook bypass", Deny},
+		{"", `sh -c "qsdev hook bypass"`, Deny},
+		{"", "/usr/local/bin/qsdev hook bypass", Deny},
+		{"", "git commit -m 'document qsdev hook bypass removal'", Deny},
+		{"", "qsdev hook run preToolUse", Allow},
+		{"", "qsdev status", Allow},
+		{"", "qsdev hook bypassx", Allow},
+		{"", "echo hook bypass", Allow},
+		{"PowerShell", "qsdev hook bypass-next", Deny},
+		{"PowerShell", "& qsdev 'hook','bypass'", Deny},
+		{"PowerShell", "Start-Process -ArgumentList 'hook','bypass' -FilePath qsdev", Deny},
+		{"PowerShell", "qsdev hook run preToolUse", Allow},
 	}
-
 	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			t.Parallel()
-			v, _ := sp012.Evaluate(&tt.ctx)
-			if v != tt.verdict {
-				t.Errorf("got %v, want %v", v, tt.verdict)
-			}
-		})
+		tools := []string{"Bash", "Monitor"}
+		if tt.tool != "" {
+			tools = []string{tt.tool}
+		}
+		for _, tool := range tools {
+			t.Run(tool+"/"+tt.command, func(t *testing.T) {
+				t.Parallel()
+				ctx := EvalContext{ToolName: tool, Command: tt.command}
+				if v, reason := sp012.Evaluate(&ctx); v != tt.verdict {
+					t.Errorf("SP-012(%q) = %v (%s), want %v", tt.command, v, reason, tt.verdict)
+				}
+			})
+		}
+	}
+}
+
+// TestSP012_WhiteLabel pins that the bypass spec names no program of its
+// own: SP-012 passes the app name from branding, so a white-labelled build
+// guards its own bypass command and not qsdev's.
+func TestSP012_WhiteLabel(t *testing.T) {
+	t.Parallel()
+	app := branding.Get().AppName
+	if hits := cmdscan.InvokedSpecs("acme hook bypass-next", "acme", hookBypassSpecs); len(hits) == 0 {
+		t.Error("the bypass spec does not match a white-labelled app's bypass command")
+	}
+	if hits := cmdscan.InvokedSpecs(app+" hook bypass-next", "acme", hookBypassSpecs); len(hits) != 0 {
+		t.Errorf("the bypass spec for acme matches %s's bypass command", app)
 	}
 }
 
@@ -1638,7 +1661,7 @@ var sensitiveFixture = withInfoFlags([]cmdscan.CommandSpec{
 		{Spellings: []string{"--no-strict"}, Value: true},
 		{Spellings: []string{"--strict"}, Value: false},
 	}},
-	{Path: [][]string{{"disable"}}, Args: func() []string { return []string{"attach-guard", "gitleaks"} }},
+	{Path: [][]string{{"disable"}}, Args: func() ([]string, error) { return []string{"attach-guard", "gitleaks"}, nil }},
 })
 
 // withInfoFlags adds cobra's help and version flags to each spec's
@@ -1842,16 +1865,93 @@ func TestSP014_CLISecurityControlBlock(t *testing.T) {
 		{"qsdev status", Allow},
 		{"qsdevx teardown --force", Allow},
 		{"git commit -m 'teardown'", Allow},
+		// W0N-18: a command split across variables, IFS or a line
+		// continuation.
+		{`x="qsdev session"; $x allow`, Deny},
+		{"IFS=,; X=qsdev,defaults,pin; $X", Deny},
+		{"x='qsdev.exe session allow'; $x", Deny},
+		{`x=qsdev; y="$x session allow"; $y`, Deny},
+		{"qsdev \\\nsession allow foo", Deny},
+		{"qs\\\ndev session allow foo", Deny},
+		// An escaped blank inside a value is the same value as a quoted
+		// one.
+		{`x=qsdev\ session; $x allow`, Deny},
+		{"x=qsdev\\\tsession; $x allow", Deny},
+		{`x=qsdev; y=$x\ session; $y allow`, Deny},
+		{"Q=qsdev; $Q status", Allow},
+		{"Q=/usr/bin/qsdev; $Q status", Allow},
+		{"Q=qsdev; $Q", Allow},
+		{"Q=qsdev; $Q --help", Allow},
+		{"qsdev check", Allow},
+		{"qsdev --help", Allow},
 	}
 	for _, tt := range tests {
-		t.Run(tt.command, func(t *testing.T) {
-			t.Parallel()
-			ctx := EvalContext{ToolName: "Bash", Command: tt.command, SensitiveCommands: sensitiveFixture}
-			v, reason := sp014.Evaluate(&ctx)
-			if v != tt.verdict {
-				t.Errorf("SP-014(%q) = %v (%s), want %v", tt.command, v, reason, tt.verdict)
-			}
-		})
+		for _, tool := range []string{"Bash", "Monitor"} {
+			t.Run(tool+"/"+tt.command, func(t *testing.T) {
+				t.Parallel()
+				ctx := EvalContext{ToolName: tool, Command: tt.command, SensitiveCommands: sensitiveFixture}
+				v, reason := sp014.Evaluate(&ctx)
+				if v != tt.verdict {
+					t.Errorf("SP-014(%q) = %v (%s), want %v", tt.command, v, reason, tt.verdict)
+				}
+			})
+		}
+	}
+}
+
+// TestSP014_MarkerStrip pins that a line that may run the CLI may not clear
+// an agent-session marker (canon.AgentEnvMarkers), which the CLI's human gate
+// reads: env -u of a marker, env's empty environment, unset, an empty prefix
+// assignment, export -n, or a variable named at run time, with the CLI named
+// or its program word computed, also inside `sh -c`. Clearing a marker for
+// another program, or another variable for the CLI, stays open.
+func TestSP014_MarkerStrip(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		command string
+		verdict Verdict
+	}{
+		{"env -u CLAUDECODE qsdev status", Deny},
+		{"env -u CLAUDE_CODE_ENTRYPOINT qsdev teardown --dry-run", Deny},
+		{"env -u CLAUDE_CODE_EXECPATH qsdev status", Deny},
+		{"env -u AI_AGENT qsdev status", Deny},
+		{"env --unset=CLAUDECODE qsdev status", Deny},
+		{"env -i qsdev status", Deny},
+		{"env - qsdev status", Deny},
+		{"env --ignore-environment qsdev check", Deny},
+		{"unset CLAUDECODE; qsdev status", Deny},
+		{"unset AI_AGENT && qsdev status", Deny},
+		{"CLAUDECODE= qsdev status", Deny},
+		{"export -n CLAUDECODE; qsdev status", Deny},
+		{"export $V=; qsdev status", Deny},
+		{"unset CLAUDECODE; $Q status", Deny},
+		{"env -u CLAUDECODE $Q status", Deny},
+		{"exec -c qsdev status", Deny},
+		{`sh -c 'unset CLAUDECODE; qsdev status'`, Deny},
+		{`unset CLAUDECODE; sh -c "qsdev status"`, Deny},
+		{"timeout 5 env -u CLAUDECODE qsdev status", Deny},
+		{"env -u CLAUDECODE npm test", Allow},
+		{"unset CLAUDECODE; npm test", Allow},
+		{"CLAUDECODE= go test ./...", Allow},
+		{"env -u HOME_CACHE qsdev status", Allow},
+		{"unset FOO; qsdev status", Allow},
+		{"qsdev status", Allow},
+		{"echo $CLAUDECODE; qsdev status", Allow},
+	}
+	for _, tt := range tests {
+		for _, tool := range []string{"Bash", "Monitor"} {
+			t.Run(tool+"/"+tt.command, func(t *testing.T) {
+				t.Parallel()
+				ctx := EvalContext{ToolName: tool, Command: tt.command, SensitiveCommands: sensitiveFixture}
+				v, reason := sp014.Evaluate(&ctx)
+				if v != tt.verdict {
+					t.Fatalf("SP-014(%q) = %v (%s), want %v", tt.command, v, reason, tt.verdict)
+				}
+				if v == Deny && !strings.Contains(reason, "human gate") {
+					t.Errorf("SP-014(%q) reason %q, want it to name the binary's human gate", tt.command, reason)
+				}
+			})
+		}
 	}
 }
 
@@ -1882,6 +1982,7 @@ func TestSP014_Reason(t *testing.T) {
 		{`Q=qsdev; env -u CLAUDECODE script -qec "$Q defaults pin" /dev/null`, computed},
 		{"qsdev $CMD", computed},
 		{"qsdev disable $TOOL; qsdev teardown", "'qsdev teardown' weakens a guardrail"},
+		{"unset CLAUDECODE; qsdev status", "the command line clears an agent-session marker"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.command, func(t *testing.T) {

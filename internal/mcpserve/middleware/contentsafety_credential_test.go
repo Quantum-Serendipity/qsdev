@@ -2,11 +2,131 @@ package middleware
 
 import (
 	"context"
+	"fmt"
 	"strings"
 	"testing"
 
 	"github.com/Quantum-Serendipity/qsdev/internal/mcpserve/spi"
+	"github.com/Quantum-Serendipity/qsdev/internal/secrets"
+	"github.com/Quantum-Serendipity/qsdev/internal/secrets/secretstest"
 )
+
+// canonSampleCase is one secrets canon sample embedded in context and the tool
+// result that carries it in Text and in nested Structured leaves.
+type canonSampleCase struct {
+	name, sample, input, prefix, suffix string
+}
+
+// canonSampleCases lists every secretstest sample of every secrets.ValuePatterns
+// entry, failing the test for a canon entry that has no sample.
+func canonSampleCases(t *testing.T) []canonSampleCase {
+	t.Helper()
+	samples := secretstest.ValuePatternSamples()
+	var cases []canonSampleCase
+	for _, vp := range secrets.ValuePatterns {
+		if len(samples[vp.Name]) == 0 {
+			t.Errorf("canon entry %q has no secretstest sample", vp.Name)
+		}
+		for i, sample := range samples[vp.Name] {
+			input, prefix, suffix := secretstest.InContext(sample)
+			cases = append(cases, canonSampleCase{
+				name: fmt.Sprintf("%s/%d", vp.Name, i), sample: sample,
+				input: input, prefix: prefix, suffix: suffix,
+			})
+		}
+	}
+	return cases
+}
+
+// result returns a fresh tool result carrying the case input in Text and in a
+// map leaf and a nested slice leaf of Structured.
+func (c canonSampleCase) result() *spi.ToolResult {
+	return &spi.ToolResult{
+		Text:       c.input,
+		Structured: map[string]any{"detail": c.input, "nested": []any{c.input}},
+	}
+}
+
+// stringLeaves collects every string leaf of a JSON-shaped value.
+func stringLeaves(v any) []string {
+	switch x := v.(type) {
+	case string:
+		return []string{x}
+	case map[string]any:
+		var out []string
+		for _, e := range x {
+			out = append(out, stringLeaves(e)...)
+		}
+		return out
+	case []any:
+		var out []string
+		for _, e := range x {
+			out = append(out, stringLeaves(e)...)
+		}
+		return out
+	default:
+		return nil
+	}
+}
+
+// TestContentSafety_RedactsEveryCanonSample proves the MCP tool-result surface
+// covers every token shape in the secrets canon: for a non-vend tool, each
+// sample is scrubbed from Text and from every Structured string leaf, while the
+// text around it survives.
+func TestContentSafety_RedactsEveryCanonSample(t *testing.T) {
+	t.Parallel()
+	for _, c := range canonSampleCases(t) {
+		t.Run(c.name, func(t *testing.T) {
+			t.Parallel()
+			out := runContentSafetyWithTool(t, "qsdev_security_scan", CategorySecurity, c.result())
+
+			t.Run("text", func(t *testing.T) {
+				if strings.Contains(out.Text, c.sample) {
+					t.Errorf("ContentSafety left the sample in Text: %q", out.Text)
+				}
+				if !strings.HasPrefix(out.Text, c.prefix) || !strings.HasSuffix(out.Text, c.suffix) {
+					t.Errorf("ContentSafety lost the surrounding text: %q", out.Text)
+				}
+			})
+			t.Run("structured", func(t *testing.T) {
+				leaves := stringLeaves(out.Structured)
+				if len(leaves) != 2 {
+					t.Fatalf("Structured has %d string leaves, want 2: %#v", len(leaves), out.Structured)
+				}
+				for _, leaf := range leaves {
+					if strings.Contains(leaf, c.sample) {
+						t.Errorf("ContentSafety left the sample in a Structured leaf: %q", leaf)
+					}
+				}
+			})
+		})
+	}
+}
+
+// TestContentSafety_VendToolPassesCanonSamples guards the credential-vend
+// exemption as on base: the trusted vend tool's output carries every canon
+// sample through unchanged, in Text and in Structured.
+func TestContentSafety_VendToolPassesCanonSamples(t *testing.T) {
+	t.Parallel()
+	for _, c := range canonSampleCases(t) {
+		t.Run(c.name, func(t *testing.T) {
+			t.Parallel()
+			out := runContentSafetyWithTool(t, CredentialVendToolName, CategoryCredential, c.result())
+			if out.Text != c.input {
+				t.Errorf("vend tool Text = %q, want unchanged %q", out.Text, c.input)
+			}
+			leaves := stringLeaves(out.Structured)
+			if len(leaves) != 2 {
+				t.Fatalf("Structured has %d string leaves, want 2: %#v", len(leaves), out.Structured)
+			}
+			for _, leaf := range leaves {
+				if leaf != c.input {
+					t.Errorf("vend tool Structured leaf = %q, want unchanged %q", leaf, c.input)
+				}
+			}
+		})
+	}
+}
 
 // runContentSafetyWithTool drives ContentSafety with a ToolCallContext and
 // request whose tool name and category are set, so the credential-vend exemption

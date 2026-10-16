@@ -387,8 +387,10 @@ func TestPackageGuard_HookDecisions(t *testing.T) {
 			command: "setpriv --reuid 1000 /usr/bin/npm install evil-new", decision: "deny"},
 		{name: "command -v does not run", command: "command -v npm install", decision: "silent"},
 		{name: "flock FILE -c script", command: "flock /tmp/l -c 'npm install evil-new'", decision: "deny"},
+		// The glob is not a package name, but the archives it matches are
+		// unchecked local files (U17-10a), so it asks rather than staying silent.
 		{name: "local wheel glob is not a package", command: "pip install --only-binary :all: ./dist/*.whl",
-			decision: "silent"},
+			decision: "ask", reason: "local files matched by the glob ./dist/*.whl", updated: noRewrite},
 		{name: "unknown exec wrapper is rewritten in place", command: "docker run --rm node:20 npm install",
 			decision: "ask", updated: "docker run --rm node:20 npm install --ignore-scripts"},
 
@@ -686,6 +688,25 @@ func TestPackageGuard_HookDecisions(t *testing.T) {
 		{name: "gate: invalid value blocks", command: "npm install left-pad", decision: "deny",
 			reason: "PACKAGE_GUARD_NEW_DEP_GATE", env: []string{"PACKAGE_GUARD_NEW_DEP_GATE=block"}},
 
+		// U17-WS4: the team allowlist narrows what may be installed; it never skips the
+		// release-age or vulnerability checks, and a personal list can only narrow it.
+		{name: "team-allowlisted too-new release is still quarantined", command: "npm install --ignore-scripts evil-new",
+			decision: "deny", reason: "published", env: []string{"PACKAGE_GUARD_TEAM_ALLOWLIST=npm:evil-new"}},
+		{name: "team-allowlisted established package passes", command: "npm install --ignore-scripts left-pad",
+			decision: "silent", env: []string{"PACKAGE_GUARD_TEAM_ALLOWLIST=left-pad,lodash"}},
+		{name: "name missing from the team allowlist is denied", command: "npm install --ignore-scripts express",
+			decision: "deny", reason: "not on the team-approved list",
+			env: []string{"PACKAGE_GUARD_TEAM_ALLOWLIST=left-pad"}},
+		{name: "personal denylist narrows the team allowlist", command: "npm install --ignore-scripts left-pad",
+			decision: "deny", reason: "explicit denylist",
+			env: []string{"PACKAGE_GUARD_TEAM_ALLOWLIST=left-pad", "PACKAGE_GUARD_DENYLIST=left-pad"}},
+		{name: "team-allowlisted name satisfies the new-dependency gate", command: "npm install --ignore-scripts left-pad",
+			decision: "silent", env: []string{"PACKAGE_GUARD_TEAM_ALLOWLIST=npm:left-pad", "PACKAGE_GUARD_NEW_DEP_GATE=deny"},
+			files: map[string]string{"package-lock.json": `{"packages": {"": {}, "node_modules/lodash": {}}}`}},
+		{name: "personal allowlist cannot lift the team denylist", command: "npm install --ignore-scripts left-pad",
+			decision: "deny", reason: "team denylist",
+			env: []string{"PACKAGE_GUARD_TEAM_DENYLIST=left-pad", "PACKAGE_GUARD_ALLOWLIST=left-pad"}},
+
 		// W031/W076: option values are not package names.
 		{name: "cargo add -F value", command: "cargo add ripgrep -F derive", decision: "silent",
 			lookupsLack: "crates/derive"},
@@ -797,6 +818,27 @@ func TestPackageGuard_HookDecisions(t *testing.T) {
 		{name: "pip-audit option values are not paths", command: "pip-audit -f json -o out.json --desc on --path venv",
 			decision: "silent", noLookups: true},
 		{name: "cargo audit --json", command: "cargo audit --json", decision: "silent", noLookups: true},
+
+		// U17-10b: rebuild runs every installed package's lifecycle scripts, so
+		// it asks (no rewrite) unless scripts are already disabled.
+		{name: "npm rebuild", command: "npm rebuild", decision: "ask", reason: "lifecycle", updated: noRewrite,
+			noLookups: true},
+		{name: "npm rb", command: "npm rb", decision: "ask", reason: "lifecycle", updated: noRewrite, noLookups: true},
+		{name: "pnpm rebuild", command: "pnpm rebuild", decision: "ask", reason: "lifecycle", updated: noRewrite,
+			noLookups: true},
+		{name: "pnpm rb", command: "pnpm rb", decision: "ask", reason: "lifecycle", updated: noRewrite, noLookups: true},
+		{name: "yarn rebuild", command: "yarn rebuild", decision: "ask", reason: "lifecycle", updated: noRewrite,
+			noLookups: true},
+		{name: "npm rebuild --ignore-scripts", command: "npm rebuild --ignore-scripts", decision: "silent",
+			noLookups: true},
+		{name: "npm --ignore-scripts rebuild", command: "npm --ignore-scripts rebuild", decision: "silent",
+			noLookups: true},
+		{name: "npm_config_ignore_scripts=true npm rebuild", command: "npm_config_ignore_scripts=true npm rebuild",
+			decision: "silent", noLookups: true},
+		{name: "npm rebuild with scripts re-enabled", command: "npm rebuild --ignore-scripts=false", decision: "ask",
+			reason: "lifecycle", updated: noRewrite, noLookups: true},
+		{name: "nested npm rebuild asks", command: "bash -c 'npm rebuild'", decision: "ask", reason: "lifecycle",
+			updated: noRewrite, noLookups: true},
 
 		// Controls.
 		{name: "go build", command: "go build ./...", decision: "silent"},
@@ -1018,7 +1060,7 @@ func TestPackageGuard_VersionGateIsReachable(t *testing.T) {
 	python, template := guardTemplate(t)
 	const driver = `
 import ast, os
-tree = ast.parse(open(os.environ['PG_PATH']).read(), feature_version=(3, 7))
+tree = ast.parse(open(os.environ['PG_PATH'], encoding='utf-8').read(), feature_version=(3, 7))
 bad = [n.lineno for n in ast.walk(tree) if isinstance(n, ast.ImportFrom) and n.module == '__future__'
        and any(a.name == 'annotations' for a in n.names)]
 print('future annotations import at line %s' % bad[0] if bad else 'ok')

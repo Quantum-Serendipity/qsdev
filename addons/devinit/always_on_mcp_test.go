@@ -10,6 +10,7 @@ import (
 	"github.com/Quantum-Serendipity/qsdev/internal/check"
 	"github.com/Quantum-Serendipity/qsdev/internal/surgery"
 	"github.com/Quantum-Serendipity/qsdev/internal/toolreg"
+	"github.com/Quantum-Serendipity/qsdev/internal/toolreg/toolregtest"
 	"github.com/Quantum-Serendipity/qsdev/pkg/types"
 )
 
@@ -34,7 +35,7 @@ func initStandardProject(t *testing.T) string {
 func alwaysOnMCPTools(t *testing.T) []*toolreg.Tool {
 	t.Helper()
 	var out []*toolreg.Tool
-	for _, tool := range toolreg.DefaultRegistry().All() {
+	for _, tool := range toolregtest.Default(t).All() {
 		if tool.Default == toolreg.AlwaysOn && tool.MCPServer != "" {
 			out = append(out, tool)
 		}

@@ -657,3 +657,47 @@ func TestUpdateDryRun_ReleaseBuildQueriesNothing(t *testing.T) {
 		})
 	}
 }
+
+// TestUpdate_AddsLocalStateGitignoreEntries checks that `init --update` gives
+// a project whose .gitignore predates the hook audit log every local-state
+// entry.
+func TestUpdate_AddsLocalStateGitignoreEntries(t *testing.T) {
+	dir := initLifecycleProject(t)
+	writeProjectFile(t, dir, ".gitignore", "/bin/\n")
+
+	if out, err := executeInitCmd(t, dir, "--update"); err != nil {
+		t.Fatalf("update: %v\n%s", err, out)
+	}
+	assertGitignoreHasLocalStateEntries(t, dir)
+}
+
+// TestUpdate_CuratedGitignoreUnchanged checks that `init --update` ensures
+// only the local-state entries and, as on base, leaves a curated .gitignore
+// without the language defaults byte-identical.
+func TestUpdate_CuratedGitignoreUnchanged(t *testing.T) {
+	dir := initLifecycleProject(t)
+	want := curatedGitignore()
+	writeProjectFile(t, dir, ".gitignore", want)
+
+	if out, err := executeInitCmd(t, dir, "--update"); err != nil {
+		t.Fatalf("update: %v\n%s", err, out)
+	}
+	if got := readProjectFile(t, dir, ".gitignore"); got != want {
+		t.Errorf("update rewrote the project's .gitignore:\n--- got\n%s--- want\n%s", got, want)
+	}
+}
+
+// TestUpdate_DryRunLeavesGitignoreByteIdentical checks that a preview never
+// edits .gitignore, even one missing the local-state entries.
+func TestUpdate_DryRunLeavesGitignoreByteIdentical(t *testing.T) {
+	dir := initLifecycleProject(t)
+	const before = "/bin/\n"
+	writeProjectFile(t, dir, ".gitignore", before)
+
+	if out, err := executeInitCmd(t, dir, "--update", "--dry-run"); err != nil {
+		t.Fatalf("update --dry-run: %v\n%s", err, out)
+	}
+	if got := readProjectFile(t, dir, ".gitignore"); got != before {
+		t.Errorf("update --dry-run changed .gitignore:\n%s", got)
+	}
+}

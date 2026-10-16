@@ -18,6 +18,10 @@ golangci-lint run
 ```
 
 
+## Code Navigation
+
+LSP servers are configured for this project. See `.claude/rules/lsp-navigation.md` for the navigation protocol (use the LSP tool, not Grep, for code symbols).
+
 <!-- qsdev:skills -->
 ## Available Skills
 - `/qsdev-init` — Initialize qsdev project configuration
@@ -70,6 +74,9 @@ golangci-lint run
 <!-- qsdev:attach-guard -->
 - Safety-block hooks are enabled.
 <!-- /qsdev:attach-guard -->
+<!-- qsdev:container-security -->
+- **Container Security** scans images with Grype and signs with Cosign.
+<!-- /qsdev:container-security -->
 <!-- qsdev:context7 -->
 - **Context7** MCP provides library documentation lookups.
 <!-- /qsdev:context7 -->
@@ -82,15 +89,18 @@ golangci-lint run
 <!-- qsdev:local-docs-devdocs -->
 - **DevDocs** local documentation available for offline API reference (official docs, high trust).
 <!-- /qsdev:local-docs-devdocs -->
-<!-- qsdev:secretspec -->
-- **Secret Specification** declares required secrets for services and ecosystem modules.
-<!-- /qsdev:secretspec -->
+<!-- qsdev:semble -->
+- **Semble** semantic search available.
+<!-- /qsdev:semble -->
 <!-- qsdev:semgrep -->
 - **Semgrep SAST** scans code with ecosystem-aware rule sets.
 <!-- /qsdev:semgrep -->
 <!-- qsdev:socket-dev-mcp -->
 - **Socket.dev MCP** provides supply chain security analysis of dependencies.
 <!-- /qsdev:socket-dev-mcp -->
+<!-- qsdev:trail-of-bits-skills -->
+- Security review skills installed.
+<!-- /qsdev:trail-of-bits-skills -->
 <!-- qsdev:version-sentinel -->
 - **Version-Sentinel** MCP tools give advisory (non-blocking) dependency version checks for: go.mod. Use them when changing dependencies.
 <!-- /qsdev:version-sentinel -->

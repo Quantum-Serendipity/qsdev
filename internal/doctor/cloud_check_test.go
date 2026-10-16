@@ -5,6 +5,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/Quantum-Serendipity/qsdev/pkg/denyutil"
 	"github.com/Quantum-Serendipity/qsdev/pkg/ecosystem/modules/cloudcommon"
 )
 
@@ -18,11 +19,11 @@ func TestNewCloudSection(t *testing.T) {
 	reports := []cloudcommon.FailSafeReport{
 		cloudcommon.ValidateFailSafe(cloudcommon.AWS,
 			map[string]string{"AWS_PROFILE": "dev"},
-			cloudcommon.BashDenyRules(cloudcommon.AWS),
+			append(cloudcommon.BashDenyRules(cloudcommon.AWS), denyutil.HomeShellReadRules(".aws", true)...),
 			cloudcommon.ReadDenyPaths(cloudcommon.AWS)),
 		cloudcommon.ValidateFailSafe(cloudcommon.GCP,
 			map[string]string{"CLOUDSDK_ACTIVE_CONFIG_NAME": "<gcloud configuration name>"},
-			cloudcommon.BashDenyRules(cloudcommon.GCP),
+			append(cloudcommon.BashDenyRules(cloudcommon.GCP), denyutil.HomeShellReadRules(".config/gcloud", true)...),
 			cloudcommon.ReadDenyPaths(cloudcommon.GCP)),
 		cloudcommon.ValidateFailSafe(cloudcommon.Azure, nil, nil, nil),
 	}

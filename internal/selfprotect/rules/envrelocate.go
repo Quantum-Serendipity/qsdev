@@ -2,6 +2,7 @@ package rules
 
 import (
 	"path/filepath"
+	"regexp"
 	"slices"
 	"strings"
 
@@ -48,6 +49,34 @@ func relocatesProtected(command string, scs []scannedCommand) bool {
 		return c.AssignsDynamic || assignsEnv(home)(c) || clearsEnv(cleared)(c)
 	}
 	return anyCommandIn(cmds, 0, changesEnv, mentionsEnvName(home))
+}
+
+// clearsAgentMarker reports whether ctx's command may run the CLI app and
+// clears an agent-session marker (canon.AgentEnvMarkers), which the CLI's
+// human gate reads: a POSIX line that may run it (mayRunCLI: named, or a
+// computed program word) and, in a command of its own or of a script it runs
+// (`sh -c`, eval), runs env with an empty environment or the marker unset,
+// exec -c, or sets or clears the marker in any form cmdscan.Command.Assigns
+// lists (unset, `CLAUDECODE= ...`, export -n), or a variable whose name it
+// computes. A line that cannot be parsed fails closed when it names the CLI
+// and a marker. A PowerShell line counts when it runs the CLI and sets or
+// clears a marker (psAgentMarkerWrites, which also reads wildcards, computed
+// names and the bare Env: drive); SP-008 denies the latter on any line.
+func clearsAgentMarker(ctx *EvalContext, app string) bool {
+	markers := canon.AgentEnvMarkers()
+	if isPowerShell(ctx) {
+		runs := cmdscan.InvokesProgram(ctx.Command, app) ||
+			cmdscan.InvokesProgram(cmdscan.PowerShellAsPOSIX(ctx.powerShell().cmds), app)
+		return runs && psAgentMarkerWrites.inLine(ctx)
+	}
+	cmds, err := ctx.ParsedCommands()
+	if err != nil {
+		return cmdscan.InvokesProgram(ctx.Command, app) && mentionsEnvName(markers)(ctx.Command)
+	}
+	clears := func(c cmdscan.Command) bool {
+		return c.AssignsDynamic || assignsEnv(markers)(c) || clearsEnv(markers)(c)
+	}
+	return mayRunCLI(ctx.Command, cmds) && anyCommandIn(cmds, 0, clears, mentionsEnvName(markers))
 }
 
 // unparsedRelocatesHome is relocatesProtected for a line that cannot be
@@ -109,10 +138,18 @@ func commandMayRunCLI(c cmdscan.Command, app string) bool {
 // maxSettingsScriptDepth. A script that cannot be parsed, or is nested
 // deeper, counts when unparsed holds for its text.
 func anyCommandIn(cmds []cmdscan.Command, depth int, pred func(cmdscan.Command) bool, unparsed func(string) bool) bool {
+	return anyCommandListIn(cmds, depth, func(cs []cmdscan.Command) bool { return slices.ContainsFunc(cs, pred) }, unparsed)
+}
+
+// anyCommandListIn is anyCommandIn for a check that judges a command list
+// as a whole, such as a pipeline stage by the stages feeding it: pred is
+// given the commands of the line, and of each shell script one of them runs,
+// in order.
+func anyCommandListIn(cmds []cmdscan.Command, depth int, pred func([]cmdscan.Command) bool, unparsed func(string) bool) bool {
+	if pred(cmds) {
+		return true
+	}
 	for _, c := range cmds {
-		if pred(c) {
-			return true
-		}
 		script, ok := cmdscan.ShellScript(append([]string{c.Name}, c.Args...))
 		if !ok {
 			continue
@@ -124,7 +161,7 @@ func anyCommandIn(cmds []cmdscan.Command, depth int, pred func(cmdscan.Command) 
 			}
 			continue
 		}
-		if anyCommandIn(sub, depth+1, pred, unparsed) {
+		if anyCommandListIn(sub, depth+1, pred, unparsed) {
 			return true
 		}
 	}
@@ -195,18 +232,18 @@ func execClearsEnv(args []string) bool {
 }
 
 // envChanges reports whether env's arguments args remove one of vars from
-// the environment of the program it runs: -u NAME (in any spelling cmdscan's
-// option table accepts, including `-C dir -u NAME` and an abbreviated
-// --unset), or -i/-/--ignore-environment, which start from an empty one. A
+// the environment of the program it runs (cmdscan.WrapperClearsEnv): -u NAME
+// (in any spelling cmdscan's option table accepts, including `-C dir -u NAME`
+// and an abbreviated --unset), or -i/-/--ignore-environment, which start from
+// an empty one. A
 // -S string is split and read as more arguments, which may also set a
 // variable.
 func envChanges(args []string, vars []string) bool {
+	if cmdscan.WrapperClearsEnv("env", args, func(name string) bool { return isEnvName(name, vars) }) {
+		return true
+	}
 	for _, o := range cmdscan.WrapperOptions("env", args) {
 		switch {
-		case o.Is("-", "-i", "--ignore-environment"):
-			return true
-		case o.Is("-u", "--unset") && isEnvName(o.Arg, vars):
-			return true
 		case o.Is("-S", "--split-string"):
 			split := strings.Fields(o.Arg)
 			if envChanges(split, vars) || slices.ContainsFunc(split, func(w string) bool {
@@ -254,14 +291,14 @@ func mentionsProtectedEnv(text string) bool {
 // canon.ProtectedEnvVars variable (`{ env.QSDEV_ORG_CONFIG = "/tmp/x"; }`,
 // or removing the line that sets it), or a shell command that writes one of
 // those files at all, since its content cannot be checked (`printf ... >>
-// ~/.bashrc`); reading one is not a change (see BashRewritesFile). It fails
+// ~/.bashrc`); reading one is not a change (see ShellRewritesFile). It fails
 // closed when the change cannot be reconstructed. It is defense in depth: a
 // relocation it cannot see (an imported .nix file, a sourced fragment, a name
 // spelled through an encoding) is caught by the CLI, which reads only the
 // overlay a human pinned (see catalog.OrgConfigPin).
 func envFileRelocation(ctx *EvalContext) string {
 	if cmdscan.IsShellTool(ctx.ToolName) {
-		if name, ok := BashRewritesFile(ctx, canon.EnvSourceFiles()); ok {
+		if name, ok := ShellRewritesFile(ctx, canon.EnvSourceFiles()); ok {
 			return "shell command writes " + name + ", which sets the environment " + branding.Get().AppName +
 				" runs in; only the Edit and Write tools can be checked for a change to " +
 				strings.Join(canon.ProtectedEnvVars(), " or ") +
@@ -280,9 +317,52 @@ func envFileRelocation(ctx *EvalContext) string {
 	if err != nil {
 		return "cannot verify the change to " + name + ": " + err.Error()
 	}
-	if before != after && (mentionsProtectedEnv(before) || mentionsProtectedEnv(after)) {
+	if before == after {
+		return ""
+	}
+	if mentionsProtectedEnv(before) || mentionsProtectedEnv(after) {
 		return name + " sets the environment " + branding.Get().AppName + " runs in; changing " +
 			strings.Join(canon.ProtectedEnvVars(), " or ") + " there would relocate the org overlay"
 	}
+	if assignsCommitGateEnv(before) || assignsCommitGateEnv(after) {
+		return name + " sets the environment git commits run in; setting or removing " +
+			strings.Join(commitGateEnvVars, " or ") + " there skips or disables the pre-commit checks of every later commit"
+	}
 	return ""
+}
+
+// commitGateAssigns finds an assignment of a commit-gate variable
+// (canon.CommitGateEnvVars) in an environment source file: NAME followed by
+// `=` (`export SKIP=x`, `env.SKIP = "x";`, `SKIP = "x";` in a Nix env set,
+// `${SKIP:=x}`), but not a comparison or a reference (`[ "$SKIP" = 1 ]`) and
+// not the name inside a longer identifier (QSDEV_SKIP_SETUP) or in text
+// (`echo "SKIP: ..."`) (assign); fish's `set [-flags] NAME` (set); and, in
+// text with its references (ref) and then envMentionNoise removed, an
+// assignment whose name quotes or concatenation split (`env."SK" + "IP" =`),
+// where the name may follow a keyword the removed spaces joined it to
+// (split). PowerShell's $env:NAME forms are psCommitGateWrites.
+var commitGateAssigns = func() struct{ assign, set, split, ref *regexp.Regexp } {
+	names := make([]string, len(commitGateEnvVars))
+	for i, n := range commitGateEnvVars {
+		names[i] = regexp.QuoteMeta(n)
+	}
+	alt := `(` + strings.Join(names, "|") + `)`
+	return struct{ assign, set, split, ref *regexp.Regexp }{
+		assign: regexp.MustCompile(`(^|[^A-Za-z0-9_$])` + alt + `\s*:?=([^=]|$)`),
+		set:    regexp.MustCompile(`(^|[^A-Za-z0-9_])set(\s+-\S+)*\s+` + alt + `([^A-Za-z0-9_]|$)`),
+		split:  regexp.MustCompile(`(^|[^A-Za-z0-9_]|export|declare|typeset|readonly|local)` + alt + `:?=([^=]|$)`),
+		ref:    regexp.MustCompile(`\$\{?` + alt + `\b`),
+	}
+}()
+
+// assignsCommitGateEnv reports whether the content of an environment source
+// file assigns a commit-gate variable (see commitGateAssigns). Unlike
+// mentionsProtectedEnv it does not match the bare name, which the generated
+// devenv.nix prints ("SKIP: not a git repository"), nor a reference to it,
+// which removing the noise would otherwise join to a comparison's `=`.
+func assignsCommitGateEnv(text string) bool {
+	re := commitGateAssigns
+	return re.assign.MatchString(text) || re.set.MatchString(text) ||
+		re.split.MatchString(envMentionNoise.Replace(re.ref.ReplaceAllString(text, "#"))) ||
+		psCommitGateWrites.inText(strings.ToLower(text), func() bool { return true })
 }

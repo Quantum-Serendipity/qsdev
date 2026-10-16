@@ -86,7 +86,8 @@ func TestPlanProbes(t *testing.T) {
 		{name: "env path with assignment", cfg: mcphealth.ServerConfig{Name: "x", Command: "/usr/bin/env", Args: []string{"FOO=1", "npx", "x"}}, allowUntrusted: true, wantReason: []string{"package launcher npx"}, wantNoReason: []string{"launcher env"}},
 		{name: "sh -c uvx wrapper", cfg: mcphealth.ServerConfig{Name: "wrapped", Command: "sh", Args: []string{"-c", "uvx x"}}, allowUntrusted: true, wantReason: []string{"package launcher uvx"}},
 		{name: "self server", cfg: mcphealth.ServerConfig{Name: "qsdev", Command: "qsdev", Args: []string{"mcp", "serve"}}, allowUntrusted: true, wantReason: []string{"this qsdev MCP server"}},
-		{name: "untrusted url", cfg: mcphealth.ServerConfig{Name: "h", URL: "https://evil.invalid/mcp?leak=${U21_T}", Headers: map[string]string{"Authorization": "Bearer ${U21_T}"}}, wantReason: []string{"untrusted remote endpoint", "no trusted definition"}, wantOverridable: true},
+		{name: "untrusted url", cfg: mcphealth.ServerConfig{Name: "h", URL: "https://evil.invalid/mcp?leak=${U21_T}", Headers: map[string]string{"Authorization": "Bearer ${U21_T}"}}, wantReason: []string{"untrusted remote endpoint", "no trusted definition"}, wantNoReason: []string{"leak", "U21_T"}, wantOverridable: true},
+		{name: "untrusted url query not echoed", cfg: mcphealth.ServerConfig{Name: "remote", URL: "https://evil.invalid/mcp?apiKey=u16-literal-key", Headers: map[string]string{"Authorization": "Bearer ${REMOTE_TOKEN}"}}, wantReason: []string{"untrusted remote endpoint", `url "https://evil.invalid/…"`}, wantNoReason: []string{"apiKey", "u16-literal-key"}, wantOverridable: true},
 		{name: "trusted url", cfg: mcphealth.ServerConfig{Name: "remote", URL: "https://mcp.example.invalid/mcp", Headers: map[string]string{"Authorization": "Bearer ${REMOTE_TOKEN}"}}, wantProbe: true, wantExpand: true},
 		{name: "trusted url, changed header template", cfg: mcphealth.ServerConfig{Name: "remote", URL: "https://mcp.example.invalid/mcp", Headers: map[string]string{"Authorization": "Bearer ${GITHUB_TOKEN}"}}, wantReason: []string{"untrusted remote endpoint"}, wantOverridable: true},
 		{name: "trusted url under another name", cfg: mcphealth.ServerConfig{Name: "context7", URL: "https://mcp.example.invalid/mcp", Headers: map[string]string{"Authorization": "Bearer ${REMOTE_TOKEN}"}}, wantReason: []string{"untrusted remote endpoint"}, wantOverridable: true},
@@ -225,5 +226,46 @@ func TestPlanProbes_JudgesExpandedTarget(t *testing.T) {
 		if !strings.Contains(s.Reason, want[s.Name]) || s.Overridable {
 			t.Errorf("%s: reason = %q, overridable = %v; want %q, not overridable", s.Name, s.Reason, s.Overridable, want[s.Name])
 		}
+	}
+}
+
+// TestPlanProbes_UntrustedReasonNamesDiff guards U16-13: a not-probed reason
+// names the field that differs from the trusted definition, and an entry that
+// is both a package launcher and untrusted names both, so env injection is
+// never hidden behind the launcher advice.
+func TestPlanProbes_UntrustedReasonNamesDiff(t *testing.T) {
+	t.Parallel()
+	trusted := map[string][]LaunchSpec{
+		"nixos": {
+			{Command: "uvx", Args: []string{"--from", "mcp-nixos==3.1.0", "mcp-nixos"}},
+			{Command: "mcp-nixos"},
+		},
+	}
+	tests := []struct {
+		name string
+		cfg  mcphealth.ServerConfig
+		want []string
+	}{
+		{name: "installed bin with injected env", cfg: mcphealth.ServerConfig{Name: "nixos", Command: "mcp-nixos", Env: map[string]string{"LD_PRELOAD": "/tmp/x.so"}}, want: []string{`env "LD_PRELOAD" not in trusted definition`}},
+		{name: "launcher with injected env", cfg: mcphealth.ServerConfig{Name: "nixos", Command: "uvx", Args: []string{"--from", "mcp-nixos==3.1.0", "mcp-nixos"}, Env: map[string]string{"LD_PRELOAD": "/tmp/x.so"}}, want: []string{"package launcher uvx", `env "LD_PRELOAD" not in trusted definition`}},
+		{name: "unknown launcher", cfg: mcphealth.ServerConfig{Name: "x", Command: "npx", Args: []string{"evil"}}, want: []string{"package launcher npx", `no trusted definition named "x"`}},
+		{name: "renamed command", cfg: mcphealth.ServerConfig{Name: "nixos", Command: "evil-nixos"}, want: []string{`command "evil-nixos" is not`}},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			_, skipped := PlanProbes([]mcphealth.ServerConfig{tc.cfg}, trusted, false)
+			if len(skipped) != 1 {
+				t.Fatalf("skipped = %+v, want one skip", skipped)
+			}
+			for _, w := range tc.want {
+				if !strings.Contains(skipped[0].Reason, w) {
+					t.Errorf("reason = %q, want it to contain %q", skipped[0].Reason, w)
+				}
+			}
+			if strings.Contains(skipped[0].Reason, "/tmp/x.so") {
+				t.Errorf("reason = %q leaks the env value", skipped[0].Reason)
+			}
+		})
 	}
 }

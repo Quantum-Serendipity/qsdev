@@ -274,17 +274,18 @@ func TestRegisterBehaviors(t *testing.T) {
 	resetDefaultsForTest(t)
 
 	calls := 0
-	RegisterBehaviors(func(r *Registry) {
+	RegisterBehaviors(func(r *Registry) error {
 		calls++
 		r.AttachBehavior("changelog", ToolBehavior{
 			DetectFunc: func(types.DetectedProject) bool { return true },
 		})
+		return nil
 	})
 	if calls != 0 {
 		t.Fatalf("provider ran %d times before the registry was built; registering must not build it", calls)
 	}
 
-	tool, ok := DefaultRegistry().ByName("changelog")
+	tool, ok := mustDefault(t).ByName("changelog")
 	if !ok || tool.DetectFunc == nil {
 		t.Fatal("provider behavior not attached when the registry was built")
 	}
@@ -294,13 +295,13 @@ func TestRegisterBehaviors(t *testing.T) {
 
 	// A rebuild re-applies registered providers.
 	ResetDefaultRegistry()
-	if tool, _ := DefaultRegistry().ByName("changelog"); tool.DetectFunc == nil {
+	if tool, _ := mustDefault(t).ByName("changelog"); tool.DetectFunc == nil {
 		t.Error("provider behavior lost after ResetDefaultRegistry")
 	}
 
 	// A provider registered after the build is applied immediately.
 	late := false
-	RegisterBehaviors(func(*Registry) { late = true })
+	RegisterBehaviors(func(*Registry) error { late = true; return nil })
 	if !late {
 		t.Error("provider registered after build was not applied")
 	}

@@ -6,13 +6,29 @@ import (
 	"github.com/Quantum-Serendipity/qsdev/internal/catalog"
 )
 
-func TestLoadDefaultProjectProfiles_NoErrors(t *testing.T) {
-	t.Parallel()
-	r, err := loadDefaultProjectProfiles()
+// mustCatalogProjectProfiles builds the built-in profile registry from the
+// default catalog, failing the test on any error.
+func mustCatalogProjectProfiles(t *testing.T) *ProjectProfileRegistry {
+	t.Helper()
+	cat, err := catalog.Default()
+	if err != nil {
+		t.Fatal(err)
+	}
+	r, err := catalogProjectProfiles(cat)
 	if err != nil {
 		t.Fatalf("loading built-in profiles: %v", err)
 	}
-	if got, want := len(r.Names()), len(projectProfileOrder); got != want {
+	return r
+}
+
+func TestCatalogProjectProfiles_NoErrors(t *testing.T) {
+	t.Parallel()
+	cat, err := catalog.Default()
+	if err != nil {
+		t.Fatal(err)
+	}
+	r := mustCatalogProjectProfiles(t)
+	if got, want := len(r.Names()), len(cat.ProjectProfiles()); got != want {
 		t.Errorf("registered %d profiles, want %d", got, want)
 	}
 }

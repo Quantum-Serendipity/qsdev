@@ -1,6 +1,7 @@
 package profile
 
 import (
+	"slices"
 	"strings"
 
 	"github.com/Quantum-Serendipity/qsdev/pkg/ecosystem"
@@ -77,6 +78,42 @@ const (
 	UpdateToolRenovate   UpdateToolType = "renovate"
 	UpdateToolDependabot UpdateToolType = "dependabot"
 )
+
+// updateToolConfigPaths lists, per update tool, the repository files the bot
+// reads its configuration from, slash-separated and relative to the
+// repository root. Renovate's package.json "renovate" key is not listed.
+var updateToolConfigPaths = map[UpdateToolType][]string{
+	UpdateToolDependabot: {".github/dependabot.yml", ".github/dependabot.yaml"},
+	UpdateToolRenovate: {
+		"renovate.json", "renovate.json5",
+		".github/renovate.json", ".github/renovate.json5",
+		".gitlab/renovate.json", ".gitlab/renovate.json5",
+		".renovaterc", ".renovaterc.json", ".renovaterc.json5",
+	},
+}
+
+// UpdateBotConfigPaths returns, sorted, every file a dependency-update bot
+// (any UpdateToolType) reads its configuration from, slash-separated and
+// relative to the repository root.
+func UpdateBotConfigPaths() []string {
+	var paths []string
+	for _, p := range updateToolConfigPaths {
+		paths = append(paths, p...)
+	}
+	slices.Sort(paths)
+	return paths
+}
+
+// UpdateToolForConfig returns the update tool that reads its configuration
+// from relPath (one of UpdateBotConfigPaths), and false for any other path.
+func UpdateToolForConfig(relPath string) (UpdateToolType, bool) {
+	for tool, paths := range updateToolConfigPaths {
+		if slices.Contains(paths, relPath) {
+			return tool, true
+		}
+	}
+	return "", false
+}
 
 // SBOMGeneratorType identifies an SBOM generator.
 type SBOMGeneratorType string

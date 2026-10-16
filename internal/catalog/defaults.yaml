@@ -953,6 +953,13 @@ security_hooks:
     - check-merge-conflicts
     - shellcheck
     - statix
+# Paths an always-on hook skips. Vendored trees (Go, Composer, Bundler) are
+# third-party code pinned by the lockfile; their test keys and token-like
+# constants would fail every re-vendoring commit. Only this built-in catalog
+# can set exemptions.
+security_hook_excludes:
+    ripsecrets:
+        - "(^|/)vendor/"
 base_packages:
     - git
     - jq

@@ -55,18 +55,28 @@ func TestServeBuildsNixRunPolicyOnlyWhenMounted(t *testing.T) {
 }
 
 // TestNixRunJudge proves the serve command's judge holds a Bash command
-// line to self-protection, SP-014 included, in the project root.
+// line to self-protection, SP-014 included, in the project root. A rewriting
+// git line is judged under a deadline, as in the hook: in a root that is not
+// a repository `git switch main` is allowed (git itself would fail), not
+// denied for want of a deadline, while a rewrite that cannot be checked
+// (an unknown directory, an expansion) is still denied by SP-007.
 func TestNixRunJudge(t *testing.T) {
 	t.Parallel()
 	root := t.TempDir()
 	j := nixRunJudge(root, []cmdscan.CommandSpec{{Path: [][]string{{"teardown"}}}})
-	for line, want := range map[string]bool{
-		"rm .claude/settings.json": true,
-		"qsdev teardown --force":   true,
-		"jq . data.json":           false,
+	for line, want := range map[string]string{
+		"rm .claude/settings.json":         "SP-003",
+		"qsdev teardown --force":           "SP-014",
+		"jq . data.json":                   "",
+		"git switch main":                  "",
+		"git checkout -- src/x.go":         "",
+		"git reset --hard HEAD":            "",
+		`cd "$D" && git reset --hard evil`: "SP-007",
+		"git reset --hard $REV":            "SP-007",
 	} {
-		if _, _, denied := j(line); denied != want {
-			t.Errorf("judge(%q) denied = %v, want %v", line, denied, want)
+		rule, reason, denied := j(t.Context(), line)
+		if denied != (want != "") || (want != "" && rule != want) {
+			t.Errorf("judge(%q) = %q %q denied=%v, want rule %q", line, rule, reason, denied, want)
 		}
 	}
 }

@@ -1,7 +1,7 @@
 ---
 name: qsdev-add-dep
 description: Add a dependency or package to the project safely. Use when the user asks to install, add, or include a package, library, tool, language, or service.
-allowed-tools: Bash(qsdev *) Bash(pnpm *) Bash(npm *) Bash(cargo *) Bash(go *) Bash(pip *) Read
+allowed-tools: Bash(qsdev *) Bash(npm view *) Bash(npm ls *) Bash(pnpm why *) Bash(cargo search *) Bash(cargo tree *) Bash(go list *) Bash(pip index *) Read Grep Glob
 ---
 
 # Add Dependency
@@ -34,7 +34,7 @@ Tell the user to run `direnv allow` or re-enter `devenv shell` to activate.
 
 ### 3. Project dependency (runtime library, framework, etc.)
 
-Use the project's package manager within the devenv shell. The package guard hook validates safety automatically:
+Use the project's package manager within the devenv shell. Installs are not pre-approved: each one asks for confirmation and the package guard hook validates safety automatically:
 
 - **npm/pnpm**: `pnpm add <package>`
 - **Rust**: `cargo add <crate>`

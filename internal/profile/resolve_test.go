@@ -414,3 +414,46 @@ func TestResolve_RejectsBadRegistryPath(t *testing.T) {
 		t.Fatalf("Resolve() with a valid path error = %v", err)
 	}
 }
+
+// TestEffectiveInfrastructure pins the one resolution generation and
+// `qsdev check` share: an explicit profile applies its registry layout, no
+// profile (or no registry) keeps the project's own endpoints, and an
+// unknown profile is an error.
+func TestEffectiveInfrastructure(t *testing.T) {
+	t.Parallel()
+	npm := ProjectInputs{Ecosystems: []string{"npm"}}
+	tests := []struct {
+		name        string
+		reg         *ProfileRegistry
+		profile     string
+		wantNPMPath string
+		wantProfile bool
+		wantErr     bool
+	}{
+		{name: "explicit profile", reg: DefaultProfileRegistry(), profile: "enterprise", wantNPMPath: "/api/npm/npm-virtual/", wantProfile: true},
+		{name: "no profile", reg: DefaultProfileRegistry()},
+		{name: "nil registry", profile: "enterprise"},
+		{name: "unknown profile", reg: DefaultProfileRegistry(), profile: "nope", wantErr: true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			got, resolved, err := tt.reg.EffectiveInfrastructure(tt.profile, validInfra(), npm)
+			if (err != nil) != tt.wantErr {
+				t.Fatalf("EffectiveInfrastructure() error = %v, wantErr %v", err, tt.wantErr)
+			}
+			if err != nil {
+				return
+			}
+			if (resolved != nil) != tt.wantProfile {
+				t.Errorf("resolved profile = %v, want present %v", resolved, tt.wantProfile)
+			}
+			if got.RegistryProxy != validInfra().RegistryProxy {
+				t.Errorf("RegistryProxy = %q, want %q", got.RegistryProxy, validInfra().RegistryProxy)
+			}
+			if p := got.RegistryProxyPaths["npm"]; p != tt.wantNPMPath {
+				t.Errorf("npm path = %q, want %q", p, tt.wantNPMPath)
+			}
+		})
+	}
+}

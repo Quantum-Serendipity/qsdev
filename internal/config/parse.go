@@ -16,6 +16,7 @@ import (
 	"github.com/Quantum-Serendipity/qsdev/internal/profile"
 	"github.com/Quantum-Serendipity/qsdev/internal/validation"
 	"github.com/Quantum-Serendipity/qsdev/pkg/branding"
+	"github.com/Quantum-Serendipity/qsdev/pkg/ecosystem"
 	"github.com/Quantum-Serendipity/qsdev/pkg/types"
 	"gopkg.in/yaml.v3"
 )
@@ -47,6 +48,11 @@ type ValidateOptions struct {
 	// (mcpserve.MountableToolNames); mcp.disabled_tools must name one of them.
 	// Validation of that list is skipped when none are given.
 	MCPToolNames []string
+	// Settings are the committable language settings of the ecosystem modules
+	// (ecosystem.Registry.CommittableSettings), the only keys
+	// languages[].extras may set. Without them every extras entry is
+	// rejected.
+	Settings ecosystem.CommittableSettings
 }
 
 // ParseQsdevConfig reads and parses a .qsdev.yaml file at path.
@@ -228,6 +234,7 @@ func ValidateQsdevConfig(cfg *types.QsdevConfig, opts ValidateOptions) []Validat
 	}
 
 	errs = append(errs, validateSplicedValues(cfg)...)
+	errs = append(errs, validateLanguageExtras(cfg, opts)...)
 
 	// Validate security level.
 	if cfg.Security.Level != "" && !validation.IsValidSecurityLevel(cfg.Security.Level) {
@@ -395,12 +402,18 @@ func validateProfiles(cfg *types.QsdevConfig, opts ValidateOptions) []Validation
 // policyEntryErrors converts the invalid entries of a policy block (the hooks
 // block: file-boundary extra read paths the hook can resolve that do not lift
 // the read boundary, and tool name patterns; claude_code.permissions:
-// permission rules) to validation errors.
+// permission rules; the package-guard policy) to validation errors. A list
+// entry's field carries its [index]; a scalar's (Index < 0) is the bare key
+// path.
 func policyEntryErrors(entries []validation.PolicyEntryError) []ValidationError {
 	var errs []ValidationError
 	for _, e := range entries {
+		field := e.Field
+		if e.Index >= 0 {
+			field = fmt.Sprintf("%s[%d]", e.Field, e.Index)
+		}
 		errs = append(errs, ValidationError{
-			Field:   fmt.Sprintf("%s[%d]", e.Field, e.Index),
+			Field:   field,
 			Value:   e.Value,
 			Message: e.Err.Error(),
 		})
@@ -473,6 +486,25 @@ func validateSplicedValues(cfg *types.QsdevConfig) []ValidationError {
 					Message: "invalid option; keys must be identifiers and values a single word of letters, digits, '.', '_' or '-'",
 				})
 			}
+		}
+	}
+	return errs
+}
+
+// validateLanguageExtras checks each committed languages[].extras entry
+// against the committable settings of the language's module (opts.Settings):
+// an entry naming any other key, such as a detected one (directory,
+// manifests), a wizard setting that is not committable, or a misspelling, is
+// rejected rather than ignored, and so is a committable setting with a value
+// its module does not accept.
+func validateLanguageExtras(cfg *types.QsdevConfig, opts ValidateOptions) []ValidationError {
+	var errs []ValidationError
+	for i, lang := range cfg.Languages {
+		for _, err := range opts.Settings.CheckExtras(lang.Name, lang.Extras) {
+			errs = append(errs, ValidationError{
+				Field:   fmt.Sprintf("languages[%d].extras", i),
+				Message: err.Error(),
+			})
 		}
 	}
 	return errs

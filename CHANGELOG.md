@@ -6,7 +6,165 @@ All notable changes to qsdev are recorded in this file. The format is based on
 
 ## [Unreleased]
 
+### Added
+
+- Team package policy for the package guard, committed in `.qsdev.yaml` as
+  `hooks.package_guard` (U17-WS4): `denylist`, an exclusive `allowlist`,
+  `min_age_days` and `new_dep_gate` (`allow`, `ask` or `deny` for packages
+  missing from the lockfiles). Entries are package names, optionally
+  ecosystem-qualified (`npm:evil`, `pypi:requests`). `min_age_days` only
+  raises the compliance level's release-age window, and merged layers union
+  the lists and keep the larger window and the stricter gate. `qsdev check`
+  and init reject an unknown qualifier, a malformed name, `min_age_days`
+  below 1 and an unknown `new_dep_gate`. Init writes the policy to the
+  `PACKAGE_GUARD_*` variables in `.claude/settings.json`, and with the
+  `soc2-audit` hook on also `PACKAGE_GUARD_SOC2_AUDIT=true`, so the guard
+  records its dependency decisions under `$CLAUDE_AUDIT_DIR` (default
+  `~/.claude/audit/`). `PACKAGE_GUARD_MIN_AGE_DAYS` is now written whenever
+  the package guard is registered, not only when the safety-block choice is
+  recorded. Run `qsdev init --update` to pick it up.
+- Team credential-scan patterns, committed in `.qsdev.yaml` as
+  `hooks.credential_scan.extra_patterns` (U17-09). Each entry is a regex
+  the credential-scan hook adds to its built-in token shapes; an optional
+  `(?P<secret>...)` group marks the credential so only that value is
+  judged as a placeholder. Merged layers union the lists. `qsdev check` and
+  init accept only the regex subset RE2 and Python share (see the
+  configuration reference) and reject anything else, naming the entry.
+  With the `credential-scan` hook on, init writes the deduplicated list one
+  per line to `CREDENTIAL_SCAN_EXTRA_PATTERNS` in `.claude/settings.json`.
+  Run `qsdev init --update` to pick it up.
+
 ### Changed
+
+- The generated `.claude/settings.json` now read-denies every per-user
+  credential store of the credential catalog at every preset, whatever the
+  selected languages (U09-WS2): `Read(~/.ssh/**)`, `Read(~/.aws/**)` and the
+  other credential directories with their contents, and the registry token
+  files by name, including `~/.npmrc`, `~/.yarnrc.yml`, `~/.pypirc`,
+  `~/.config/pip/pip.conf`, `~/.gem/credentials`, `~/.bundle/config`,
+  `~/.config/composer/auth.json`, `~/.local/share/pypoetry/auth.toml`,
+  `~/.cargo/credentials.toml`, `~/.m2/settings.xml`,
+  `~/.gradle/gradle.properties`, `~/.config/gh`, `~/.git-credentials`,
+  `~/.pgpass`, `~/.vault-token` and `~/.claude/.credentials.json`. Before,
+  only the modules of the selected languages added some of them. With the
+  opt-in `sandbox`, `sandbox.filesystem.denyRead` carries the same stores,
+  and Claude Code applies the Read denies to sandboxed Bash too, so `ssh`,
+  `gpg`, `npm`, `mvn` and `gh` run there without their user configuration.
+  The Rust, .NET, Helm and container modules no longer declare their own
+  copies, and Terraform keeps only its state and variable-file globs. The
+  framework adapter's credential exclusions come from the same catalog, so
+  the cloud stores are excluded whatever the credential scope names. A
+  `hooks.file_boundary.extra_read_paths` entry that names a newly catalogued
+  store or a directory containing it (`~/.m2`, `~/.config/gh`) now fails
+  `qsdev check`; name a sub-directory such as `~/.m2/repository` instead.
+  Run `qsdev init --update` to pick it up.
+- The generated `.claude/settings.json` now carries a shell-read tripwire
+  over the same credential stores at every preset, whatever the selected
+  languages (XS-WS5): a Bash deny for `cat`, `less`, `head`, `tail`, `cp`,
+  `base64` and `xxd`, plain and behind `env` (`env FOO=1 cat ...`), naming
+  each store, with or without options before the path
+  (`Bash(cat *~/.npmrc*)`). A directory store is denied both inside it
+  (`Bash(cat *~/.ssh/*)`) and by its bare path (`Bash(cp *~/.ssh)`,
+  `Bash(cp *~/.ssh *)`), so `cp -r ~/.ssh /tmp/x` is denied too, and a store
+  whose path holds a space is denied in its backslash-escaped and
+  double-quoted spellings. Before, only the AWS, GCP, Azure, Helm and
+  container modules denied `cat` over their own stores; those private copies
+  are gone, and the same reads are now denied with no module selected. It is
+  a tripwire, not a boundary: `$HOME/` and absolute spellings, other readers,
+  input redirection (`wc < ~/.npmrc`), stdin fed from elsewhere, quoting
+  other than the generated forms, globs (`~/.np?rc`), `~//` and `~/./`
+  spellings, absolute reader paths (`/bin/cat`) and PowerShell are not
+  matched, and the native sandbox's `denyRead` remains the real control.
+  Run `qsdev init --update` to pick it up.
+- `qsdev check` now requires the home credential denies at every preset,
+  `supply-chain-only` included (XS-WS5): deleting any canon `Read(...)` deny
+  or any shell-read tripwire rule from `.claude/settings.json` fails
+  `deny_rules_present`. The cloud credential isolation check likewise
+  requires, besides each cloud CLI operation rule, a shell-read tripwire
+  covering every home credential path of the provider (`~/.aws/credentials`
+  and the rest), so its agent deny rules layer fails when one is removed.
+  Settings generated before this change fail both checks until you run
+  `qsdev init --update`.
+- The credential-scan hook now looks for a placeholder word in an
+  assignment's value only as a word, not glued into camel case (U17-08).
+  `password = "MyExamplePassword"` and, in a config file,
+  `password: SampleCorpProd2024` are now denied: they have the same shape
+  as a real password that contains such a word. Use a separated word
+  (`my_example_password`), a template (`${DB_PASSWORD}`) or an environment
+  variable instead.
+- `CREDENTIAL_SCAN_EXTRA_PATTERNS` now holds one regex per line instead of a
+  comma-separated list (U17-09, W1N-47), so a quantifier such as `{20,40}`
+  stays in its pattern. Each line is stripped of spaces, tabs and CRs and
+  blank lines are ignored. A hand-set comma list is now read as a single
+  regex; put each pattern on its own line. A pattern may mark the credential
+  with a `(?P<secret>...)` group so that only that value is tested for a
+  placeholder. An entry that does not compile now blocks the call (exit 2)
+  with `invalid CREDENTIAL_SCAN_EXTRA_PATTERNS entry N: <error>` and an
+  `invalid_extra_pattern` audit entry, instead of being skipped silently.
+- Self-protection now applies the shell gate-dodge check (GD-003, GD-004),
+  the git code-execution check (GIT-001) and the shell-write half of SP-015
+  to every tool that runs a shell command, not only Bash: under Monitor and
+  PowerShell, `echo ignore-scripts=false >> .npmrc`, `rm .npmrc`,
+  `git commit --no-verify`, `git -c core.hooksPath=... commit`,
+  `git config ...` and `printf x >> ~/.bashrc` were allowed and are now
+  denied. PowerShell is judged in its own dialect (`Remove-Item C:\p\.npmrc`,
+  `Set-Content .npmrc x`, `git.exe commit --no-verify` are denied;
+  `Get-Content .npmrc` stays allowed). The commands of a PowerShell `$(...)`
+  subexpression inside a quoted string, and of an assignment's value
+  (`$x = git commit --no-verify`), are judged as commands of their own, so
+  `echo "$(Remove-Item .npmrc)"` and `Write-Host "$(git config ...)"` are
+  denied. A command a line redefines as an alias or function
+  (`alias gh='rm -f'; gh pr create .npmrc`, `alias cat='tee -a'`,
+  `Set-Alias`) no longer gets its read-only modelling, and neither does any
+  command on a line that sources a script (`. ./defs.sh`, `source x`), which
+  may define it as a function. Under PowerShell a writing cmdlet that takes
+  its path from pipeline input or a parenthesised argument fails closed when
+  the line names a guarded file (`gci .npmrc | ri`,
+  `Get-Item .qsdev.yaml | Clear-Content`, `Set-Content ('.npmrc') x`,
+  `Remove-Item -Path (Resolve-Path .qsdev.yaml)`); a read cmdlet in the
+  pipeline (`Get-Content .npmrc | Select-String x`) stays allowed, while any
+  other piped command (`gc .npmrc | Measure-Object`) is denied, as for
+  `.claude`. A Write or Edit of a guarded file through a name Windows strips
+  to it (`.qsdev.yaml.`, `.qsdev.yaml::$DATA`) gets that file's checks. A new architecture
+  test rejects code that compares a tool name with the literal `"Bash"`. A skill's bare `Bash`
+  or `PowerShell` grant is matched as every command of that tool by the
+  permission-rule matcher itself, as Claude Code does.
+
+- Self-protection now denies a shell rewrite of `.qsdev.yaml` (GD-001) under
+  every shell tool, as it already did for `.npmrc` and the other guarded
+  package-manager and pre-commit configs: `sed -i 's/level: strict/level:
+  minimal/' .qsdev.yaml` and `echo ... > .qsdev.yaml` were allowed and skipped
+  the security-level downgrade check that Edit and Write go through. Change
+  `.qsdev.yaml` with Edit or Write. `gh pr` and `gh issue` `create`,
+  `comment`, `edit`, `view` and `list` are now known to write no file, so a
+  pull request body that names a guarded file through `$(cat <<'EOF' ...)`
+  is allowed. Known limitation, deferred to U18-WS8: as for `.npmrc` before,
+  a line that names `.qsdev.yaml` is denied when another command on it is a
+  reader the write analysis does not model or writes an expansion operand
+  (`yq '.security.level' .qsdev.yaml`, `md5sum .qsdev.yaml`,
+  `qsdev check --config .qsdev.yaml`, `python3 -c "...open('.qsdev.yaml')"`,
+  the index-only `git restore --staged .qsdev.yaml` and
+  `git rm --cached .qsdev.yaml`, `rm -rf "$TMPDIR/b" && cat .qsdev.yaml`,
+  `cp .qsdev.yaml "$TMPDIR/b"`). Under Monitor and PowerShell the readers
+  Bash already denied for `.npmrc` (`md5sum`, `sha256sum`, `less`, `bat`,
+  `awk`, `find -name .npmrc`, `python3 scripts/check.py --config .npmrc`)
+  are now denied too. Also deferred to U18-WS8: a script handed to
+  `pwsh -c`/`powershell -c` or `cmd /c` (`cmd /c "echo x > .npmrc"`,
+  `cmd /c git commit --no-verify -m x`), and operands `xargs` reads from
+  standard input, are not judged by these checks.
+
+- MCP server code attestation (the `external-attestation` criterion of
+  `qsdev mcp grade`) now trusts only the embedded qsdev release key and the
+  keys in the new code keyring `~/.qsdev/keys/code/` (U16-16). Keys in
+  `~/.qsdev/keys/` stay trusted for docs and content signatures but no longer
+  attest the code an MCP server runs, so a docs-signing key cannot vouch for
+  an executable. Move code-signing `.pub` files into `~/.qsdev/keys/code/`:
+  while the top-level directory holds keys and the code keyring is empty,
+  `qsdev mcp grade` prints one line on stderr naming the code keyring, whether
+  or not any server reaches Verified. The attestation check also runs under
+  the caller's context, so cancelling `qsdev mcp grade` (or an MCP `mcp_list`
+  call or `qsdev://project/mcp-servers` resource read) stops signature
+  verification.
 
 - The MCP server's opt-in `qsdev_nix_run` tool is now held to what a Bash call
   may do, not only to the Bash deny rules: a call whose Bash equivalent (the
@@ -287,6 +445,61 @@ All notable changes to qsdev are recorded in this file. The format is based on
 
 ### Fixed
 
+- Generated Claude Code settings no longer read-deny the data files of a
+  source package named `secrets` (U26-WS1). The nested secrets rules now
+  deny the data formats (`*.json`, `*.yaml`, `*.yml`, `*.toml`, `*.txt`)
+  only as direct children of a directory named `secrets`
+  (`Read(/**/secrets/*.json)`), so `internal/secrets/testdata/cases.json`
+  is readable while `infra/secrets/sa.json` stays denied. This narrows the
+  coverage: a data file in a subdirectory of a nested `secrets` directory,
+  such as `infra/secrets/prod/sa.json` or `k8s/secrets/staging/db.yaml`, is
+  no longer read-denied. Keep such files directly inside the `secrets`
+  directory or under the top-level `secrets/`. Secret material
+  (dotenv files, keys, certificates, keystores, `*.gpg`, `*.age`) is still
+  denied at any depth below a `secrets` directory, and the top-level
+  `secrets/` is still denied as a whole. `qsdev check` now also requires
+  the nested secrets rules, so `deny_rules_present` fails when one is
+  deleted. Run `qsdev init --update` to pick up the new rules.
+- The credential-scan hook judges an assignment or connection string by its
+  credential value, not by the whole match (U17-08). A placeholder word in a
+  key or host no longer hides a real secret, so
+  `postgres://app:<real>@todo-db.prod.internal/todo` and
+  `password = "SampleCorpProd2024!"` are now denied, and a placeholder
+  connection string no longer hides a real one later in the same list. A
+  value that is entirely a template (`${DB_PASSWORD}`, `<your-password>`,
+  `{{db_pw}}`, `%(db_pw)s`) or names a placeholder as a word
+  (`your-password`, `replace_with_your_password`) is now allowed. A value
+  that is itself a token shape (`api_key = "sk_live_EXAMPLE..."`) is judged
+  by that token's own pattern, as before. Quoted and JSON AWS secret keys
+  (`aws_secret_access_key = "..."`, `{"aws_secret_access_key": "..."}`) are
+  now detected, and a pattern that matches the empty string no longer
+  denies every write.
+- `qsdev mcp grade`'s `matches-registry-definition` criterion now uses the
+  same trust check as `qsdev mcp status` and is reported for every configured
+  server (U16-01, U16-13). An entry passes only when it is exactly a
+  definition qsdev trusts (a catalog launcher, its hardened form at any valid
+  release cutoff, or the binary `qsdev mcp install` provides, with any catalog optional arguments; an organization
+  overlay server; or a server built into qsdev), comparing command,
+  arguments, URL, headers and environment. qsdev's own installed binaries
+  (e.g. `context7-mcp`) now pass, and an exact catalog launcher with an
+  injected variable such as `LD_PRELOAD` now fails. A failing criterion, and
+  the not-probed reason in `qsdev mcp status`, name the first field that
+  differs (e.g. `env "LD_PRELOAD" not in trusted definition`) without
+  printing env or header values, and a package launcher that is also
+  untrusted names both. The criterion name is unchanged and it still does
+  not affect the grade level.
+- `qsdev mcp status`/`health` probes, `qsdev devenv doctor` and `qsdev mcp
+  grade` now treat an `.mcp.json` server as Claude Code does: it runs from
+  the project root, so a relative command (`./server.sh`) or script argument
+  (`server.js`) resolves against the root, not the directory qsdev is run
+  from (U16-10). Run from a subdirectory, `--probe-untrusted` used to fail
+  with `fork/exec ./server.sh: no such file or directory`, the doctor flagged
+  the command as missing, and attestation checked the wrong file. A bare
+  command name is still looked up on `PATH` only. Accepted risk: because a
+  probed server now starts in the project root, toolchain shims it runs
+  (asdf, mise, pyenv, nvm and the like) read the repository's version pins,
+  as they do under Claude Code itself; only trusted catalog launches are
+  probed unless `--probe-untrusted` is given.
 - The generated `devenv.nix` for an Elixir project failed to evaluate: qsdev
   and devenv's Elixir module both defined the `mix-format` hook's package at
   the same priority, which Nix rejects as "defined multiple times" (U10-01).
@@ -308,6 +521,246 @@ All notable changes to qsdev are recorded in this file. The format is based on
   or release-age window when the catalog cannot be loaded (U12-09).
 
 ### Security
+
+- SP-007 judges more of the commands before a same-line rewrite, so these
+  chains are allowed again in a repository that tracks `.claude/`, as on
+  w1-s5, unless the rewrite writes a protected path: a redirect to
+  `/dev/null` or `2>&1` writes no file (`git commit -am x 2>/dev/null &&
+  git switch topic`, `cat main.go > /dev/null && git switch topic`); a
+  commit message from a double-quoted variable (`git commit -am "$MSG" &&
+  git switch topic`); a branch created at HEAD (`git switch -c feat &&
+  git commit -am wip && git switch main`), unless a later revision names it
+  or the previous branch; `git add --chmod=+x main.go && git switch topic`,
+  judged with the paths the chmod names; PowerShell `Write-Output` and the
+  read cmdlets (`Write-Output start; git checkout -- main.go`); and `cd -`
+  after a `cd` joined by `&&` (`cd .. && cd - && git switch topic`), which
+  returns to the directory that `cd` left. Elsewhere `cd -` still lands in
+  an unknown directory. `git checkout -f -b <name>` (and `-B`, `--orphan`)
+  with no start point, which resets the working tree to HEAD as `git
+  checkout -f` does, is now judged as `git checkout -f` is; it was not
+  checked at all.
+
+- SP-007 no longer denies every working-tree rewrite that follows another
+  command on its line in a repository that tracks `.claude/`. Each earlier
+  command is now judged by what it can change for the rewrite: an inert
+  command (`echo`, `true`, `:`, `test`, `cat`, a read-only git, a
+  directory change) changes nothing, a commit adds the paths it records,
+  an add counts only when it may track an untracked protected file, a
+  stash push leaves `stash@{0}` to its own check, and a fetch, pull,
+  checkout or other rewrite keeps the stash. So `echo start; git checkout
+  -- main.go`, `true && git restore main.go`, `git stash && git stash pop`,
+  `git stash && git pull --rebase && git stash pop`, `git commit -am x &&
+  git switch main`, `git add -A && git commit -m x && git checkout main`
+  and `git checkout -b topic && git stash pop` are allowed again, as on
+  w1-s5, unless the rewrite writes a protected path. Still denied in such
+  a repository, with a reason to run the rewrite in its own call: a
+  rewrite after an unknown program or script (`go test ./... && git
+  checkout main`), a rewrite from a revision after a fetch, pull or other
+  rewrite (`git fetch && git rebase origin/main`, `git checkout main &&
+  git merge topic`), a restore after `git restore --staged`, and a stash
+  pop after a drop or pop. docs/security-architecture.md lists them.
+
+- SP-007 now judges `git rm` as a working-tree rewrite. A recursive
+  `git rm` that does not name `.claude` (`git rm -r .`,
+  `git rm -r -q -- .`) deleted every tracked protected file and was
+  allowed; it is now denied when the tracked paths its pathspec matches
+  (`git ls-files -- <pathspec>`) include a protected one, and a pathspec
+  read from a file is judged as the whole index. `git rm --cached` and
+  `git rm -n` stay allowed, as does a `git rm` of other paths.
+
+- SP-015 and the gate-dodge rules now judge the values of the git
+  variables that write a file or run a program, as SP-007 does for
+  protected paths. `GIT_INDEX_FILE=devenv.yaml git read-tree HEAD` replaced
+  `devenv.yaml` with a git index, and `GIT_INDEX_FILE=.qsdev.yaml git
+  status`, `env GIT_INDEX_FILE=devenv.yaml git status` and
+  `GIT_EDITOR='cp /dev/null devenv.yaml #' git commit --amend` were
+  allowed; a `GIT_INDEX_FILE` or `GIT_OBJECT_DIRECTORY` value naming a
+  guarded file, or a guarded file named inside an editor, pager, ssh or
+  askpass variable, is now a shell write of that file. A value naming no
+  guarded file (`GIT_INDEX_FILE=/tmp/idx git read-tree HEAD`) stays
+  allowed.
+
+- Self-protection now denies, as `EVASION-obfuscation`, a shell or
+  interpreter that reads its program from standard input computed at run
+  time, under Bash and Monitor and in the scripts the MCP server's
+  `qsdev_nix_run` tool is judged as (XS-WS4): `curl -s https://x/y.sh | bash`,
+  `echo … | rev | sh`, `echo … | xxd -r -p | sh`, `… | base64 -d | python3`,
+  `… | { sh; }`, `sh <<< "$(…)"`, `bash -s <<< "$(cat x)"`, `sh < <(…)` and
+  `cat <<EOF | sh` with an expansion in the body were allowed unless they
+  matched the base64 or printf-hex spellings. So are standard input named
+  as a path (`… | sh /dev/stdin`, `… | sh < /dev/stdin`,
+  `… | cat /dev/stdin | sh`), a `/dev/tcp` redirect, an `exec <` redirect
+  before the shell (`exec < <(curl …); sh`), `busybox sh`, `sudo -s`,
+  `sudo -i`, `doas -s`, `su`, `pwsh -Command -`, xargs building a `-c` code
+  word (`… | xargs -0 sh -c`, `… | xargs -I{} sh -c {}`) and a shell run
+  inside a function the line pipes into. A literal program on standard
+  input (`echo hi | sh`, `printf 'cd /x\nls' | sh`, `cat x.sh | bash`,
+  `sh <<< 'echo hi'`, `cat <<'EOF' | sh`, `bash -s < script.sh`), a script
+  file and inline code (`python3 -c "print('$HOME')"`) stay allowed, and a
+  literal sensitive command keeps its SP-014 report. The shells and
+  interpreters are recognised by path, case, version suffix and alias
+  (`/usr/bin/python3.12`, `nodejs`, `pypy3`). The rule also judges the
+  scripts a line runs, whose statements read the running command's
+  standard input (`bash -c 'curl … | bash'`, `eval 'curl … | sh'`,
+  `sudo sh -c '…'`, `watch -n1 'curl … | sh'`, `curl … | sh -c sh`,
+  `curl … | sh -c 'cat | sh'`), and counts `. /dev/stdin`,
+  `source /dev/stdin`, `pwsh -NoProfile`, `env -S sh`, `flock FILE sh`,
+  `parallel --pipe sh`, `parallel sh -c` and parallel given no command;
+  these were allowed. cmdscan now follows `flock`, `watch` and `parallel`
+  as wrappers, so the other self-protection rules see the command they run
+  too (`flock /tmp/l -c 'qsdev teardown'` is a literal invocation). The PowerShell tool keeps its own evasion layer.
+  Newly denied, with a reason that says to quote the here-document
+  delimiter or use a script file: an expanded here-document fed to a shell
+  or interpreter (`python3 - <<EOF` with `$HOME` in the body) and a
+  program's output piped to `python3 -`. Residuals, listed under Known
+  Limitations: interpreter inline code built from an expansion or from
+  strings, `bash <(curl …)`, a program word computed at run time, `php`,
+  `lua`, `deno`, `bun`, `fish`, `yash`, `tcsh` and `csh` reading their
+  program from standard input, and `python3 -m code`. A new test replays
+  every command fixture of the self-protection rules as Bash and as Monitor
+  and requires the same verdict.
+
+- The package guard now covers the MCP server's `qsdev_nix_run` tool
+  (XS-WS4). Its settings matcher becomes
+  `Bash|PowerShell|Monitor|mcp__.*__qsdev_nix_run`, which Claude Code reads
+  as a regular expression, so it fires for the tool under any server name.
+  An install in the program's arguments, a `-c` script or standard input
+  (`nixpkgs#bash -c 'pnpm i x'`, `nixpkgs#pnpm add x`, `nixpkgs#busybox sh
+  -c 'npm i x'`, `nixpkgs#bash` fed `npm install x`, and an attribute with
+  a version or variant suffix such as `nixpkgs#pnpm_9 add x`,
+  `nixpkgs#yarn-berry add x` or `nixpkgs#nodejs_22 -e …`) reached exec with
+  no package check; it is now denied without registry lookups, even for a clean
+  package, since the guard cannot harden a command it does not hold: run
+  installs through Bash. A malformed `tool_input` is denied. Run
+  `qsdev init --update` to pick up the matcher. Residual: MCP clients other
+  than Claude Code (gateway mode) run no hook, so there the tool is held
+  only to the server's Bash deny and ask rules.
+
+- The package guard and the destructive-command hook now read the command
+  lines GNU `parallel` builds from its arguments (W1N-08). With no command
+  word each line takes one argument of every `:::`/`:::+` source
+  (`parallel ::: 'npm install x'`, `parallel ::: npm ::: install ::: x`,
+  `parallel ::: 'rm -rf' ::: ~`); a template's replacement strings take the
+  arguments (`parallel {} ::: 'npm install x'`, `{1}`), otherwise they are
+  appended (`parallel sh -c ::: 'rm -rf ~'`); and an option that takes a
+  value (`--env X`, `--workdir`, `-I`) no longer passes for the command
+  word. These forms reached exec unjudged. Each argument combination is
+  also judged alone, so `parallel echo ::: 'rm -rf ~'` is now denied.
+  Residuals: arguments read from `::::` files or standard input, a changed
+  separator (`--arg-sep`), and past 64 combinations only each argument and
+  all of them joined are judged.
+
+- A tab after a PowerShell installer cmdlet (`Install-Module<TAB>Evil`) is
+  not matched by the PowerShell module's permission deny rules (W1N-29);
+  the package guard denies it, and a test now pins that backstop. Listed
+  under Known Limitations.
+
+- The package guard now sees an install written with `--` before the verb
+  (`npm -- install x`, `pnpm -- add x`, `uv -- pip install x`), for every
+  manager, and the `--ignore-scripts` rewrite lands after the verb
+  (U17-03). `npm rebuild`, `npm rb`, `pnpm rebuild`, `pnpm rb` and
+  `yarn rebuild` now ask, because they run the lifecycle scripts of every
+  installed package; they stay silent when scripts are already disabled
+  (`--ignore-scripts`, `npm_config_ignore_scripts=true`) (U17-10).
+
+- The package guard now asks before installing a local package archive
+  (`npm install --ignore-scripts ./x.tgz`, `gem install ./x.gem`,
+  `pip install ./x.whl`) unless the file is byte-for-byte the copy committed
+  at HEAD (U17-10). One lock-free `git ls-tree` reads the committed blob id,
+  which the hook compares with the git hash of the file's bytes; it applies
+  no filters, so the repository's config cannot make the hook run a program.
+  Untracked or modified files, symlinks, non-regular files, files over
+  64 MiB, paths outside the repository and any git error ask. A glob
+  over local files (`npm install ./dist/*.tgz`, `./x.tg[z]`) and an
+  archive the same command line also names elsewhere (`cp evil.tgz x.tgz &&
+  npm i ./x.tgz`) ask without starting git. The reason names the path,
+  never the file's content. Installs without a local archive start no
+  process.
+
+- The package guard reads PowerShell in its own dialect (U17-02). Through
+  the PowerShell tool, `Install-Module`, `Install-PSResource`,
+  `PowerShellGet\Install-Module`, `Find-Module X | Install-Module` and the
+  other PSGallery installer cmdlets were allowed and are now denied, while
+  `Get-Help Install-Module` stays allowed. `iex "npm install evil"`,
+  `Invoke-Expression -Command:'...'` and `Start-Process npm -ArgumentList
+  @('install','evil')` (or a string or comma list) are now validated like
+  the command they run, and a computed or piped Invoke-Expression string
+  asks. The same holds for a script handed to `pwsh -Command` or
+  `-EncodedCommand` from the Bash tool, which is now also found past value
+  parameters (`pwsh -ExecutionPolicy Bypass -Command ...`), and for
+  Windows PowerShell's positional command (`powershell npm install x`).
+  The command an assignment (`$null = Install-Module X`), the dot-source
+  operator (`. Install-Module X`) or a script block (`Invoke-Command {
+  Install-Module X }`, `% { ... }`) runs is judged too, `<# ... #>` block
+  comments and backtick escapes (`` In`stall-Module ``) no longer hide a
+  command, `Start-Process -ArgumentList 'install x' npm` starts npm as
+  PowerShell binds it, and a cmdlet that names an installer cmdlet as a
+  bare argument (other than `Get-Help`/`Get-Command`) asks.
+  Bash's `iex -S mix` is unaffected.
+
+- The package guard now asks before inline interpreter code that runs a
+  package manager install (U17-12): `python3 -c 'import os;
+  os.system("pip install x")'`, `subprocess.run(["pip","install",x])`,
+  `node -e "execSync('npm i x')"`, `ruby -e 'system("gem install x")'`,
+  `perl -wle 'system("cpanm Foo")'`, `deno eval`, `bun -e`, `nodejs -e`,
+  `py -c` and `php -r` were allowed. Option clusters (`python3 -Ic`,
+  `perl -wle`) are recognised. An install verb counts only after its own
+  manager, so `execSync('npm run build')` and a variable named `cmd` stay
+  allowed. Inline code that only names a manager
+  (`print(pip.__version__)`) stays allowed, and
+  the guard still validates an install the interpreter is handed as
+  arguments (`perl -e 'exec @ARGV' npm install x`).
+
+- A package on the package guard's team allowlist
+  (`PACKAGE_GUARD_TEAM_ALLOWLIST`) no longer skips the OSV.dev and
+  release-age checks, so a hijacked release of an approved package published
+  today is blocked like any other (U17-WS4). The allowlist still blocks every
+  package not on it and satisfies the new-dependency gate. The developer's
+  own `PACKAGE_GUARD_DENYLIST` is now applied before the team allowlist, so a
+  personal list can only narrow team policy.
+
+- `qsdev check` now vouches for the `.mcp.json` entries of required
+  always-on MCP tools (such as context7) instead of only checking that they
+  exist (W0N-08). An entry must be exactly a definition qsdev trusts, using
+  the same check as `qsdev mcp status` and `qsdev mcp grade` (a catalog
+  launcher or installed binary, with any optional arguments), or the entry
+  the project's own generation writes. A replaced command, changed arguments
+  or an injected variable such as `LD_PRELOAD` now fails
+  `tool_mcp_server_untrusted_<tool>`, naming the first differing field
+  without printing env or header values. To fix it, run `qsdev update
+  --configs-only --overwrite-modified`, which restores the generated
+  `.mcp.json` (`qsdev init --update` keeps an edited entry), or `qsdev
+  disable <tool> --force` to opt out.
+
+- qsdev now refuses an `.mcp.json` that spells a field two ways, such as
+  `"command"` and `"Command"`, `"env"` and `"ENV"`, or `"mcpServers"` and
+  `"MCPSERVERS"`. Go's JSON decoder matched keys case-insensitively (the last
+  spelling won) while Claude Code reads only the exact one, so such a file
+  could pass `qsdev check`, `qsdev mcp grade` and `qsdev mcp status` as a
+  trusted launch while Claude Code ran another command or kept an injected
+  `LD_PRELOAD`. `qsdev mcp grade` and `qsdev mcp status` now exit with an
+  error naming the key, and `qsdev check` fails
+  `tool_mcp_server_missing_<tool>` for each required server with the same
+  reason and the `qsdev update --configs-only --overwrite-modified`
+  remediation. Keys inside `env` and `headers` are the user's and still match
+  exactly.
+- The not-probed reason in `qsdev mcp status` and the trust failures of
+  `qsdev mcp grade` and `qsdev check` show only the scheme and host of a
+  configured URL (`https://example.invalid/…`), so a credential in its path,
+  query or userinfo (`?apiKey=...`) is not printed.
+- An `.mcp.json` entry that keeps a trusted remote URL but adds a command,
+  such as `{"type":"stdio","command":"./evil.sh","url":"https://mcp.socket.dev/"}`,
+  no longer passes as the trusted endpoint. Claude Code launches such an
+  entry as a stdio server running the command, so `qsdev mcp grade`,
+  `qsdev mcp status` and `qsdev check` now compare the whole launch (command,
+  arguments, URL, headers and environment) whatever the transport, and name
+  the extra command (`command "./evil.sh" where the trusted definition is
+  remote url ...`).
+- qsdev now refuses an `.mcp.json` that repeats a key, such as two
+  `"mcpServers"` objects or two `"env"` maps in one entry. Go's JSON decoder
+  merged them while Claude Code keeps only the last, so a required server
+  defined only in the first `"mcpServers"` object passed `qsdev check` though
+  Claude Code never loaded it. It is reported like a miscased key.
 
 - A committed `security.credential_vend.enabled: true` no longer mounts
   `qsdev_credential_vend` by itself (U21-V02, U21-07). The operator must

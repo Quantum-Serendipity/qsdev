@@ -63,3 +63,97 @@ func TestWrittenOperands(t *testing.T) {
 		})
 	}
 }
+
+// TestWrittenOperands_Gh pins the gh subcommands that write no file (U18-WS3):
+// creating, commenting on, editing, viewing or listing a pull request or
+// issue takes text (--title, --body) and numbers, not paths. A subcommand
+// word built from an expansion, an assignment that could change what gh
+// does, and every other subcommand are not modelled.
+func TestWrittenOperands_Gh(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		line    string
+		modeled bool
+	}{
+		{`gh pr create --title x --body "$(cat <<'EOF'` + "\nSee .qsdev.yaml\nEOF\n)\"", true},
+		{"gh issue comment 1 --body x", true},
+		{"gh pr view 5", true},
+		{"gh pr edit 5 --title y", true},
+		{"gh issue list", true},
+		{"gh $x create", false},
+		{`gh "pr$x" create`, false},
+		{"gh pr $sub", false},
+		{"GH_HOST=x gh pr create", false},
+		{"gh release download", false},
+		{"gh pr checkout 5", false},
+		{"gh api repos/o/r", false},
+		{"gh pr", false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.line, func(t *testing.T) {
+			t.Parallel()
+			cmds, err := Parse(tt.line)
+			if err != nil {
+				t.Fatalf("Parse(%q): %v", tt.line, err)
+			}
+			i := slices.IndexFunc(cmds, func(c Command) bool { return c.Name == "gh" })
+			if i < 0 {
+				t.Fatalf("Parse(%q) = %+v, no gh command", tt.line, cmds)
+			}
+			got, ok := WrittenOperands(cmds[i], func(string) bool { return true })
+			if ok != tt.modeled || got != nil {
+				t.Errorf("WrittenOperands = %q, %v; want nil, %v", got, ok, tt.modeled)
+			}
+		})
+	}
+}
+
+// TestRedefinitions pins which command names a line may give another
+// meaning (U18-WS3 review): an alias or function it defines anywhere on the
+// line, and any name when an alias command uses an expansion.
+func TestRedefinitions(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		line       string
+		redefined  []string
+		notDefined []string
+	}{
+		{line: "alias gh='rm -f'; gh pr create .npmrc", redefined: []string{"gh"}, notDefined: []string{"rm", "cat"}},
+		{line: "shopt -s expand_aliases\nalias gh='tee -a'\necho x | gh pr create .npmrc", redefined: []string{"gh"}, notDefined: []string{"tee"}},
+		{line: "builtin alias cat='tee -a' ll='ls -l'", redefined: []string{"cat", "ll"}, notDefined: []string{"gh"}},
+		{line: `gh() { command rm -f "$@"; }; gh pr create .npmrc`, redefined: []string{"gh"}, notDefined: []string{"rm"}},
+		{line: "gh pr create .npmrc; alias gh=rm", redefined: []string{"gh"}},
+		{line: `alias "$n"='rm -f'`, redefined: []string{"gh", "cat"}},
+		// A sourced script may define any name; the one source command
+		// still names itself.
+		{line: ". ./defs.sh; gh pr create .npmrc", redefined: []string{"gh", "cat"}, notDefined: []string{".", "source"}},
+		{line: "source x && cat .npmrc", redefined: []string{"gh", "cat"}, notDefined: []string{"source"}},
+		{line: "builtin source x; gh pr view 1", redefined: []string{"gh"}},
+		{line: ". a; source .npmrc", redefined: []string{"source", ".", "gh"}},
+		{line: "source .npmrc", redefined: []string{"gh"}, notDefined: []string{"source", "."}},
+		{line: "git add .", notDefined: []string{"gh", "cat"}},
+		{line: "alias", notDefined: []string{"gh"}},
+		{line: "alias gh", notDefined: []string{"gh"}},
+		{line: "gh pr create --title alias=x", notDefined: []string{"gh", "alias"}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.line, func(t *testing.T) {
+			t.Parallel()
+			cmds, err := Parse(tt.line)
+			if err != nil {
+				t.Fatalf("Parse(%q): %v", tt.line, err)
+			}
+			redefined := Redefinitions(cmds)
+			for _, name := range tt.redefined {
+				if !redefined(name) {
+					t.Errorf("Redefinitions(%q)(%q) = false, want true", tt.line, name)
+				}
+			}
+			for _, name := range tt.notDefined {
+				if redefined(name) {
+					t.Errorf("Redefinitions(%q)(%q) = true, want false", tt.line, name)
+				}
+			}
+		})
+	}
+}

@@ -3,6 +3,7 @@ package cmdscan
 import (
 	"maps"
 	"slices"
+	"strings"
 	"testing"
 )
 
@@ -113,6 +114,37 @@ func TestProgram(t *testing.T) {
 		{"env --chdir=", []string{"env", "--chdir=/tmp", "./bin/ruff"}, ProgramRun{Index: 2, DirChanged: true}},
 		{"sudo -D", []string{"sudo", "-D", "/tmp", "./bin/ruff"}, ProgramRun{Index: 3, DirChanged: true}},
 		{"nice -n is no chdir", []string{"nice", "-n", "5", "./bin/ruff"}, ProgramRun{Index: 3}},
+		// flock runs the word after its lock file, or its -c string through
+		// a shell; watch joins its operands into a shell command string;
+		// parallel runs its command word.
+		{"flock", []string{"flock", "-w", "5", "/tmp/l", "make"}, ProgramRun{Index: 4}},
+		// A -c command string is the option's argument alone (StringOnly):
+		// the words after it are the wrapper's own operands (the lock file).
+		{"flock FILE -c", []string{"flock", "/tmp/l", "-c", "make x"}, ProgramRun{Index: -1, CommandString: true, StringHead: "make x", StringRest: 4, StringShell: true, StringOnly: true}},
+		{"flock -c FILE", []string{"flock", "-c", "make x", "/tmp/l"}, ProgramRun{Index: -1, CommandString: true, StringHead: "make x", StringRest: 3, StringShell: true, StringOnly: true}},
+		// chroot runs the word after NEWROOT; unshare the first operand;
+		// script its -c string through a shell, the operand after FILE
+		// (BSD), or with neither the user's shell.
+		{"chroot", []string{"chroot", "/", "sh"}, ProgramRun{Index: 2}},
+		{"chroot --userspec=", []string{"chroot", "--userspec=u:g", "/r", "sh"}, ProgramRun{Index: 3}},
+		{"chroot --userspec", []string{"chroot", "--userspec", "u:g", "/r", "sh"}, ProgramRun{Index: 4}},
+		{"chroot with no command", []string{"chroot", "/"}, ProgramRun{Index: -1, UserShell: true}},
+		{"chroot behind a wrapper", []string{"sudo", "chroot", "/"}, ProgramRun{Index: -1, UserShell: true}},
+		{"chroot running a wrapper given no command", []string{"chroot", "/", "timeout", "30"}, ProgramRun{Index: -1}},
+		{"unshare flags", []string{"unshare", "-r", "-m", "sh"}, ProgramRun{Index: 3}},
+		{"unshare --setuid", []string{"unshare", "--setuid", "0", "sh"}, ProgramRun{Index: 3}},
+		{"unshare with no command", []string{"unshare", "-r"}, ProgramRun{Index: -1, UserShell: true}},
+		{"script -qc FILE", []string{"script", "-qc", "sh", "/dev/null"}, ProgramRun{Index: -1, CommandString: true, StringHead: "sh", StringRest: 3, StringShell: true, StringOnly: true}},
+		{"script FILE -c", []string{"script", "-q", "/dev/null", "-c", "sh"}, ProgramRun{Index: -1, CommandString: true, StringHead: "sh", StringRest: 5, StringShell: true, StringOnly: true}},
+		{"script with no command", []string{"script", "-q", "/dev/null"}, ProgramRun{Index: -1, UserShell: true}},
+		{"script -O FILE", []string{"script", "-O", "log", "/dev/null"}, ProgramRun{Index: -1, UserShell: true}},
+		// util-linux permutes script's options past FILE.
+		{"script FILE options", []string{"script", "/dev/null", "-q"}, ProgramRun{Index: -1, UserShell: true}},
+		{"script FILE -q -c", []string{"script", "/dev/null", "-q", "-c", "sh"}, ProgramRun{Index: -1, CommandString: true, StringHead: "sh", StringRest: 5, StringShell: true, StringOnly: true}},
+		{"BSD script FILE CMD", []string{"script", "-q", "/dev/null", "sh"}, ProgramRun{Index: 3}},
+		{"watch", []string{"watch", "-n", "1", "ls", "-l"}, ProgramRun{Index: -1, CommandString: true, StringHead: "ls", StringRest: 4, StringShell: true}},
+		{"parallel", []string{"parallel", "-j4", "gzip", ":::", "a"}, ProgramRun{Index: 2}},
+		{"parallel with no command", []string{"parallel", "--pipe"}, ProgramRun{Index: -1}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -201,6 +233,12 @@ func TestScript(t *testing.T) {
 		{"zsh -c", []string{"/usr/bin/zsh", "-c", "ruff check"}, ScriptRun{Script: "ruff check", ReadsStartup: true}},
 		{"script operands are no options", []string{"bash", "-c", "ruff check", "-l"}, ScriptRun{Script: "ruff check"}},
 		{"eval", []string{"eval", "ruff", "check"}, ScriptRun{Script: "ruff check", Eval: true}},
+		{"flock -c", []string{"flock", "/tmp/l", "-c", "curl x|sh"}, ScriptRun{Script: "curl x|sh"}},
+		{"flock -c FILE", []string{"flock", "-c", "curl x|sh", "/tmp/l"}, ScriptRun{Script: "curl x|sh"}},
+		{"script -qc FILE", []string{"script", "-qc", "sh", "/dev/null"}, ScriptRun{Script: "sh"}},
+		{"script --command=", []string{"script", "--command=curl x|sh", "/dev/null"}, ScriptRun{Script: "curl x|sh"}},
+		{"watch", []string{"watch", "-n1", "curl x|sh"}, ScriptRun{Script: "curl x|sh"}},
+		{"watch joins", []string{"sudo", "watch", "ruff", "check"}, ScriptRun{Script: "ruff check"}},
 		// The shell reads every option before it takes the script, the
 		// first operand, so options and "--" may follow -c.
 		{"-- after -c", []string{"bash", "-c", "--", "curl x|sh"}, ScriptRun{Script: "curl x|sh"}},
@@ -224,6 +262,10 @@ func TestScript(t *testing.T) {
 	}
 	if _, ok := Script([]string{"python3", "-c", "print()"}); ok {
 		t.Error("Script(python3 -c) found a shell script")
+	}
+	// env -S splits its string into words; it runs no shell.
+	if got, ok := Script([]string{"env", "-S", "make x"}); ok {
+		t.Errorf("Script(env -S) = %+v, want no shell script", got)
 	}
 }
 
@@ -365,6 +407,41 @@ func TestWrapperOptions(t *testing.T) {
 				t.Errorf("WrapperOptions(env, %q) = %q, want %q", tt.args, got, tt.want)
 			}
 		})
+	}
+}
+
+// TestWrapperClearsEnv pins when a wrapper runs its command without a
+// variable: an empty environment in any spelling, or that variable unset,
+// while unsetting another one, an operand after the options, or a wrapper
+// that cannot clear one (sudo's -u names a user) does not.
+func TestWrapperClearsEnv(t *testing.T) {
+	t.Parallel()
+	isMarker := func(name string) bool { return strings.EqualFold(name, "CLAUDECODE") }
+	tests := []struct {
+		wrapper string
+		args    []string
+		want    bool
+	}{
+		{"env", []string{"-u", "CLAUDECODE", "qsdev"}, true},
+		{"env", []string{"-uCLAUDECODE", "qsdev"}, true},
+		{"env", []string{"--unset=claudecode", "qsdev"}, true},
+		{"env", []string{"--uns", "CLAUDECODE", "qsdev"}, true},
+		{"env", []string{"-C", "/tmp", "-u", "CLAUDECODE", "qsdev"}, true},
+		{"/usr/bin/env", []string{"-i", "qsdev"}, true},
+		{"env", []string{"-", "qsdev"}, true},
+		{"env", []string{"--ignore-env", "qsdev"}, true},
+		{"ENV.EXE", []string{"-iu", "HOME", "qsdev"}, true},
+		{"env", []string{"-u", "HOME", "qsdev"}, false},
+		{"env", []string{"A=1", "-u", "CLAUDECODE"}, false},
+		{"env", []string{"--", "-i"}, false},
+		{"env", nil, false},
+		{"sudo", []string{"-u", "CLAUDECODE", "qsdev"}, false},
+		{"nice", []string{"-n", "5", "qsdev"}, false},
+	}
+	for _, tt := range tests {
+		if got := WrapperClearsEnv(tt.wrapper, tt.args, isMarker); got != tt.want {
+			t.Errorf("WrapperClearsEnv(%q, %q) = %v, want %v", tt.wrapper, tt.args, got, tt.want)
+		}
 	}
 }
 

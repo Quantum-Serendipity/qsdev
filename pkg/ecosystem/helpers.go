@@ -60,14 +60,29 @@ func ToModuleConfigWithInfra(lang types.LanguageChoice, infra types.InfraConfig)
 			cfg.Extras[ExtraBuildCache] = infra.BuildCache
 		}
 	}
-	// The module sees the full configuration, so a key that depends on the
-	// build tool (Java's maven or gradle, Scala's sbt or Mill) follows it
-	// wherever it is recorded.
-	proxyKey := DefaultRegistry().proxyKeyFor(lang.Name, cfg)
-	if proxyKey != "" {
-		cfg.RegistryProxy = ResolveProxyURL(infra.RegistryProxyBase(), infra.RegistryProxyOverrides, proxyKey, infra.RegistryProxyPaths)
-	}
+	cfg.RegistryProxy = ResolveRegistryProxy(lang.Name, cfg, infra)
 	return cfg
+}
+
+// ResolveRegistryProxy returns the registry proxy URL the DefaultRegistry
+// module for langName routes cfg through under infra, or "" when no proxy is
+// configured, the language has no module, or the module does not route this
+// configuration. The module sees the full configuration, so a key that
+// depends on the package manager or build tool (Python's pip, Java's maven or
+// gradle) follows it wherever it is recorded. Generation
+// (ToModuleConfigWithInfra) and qsdev check both resolve through it, so the
+// check expects exactly the proxy generation wrote.
+func ResolveRegistryProxy(langName string, cfg ModuleConfig, infra types.InfraConfig) string {
+	return DefaultRegistry().resolveRegistryProxy(langName, cfg, infra)
+}
+
+// resolveRegistryProxy is ResolveRegistryProxy against r.
+func (r *Registry) resolveRegistryProxy(langName string, cfg ModuleConfig, infra types.InfraConfig) string {
+	proxyKey := r.proxyKeyFor(langName, cfg)
+	if proxyKey == "" {
+		return ""
+	}
+	return ResolveProxyURL(infra.RegistryProxyBase(), infra.RegistryProxyOverrides, proxyKey, infra.RegistryProxyPaths)
 }
 
 // ToGenerationConfig converts a LanguageChoice into the ModuleConfig

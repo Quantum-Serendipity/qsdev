@@ -1,6 +1,8 @@
 package config
 
 import (
+	"slices"
+
 	"github.com/Quantum-Serendipity/qsdev/pkg/types"
 )
 
@@ -41,6 +43,34 @@ func mergeUnionStrings(base, overlay []string) []string {
 		}
 	}
 	return result
+}
+
+// mergePackageGuard merges two hooks.package_guard blocks so that no layer
+// loosens the gate: lists are unioned, min_age_days takes the larger value and
+// new_dep_gate the stricter one (later in types.NewDepGates()). The result
+// never aliases an input's pointer.
+func mergePackageGuard(base, overlay types.PackageGuardConfig) types.PackageGuardConfig {
+	out := types.PackageGuardConfig{
+		Allowlist:  mergeUnionStrings(base.Allowlist, overlay.Allowlist),
+		Denylist:   mergeUnionStrings(base.Denylist, overlay.Denylist),
+		NewDepGate: base.NewDepGate,
+	}
+	if overlay.NewDepGate != "" && (base.NewDepGate == "" || newDepGateRank(overlay.NewDepGate) > newDepGateRank(base.NewDepGate)) {
+		out.NewDepGate = overlay.NewDepGate
+	}
+	for _, days := range []*int{base.MinAgeDays, overlay.MinAgeDays} {
+		if days != nil && (out.MinAgeDays == nil || *days > *out.MinAgeDays) {
+			v := *days
+			out.MinAgeDays = &v
+		}
+	}
+	return out
+}
+
+// newDepGateRank orders new_dep_gate values from loosest to strictest; an
+// unknown value (rejected by validation) ranks below every known one.
+func newDepGateRank(gate string) int {
+	return slices.Index(types.NewDepGates(), gate)
 }
 
 // mergeReplaceLanguages replaces the base languages with the overlay when the

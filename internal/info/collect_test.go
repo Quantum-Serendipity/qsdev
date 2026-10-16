@@ -6,7 +6,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/Quantum-Serendipity/qsdev/internal/catalog"
 	"github.com/Quantum-Serendipity/qsdev/internal/state"
+	"github.com/Quantum-Serendipity/qsdev/pkg/branding"
 	"github.com/Quantum-Serendipity/qsdev/pkg/types"
 )
 
@@ -223,7 +225,86 @@ func TestCollectInfo_DefaultProjectName(t *testing.T) {
 	if info.ProjectName != expected {
 		t.Errorf("ProjectName = %q, want %q (directory basename)", info.ProjectName, expected)
 	}
-	if info.SecurityProfile != "standard" {
-		t.Errorf("SecurityProfile = %q, want %q (default)", info.SecurityProfile, "standard")
+	// The default is the catalog's compliance level for its default tier. The
+	// old literal "standard" was a tier name, not a compliance level.
+	cat, err := catalog.Default()
+	if err != nil {
+		t.Fatalf("catalog.Default: %v", err)
+	}
+	want := cat.TierCompliance(cat.DefaultTier())
+	if want == "" {
+		t.Fatalf("catalog default tier %q has no compliance level", cat.DefaultTier())
+	}
+	if info.SecurityProfile != want {
+		t.Errorf("SecurityProfile = %q, want %q (catalog default compliance)", info.SecurityProfile, want)
+	}
+}
+
+// writeProject writes a .qsdev.yaml with the given content into a fresh
+// project directory and returns the directory.
+func writeProject(t *testing.T, config string) string {
+	t.Helper()
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, ".qsdev.yaml"), []byte(config), 0o644); err != nil {
+		t.Fatalf("writing .qsdev.yaml: %v", err)
+	}
+	return dir
+}
+
+// saveInitState writes st to the file state.InitStateFile names.
+func saveInitState(t *testing.T, dir string, st types.GeneratedState) {
+	t.Helper()
+	path := filepath.Join(dir, filepath.FromSlash(state.InitStateFile()))
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatalf("creating state dir: %v", err)
+	}
+	if err := state.SaveStateToFile(path, st); err != nil {
+		t.Fatalf("saving state: %v", err)
+	}
+}
+
+func TestCollectInfoUnknownGeneratorVersion(t *testing.T) {
+	t.Parallel()
+
+	dir := writeProject(t, "version: 1\n")
+	saveInitState(t, dir, types.GeneratedState{
+		Files: map[string]types.FileState{"devenv.nix": {Hash: "aaa"}},
+	})
+
+	got, err := CollectInfo(dir)
+	if err != nil {
+		t.Fatalf("CollectInfo: %v", err)
+	}
+	if got.QsdevVersion != Unknown {
+		t.Errorf("QsdevVersion = %q, want %q (state records no generator version)", got.QsdevVersion, Unknown)
+	}
+}
+
+// TestCollectInfoReadsInitStateFile changes the process-wide branding, so it
+// must not run in parallel.
+func TestCollectInfoReadsInitStateFile(t *testing.T) {
+	orig := branding.Get().StateDir
+	branding.Set(branding.Config{StateDir: ".custom-state"})
+	t.Cleanup(func() { branding.Set(branding.Config{StateDir: orig}) })
+
+	dir := writeProject(t, "version: 1\n")
+	saveInitState(t, dir, types.GeneratedState{
+		QsdevVersion: "4.5.6",
+		Files: map[string]types.FileState{
+			"devenv.nix":  {Hash: "aaa"},
+			"devenv.yaml": {Hash: "bbb"},
+		},
+	})
+	if _, err := os.Stat(filepath.Join(dir, ".custom-state")); err != nil {
+		t.Fatalf("state was not written under the custom StateDir: %v", err)
+	}
+
+	got, err := CollectInfo(dir)
+	if err != nil {
+		t.Fatalf("CollectInfo: %v", err)
+	}
+	if got.QsdevVersion != "4.5.6" || got.ManagedFileCount != 2 {
+		t.Errorf("QsdevVersion, ManagedFileCount = %q, %d; want %q, 2 read from %s",
+			got.QsdevVersion, got.ManagedFileCount, "4.5.6", state.InitStateFile())
 	}
 }

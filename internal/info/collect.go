@@ -8,25 +8,35 @@ import (
 	"path/filepath"
 
 	"github.com/Quantum-Serendipity/qsdev/internal/answers"
+	"github.com/Quantum-Serendipity/qsdev/internal/catalog"
 	qsdevconfig "github.com/Quantum-Serendipity/qsdev/internal/config"
 	"github.com/Quantum-Serendipity/qsdev/internal/state"
 	"github.com/Quantum-Serendipity/qsdev/internal/toolreg"
-	"github.com/Quantum-Serendipity/qsdev/internal/version"
 	"github.com/Quantum-Serendipity/qsdev/pkg/branding"
 	"github.com/Quantum-Serendipity/qsdev/pkg/types"
 )
 
+// Unknown is reported for a value that cannot be determined, such as a
+// generator version the state file does not record. info never substitutes a
+// plausible-looking value (the running binary's version, a guessed profile).
+const Unknown = "unknown"
+
 // SecurityProfileUnknown is reported when the project configuration cannot be
-// parsed, so a broken config is never displayed as a healthy default profile.
-const SecurityProfileUnknown = "unknown"
+// parsed, or the default profile cannot be derived from the catalog, so a
+// broken project is never displayed as a healthy default profile.
+const SecurityProfileUnknown = Unknown
 
 // ErrNotQsdevProject is returned when the project root does not contain a
 // .qsdev.yaml configuration file.
 var ErrNotQsdevProject = errors.New("not a qsdev-managed project")
 
 // CollectInfo reads cached state files to build a ProjectInfo.
-// It reads only .qsdev.yaml, .devinit/.qsdev-init-state.yaml, and
-// .devinit/.qsdev-init-answers.yaml — no evaluation, no scanning.
+// It reads only .qsdev.yaml, the init state file (state.InitStateFile) and
+// the wizard answers — no evaluation, no scanning. Category counts come from
+// the tool registry, and a security profile set by neither the config nor the
+// answers defaults to the catalog's compliance level for its default tier. A
+// registry or catalog that cannot be loaded is reported in Warnings, like an
+// unreadable config or state file.
 func CollectInfo(projectRoot string) (*ProjectInfo, error) {
 	// 1. Check .qsdev.yaml exists.
 	configPath := filepath.Join(projectRoot, branding.Get().ConfigFile)
@@ -42,7 +52,7 @@ func CollectInfo(projectRoot string) (*ProjectInfo, error) {
 
 	// 3. Load state (graceful if missing; LoadStateFromFile returns an empty
 	// state for a missing file, so any error here means it is unreadable).
-	statePath := filepath.Join(projectRoot, branding.Get().StateDir, "."+branding.Get().AppName+"-init-state.yaml")
+	statePath := filepath.Join(projectRoot, filepath.FromSlash(state.InitStateFile()))
 	genState, stateErr := state.LoadStateFromFile(statePath)
 
 	// 4. Load answers (graceful if missing).
@@ -77,7 +87,7 @@ func CollectInfo(projectRoot string) (*ProjectInfo, error) {
 	// From state.
 	info.QsdevVersion = genState.QsdevVersion
 	if info.QsdevVersion == "" {
-		info.QsdevVersion = version.Info().Version
+		info.QsdevVersion = Unknown
 	}
 	info.LastUpdated = genState.LastRun
 	info.ManagedFileCount = len(genState.Files)
@@ -89,9 +99,12 @@ func CollectInfo(projectRoot string) (*ProjectInfo, error) {
 		}
 	}
 
-	// Tool breakdown by category from registry. A catalog that does not load
-	// (a rejected defaults file) is reported, not fatal: the bug report this
-	// feeds is what a person reaches for after that failure.
+	// Tool breakdown by category from the registry rather than the catalog:
+	// the registry also holds tools that providers register outside catalog
+	// metadata (the operation skills), which catalog-only counts would miss.
+	// A catalog that does not load (a rejected defaults file) is reported,
+	// not fatal: the bug report this feeds is what a person reaches for after
+	// that failure.
 	if registry, err := toolreg.Default(); err != nil {
 		info.Warnings = append(info.Warnings, fmt.Sprintf("tool registry could not be built: %v", err))
 	} else {
@@ -122,10 +135,26 @@ func CollectInfo(projectRoot string) (*ProjectInfo, error) {
 		info.ProjectName = filepath.Base(projectRoot)
 	}
 	if info.SecurityProfile == "" {
-		info.SecurityProfile = "standard"
+		info.SecurityProfile = defaultSecurityProfile()
 	}
 
 	return info, nil
+}
+
+// defaultSecurityProfile returns the catalog's compliance level for its
+// default tier, or SecurityProfileUnknown when the catalog cannot be loaded.
+// It adds no warning: the registry warning already reports a catalog failure.
+// It is called only when nothing else sets the profile, so a healthy project
+// with an explicit level never loads the catalog for it.
+func defaultSecurityProfile() string {
+	cat, err := catalog.Default()
+	if err != nil {
+		return SecurityProfileUnknown
+	}
+	if c := cat.TierCompliance(cat.DefaultTier()); c != "" {
+		return c
+	}
+	return SecurityProfileUnknown
 }
 
 // loadAnswersBestEffort reads the primary answers file. A missing file yields

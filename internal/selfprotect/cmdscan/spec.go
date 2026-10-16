@@ -25,8 +25,10 @@ type CommandSpec struct {
 	// Flags match an invocation that sets any of them to its Value.
 	Flags []FlagCond
 	// Args returns the positional arguments that match an invocation; it is
-	// called only once an invocation may match. Nil matches none.
-	Args func() []string
+	// called only once an invocation may match. Nil matches none. An error
+	// fails closed: the spec then matches every invocation of its path, as
+	// an unconditional one does.
+	Args func() ([]string, error)
 }
 
 // FlagCond is a boolean flag set to Value, written as any of Spellings
@@ -100,11 +102,16 @@ type commandIndex struct {
 // flag before any "--" (`--dry-run`, `--help`) makes it no match at all,
 // except after a mention: where the text runs it is not known, so the flag
 // may be another command's word (`parallel ::: "qsdev teardown" --help`).
+// A computed program word on a line that spreads a value naming the program
+// (invocation.spread) is a computed match whatever words follow it.
 func (s CommandSpec) invokedAt(c *simpleCommand, inv invocation, idx *commandIndex) matchKind {
 	if idx.paths == nil {
 		idx.paths = s.newPathScan(c.texts)
 	}
-	k, end := idx.paths.match(inv)
+	k, end := computedMatch, -1
+	if !inv.spread {
+		k, end = idx.paths.match(inv)
+	}
 	if k == noMatch {
 		return noMatch
 	}
@@ -264,13 +271,18 @@ type restIndex struct {
 	cond, dynamic []bool
 }
 
-// indexRest indexes words for the spec.
+// indexRest indexes words for the spec. When the spec's Args fails, every
+// position holds a condition, so the spec fails closed (see CommandSpec.Args).
 func (s CommandSpec) indexRest(words []string) *restIndex {
 	n := len(words)
 	r := &restIndex{readOnly: make([]bool, n+1), cond: make([]bool, n+1), dynamic: make([]bool, n+1)}
 	var args []string
 	if s.Args != nil {
-		args = s.Args()
+		var err error
+		if args, err = s.Args(); err != nil {
+			// cond[i] carries cond[i+1], so this marks every position.
+			r.cond[n] = true
+		}
 	}
 	for i := n - 1; i >= 0; i-- {
 		w := words[i]
@@ -365,9 +377,16 @@ type Invoked struct {
 // may take its remaining words from its input (`echo pin | xargs qsdev
 // defaults`, `xargs -I X X defaults pin`). A command whose program and
 // subcommand words are all computed (`$A $B`) is matched only when the text
-// assigns the program's name to a variable (`Q=qsdev; $Q $S`). A literal
-// read-only flag (ReadOnly) before any "--" clears an invocation whatever
-// else it holds (`qsdev $CMD --help`).
+// assigns the program's name to a variable (`Q=qsdev; $Q $S`). When the text
+// assigns a value spread over several words that names the program, or
+// expands a variable holding it (`x="qsdev session"; $x allow`, `IFS=,;
+// X=qsdev,defaults,pin; $X`, `x=qsdev; y="$x session allow"; $y`), every
+// computed program word matches every spec as computed, since which words
+// the value splits into is not judged; a value that is the program's name
+// alone (`Q=qsdev; $Q status`) does not spread. A line continuation
+// (backslash-newline outside single quotes) is joined before any of this. A
+// literal read-only flag (ReadOnly) before any "--" clears an invocation
+// whatever else it holds (`qsdev $CMD --help`).
 func InvokedSpecs(command, app string, specs []CommandSpec) []Invoked {
 	var hit []Invoked
 	for _, c := range commandsInvoking(command, app) {

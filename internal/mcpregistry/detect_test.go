@@ -54,7 +54,7 @@ func TestScanMcpJSON_RemoteServers(t *testing.T) {
 			if def.URL != tt.url {
 				t.Errorf("URL = %q, want %q", def.URL, tt.url)
 			}
-			if got := GradeServer(&def).Level; got > tt.maxGrade {
+			if got := GradeServer(t.Context(), &def).Level; got > tt.maxGrade {
 				t.Errorf("grade = %s, want at most %s", got, tt.maxGrade)
 			}
 		})
@@ -121,5 +121,47 @@ func TestIsLocalOnly_URL(t *testing.T) {
 				t.Errorf("isLocalOnly(%q) = %v, want %v", tt.url, got, tt.want)
 			}
 		})
+	}
+}
+
+// TestScanMcpJSON_SetsDir is the U16-10 regression: every server read from
+// .mcp.json carries the absolute project root as the directory it is launched
+// from, and ConfiguredServers passes it on to the probe.
+func TestScanMcpJSON_SetsDir(t *testing.T) {
+	root := t.TempDir()
+	data := []byte(`{"mcpServers":{"x":{"command":"./marker.sh"},"r":{"url":"https://mcp.example/mcp"}}}`)
+	if err := os.WriteFile(filepath.Join(root, ".mcp.json"), data, 0o644); err != nil {
+		t.Fatalf("writing .mcp.json: %v", err)
+	}
+	if err := os.Mkdir(filepath.Join(root, "sub"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Chdir(filepath.Join(root, "sub"))
+
+	for _, arg := range []string{root, ".."} {
+		defs, err := ScanMcpJSON(arg)
+		if err != nil {
+			t.Fatalf("ScanMcpJSON(%q): %v", arg, err)
+		}
+		if len(defs) != 2 {
+			t.Fatalf("ScanMcpJSON(%q) = %d servers, want 2", arg, len(defs))
+		}
+		for name, def := range defs {
+			if def.Dir != root {
+				t.Errorf("ScanMcpJSON(%q)[%s].Dir = %q, want %q", arg, name, def.Dir, root)
+			}
+		}
+		servers, err := ConfiguredServers(arg, nil)
+		if err != nil {
+			t.Fatalf("ConfiguredServers(%q): %v", arg, err)
+		}
+		if len(servers) != 2 {
+			t.Fatalf("ConfiguredServers(%q) = %d servers, want 2", arg, len(servers))
+		}
+		for _, s := range servers {
+			if s.Dir != root {
+				t.Errorf("ConfiguredServers(%q)[%s].Dir = %q, want %q", arg, s.Name, s.Dir, root)
+			}
+		}
 	}
 }

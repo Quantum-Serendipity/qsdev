@@ -4,17 +4,14 @@ import (
 	"fmt"
 	"io"
 	"maps"
-	"os"
 	"slices"
 	"strconv"
 	"strings"
 	"sync"
 
-	"github.com/charmbracelet/x/term"
 	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
 
-	"github.com/Quantum-Serendipity/qsdev/internal/selfprotect/canon"
 	"github.com/Quantum-Serendipity/qsdev/internal/selfprotect/cmdscan"
 	"github.com/Quantum-Serendipity/qsdev/pkg/branding"
 )
@@ -36,8 +33,9 @@ type Sensitivity struct {
 	Flags map[string]bool
 	// Args returns the positional arguments that make an invocation
 	// sensitive. It is called when a matching invocation is judged, not when
-	// the command is built, so it may read the catalog.
-	Args func() []string
+	// the command is built, so it may read the catalog. An error fails
+	// closed: every invocation is then sensitive.
+	Args func() ([]string, error)
 }
 
 // sensitivities holds the Sensitivity of every command MarkSensitive marked.
@@ -68,7 +66,8 @@ func sensitivityOf(cmd *cobra.Command) (Sensitivity, bool) {
 }
 
 // IsSensitiveInvocation reports whether running cmd with the parsed flags
-// and positional args needs a human.
+// and positional args needs a human. When the Sensitivity's Args fails, it
+// does: which arguments are safe is then unknown.
 func IsSensitiveInvocation(cmd *cobra.Command, args []string) bool {
 	s, ok := sensitivityOf(cmd)
 	if !ok || readOnlyInvocation(cmd) {
@@ -87,7 +86,10 @@ func IsSensitiveInvocation(cmd *cobra.Command, args []string) bool {
 		}
 	}
 	if s.Args != nil {
-		sensitive := s.Args()
+		sensitive, err := s.Args()
+		if err != nil {
+			return true
+		}
 		return slices.ContainsFunc(args, func(a string) bool { return slices.Contains(sensitive, a) })
 	}
 	return false
@@ -207,49 +209,28 @@ func InstallHumanGate(root *cobra.Command) {
 	}
 }
 
-// agentSessionMarker returns the first agent marker set in the environment,
-// or "" when the command is not running inside an agent session.
-func agentSessionMarker() string {
-	for _, name := range canon.AgentEnvMarkers {
-		if os.Getenv(name) != "" {
-			return name
-		}
-	}
-	return ""
-}
-
-// Terminal is an input a test can present as an interactive terminal.
+// Terminal is an input a test presents as an interactive terminal: with
+// IsTerminal true it answers for a human, so the gate skips its ancestry and
+// controlling-terminal checks (see humanGate.verify). Only tests implement it
+// (humantest.HumanTerminal); TestNoProductionTerminalDouble keeps shipped code
+// from doing so.
 type Terminal interface {
 	io.Reader
 	IsTerminal() bool
 }
 
-// atTerminal reports whether in is an interactive terminal.
-func atTerminal(in io.Reader) bool {
-	switch r := in.(type) {
-	case *os.File:
-		return term.IsTerminal(r.Fd())
-	case Terminal:
-		return r.IsTerminal()
-	}
-	return false
-}
-
 // RequireHuman refuses cmd unless a human runs it: an agent's tool calls run
-// inside its session (and usually without a terminal) and cannot answer a
-// confirmation prompt. A pseudo-terminal wrapper such as script(1) defeats the
-// terminal check alone, hence the agent-environment check too. It is defence
-// in depth: the enforcing control for Claude Code is the self-protection
-// hook's SP-014, which blocks the same commands before they run.
+// inside its session, usually without a terminal, and cannot answer a code
+// shown on the controlling terminal. See humanGate.verify for the checks; on
+// platforms other than Linux and macOS the process ancestry is unknown and
+// the terminal challenge carries the decision, as it does for a process
+// reparented away from its agent (setsid and a double fork) or driven on a
+// pseudo-terminal by something that reads the code back. It is defence in
+// depth: the
+// enforcing control for Claude Code is the self-protection hook's SP-014,
+// which blocks the same commands before they run.
 func RequireHuman(cmd *cobra.Command) error {
 	app := branding.Get().AppName
 	name := strings.TrimSpace(strings.TrimPrefix(cmd.CommandPath(), cmd.Root().Name()))
-	if marker := agentSessionMarker(); marker != "" {
-		return fmt.Errorf("'%s %s' requires a human: it is refused inside an AI agent session (%s is set); run it from your own terminal",
-			app, name, marker)
-	}
-	if !atTerminal(cmd.InOrStdin()) {
-		return fmt.Errorf("'%s %s' requires a human at an interactive terminal: it weakens or removes a guardrail", app, name)
-	}
-	return nil
+	return productionGate.verify(cmd.InOrStdin(), fmt.Sprintf("'%s %s'", app, name))
 }

@@ -18,6 +18,7 @@ import (
 	"mvdan.cc/sh/v3/syntax"
 
 	claudecode "github.com/Quantum-Serendipity/qsdev/addons/claudecode"
+	"github.com/Quantum-Serendipity/qsdev/internal/claudesettings"
 	"github.com/Quantum-Serendipity/qsdev/internal/sandbox"
 	"github.com/Quantum-Serendipity/qsdev/internal/secrets"
 	"github.com/Quantum-Serendipity/qsdev/internal/selfprotect/hookio"
@@ -189,8 +190,8 @@ func TestDefaultHookRegistry_PackageGuardRegistered(t *testing.T) {
 		t.Fatalf("expected 2 PreToolUse matchers (self-protection, package-guard), got %d", len(matchers))
 	}
 	guard := matchers[1]
-	if guard.Matcher != "Bash|PowerShell|Monitor" {
-		t.Errorf("matcher = %q, want Bash|PowerShell|Monitor", guard.Matcher)
+	if want := "Bash|PowerShell|Monitor|mcp__.*__qsdev_nix_run"; guard.Matcher != want {
+		t.Errorf("matcher = %q, want %s", guard.Matcher, want)
 	}
 	if guard.Hooks[0].Timeout != 30 {
 		t.Errorf("timeout = %d, want 30", guard.Hooks[0].Timeout)
@@ -428,6 +429,20 @@ func TestDefaultHookRegistry_SandboxCategoriesValid(t *testing.T) {
 		if _, err := sandbox.ParseHookCategoryStrict(d.SandboxCategory); err != nil {
 			t.Errorf("hook %q (event=%s): %v", d.Owner, d.Event, err)
 		}
+	}
+}
+
+// TestCredentialScanEnvNameMatchesScript verifies that scan-secrets.py reads
+// the variable buildHookEnv sets from hooks.credential_scan.extra_patterns,
+// so the generator and the hook cannot drift apart.
+func TestCredentialScanEnvNameMatchesScript(t *testing.T) {
+	t.Parallel()
+	script, err := claudecode.ExportTemplateFS.ReadFile("templates/hooks/scan-secrets.py")
+	if err != nil {
+		t.Fatalf("reading scan-secrets.py: %v", err)
+	}
+	if name := claudesettings.EnvCredentialScanExtraPatterns; !bytes.Contains(script, []byte(`"`+name+`"`)) {
+		t.Errorf("scan-secrets.py does not read %s", name)
 	}
 }
 

@@ -188,6 +188,17 @@ var declBuiltins = map[string]bool{
 	"export": true, "declare": true, "typeset": true, "local": true, "readonly": true, "nameref": true,
 }
 
+// PrefixAssignsOnly reports whether every variable c sets is a prefix
+// assignment of the command c names (`LC_ALL=C git log`), which the shell
+// sets in that command's environment alone: c has a command word that is not
+// a declaration builtin, and it sets nothing else (a ${X:=v} default, an
+// arithmetic assignment, a variable read or printf -v stores into) and
+// nothing whose name comes from an expansion.
+func (c Command) PrefixAssignsOnly() bool {
+	return c.Name != "" && !declBuiltins[ProgramName(c.Name)] && !c.AssignsDynamic &&
+		len(c.Assigns) > 0 && len(c.Assigns) == len(c.AssignTexts)
+}
+
 // builtin adds the variables a simple command with words sets when its
 // program (behind any wrapper such as builtin or command) is a builtin that
 // stores into named variables.

@@ -290,7 +290,9 @@ func (m *Module) DevenvNixFragment(config ecosystem.ModuleConfig) (string, error
 		// in the shell (and so in CI) is pointed at the generated one. -gs
 		// loads it as the global settings, under the user's
 		// ~/.m2/settings.xml, which keeps private-repository credentials
-		// working; it is resolved against the project root, so it also
+		// working (mvn still reads that file; only the agent's Read tool is
+		// denied it, by the credential canon's generated Read rules); it is
+		// resolved against the project root, so it also
 		// applies in module subdirectories. bin/mvn word-splits MAVEN_ARGS,
 		// so a project root containing a space is not supported.
 		fmt.Fprintf(&b, "  env.MAVEN_ARGS = \"-gs ${config.devenv.root}/%s\";\n", settingsXMLPath)

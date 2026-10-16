@@ -11,7 +11,15 @@ Exit codes:
   2 — hook error (fail-closed, blocks the operation)
 
 Configuration via environment variables:
-  CREDENTIAL_SCAN_EXTRA_PATTERNS — comma-separated regex patterns to add
+  CREDENTIAL_SCAN_EXTRA_PATTERNS — extra regex patterns, one per line (a
+    comma is part of a pattern, as in {20,40}). Each line is stripped of
+    spaces, tabs and CRs; blank lines are ignored. A pattern may mark the
+    credential with one (?P<secret>...) group, so only that value is tested
+    for a placeholder (your_token_here); without the group the whole match
+    is. A pattern that does not compile blocks the call (exit 2) with
+    "invalid CREDENTIAL_SCAN_EXTRA_PATTERNS entry N: <error>" on stderr and
+    an invalid_extra_pattern audit entry. qsdev sets it from
+    hooks.credential_scan.extra_patterns.
 
 Security invariant:
   - Fail-closed: any uncaught exception blocks the operation (exit 2).
@@ -86,7 +94,7 @@ DEFAULT_PATTERNS: list[str] = [
     # Google API keys
     r'AIza[0-9A-Za-z_-]{35}',
     # Database connection strings with credentials
-    r"""(mongodb(\+srv)?|postgres(ql)?|mysql|redis)://[^\s"':]+:[^\s"'@]+@[^\s"']{5,}""",
+    r"""(mongodb(\+srv)?|postgres(ql)?|mysql|redis)://[^\s"':]+:(?P<secret>[^\s"'@]+)@[^\s"']{5,}""",
     # HashiCorp Vault service, batch and recovery tokens
     r'hv[sbr]\.[A-Za-z0-9_-]{24,}',
     # Slack API tokens
@@ -107,12 +115,12 @@ DEFAULT_PATTERNS: list[str] = [
     r'hf_[A-Za-z0-9]{30,}',
     # age secret keys
     r'AGE-SECRET-KEY-1[0-9A-Z]{58}',
-    # Heuristic: AWS secret/session token assignments
-    r'(?i)aws[_-]?(secret[_-]?access[_-]?key|session[_-]?token)\s*[=:]\s*[A-Za-z0-9/+=]{20,}',
+    # Heuristic: AWS secret/session token assignments; key and value may be quoted
+    r"""(?i)aws[_-]?(secret[_-]?access[_-]?key|session[_-]?token)["']?\s*[=:]\s*["']?(?P<secret>[A-Za-z0-9/+=]{20,})""",
     # Heuristic: generic API key assignments
-    r"""["']?[Aa](pi|PI)[_-]?[Kk](ey|EY)["']?\s*[=:]\s*["'][A-Za-z0-9_-]{20,}["']""",
+    r"""["']?[Aa](pi|PI)[_-]?[Kk](ey|EY)["']?\s*[=:]\s*["'](?P<secret>[A-Za-z0-9_-]{20,})["']""",
     # Heuristic: generic secret/password assignments; the key may be quoted (JSON)
-    r"""(?i)(password|passwd|secret|token|credential)["']?\s*[=:]\s*["'][^\s"']{8,}["']""",
+    r"""(?i)(password|passwd|secret|token|credential)["']?\s*[=:]\s*["'](?P<secret>[^\s"']{8,})["']""",
 ]
 
 # Unquoted `KEY=value` / `key: value` assignments, checked only in dotenv and
@@ -123,7 +131,7 @@ DEFAULT_PATTERNS: list[str] = [
 # line and may not start with a variable reference or template
 # (`${DB_PASSWORD}`, `<password>`, `%(pw)s`).
 CONFIG_PATTERNS: list[str] = [
-    r"""(?im)^[ \t]*(export[ \t]+)?[A-Za-z0-9_.-]*(password|passwd|secret|token|credential|api[_-]?key|access[_-]?key)["']?[ \t]*[=:][ \t]*[^\s"'#$<%{][^\s"'#]{7,}""",
+    r"""(?im)^[ \t]*(export[ \t]+)?[A-Za-z0-9_.-]*(password|passwd|secret|token|credential|api[_-]?key|access[_-]?key)["']?[ \t]*[=:][ \t]*(?P<secret>[^\s"'#$<%{][^\s"'#]{7,})""",
 ]
 
 # Dotenv and configuration files, by base name.
@@ -143,33 +151,104 @@ PLACEHOLDER_INDICATORS: tuple[str, ...] = (
     'INSERT_', 'TODO', 'XXXX', 'SAMPLE', 'DUMMY', 'TEST_KEY',
 )
 
-def get_patterns(file_path: str) -> list[re.Pattern]:
-    """Compile default + extra patterns from environment, plus the config
-    assignment patterns when file_path is a dotenv or config file."""
+# Credential token shapes: the default patterns without a (?P<secret>) group.
+# An assignment whose whole value is one of these shapes is left to that
+# shape's own pattern, which applies the token placeholder test.
+TOKEN_SHAPES: list[re.Pattern] = [re.compile(p) for p in DEFAULT_PATTERNS if "(?P<secret>" not in p]
+
+# A value that is entirely a template reference: <name>, ${VAR}, {{name}} or
+# %(name)s. A bare $VAR is not a template ($hunter2realpass is a password).
+TEMPLATE = re.compile(r'<[^<>]+>|\$\{[^{}]+\}|\{\{[^{}]+\}\}|%\([^()]+\)s')
+
+# PLACEHOLDER_INDICATORS as words of an upper-cased value: not glued to a
+# letter on either side (so SampleCorpProd2024 is not a SAMPLE placeholder),
+# with a trailing '_' dropped and an X run of any length from four up.
+INDICATOR_WORD = re.compile("|".join(
+    "(?<![A-Z])" + ("X{4,}" if set(i) == {"X"} else re.escape(i.rstrip("_"))) + "(?![A-Z])"
+    for i in PLACEHOLDER_INDICATORS))
+
+EXTRA_PATTERNS_ENV = "CREDENTIAL_SCAN_EXTRA_PATTERNS"
+
+
+def extra_patterns() -> list[re.Pattern]:
+    """Compile EXTRA_PATTERNS_ENV: one regex per line, each stripped of
+    spaces, tabs and CRs, blank lines dropped (as qsdev's Go validation reads
+    it). An entry that does not compile blocks the call (exit 2), naming it
+    by its 1-based number among the non-blank entries: a misspelt policy must
+    not silently scan less."""
+    entries = (e.strip(" \t\r") for e in os.environ.get(EXTRA_PATTERNS_ENV, "").split("\n"))
+    compiled = []
+    for n, p in enumerate((e for e in entries if e), 1):
+        try:
+            compiled.append(re.compile(p))
+        except re.error as err:
+            lib.audit_log({"event": "invalid_extra_pattern", "hook": "credential-scan", "entry": n, "error": str(err)})
+            print(f"invalid {EXTRA_PATTERNS_ENV} entry {n}: {err}", file=sys.stderr)
+            sys.exit(2)
+    return compiled
+
+
+def get_patterns(file_path: str, extras: list[re.Pattern]) -> list[re.Pattern]:
+    """Compile the default patterns, plus the config assignment patterns when
+    file_path is a dotenv or config file, followed by the compiled extras."""
     raw = list(DEFAULT_PATTERNS)
     if CONFIG_FILE.search(os.path.basename(file_path)):
         raw.extend(CONFIG_PATTERNS)
-    extra = os.environ.get("CREDENTIAL_SCAN_EXTRA_PATTERNS", "")
-    if extra:
-        for p in extra.split(","):
-            p = p.strip()
-            if p:
-                raw.append(p)
     compiled = []
     for p in raw:
         try:
             compiled.append(re.compile(p))
         except re.error as err:
             lib.audit_log({"event": "pattern_compile_error", "hook": "credential-scan", "pattern": p, "error": str(err)})
-    return compiled
+    return compiled + extras
 
 
 def is_placeholder(matched_text: str) -> bool:
-    """Check if matched text is a known example or placeholder."""
+    """Check if a token-shape match is a known example or placeholder."""
     if matched_text in KNOWN_EXAMPLES:
         return True
     upper = matched_text.upper()
     return any(indicator in upper for indicator in PLACEHOLDER_INDICATORS)
+
+
+def is_placeholder_value(value: str) -> bool:
+    """Check if the secret group of an assignment or connection-string match
+    is a placeholder: a known example, a whole-value template, a placeholder
+    indicator as a word, or a token shape (judged by that shape's pattern)."""
+    if value in KNOWN_EXAMPLES or TEMPLATE.fullmatch(value):
+        return True
+    if INDICATOR_WORD.search(value.upper()):
+        return True
+    return any(shape.fullmatch(value) for shape in TOKEN_SHAPES)
+
+
+def find_secret(pattern: re.Pattern, content: str):
+    """Return the first match of pattern in content that is not a
+    placeholder, or None. Every match counts: a placeholder earlier in the
+    file (the AWS docs' example key) must not hide a real secret of the same
+    kind below it."""
+    grouped = "secret" in pattern.groupindex
+    pos = 0
+    while pos <= len(content):
+        match = pattern.search(content, pos)
+        if match is None:
+            return None
+        if match.end() == match.start():
+            # An empty match is never a credential.
+            pos = match.end() + 1
+            continue
+        if grouped and match.group("secret") is not None:
+            if not is_placeholder_value(match.group("secret")):
+                return match
+            # Resume after the placeholder value, not after the whole match,
+            # so a placeholder connection string cannot hide a real one later
+            # in the same token.
+            pos = max(match.end("secret"), match.start() + 1)
+        elif not is_placeholder(match.group()):
+            return match
+        else:
+            pos = match.end()
+    return None
 
 
 # Tools whose written content this hook scans. The hook's settings.json matcher
@@ -197,6 +276,7 @@ def written_content(tool_name: str, tool_input: dict) -> tuple[str, str]:
 
 def main() -> None:
     lib.arm_deadline("credential-scan", _HOOK_DEADLINE_S)
+    extras = extra_patterns()
     try:
         input_data = json.load(sys.stdin)
     except (json.JSONDecodeError, ValueError) as e:
@@ -216,14 +296,10 @@ def main() -> None:
     if not content:
         sys.exit(0)
 
-    for pattern in get_patterns(file_path):
-        # Every match counts: a placeholder earlier in the file (the AWS docs'
-        # example key) must not hide a real secret of the same kind below it.
-        for match in pattern.finditer(content):
+    for pattern in get_patterns(file_path, extras):
+        match = find_secret(pattern, content)
+        if match is not None:
             matched_text = match.group()
-            if is_placeholder(matched_text):
-                continue
-
             redacted = matched_text[:8] + "..." if len(matched_text) > 8 else matched_text
 
             lib.audit_log({

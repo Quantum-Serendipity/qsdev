@@ -33,26 +33,90 @@ type localProbe struct {
 	// Args must equal the arguments exactly, or start them when Prefix is set.
 	Args   []string
 	Prefix bool
+	// Kind is what the probe asks the binary.
+	Kind ProbeKind
 }
+
+// ProbeKind is what a local probe asks its binary.
+type ProbeKind int
+
+const (
+	// ProbeVersion asks for the binary's version.
+	ProbeVersion ProbeKind = iota + 1
+	// ProbeSyntax checks the syntax of its input: the exit status says
+	// whether it is valid.
+	ProbeSyntax
+	// ProbeQuery asks the host a question whose answer the caller parses:
+	// a user entry, a process name, a container runtime's mode, a
+	// repository's state.
+	ProbeQuery
+)
 
 // localProbes is the single allowlist of execs a read-only command may run.
 var localProbes = []localProbe{
-	{Name: "docker", Args: []string{"--version"}},
-	{Name: "docker", Args: []string{"compose", "version"}},
-	{Name: "podman", Args: []string{"info", "--format"}, Prefix: true},
-	{Name: "podman", Args: []string{"version", "--format"}, Prefix: true},
-	{Name: "git", Args: []string{"rev-parse"}, Prefix: true},
-	{Name: "getent", Args: []string{"passwd"}, Prefix: true},
-	{Name: "nix-instantiate", Args: []string{"--parse", "-"}},
-	{Name: "bash", Args: []string{"-n"}},
-	{Name: "ps", Args: []string{"-p"}, Prefix: true},
-	{Name: "cmd", Args: []string{"/c", "ver"}},
-	{Name: "xcode-select", Args: []string{"-p"}},
-	{Name: "ghc", Args: []string{"--numeric-version"}},
-	{Name: "sw_vers", Args: []string{"-productVersion"}},
-	{Name: "sw_vers", Args: []string{"-productName"}},
-	{Name: "uname", Args: []string{"-r"}},
-	{Name: "sysctl", Args: []string{"-n", "sysctl.proc_translated"}},
+	// A query, not only a version: container detection reads whether the
+	// answer names Podman, whose Docker alias it is.
+	{Name: "docker", Args: []string{"--version"}, Kind: ProbeQuery},
+	// A query too: its exit status decides whether Compose is available.
+	{Name: "docker", Args: []string{"compose", "version"}, Kind: ProbeQuery},
+	{Name: "podman", Args: []string{"info", "--format"}, Prefix: true, Kind: ProbeQuery},
+	{Name: "podman", Args: []string{"version", "--format"}, Prefix: true, Kind: ProbeQuery},
+	{Name: "git", Args: []string{"rev-parse"}, Prefix: true, Kind: ProbeQuery},
+	// internal/gitrepo's diff, stash show and log: no lock, fsmonitor,
+	// external diff, textconv or signature check, and every later argument is
+	// a revision or pathspec.
+	{Name: "git", Args: []string{
+		"--no-optional-locks", "-c", "core.fsmonitor=false", "diff",
+		"--name-only", "-z", "--no-relative", "--no-renames", "--no-ext-diff", "--no-textconv", "--end-of-options",
+	}, Prefix: true, Kind: ProbeQuery},
+	{Name: "git", Args: []string{
+		"--no-optional-locks", "stash", "show", "--name-only", "-z", "--no-renames", "--include-untracked", "--end-of-options",
+	}, Prefix: true, Kind: ProbeQuery},
+	{Name: "git", Args: []string{
+		"--no-optional-locks", "log", "--format=", "--name-only", "-z", "--no-relative", "--no-renames",
+		"--no-show-signature", "--no-walk", "--diff-merges=separate", "--end-of-options",
+	}, Prefix: true, Kind: ProbeQuery},
+	// internal/gitrepo's patch listing: --numstat turns applying off, and
+	// the rest is -R, -p<n>, --directory=<d>, "--" and the patch files.
+	{Name: "git", Args: []string{"--no-optional-locks", "apply", "--numstat", "-z"}, Prefix: true, Kind: ProbeQuery},
+	// internal/gitrepo's clean listing: --dry-run removes nothing, and the
+	// rest is -d, -x or -X, -f, --exclude=<pattern>, "--" and the pathspec.
+	{Name: "git", Args: []string{
+		"--no-optional-locks", "-c", "core.fsmonitor=false", "-c", "core.quotePath=false", "clean", "--dry-run",
+	}, Prefix: true, Kind: ProbeQuery},
+	// internal/gitrepo's index listing, exactly: no pathspec, no options.
+	{Name: "git", Args: []string{"--no-optional-locks", "-c", "core.fsmonitor=false", "ls-files", "-z"}, Kind: ProbeQuery},
+	{Name: "getent", Args: []string{"passwd"}, Prefix: true, Kind: ProbeQuery},
+	{Name: "nix-instantiate", Args: []string{"--parse", "-"}, Kind: ProbeSyntax},
+	{Name: "bash", Args: []string{"-n"}, Kind: ProbeSyntax},
+	{Name: "ps", Args: []string{"-p"}, Prefix: true, Kind: ProbeQuery},
+	{Name: "cmd", Args: []string{"/c", "ver"}, Kind: ProbeQuery},
+	{Name: "xcode-select", Args: []string{"-p"}, Kind: ProbeQuery},
+	{Name: "ghc", Args: []string{"--numeric-version"}, Kind: ProbeVersion},
+	{Name: "sw_vers", Args: []string{"-productVersion"}, Kind: ProbeQuery},
+	{Name: "sw_vers", Args: []string{"-productName"}, Kind: ProbeQuery},
+	{Name: "uname", Args: []string{"-r"}, Kind: ProbeQuery},
+	{Name: "sysctl", Args: []string{"-n", "sysctl.proc_translated"}, Kind: ProbeQuery},
+}
+
+// LocalProbeNames returns the binaries the forbid-exec guard lets a command
+// run by name (see localProbes) whose every allowed probe is of one of
+// kinds, or every such binary when kinds is empty; sorted, without repeats.
+// A hermetic test can stand an empty program in for a binary probed only for
+// its version or for syntax, which reads as a tool of unknown version or
+// valid input, but not for one it queries, whose empty answer the caller
+// would parse as a different host.
+func LocalProbeNames(kinds ...ProbeKind) []string {
+	names := make([]string, 0, len(localProbes))
+	for _, p := range localProbes {
+		names = append(names, p.Name)
+	}
+	slices.Sort(names)
+	return slices.DeleteFunc(slices.Compact(names), func(name string) bool {
+		return len(kinds) > 0 && slices.ContainsFunc(localProbes, func(p localProbe) bool {
+			return p.Name == name && !slices.Contains(kinds, p.Kind)
+		})
+	})
 }
 
 // Command is exec.Command behind the forbid-exec guard.

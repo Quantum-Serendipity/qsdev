@@ -22,7 +22,7 @@ var consultingWorkflowNames = []string{
 }
 
 func TestConsultingWorkflowToolsRegistered(t *testing.T) {
-	reg := DefaultRegistry()
+	reg := mustDefault(t)
 
 	count := 0
 	for _, name := range consultingWorkflowNames {
@@ -44,7 +44,7 @@ func TestConsultingWorkflowToolsRegistered(t *testing.T) {
 }
 
 func TestConsultingWorkflowToolsOptIn(t *testing.T) {
-	reg := DefaultRegistry()
+	reg := mustDefault(t)
 
 	for _, name := range consultingWorkflowNames {
 		toolKey := "consulting-workflow-" + name
@@ -60,7 +60,7 @@ func TestConsultingWorkflowToolsOptIn(t *testing.T) {
 }
 
 func TestConsultingWorkflowReviewPrSupersedesBasic(t *testing.T) {
-	reg := DefaultRegistry()
+	reg := mustDefault(t)
 
 	tool, ok := reg.ByName("consulting-workflow-review-pr")
 	if !ok {
@@ -96,7 +96,7 @@ func TestConsultingWorkflowReviewPrSupersedesBasic(t *testing.T) {
 }
 
 func TestConsultingWorkflowToolsHaveOwnedFiles(t *testing.T) {
-	reg := DefaultRegistry()
+	reg := mustDefault(t)
 
 	for _, name := range consultingWorkflowNames {
 		toolKey := "consulting-workflow-" + name
@@ -128,7 +128,7 @@ func TestConsultingWorkflowToolsHaveOwnedFiles(t *testing.T) {
 }
 
 func TestConsultingWorkflowToolsLifecycleOnly(t *testing.T) {
-	reg := DefaultRegistry()
+	reg := mustDefault(t)
 	var names []string
 	for _, name := range consultingWorkflowNames {
 		if toolKey := "consulting-workflow-" + name; toolKey != consultingWorkflowReviewPR {
@@ -149,7 +149,7 @@ func TestConsultingWorkflowToolsLifecycleOnly(t *testing.T) {
 }
 
 func TestConsultingWorkflowToolsHaveDescriptions(t *testing.T) {
-	reg := DefaultRegistry()
+	reg := mustDefault(t)
 
 	for _, name := range consultingWorkflowNames {
 		toolKey := "consulting-workflow-" + name

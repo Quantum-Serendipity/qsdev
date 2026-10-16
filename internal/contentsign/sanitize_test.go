@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
 )
@@ -502,6 +503,39 @@ func TestSanitizeJSONStringsBoundsRecursionDepth(t *testing.T) {
 	}
 	if out != nil {
 		t.Error("over-deep input must not return (unsanitized) output")
+	}
+}
+
+func TestIsInvisibleRune(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		r    rune
+		want bool
+	}{
+		{0x200B, true}, // zero-width space
+		{0x2060, true}, // word joiner
+		{0x00AD, true}, // soft hyphen
+		{'\U000E0041', true},
+		{0xFEFF, true}, // BOM; Go rejects it as a rune literal
+		{'\x00', true},
+		{'\x1f', true},
+		{0x2028, true}, // line separator
+		{'a', false},
+		{' ', false},
+		{'\t', false},
+		{'\n', false},
+		{'\r', false},
+		{0x00E9, false}, // precomposed e-acute
+		{0x0301, false}, // combining acute accent
+		{'\U0001F3F4', false},
+	}
+	for _, tt := range tests {
+		t.Run(fmt.Sprintf("U+%04X", tt.r), func(t *testing.T) {
+			t.Parallel()
+			if got := IsInvisibleRune(tt.r); got != tt.want {
+				t.Errorf("IsInvisibleRune(%U) = %v, want %v", tt.r, got, tt.want)
+			}
+		})
 	}
 }
 

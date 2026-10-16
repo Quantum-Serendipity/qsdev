@@ -38,9 +38,10 @@ func CheckBoundaryReadPath(p string) error {
 }
 
 // checkBoundaryReadPath is CheckBoundaryReadPath for the given home directory,
-// comparing paths as a filesystem with opts does (so on macOS and Windows
-// "~/.SSH" is the credential store "~/.ssh"); an empty home skips the checks
-// of absolute paths against it.
+// comparing a path with the home directory as a filesystem with opts does.
+// Credential stores are compared with crossHostMatch whatever opts says, so
+// "~/.SSH" is the store "~/.ssh" on every host. An empty home skips the
+// checks of absolute paths against it.
 func checkBoundaryReadPath(p, home string, opts pathmatch.Options) error {
 	switch {
 	case p == "":
@@ -78,15 +79,24 @@ func checkBoundaryReadPath(p, home string, opts pathmatch.Options) error {
 		return errors.New("path is the filesystem root or the home directory, which would lift the read boundary")
 	}
 	if homeRelative {
-		return checkCredentialOverlap(path.Clean("/"+rest), "/", secrets.CredentialPaths(), opts)
+		// A home-relative path is checked against the home stores only, so
+		// ~/sdks stays valid when home is /root (a system deny entry).
+		return checkCredentialOverlap(path.Clean("/"+rest), "/", "~/", secrets.CredentialPaths())
 	}
 	return checkAbsoluteReadPath(slashed[:len(slashed)-len(rest)]+path.Clean("/"+rest), home, opts)
 }
 
+// crossHostMatch is how a read path is compared with the credential stores:
+// folding case and ignoring Windows name aliases on every host, because the
+// committed .qsdev.yaml is used on all of them, and "~/.SSH" or "~/.ssh." is
+// the store "~/.ssh" on macOS or Windows.
+var crossHostMatch = pathmatch.Options{FoldCase: true, WindowsAliases: true}
+
 // checkAbsoluteReadPath rejects an absolute read path that contains the home
-// directory or overlaps a system or per-user credential store.
+// directory (compared as the host filesystem does, per opts) or overlaps a
+// system or per-user credential store.
 func checkAbsoluteReadPath(abs, home string, opts pathmatch.Options) error {
-	if err := checkCredentialOverlap(abs, "", denylist.SystemDenyPaths(), opts); err != nil {
+	if err := checkCredentialOverlap(abs, "", "", denylist.SystemDenyPaths()); err != nil {
 		return err
 	}
 	if home == "" {
@@ -96,17 +106,19 @@ func checkAbsoluteReadPath(abs, home string, opts pathmatch.Options) error {
 	if opts.Within(home, abs) {
 		return errors.New("path is or contains the home directory, which would lift the read boundary")
 	}
-	return checkCredentialOverlap(abs, home+"/", secrets.CredentialPaths(), opts)
+	return checkCredentialOverlap(abs, home+"/", home+"/", secrets.CredentialPaths())
 }
 
 // checkCredentialOverlap rejects p when it equals, contains or lies inside
-// any deny entry (each prefixed with prefix), since reading it would expose
-// the credential store.
-func checkCredentialOverlap(p, prefix string, deny []string, opts pathmatch.Options) error {
+// any deny entry (each prefixed with prefix), compared with crossHostMatch,
+// since reading it would expose the credential store. The error names the
+// store as display plus the entry ("~/.ssh" for a home-relative path).
+func checkCredentialOverlap(p, prefix, display string, deny []string) error {
 	for _, d := range deny {
-		d = path.Clean(prefix + toSlash(d))
-		if opts.Within(p, d) || opts.Within(d, p) {
-			return fmt.Errorf("path overlaps the credential store %s", d)
+		d = toSlash(d)
+		full := path.Clean(prefix + d)
+		if crossHostMatch.Within(p, full) || crossHostMatch.Within(full, p) {
+			return fmt.Errorf("path overlaps the credential store %s", display+d)
 		}
 	}
 	return nil

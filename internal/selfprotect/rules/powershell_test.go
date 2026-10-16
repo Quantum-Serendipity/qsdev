@@ -1,11 +1,14 @@
 package rules
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"slices"
+	"strings"
 	"testing"
 
+	"github.com/Quantum-Serendipity/qsdev/internal/selfprotect/cmdscan"
 	"github.com/Quantum-Serendipity/qsdev/pkg/branding"
 )
 
@@ -45,7 +48,10 @@ func TestPowerShellNative(t *testing.T) {
 		{name: "taskkill image", command: `taskkill /IM ` + app + `.exe /F`, want: Deny, rule: "SP-009"},
 		{name: "Stop-Process glob", command: `Stop-Process -Name q*`, want: Deny, rule: "SP-009"},
 		{name: "spps claude", command: `spps -Name:claude -Force`, want: Deny, rule: "SP-009"},
-		{name: "STOP-PROCESS gdev", command: `STOP-PROCESS -Name GDEV,node`, want: Deny, rule: "SP-009"},
+		{name: "STOP-PROCESS upper-case app", command: `STOP-PROCESS -Name ` + strings.ToUpper(app) + `,node`, want: Deny, rule: "SP-009"},
+		{name: "pkill pattern", command: `pkill -f 'q.dev'`, want: Deny, rule: "SP-009"},
+		{name: "systemctl stop unit", command: `systemctl --user stop ` + app + `-mcp`, want: Deny, rule: "SP-009"},
+		{name: "killall claude", command: `killall claude`, want: Deny, rule: "SP-009"},
 		{name: "kill by variable", command: `$n = 'qs' + 'dev'; kill -Name $n`, want: Deny, rule: "SP-009"},
 		{name: "Kill method", command: `(Get-Process ` + app + `).Kill()`, want: Deny, rule: "SP-009"},
 		{name: "Stop-Process concatenated name", command: `Stop-Process -Name ('` + app[:2] + `'+'` + app[2:] + `')`, want: Deny, rule: "SP-009"},
@@ -104,6 +110,77 @@ func TestPowerShellNative(t *testing.T) {
 	}
 }
 
+// TestPowerShell_UnicodeWhitespace pins W1bN-16 in the PowerShell tool: a
+// word separated by NEL, NBSP or a Unicode space separator is judged as if
+// it were separated by an ASCII space, as PowerShell's tokenizer splits it.
+func TestPowerShell_UnicodeWhitespace(t *testing.T) {
+	t.Parallel()
+	top := filepath.Join(homeDir(t), "project")
+	const overwrite = "would overwrite protected .claude/settings.json in the working tree"
+	for _, r := range []rune{' ', 0x85, 0xa0, 0x1680, 0x2003, 0x2028, 0x2029, 0x202f, 0x3000} {
+		sep := string(r)
+		reset := strings.Join([]string{"git", "reset", "--hard", "evil"}, sep)
+		t.Run(fmt.Sprintf("%U/reset evil", r), func(t *testing.T) {
+			t.Parallel()
+			if got, reason, matches := rewriteVerdict(t, "PowerShell", reset, top, rewriteRepo(top, true)); got != Deny || !strings.Contains(reason, overwrite) {
+				t.Errorf("%q: verdict = %v, SP-007 reason %q (matches %v), want Deny with %q", reset, got, reason, matchIDs(matches), overwrite)
+			}
+		})
+		t.Run(fmt.Sprintf("%U/reset clean", r), func(t *testing.T) {
+			t.Parallel()
+			if got, reason, matches := rewriteVerdict(t, "PowerShell", reset, top, rewriteRepo(top, false)); got != Allow {
+				t.Errorf("%q: verdict = %v (matches %v, SP-007 %q), want Allow", reset, got, matchIDs(matches), reason)
+			}
+		})
+		teardown := "qsdev" + sep + "teardown"
+		t.Run(fmt.Sprintf("%U/teardown", r), func(t *testing.T) {
+			t.Parallel()
+			ctx := EvalContext{ToolName: "PowerShell", Command: teardown, SensitiveCommands: sensitiveFixture}
+			if v, reason := sp014.Evaluate(&ctx); v != Deny {
+				t.Errorf("SP-014(%q) = %v (%s), want Deny", teardown, v, reason)
+			}
+		})
+	}
+}
+
+// TestPowerShell_EnvAssignUnicodeWhitespace pins the W1bN-16 class in the
+// raw-text checks: for every rune PowerShell reads as whitespace
+// (cmdscan.IsPowerShellSpace), an agent-marker assignment spaced with it is
+// the assignment SP-008 denies, while a zero-width space, which PowerShell
+// keeps in the variable's name, is not whitespace.
+func TestPowerShell_EnvAssignUnicodeWhitespace(t *testing.T) {
+	t.Parallel()
+	var spaces []rune
+	for r := rune(0); r <= 0xffff; r++ {
+		if cmdscan.IsPowerShellSpace(r) {
+			spaces = append(spaces, r)
+		}
+	}
+	for _, r := range spaces {
+		sep := string(r)
+		for _, command := range []string{
+			"$env:CLAUDECODE" + sep + "= $null",
+			"$env:CLAUDECODE" + sep + "=" + sep + "$null",
+			"${env:CLAUDECODE}" + sep + "+=" + sep + "'x'",
+		} {
+			t.Run(fmt.Sprintf("%U/%q", r, command), func(t *testing.T) {
+				t.Parallel()
+				ctx := EvalContext{ToolName: "PowerShell", Command: command}
+				if v, reason := sp008.Evaluate(&ctx); v != Deny {
+					t.Errorf("SP-008(%q) = %v (%s), want Deny", command, v, reason)
+				}
+			})
+		}
+	}
+	zeroWidth, nbsp := string(rune(0x200b)), string(rune(0xa0))
+	for _, command := range []string{"$env:CLAUDECODE" + zeroWidth + "= $null", "$env:CLAUDECODE" + nbsp + "-eq $null"} {
+		ctx := EvalContext{ToolName: "PowerShell", Command: command}
+		if v, reason := sp008.Evaluate(&ctx); v != Allow {
+			t.Errorf("SP-008(%q) = %v (%s), want Allow", command, v, reason)
+		}
+	}
+}
+
 func matchIDs(matches []RuleMatch) []string {
 	ids := make([]string, len(matches))
 	for i, m := range matches {
@@ -151,6 +228,127 @@ func TestPowerShellResolvedPaths(t *testing.T) {
 			ctx := EvalContext{ToolName: "PowerShell", Command: tc.command, CWD: cwd}
 			if got, matches := Tier1Rules.EvaluateAll(&ctx); got != tc.want {
 				t.Fatalf("verdict = %v, want %v (matches %v)", got, tc.want, matchIDs(matches))
+			}
+		})
+	}
+}
+
+// TestShellRewritesFile_PowerShell verifies a PowerShell line is judged in
+// its own dialect for the guarded-file rewrite check (U18-07): backslash
+// paths, case-insensitive names and the delete, write and append cmdlets
+// count as rewrites, a subexpression that may carry the name fails closed,
+// and the read cmdlets, safe-read programs and git staging stay allowed.
+func TestShellRewritesFile_PowerShell(t *testing.T) {
+	t.Parallel()
+	project := filepath.Join(homeDir(t), "project")
+	guarded := []string{".npmrc"}
+	cases := []struct {
+		command string
+		want    string
+	}{
+		{`Remove-Item C:\p\.npmrc`, ".npmrc"},
+		{`ri .\.NPMRC`, ".npmrc"},
+		{`Set-Content .npmrc x`, ".npmrc"},
+		{`Add-Content -Path .npmrc -Value ignore-scripts=false`, ".npmrc"},
+		{`echo x >> .npmrc`, ".npmrc"},
+		{`Move-Item x .npmrc`, ".npmrc"},
+		{`$n = '.npmrc'; cp x "$($n)"`, ".npmrc"},
+		// A subexpression runs code whatever the command holding it is
+		// (U18-WS3 review).
+		{`echo "$(Remove-Item .npmrc)"`, ".npmrc"},
+		{`cat "$(ri .npmrc)"`, ".npmrc"},
+		{`Write-Host "$(rm .npmrc)"`, ".npmrc"},
+		{`gh pr create --body "$(Remove-Item .npmrc)"`, ".npmrc"},
+		{`gh pr create --title x --body "$(Set-Content .npmrc 'ignore-scripts=false')"`, ".npmrc"},
+		{`gh pr create --body "$(sed -i s/true/false/ .npmrc)"`, ".npmrc"},
+		{`Get-Content "$(Set-Content .npmrc x)"`, ".npmrc"},
+		{"Write-Host @\"\n$(Remove-Item .npmrc)\n\"@", ".npmrc"},
+		{`$x = Remove-Item .npmrc`, ".npmrc"},
+		{`$x=ri .npmrc`, ".npmrc"},
+		// .NET calls and the ${...} notation, whose arguments are not
+		// modelled, fail closed once the line names the file.
+		{`[IO.File]::WriteAllText('.npmrc','x')`, ".npmrc"},
+		{`${C:\p\.npmrc} = 'ignore-scripts=false'`, ".npmrc"},
+		// An alias or function may give a read or gh another meaning.
+		{`Set-Alias gh Remove-Item; gh pr create .npmrc`, ".npmrc"},
+		{`Set-Alias Get-Content Remove-Item; Get-Content .npmrc`, ".npmrc"},
+		{`function gc { Remove-Item $args }; gc .npmrc`, ".npmrc"},
+		{`$function:gh = { ri .npmrc }; gh pr create`, ".npmrc"},
+		// A writer whose path comes from pipeline input or a parenthesised
+		// group has no target word of its own (U18-WS3 review).
+		{`gci .npmrc | ri`, ".npmrc"},
+		{`Get-ChildItem .npmrc | Remove-Item`, ".npmrc"},
+		{`Get-Item .npmrc | Set-Content -Value ignore-scripts=false`, ".npmrc"},
+		{`'.npmrc' | Remove-Item`, ".npmrc"},
+		{`ls .npmrc | rm`, ".npmrc"},
+		{"gci .npmrc |\n  Clear-Content", ".npmrc"},
+		{`Set-Content ('.npmrc') x`, ".npmrc"},
+		{`Set-Content (".npmrc") ignore-scripts=false`, ".npmrc"},
+		{`ri ('.npmrc')`, ".npmrc"},
+		{`Remove-Item -Path (Resolve-Path .npmrc)`, ".npmrc"},
+		{`Clear-Content -Path (gi .npmrc)`, ".npmrc"},
+		{`sc ('.np'+'mrc') x`, ".npmrc"},
+		{`(gi .npmrc).Delete()`, ".npmrc"},
+		{`Get-Content .npmrc | Select-String x`, ""},
+		{`if (Test-Path .npmrc) { gc .npmrc }`, ""},
+		{`gc .npmrc || gc x`, ""},
+		{`echo "$(Get-Content .npmrc)"`, ""},
+		{`$x = Get-Content .npmrc`, ""},
+		{`gh pr create --body "$(Get-Content notes.txt)"`, ""},
+		{`Get-Content .npmrc`, ""},
+		{`gc .npmrc`, ""},
+		{`type .npmrc`, ""},
+		{`Select-String x .npmrc`, ""},
+		{`git diff .npmrc`, ""},
+		{`git add .npmrc`, ""},
+		{`sed -n 1p .npmrc`, ""},
+		{`Set-Content notes.txt x`, ""},
+	}
+	for _, tc := range cases {
+		t.Run(tc.command, func(t *testing.T) {
+			t.Parallel()
+			ctx := EvalContext{ToolName: "PowerShell", Command: tc.command, CWD: project}
+			if name, ok := ShellRewritesFile(&ctx, guarded); name != tc.want || ok != (tc.want != "") {
+				t.Errorf("ShellRewritesFile = (%q, %v), want (%q, %v)", name, ok, tc.want, tc.want != "")
+			}
+		})
+	}
+}
+
+// TestGitCodeExecution_PowerShell verifies git is judged over the commands
+// of a PowerShell line (U18-V02): the call operator and a git.exe spelling
+// still run git.
+func TestGitCodeExecution_PowerShell(t *testing.T) {
+	t.Parallel()
+	cases := []struct {
+		command string
+		deny    bool
+	}{
+		{`git.exe commit --no-verify -m x`, true},
+		{`& git -c alias.x='!sh' x`, true},
+		{`C:\Tools\Git.EXE config core.hooksPath C:\tmp`, true},
+		// git inside a subexpression or as an assignment's value (U18-WS3
+		// review).
+		{`Write-Host "$(git commit --no-verify -m x)"`, true},
+		{`Write-Host "$(git config core.hooksPath /tmp)"`, true},
+		{`gh pr create --body "$(git commit --no-verify -m x)"`, true},
+		{"Write-Host @\"\n$(git commit -n -m x)\n\"@", true},
+		{`$x = git commit --no-verify -m x`, true},
+		{`$x = git -c core.hooksPath=/tmp commit -m x`, true},
+		{`$x = git config core.hooksPath /tmp`, true},
+		{`$x=git config core.hooksPath /tmp`, true},
+		{`$out = & git commit --no-verify -m x`, true},
+		{`Write-Host (git commit --no-verify -m x)`, true},
+		{`git log --oneline`, false},
+		{`$log = git log --oneline`, false},
+		{`Write-Host "$(git log -1)"`, false},
+		{`Get-Content x | git commit -F -`, false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.command, func(t *testing.T) {
+			t.Parallel()
+			if reason, deny := GitCodeExecution(&EvalContext{ToolName: "PowerShell", Command: tc.command}); deny != tc.deny {
+				t.Errorf("GitCodeExecution = (%q, %v), want deny %v", reason, deny, tc.deny)
 			}
 		})
 	}

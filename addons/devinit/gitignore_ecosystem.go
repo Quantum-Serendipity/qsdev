@@ -1,7 +1,5 @@
 package devinit
 
-import "github.com/Quantum-Serendipity/qsdev/internal/selfprotect/canon"
-
 // ecosystemGitignoreEntries maps ecosystem module names (EcosystemModule.Name(),
 // the value stored in WizardAnswers.Languages[].Name) to their recommended
 // .gitignore entries. These cover build artifacts, dependency directories, and
@@ -152,11 +150,9 @@ var securityGitignoreEntries = []string{
 	".env.*",
 	"*.pem",
 	"*.key",
-	// Claude Code hook audit logs record full command lines, which can carry
-	// credentials (tokens in index URLs, NPM_TOKEN=...). The second entry is
-	// the package guard's location in older templates.
-	canon.HookLogDir + "/",
-	".claude/hook-audit.log",
+	// The Claude Code hook audit logs (.claude/logs/, .claude/hook-audit.log*)
+	// are owned by projectGitignoreEntries, the one list create, join and
+	// update all ensure.
 }
 
 // gitignoreEntriesForLanguages returns the combined .gitignore entries for

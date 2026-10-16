@@ -12,6 +12,19 @@
 # Appended to $GITHUB_ENV by workflows, including on Windows runners, where a
 # CRLF checkout would put a trailing \r into every value.
 .github/tool-versions.env text eol=lf
+# The catalog source of the Nix release pins: install-nix.sh rejects a value
+# with a trailing \r, and the generated .github/nix-release.env (pinned to LF
+# in the qsdev block below) must stay byte-identical to it
+# (TestRepoNixInstallerIsCatalogOutput).
+internal/cigeneration/nix-release.env text eol=lf
 # Signed release fixtures: verification is over the exact published bytes,
 # so line endings must never be converted on checkout (e.g. CRLF on Windows).
 internal/selfupdate/testdata/** -text
+
+# qsdev generated files
+/.claude/hooks/lsp-first-guard.sh text eol=lf
+/.claude/hooks/package-guard.py text eol=lf
+/.envrc text eol=lf
+/.github/nix-release.env text eol=lf
+/.github/scripts/install-nix.sh text eol=lf
+/.claude/hooks/semble-analytics.sh text eol=lf

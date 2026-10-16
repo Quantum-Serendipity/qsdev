@@ -79,7 +79,7 @@ func runScanSecretsWrite(t *testing.T, python, hook, filePath, content string) (
 		t.Fatal(err)
 	}
 	cmd := exec.Command(python, hook)
-	cmd.Env = append(cmd.Environ(), "CLAUDE_PROJECT_DIR="+t.TempDir())
+	cmd.Env = hookEnv(t)
 	cmd.Stdin = bytes.NewReader(input)
 	out, err := cmd.Output()
 	if err != nil {
@@ -101,7 +101,10 @@ func runScanSecretsWrite(t *testing.T, python, hook, filePath, content string) (
 }
 
 // TestScanSecretsHook_PlaceholderIndicatorsTakeEffect runs the real hook to
-// show that each indicator suppresses a match regardless of its case.
+// show that each indicator suppresses a match regardless of its case. In an
+// assignment the indicator is looked for as a word in the value (separated by
+// '_', '-', a digit or the value's edge), and a whole-value template
+// (${VAR}, <name>, {{name}}, %(name)s) is a placeholder too.
 func TestScanSecretsHook_PlaceholderIndicatorsTakeEffect(t *testing.T) {
 	t.Parallel()
 	python, hook := scanSecretsHook(t)
@@ -114,6 +117,15 @@ func TestScanSecretsHook_PlaceholderIndicatorsTakeEffect(t *testing.T) {
 		{"lower-case dummy placeholder", `password = "dummy_password_value"`, false},
 		{"lower-case sample placeholder", `secret: "sample-secret-value"`, false},
 		{"test_key placeholder", `token = "my_test_key_value"`, false},
+		{"replace placeholder", `password = "replace_with_your_password"`, false},
+		{"upper-case replace placeholder", `password = "REPLACE_ME_PLEASE"`, false},
+		{"changeme then digits", `password = "CHANGEME123"`, false},
+		{"test_key api key", `api_key = "test_key_1234567890abcdef"`, false},
+		{"x run", `password = "xxxxxxxx"`, false},
+		{"prefixed x run", `password = "pw_xxxxxxxx"`, false},
+		{"hyphenated your", `password = "your-password"`, false},
+		{"python percent template", `password = "%(db_pw)s"`, false},
+		{"mustache template", `password = "{{db_pw}}"`, false},
 		{"real-looking secret", `password = "hunter2hunter2hunter2"`, true},
 	}
 	for _, tt := range tests {

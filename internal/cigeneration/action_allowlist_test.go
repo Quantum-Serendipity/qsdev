@@ -88,9 +88,10 @@ func checkWorkflowActions(src []byte) []string {
 }
 
 // TestWorkflowActionsAllowlisted keeps every workflow startable. Wave 1 added
-// cachix/install-nix-action, which the repository's allowlist does not admit,
-// and every CI run ended in startup_failure before any job ran. Each file in
-// .github/workflows must also parse as YAML.
+// a third-party Nix action, which the repository's allowlist does not admit,
+// and every CI run ended in startup_failure before any job ran; Nix is now
+// installed by the checksum-pinned .github/scripts/install-nix.sh. Each file
+// in .github/workflows must also parse as YAML.
 func TestWorkflowActionsAllowlisted(t *testing.T) {
 	t.Parallel()
 
@@ -115,6 +116,19 @@ func TestWorkflowActionsAllowlisted(t *testing.T) {
 	}
 	if checked == 0 {
 		t.Fatal("found no workflows; the layout changed")
+	}
+}
+
+// TestActionCatalogAllowlisted keeps every catalog pin startable: the
+// generator and this repository's workflows emit only catalog actions, so a
+// pin the allowlist does not admit would fail every workflow that uses it.
+func TestActionCatalogAllowlisted(t *testing.T) {
+	t.Parallel()
+
+	for name, ref := range AllActionRefs() {
+		if !actionAllowed(ref.String()) {
+			t.Errorf("%s (%s) is not admitted by the Actions allowlist", name, ref)
+		}
 	}
 }
 

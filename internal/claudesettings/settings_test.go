@@ -597,3 +597,53 @@ func TestIsLaunchEnv(t *testing.T) {
 		})
 	}
 }
+
+func TestHooksFor(t *testing.T) {
+	t.Parallel()
+	hook := func(cmd string) Hook { return Hook{Type: HookTypeCommand, Command: cmd} }
+	const registered = `{"hooks": {
+  "PreToolUse": [
+    {"matcher": "*", "hooks": [{"type": "command", "command": "qsdev selfprotect"}]},
+    {"matcher": "", "hooks": [{"type": "command", "command": "empty"}]},
+    {"matcher": "Bash|PowerShell, Monitor", "hooks": [{"type": "command", "command": "list"}]},
+    {"matcher": "^(Edit|Write)$", "hooks": [{"type": "command", "command": "regex"}]},
+    {"matcher": "[EW]rite", "hooks": [{"type": "command", "command": "bracket"}]},
+    {"matcher": "Read", "hooks": [{"type": "command", "command": "qsdev selfprotect"}]}
+  ],
+  "PostToolUse": [
+    {"matcher": 7, "hooks": [{"type": "command", "command": "invalid-matcher"}]},
+    {"matcher": "*", "hooks": [{"type": "bogus"}, {"type": "command", "command": "audit"}]}
+  ]
+}}`
+	tests := []struct {
+		name, doc, event, tool string
+		want                   []Hook
+	}{
+		{"exact list", registered, EventPreToolUse, "Monitor", []Hook{hook("qsdev selfprotect"), hook("empty"), hook("list")}},
+		{"star and empty match every tool", registered, EventPreToolUse, "Grep", []Hook{hook("qsdev selfprotect"), hook("empty")}},
+		{"portable regexp", registered, EventPreToolUse, "Write", []Hook{hook("qsdev selfprotect"), hook("empty"), hook("regex")}},
+		// The "Read" entry repeats the "*" entry's hook: Claude Code runs an
+		// identical hook once.
+		{"identical hook once", registered, EventPreToolUse, "Read", []Hook{hook("qsdev selfprotect"), hook("empty")}},
+		// The non-string matcher's entry and the unloadable "bogus" hook
+		// never run; the rest of a non-guard event still does.
+		{"invalid matcher and entry skipped", registered, "PostToolUse", "Bash", []Hook{hook("audit")}},
+		{"event with no entries", registered, "Stop", "Bash", nil},
+		{"unloadable file", `{"hooks": {"PreToolUse": [{"matcher": "*", "hooks": [{"type": "command", "command": "x"}, {"type": "bogus"}]}]}}`,
+			EventPreToolUse, "Bash", nil},
+		{"all hooks disabled", `{"disableAllHooks": true, "hooks": {"PreToolUse": [{"matcher": "*", "hooks": [{"type": "command", "command": "x"}]}]}}`,
+			EventPreToolUse, "Bash", nil},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			s, err := Parse([]byte(tt.doc))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got := s.HooksFor(tt.event, tt.tool); !slices.Equal(got, tt.want) {
+				t.Errorf("HooksFor(%q, %q) = %+v, want %+v", tt.event, tt.tool, got, tt.want)
+			}
+		})
+	}
+}

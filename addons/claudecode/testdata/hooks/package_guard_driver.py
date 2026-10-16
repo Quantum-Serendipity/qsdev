@@ -10,14 +10,22 @@ urllib.request.urlopen replaced by a stub registry, so no network is touched:
   - PG_URL_ERROR=1 makes every request fail with URLError (network down);
     PG_INTERNAL_ERROR=1 makes it raise RuntimeError (a hook bug).
 
+subprocess.run is stubbed too, so no host git is needed: every argv is
+recorded, and `git ... ls-tree ... -- <path>` is answered from PG_GIT_LSTREE, a
+JSON map path -> "<mode> blob <id>" (a tracked file), "error" (git exits 128)
+or "timeout" (TimeoutExpired); a path missing from the map is untracked (empty
+output). Any other subprocess raises, so an unexpected one fails the hook.
+
 Prints one JSON object: the exit code, the parsed hookSpecificOutput (or
-null), stderr, and every package the stub was asked about.
+null), stderr, every package the stub was asked about, and every subprocess
+argv.
 """
 import contextlib
 import io
 import json
 import os
 import runpy
+import subprocess
 import sys
 import urllib.error
 import urllib.parse
@@ -26,7 +34,24 @@ from datetime import datetime, timezone
 
 VULN = set(filter(None, os.environ.get("PG_VULN", "").split(",")))
 FRESH = set(filter(None, os.environ.get("PG_FRESH", "").split(",")))
+GIT_LSTREE = json.loads(os.environ.get("PG_GIT_LSTREE") or "{}") or {}
 LOOKUPS = []
+SUBPROCESSES = []
+
+
+def fake_run(args, *_, timeout=None, **__):
+    argv = [str(a) for a in args]
+    SUBPROCESSES.append(argv)
+    if not argv or os.path.basename(argv[0]) != "git" or "ls-tree" not in argv or "--" not in argv:
+        raise RuntimeError("stub: unexpected subprocess " + repr(argv))
+    path = argv[-1]
+    entry = GIT_LSTREE.get(path)
+    if entry == "timeout":
+        raise subprocess.TimeoutExpired(argv, timeout)
+    if entry == "error":
+        return subprocess.CompletedProcess(argv, 128, b"", b"fatal: stub error\n")
+    out = (entry + "\t" + path + "\0").encode() if entry else b""
+    return subprocess.CompletedProcess(argv, 0, out, b"")
 
 
 class _Resp(io.BytesIO):
@@ -85,6 +110,7 @@ def fake_urlopen(req, timeout=None):
 
 def main():
     urllib.request.urlopen = fake_urlopen
+    subprocess.run = fake_run
     sys.stdin = io.StringIO(os.environ["PG_ENVELOPE"])
     out, err = io.StringIO(), io.StringIO()
     code = 0
@@ -100,6 +126,7 @@ def main():
         "output": hook_output,
         "stderr": err.getvalue(),
         "lookups": LOOKUPS,
+        "subprocesses": SUBPROCESSES,
     }))
 
 

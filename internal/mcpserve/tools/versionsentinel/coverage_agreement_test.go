@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/Quantum-Serendipity/qsdev/internal/toolreg"
+	"github.com/Quantum-Serendipity/qsdev/internal/toolreg/toolregtest"
 	"github.com/Quantum-Serendipity/qsdev/pkg/ecosystem"
 	_ "github.com/Quantum-Serendipity/qsdev/pkg/ecosystem/modules" // every ecosystem module
 	"github.com/Quantum-Serendipity/qsdev/pkg/types"
@@ -17,7 +18,7 @@ import (
 // presence_only and uncovered (go.mod was once "NOT covered" in one and
 // "diffed" in the other).
 func TestManifestCoverage_AgreesWithClaudeMdSection(t *testing.T) {
-	tool, ok := toolreg.DefaultRegistry().ByName(toolreg.ToolVersionSentinel)
+	tool, ok := toolregtest.Default(t).ByName(toolreg.ToolVersionSentinel)
 	if !ok || tool.SectionDataFunc == nil {
 		t.Fatalf("catalog tool %q has no CLAUDE.md section data", toolreg.ToolVersionSentinel)
 	}

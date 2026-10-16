@@ -8,16 +8,11 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
-	"time"
 
-	"github.com/Quantum-Serendipity/qsdev/internal/procexec"
+	"github.com/Quantum-Serendipity/qsdev/internal/gitrepo"
 )
 
 const categoryHookDrift = "Pre-Commit Hook Drift"
-
-// gitHooksDirTimeout bounds the git invocation used to locate the hooks
-// directory, so a wedged git never stalls a posture assessment.
-const gitHooksDirTimeout = 5 * time.Second
 
 // detectHookDrift checks that git hooks are installed and properly configured.
 // The hooks directory is resolved the way git resolves it, so worktrees,
@@ -115,50 +110,10 @@ func checkHook(hooksDir, name, missingDesc, missingRemediation string) (Finding,
 // gitdir links and honours core.hooksPath; when git is unavailable or does not
 // recognise the repository it falls back to reading the .git link directly.
 func resolveHooksDir(projectDir string) (string, error) {
-	if dir, err := gitHooksDir(projectDir); err == nil {
+	if dir, err := (gitrepo.Client{}).HooksDir(context.Background(), projectDir); err == nil {
 		return dir, nil
 	}
 	return hooksDirFromDotGit(projectDir)
-}
-
-// gitHooksDir asks git for the hooks path of the repository rooted exactly at
-// projectDir. GIT_CEILING_DIRECTORIES stops git from walking up into an
-// unrelated enclosing repository when projectDir's own .git is unusable.
-func gitHooksDir(projectDir string) (string, error) {
-	absDir, err := filepath.Abs(projectDir)
-	if err != nil {
-		return "", fmt.Errorf("resolving project dir: %w", err)
-	}
-	ctx, cancel := context.WithTimeout(context.Background(), gitHooksDirTimeout)
-	defer cancel()
-	cmd := procexec.CommandContext(ctx, "git", "-C", absDir,
-		"rev-parse", "--path-format=absolute", "--git-path", "hooks")
-	cmd.Env = append(repoScopedEnv(os.Environ()), "GIT_CEILING_DIRECTORIES="+filepath.Dir(absDir))
-	out, err := cmd.Output()
-	if err != nil {
-		return "", fmt.Errorf("git rev-parse --git-path hooks: %w", err)
-	}
-	dir := strings.TrimSpace(string(out))
-	if dir == "" || !filepath.IsAbs(filepath.FromSlash(dir)) {
-		return "", fmt.Errorf("git returned unusable hooks path %q", dir)
-	}
-	return filepath.Clean(filepath.FromSlash(dir)), nil
-}
-
-// repoScopedEnv drops the variables that pin git to a particular repository
-// (set, for example, while qsdev runs inside a git hook), so git discovers
-// the repository from the -C directory instead.
-func repoScopedEnv(env []string) []string {
-	out := make([]string, 0, len(env))
-	for _, kv := range env {
-		name, _, _ := strings.Cut(kv, "=")
-		switch name {
-		case "GIT_DIR", "GIT_WORK_TREE", "GIT_COMMON_DIR", "GIT_INDEX_FILE":
-			continue
-		}
-		out = append(out, kv)
-	}
-	return out
 }
 
 // hooksDirFromDotGit resolves the hooks directory from projectDir/.git

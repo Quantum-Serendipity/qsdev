@@ -17,9 +17,10 @@ const (
 	ciWorkflowFile = "ci.yml"
 	nixSandboxJob  = "nix-sandbox"
 	skipReportCmd  = "go run ./internal/testutil/cmd/skipreport"
-	// installNixScript installs the checksum-pinned official Nix release;
-	// the repository's Actions allowlist admits no Nix action.
-	installNixScript = ".github/scripts/install-nix.sh"
+	// installNixScript installs the checksum-pinned official Nix release
+	// from the catalog's pins; the repository's Actions allowlist admits no
+	// Nix action.
+	installNixScript = InstallNixScriptPath + " " + NixReleasePinsPath
 )
 
 // nixSandboxSwitches are the switches the nix-sandbox job provisions the

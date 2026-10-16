@@ -83,9 +83,13 @@ type jsonRPCError struct {
 	Message string `json:"message"`
 }
 
-func startServer(command string, args []string, env map[string]string) (*MCPProcess, error) {
-	cmd := procexec.Command(command, args...) //nolint:gosec // argv is an explicit array; no shell interpolation
-	cmd.Env = buildProcessEnv(env)
+// startServer starts cfg's command in cfg.Dir ("" keeps the current
+// directory). A relative command path is resolved against cfg.Dir, as
+// exec.Cmd evaluates Path relative to Dir.
+func startServer(cfg ServerConfig) (*MCPProcess, error) {
+	cmd := procexec.Command(cfg.Command, cfg.Args...) //nolint:gosec // argv is an explicit array; no shell interpolation
+	cmd.Dir = cfg.Dir
+	cmd.Env = buildProcessEnv(cfg.Env)
 	// Run the server in its own process group so launchers (npx, uvx, sh) and
 	// the real server they spawn can be killed together.
 	setProcessGroup(cmd)
@@ -109,7 +113,7 @@ func startServer(command string, args []string, env map[string]string) (*MCPProc
 
 	if err := cmd.Start(); err != nil {
 		stdin.Close()
-		return nil, fmt.Errorf("starting server %q: %w", command, err)
+		return nil, fmt.Errorf("starting server %q: %w", cfg.Command, err)
 	}
 
 	// MCP stdio messages are single lines; a tools/list response with full

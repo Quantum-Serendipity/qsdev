@@ -219,6 +219,7 @@ func resolveGroup(target string, group []types.FragmentEntry) (types.GeneratedFi
 		Strategy: highest.Strategy,
 		Owner:    highest.Owner,
 		HeldWith: highest.HeldWith,
+		PinLF:    highest.PinLF,
 	}
 
 	switch highest.ComposeMode {

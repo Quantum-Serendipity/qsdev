@@ -54,6 +54,7 @@ Optional positional argument to show a specific section:
   defense   Show defense layer details
   config    Show configuration health
   deps      Show dependency health
+  mcp       Show the compliance grade of each .mcp.json server
   tools     Show tool availability
 
 When the project has a .qsdev-policy.yaml, its custom conformance

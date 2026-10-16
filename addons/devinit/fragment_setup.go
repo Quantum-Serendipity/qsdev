@@ -9,7 +9,6 @@ import (
 	"github.com/Quantum-Serendipity/qsdev/addons/devenv"
 	"github.com/Quantum-Serendipity/qsdev/internal/profile"
 	"github.com/Quantum-Serendipity/qsdev/internal/toolreg"
-	"github.com/Quantum-Serendipity/qsdev/pkg/ecosystem"
 	"github.com/Quantum-Serendipity/qsdev/pkg/generate"
 	"github.com/Quantum-Serendipity/qsdev/pkg/types"
 )
@@ -58,7 +57,7 @@ func applyScopeFlags(opts InitOptions, answers *types.WizardAnswers) {
 }
 
 func runAccumulator(answers types.WizardAnswers, scope generationScope) (accumulatorResult, error) {
-	registry := ecosystem.DefaultRegistry()
+	registry := ecosystems()
 	acc := generate.NewFragmentAccumulator()
 
 	if !scope.ClaudeOnly {
@@ -75,7 +74,11 @@ func runAccumulator(answers types.WizardAnswers, scope generationScope) (accumul
 		}
 	}
 
-	tools := toolFilesGenerator{registry: toolreg.DefaultRegistry()}
+	toolRegistry, err := toolreg.Default()
+	if err != nil {
+		return accumulatorResult{}, fmt.Errorf("loading the tool registry for tool file generation: %w", err)
+	}
+	tools := toolFilesGenerator{registry: toolRegistry}
 	if err := acc.RegisterProducer(toolFilesSource, generate.NewGeneratorAdapter(toolFilesSource, tools)); err != nil {
 		return accumulatorResult{}, err
 	}
@@ -123,7 +126,7 @@ func warnEcosystemSetup(w io.Writer, projectRoot string, answers types.WizardAns
 	if scope.ClaudeOnly {
 		return
 	}
-	for _, msg := range ecosystem.DefaultRegistry().SetupWarnings(projectRoot, answers) {
+	for _, msg := range ecosystems().SetupWarnings(projectRoot, answers) {
 		_, _ = fmt.Fprintln(w, "Warning: "+msg)
 	}
 }

@@ -61,7 +61,8 @@ func createArchive(projectRoot, archiveName string, files []string) (string, err
 	}
 
 	if writeErr != nil {
-		os.Remove(archivePath)
+		// Best effort: the write error is the one worth reporting.
+		_ = fileutil.RemoveInRoot(projectRoot, archiveName)
 		return "", writeErr
 	}
 

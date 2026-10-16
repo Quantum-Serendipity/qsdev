@@ -28,6 +28,8 @@ if sys.version_info < MIN_PYTHON:
           f"(found {sys.version.split()[0]}); blocking to fail closed.", file=sys.stderr)
     sys.exit(2)
 
+import getpass  # noqa: E402
+import itertools  # noqa: E402
 import json  # noqa: E402
 import os  # noqa: E402
 import re  # noqa: E402
@@ -94,6 +96,39 @@ def append_private(path: str, line: str) -> None:
     fd = _open_private(str(path), os.O_WRONLY | os.O_APPEND)
     with os.fdopen(fd, "a") as f:
         f.write(line)
+
+
+# ---------------------------------------------------------------------------
+# Home directory expansion
+# ---------------------------------------------------------------------------
+
+
+def _current_user() -> str:
+    """The name of the user running the hook, from the login environment or
+    the process's own uid: never a lookup of another name."""
+    try:
+        return getpass.getuser()
+    except Exception:  # no login variable and no passwd entry for the uid
+        return ""
+
+
+def expand_home(path: str) -> Optional[str]:
+    """Expand a leading ~ the way the tools do, without asking the user
+    database about anyone else: os.path.expanduser("~name") looks the name
+    up, and for an unknown name that can block for seconds (macOS directory
+    services) and outlast a hook's deadline.
+
+    Returns path unchanged when it does not start with ~, the expansion of ~
+    and ~<the current user>, and None for another user's ~name, which a hook
+    cannot resolve without that lookup and must treat as unresolved."""
+    if not path.startswith("~"):
+        return path
+    rest = path[1:]
+    cut = min((i for i in (rest.find("/"), rest.find(os.sep)) if i >= 0), default=len(rest))
+    name, tail = rest[:cut], rest[cut:]
+    if name and name != _current_user():
+        return None
+    return os.path.expanduser("~") + tail
 
 
 # ---------------------------------------------------------------------------
@@ -205,16 +240,19 @@ class WrapperSpec(NamedTuple):
     # (screen -R: reattach, else create); they override no_exec anywhere in
     # the options (`screen -xRR s CMD`, `screen -r -R s CMD`).
     creates: frozenset = frozenset()
+    # Builds its command lines from the arguments after input separators
+    # (parallel CMD ::: ARGS, parallel ::: CMD ...; see _parallel_lines).
+    arg_lines: bool = False
 
 
 def _wrapper(value: str = "", positional: str = "", runtime: bool = False,
              script: str = "", no_exec: str = "", joins: bool = False,
              subcommands: Optional[dict] = None, command: str = "", optional: str = "",
-             commands: str = "", creates: str = "") -> WrapperSpec:
+             commands: str = "", creates: str = "", arg_lines: bool = False) -> WrapperSpec:
     return WrapperSpec(frozenset(value.split()), positional, runtime,
                        frozenset(script.split()), frozenset(no_exec.split()), joins, subcommands,
                        frozenset(command.split()), frozenset(optional.split()), commands,
-                       frozenset(creates.split()))
+                       frozenset(creates.split()), arg_lines)
 
 
 def _subcommands(*groups: tuple) -> dict:
@@ -261,8 +299,15 @@ WRAPPERS: dict = {
     "chroot": _wrapper("--userspec --groups", positional="one"),
     "xargs": _wrapper("-a --arg-file -d --delimiter -E -I -L --max-lines -n --max-args -P "
                       "--max-procs -s --max-chars --process-slot-var", runtime=True),
-    "parallel": _wrapper("-j --jobs -S --sshlogin --joblog --results -a --arg-file --delay "
-                         "--timeout --colsep -N --max-args", runtime=True),
+    "parallel": _wrapper("-j --jobs -P --max-procs -S --sshlogin --slf --sshloginfile --joblog "
+                         "--results --res -a --arg-file --delay --timeout --colsep -C -N -n --max-args "
+                         "-L --max-lines -s --max-chars -I --replace -E --eof -d --delimiter --env "
+                         "--basefile --bf --return --tagstring --workdir --wd --tmpdir --load "
+                         "--memfree --nice --retries --halt --termseq --header --block --block-size "
+                         "--recstart --recend --rpl --parens --profile -J --limit --filter --group-by "
+                         "--compress-program --decompress-program --ssh --sshdelay --transferfile "
+                         "--tf --trc --semaphorename --id --arg-sep --arg-file-sep", runtime=True,
+                         arg_lines=True),
     "setpriv": _wrapper("--reuid --regid --ruid --rgid --euid --egid --groups --inh-caps "
                         "--ambient-caps --bounding-set --securebits --pdeathsig --selinux-label "
                         "--apparmor-profile --landlock-access --landlock-rule"),
@@ -493,6 +538,89 @@ def _skip_tmux(argv: list, j: int, spec: WrapperSpec, scripts: tuple) -> Wrapper
     return WrapperStep(len(argv), tuple(s for s in out if s.strip()), False, None)
 
 
+# GNU parallel's input-source separators: ::: and :::+ take arguments,
+# :::: and ::::+ take files of arguments.
+_PARALLEL_SEPARATORS = frozenset((":::", ":::+", "::::", "::::+"))
+
+
+# A parallel replacement string: {}, {.}, {/}, {//}, {/.}, {#}, {%}, their
+# positional forms ({1}, {2.}) and a perl expression {= ... =}.
+_PARALLEL_REPLACEMENT_RE = re.compile(r"\{(?:=.*?=|[0-9]*[./#%]*)\}")
+
+# The most argument combinations _parallel_lines spells out one by one.
+_PARALLEL_MAX_COMBINATIONS = 64
+
+
+def _parallel_sources(words: list) -> list:
+    """The argument lists of parallel's ::: and :::+ input sources in words,
+    which start at the first separator. :::: and ::::+ sources name files of
+    arguments, which cannot be read, so they are left out."""
+    sources: list = []
+    current: Optional[list] = None
+    for word in words:
+        if word in _PARALLEL_SEPARATORS:
+            current = [] if word in (":::", ":::+") else None
+            if current is not None:
+                sources.append(current)
+        elif current is not None:
+            current.append(word)
+    return [s for s in sources if s]
+
+
+def _parallel_combinations(sources: list) -> list:
+    """The argument combinations parallel runs a command line for: one
+    argument of every source (the cartesian product; :::+ links a source to
+    the one before it, which the product includes). Past
+    _PARALLEL_MAX_COMBINATIONS, each argument alone and all of them joined
+    stand in for it."""
+    count = 1
+    for s in sources:
+        count *= len(s)
+    if count <= _PARALLEL_MAX_COMBINATIONS:
+        return [list(c) for c in itertools.product(*sources)]
+    return [[w] for s in sources for w in s] + [[w for s in sources for w in s]]
+
+
+def _parallel_splice(word: str, combo: list, text: str) -> str:
+    """word with each replacement string replaced: a positional one ({2},
+    {2.}) by that source's argument, any other by all of them (text). A
+    modifier (. / // #) is not applied, which only over-reports."""
+    def replace(m: "re.Match") -> str:
+        digits = re.match(r"\{([0-9]+)", m.group(0))
+        if digits and 0 < int(digits.group(1)) <= len(combo):
+            return combo[int(digits.group(1)) - 1]
+        return text
+    return _PARALLEL_REPLACEMENT_RE.sub(replace, word)
+
+
+def _parallel_lines(template: list, words: list) -> tuple:
+    """The command lines GNU parallel runs for the command template (the
+    words before the first input separator, maybe none) and the input
+    sources in words. Each line takes one argument of every ::: source.
+    With no template the arguments are the command line (`parallel ::: npm
+    ::: install ::: x` runs `npm install x`); a template's replacement
+    strings ({}, {1}, {.}, ...) are replaced by them, else they are appended.
+    A template that is only a replacement string (`parallel {} ::: CMD`) or a
+    shell -c with none (`parallel sh -c ::: CMD`) runs each argument line, so
+    every line is given both with the arguments spliced in as words and
+    shell-quoted as one; and each combination is also given alone, in case an
+    option parallel takes a value for (not in WRAPPERS["parallel"]) swallowed
+    the command word. That over-reports rather than hides a command.
+    Arguments read from :::: files or stdin are not known."""
+    lines: list = []
+    for combo in _parallel_combinations(_parallel_sources(words)):
+        text = " ".join(combo)
+        lines.append(text)
+        if not template:
+            continue
+        if any(_PARALLEL_REPLACEMENT_RE.search(w) for w in template):
+            spliced = [_parallel_splice(w, combo, text) for w in template]
+            lines.extend((" ".join(spliced), shlex.join(spliced)))
+        else:
+            lines.extend((" ".join(template + combo), shlex.join(template + combo), shlex.join(template + [text])))
+    return tuple(dict.fromkeys(line for line in lines if line.strip()))
+
+
 def skip_wrapper(argv: list, i: int, name: str) -> WrapperStep:
     """Skip the wrapper argv[i] (WRAPPERS[name]) with its options, positional
     and subcommand, so argv[end] is the next command word."""
@@ -510,6 +638,15 @@ def skip_wrapper(argv: list, i: int, name: str) -> WrapperStep:
     j, scripts = opts.j, opts.scripts
     if spec.joins:
         return WrapperStep(n, scripts + (" ".join(argv[j:]),), False, None)  # `watch 'rm x'` runs `sh -c`
+    if spec.arg_lines:
+        k = next((x for x in range(j, n) if argv[x] in _PARALLEL_SEPARATORS), n)
+        lines = _parallel_lines(argv[j:k], argv[k:])
+        # k == n when parallel reads its jobs from stdin or a -a file
+        # (`cat jobs | parallel`, `parallel --version`): no line is known.
+        if k == j and (lines or (j < n and argv[j] in (":::", ":::+"))):
+            return WrapperStep(n, scripts + lines, False, None)  # no command word
+        if lines:
+            return WrapperStep(j, scripts + lines, False, None)
     # The positional is exactly one word, whatever it looks like: timeout's
     # DURATION may be `.5`, `+5`, `inf`, `infinity` or ` 5`, not only digits.
     if spec.positional and j < n and not argv[j].startswith("-"):

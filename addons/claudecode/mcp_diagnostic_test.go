@@ -58,7 +58,7 @@ func TestPlanProbes_GeneratedConfigIsTrusted(t *testing.T) {
 			}
 			cfg := addon.Config
 			if def, ok := cat.MCPServer(sembleServerName); ok {
-				entry := catalogServerEntry(sembleServerName, def, installedMCPServers(root))
+				entry := catalogServerEntry(sembleServerName, def, installedMCPServers(root), 0)
 				override, err := sembleTextFilesServer(entry, def)
 				if err != nil {
 					t.Fatal(err)
@@ -96,7 +96,8 @@ func runMCPSubcommand(t *testing.T, dir string, cmd *cobra.Command, args ...stri
 	cmd.SetOut(&out)
 	cmd.SetErr(io.Discard)
 	cmd.SilenceUsage = true // as under the real root command
-	cmd.SetArgs(args)
+	// Never nil: cobra reads a nil args slice from the test binary's os.Args.
+	cmd.SetArgs(append([]string{}, args...))
 	cmd.SetContext(context.Background())
 	err := cmd.Execute()
 	return out.String(), err
@@ -271,7 +272,7 @@ func context7LauncherFixture(t *testing.T) (dir, marker string) {
 	if !ok {
 		t.Fatal("catalog has no context7 server")
 	}
-	entry := catalogServerEntry("context7", def, nil)
+	entry := catalogServerEntry("context7", def, nil, 0)
 	if entry.Command != "npx" {
 		t.Fatalf("catalog context7 command = %q, want npx", entry.Command)
 	}

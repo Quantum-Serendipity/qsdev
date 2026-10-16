@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/Quantum-Serendipity/qsdev/internal/policyengine/policy"
+	"github.com/Quantum-Serendipity/qsdev/internal/testutil/humantest"
 	"github.com/Quantum-Serendipity/qsdev/pkg/branding"
 )
 
@@ -66,7 +67,7 @@ func setupSessionTest(t *testing.T, inAgent bool) (statePath, project string) {
 		agentMarker = "1"
 	}
 	// The suite itself may run inside an agent session; pin the marker.
-	t.Setenv("CLAUDECODE", agentMarker)
+	humantest.SetAgentSession(t, agentMarker)
 	project = canonicalProjectRoot(t.TempDir())
 	if err := os.MkdirAll(filepath.Join(project, ".qsdev"), 0o755); err != nil {
 		t.Fatal(err)
@@ -92,7 +93,7 @@ func runSessionAllowCmd(t *testing.T, interactive bool, stdin string, args ...st
 	var out bytes.Buffer
 	root.SetOut(&out)
 	root.SetErr(&out)
-	root.SetIn(ttyInput{Reader: strings.NewReader(stdin), tty: interactive})
+	root.SetIn(humantest.HumanTerminal{Reader: strings.NewReader(stdin), TTY: interactive})
 	root.SetArgs(append([]string{"session", "allow"}, args...))
 	err := root.Execute()
 	return out.String(), err

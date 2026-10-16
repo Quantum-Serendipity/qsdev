@@ -15,6 +15,8 @@ import (
 	"github.com/Quantum-Serendipity/qsdev/internal/check"
 	"github.com/Quantum-Serendipity/qsdev/internal/cmdutil"
 	qsdevconfig "github.com/Quantum-Serendipity/qsdev/internal/config"
+	"github.com/Quantum-Serendipity/qsdev/internal/mcpconfig"
+	"github.com/Quantum-Serendipity/qsdev/internal/mcpregistry"
 	"github.com/Quantum-Serendipity/qsdev/internal/mcpserve"
 	mcpadapters "github.com/Quantum-Serendipity/qsdev/internal/mcpserve/adapters"
 	"github.com/Quantum-Serendipity/qsdev/internal/posture"
@@ -193,6 +195,7 @@ func runCheck(cmd *cobra.Command, format check.OutputFormat, auditLevel check.Au
 		ctx.ExpectedGenerationErr = fillDevenvSecurity(&ctx, answers, freshFiles, projectRoot)
 	}
 	ctx.RequiredMCPServers = requiredMCPServers(answers, toolRegistry, freshFiles)
+	ctx.TrustedMCP = trustedMCPServers(ctx.RequiredMCPServers, freshFiles)
 	if answers.ClaudeCode {
 		for _, h := range claudecode.HooksWithoutPolicy(answers) {
 			ctx.HooksWithoutPolicy = append(ctx.HooksWithoutPolicy, check.HookWithoutPolicy{Name: h.Name, PolicyKey: h.PolicyKey})
@@ -258,6 +261,7 @@ func catalogFreeCheckContext(cmd *cobra.Command, projectRoot string) check.Check
 		ClaudeUserDir:   claudeUserDir(),
 		OrgConfigDrift:  catalog.ProjectOrgConfigDrift(projectRoot),
 		OrgConfigSource: catalog.ProjectOrgConfigSource(projectRoot),
+		Settings:        committableSettings(),
 	}
 	// Parse config if present. The error travels in the context so the report
 	// (including machine-readable formats) distinguishes "not found" from a
@@ -348,7 +352,12 @@ func isMachineReadableFormat(f check.OutputFormat) bool {
 // requiredDenyRules returns the base deny rules the generator emits for the
 // project's permission preset; each must be present in .claude/settings.json.
 // The rules come from the catalog's deny sets for that preset, so a preset
-// that omits a set (e.g. supply-chain-only) is not required to carry it.
+// that omits a set (e.g. supply-chain-only) is not required to carry it, plus
+// the nested secrets rules the generator adds when the preset denies the
+// top-level secrets/ directory (claudecode.WithNestedSecretFileRules), plus
+// the home credential denies of the credential canon (the Read denies and the
+// shell-read tripwire, claudecode.HomeCredentialDenyRules), which every
+// preset carries.
 func requiredDenyRules(answers types.WizardAnswers, cfg *types.QsdevConfig) ([]string, error) {
 	cat, err := catalog.Default()
 	if err != nil {
@@ -365,7 +374,7 @@ func requiredDenyRules(answers types.WizardAnswers, cfg *types.QsdevConfig) ([]s
 	for _, setName := range def.DenySets {
 		rules = append(rules, cat.PermissionDenyRules(setName)...)
 	}
-	return rules, nil
+	return append(claudecode.WithNestedSecretFileRules(rules), claudecode.HomeCredentialDenyRules()...), nil
 }
 
 // effectivePermissionPreset resolves the permission preset the same way
@@ -428,6 +437,30 @@ func requiredMCPServers(answers types.WizardAnswers, reg *toolreg.Registry, fres
 		}
 	}
 	return required
+}
+
+// trustedMCPServers returns the server definitions check vouches for: those
+// qsdev trusts (mcpregistry.TrustedDefinitions) plus, for each required
+// server, its entry in the expected .mcp.json in freshFiles. The catalog's
+// launch variants do not cover that entry when a server built into the binary
+// (the claudecode addon configuration, which devinit cannot read) replaces the
+// catalog definition of the same name; the generated output is where that
+// definition reaches check. A project defaults file cannot redefine a server
+// (the catalog rejects mcp_servers there), so this adds no repository content.
+func trustedMCPServers(required map[string]string, freshFiles map[string]types.GeneratedFile) map[string][]mcpregistry.LaunchSpec {
+	extra := make(map[string][]mcpregistry.LaunchSpec, len(required))
+	if expected, ok := freshFiles[check.MCPConfigRelPath]; ok {
+		// Generated output always parses; were it not to, nothing beyond the
+		// catalog is trusted, so check fails closed.
+		if file, err := mcpconfig.Parse(expected.Content); err == nil {
+			for _, server := range required {
+				if entry, ok := file.MCPServers[server]; ok {
+					extra[server] = []mcpregistry.LaunchSpec{mcpregistry.EntrySpec(entry)}
+				}
+			}
+		}
+	}
+	return mcpregistry.TrustedDefinitions(extra)
 }
 
 // fillDevenvSecurity records in ctx the security git hooks (see

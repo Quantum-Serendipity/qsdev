@@ -71,8 +71,8 @@ var readOnlyHarmlessFlags = map[string][]string{
 // flag that makes the command read-only and the flags that leave the
 // contract) exists on its command, the opt-outs are the recorded ones, and
 // every other boolean flag of a read-only command is reviewed as harmless.
+// It builds the real tree, so it is serial (TestRootBuildersAreSerial).
 func TestReadOnlyAnnotationFlags(t *testing.T) {
-	t.Parallel()
 	var walk func(c *cobra.Command)
 	walk = func(c *cobra.Command) {
 		if args, ok := cmdutil.ReadOnlyArgs(c); ok {

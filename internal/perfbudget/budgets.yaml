@@ -1,0 +1,235 @@
+# qsdev performance budgets: the single source of every budget number.
+#
+# The numbers are the XD plan's budget table (crosscut/dx-performance.md,
+# "Budgets") taken as CPU milliseconds: user plus system time, including the
+# descendants a process waited for. Measured on the reference machine, CPU
+# time is about wall time for these processes, so the plan's numbers carry
+# over without re-basing.
+#
+# What a CLI row measures. The CLI suite runs every command on a hermetic
+# PATH (perfbudget.HermeticPath): the qsdev under test, git (the fixture is
+# a repository qsdev reads through it), and an empty stub program for each
+# tool qsdev probes only for a version or for syntax, as its registries list
+# them (doctor's tool checks, procexec's local probes). A tool qsdev queries
+# for an answer it parses (podman, docker, ps, getent, ...) is absent, as is
+# every other host tool. So a row holds qsdev's own work plus one stub
+# start-up per probe it launches, about a noop's CPU each, and never the
+# probed tools' own CPU, which depends on what the machine has installed
+# (a cloud CLI's version probe alone can cost more than a budget). A
+# command that starts more probes costs more; one that runs a host tool
+# outside the registries finds it absent. The hook suite runs hook scripts
+# on the host PATH, because their interpreter is their cost.
+#
+# A cpu_p95_ms budget gates the p95 over `runs` timed runs after `warmups`
+# untimed ones, multiplied by the calibration factor of the machine running
+# the suite and by `allowance`, which absorbs run-to-run noise. It is the
+# only kind of budget this package's harness measures.
+#
+# wall_max_ms and max_bytes budgets record the plan's targets for surfaces
+# their owning workstream measures. They are owner-only: each must carry an
+# unfiltered tracked skip naming that owner, who adds the measurement when
+# fixing the surface. sandbox-wrap is a CPU budget but owner-only too,
+# because measuring it needs bubblewrap.
+#
+# A tracked skip is the only way to waive a budget. It names the workstream
+# that owns the fix (an id like XD-WS3), a reason and, optionally, the
+# subjects and payloads it covers; the first skip covering a row applies.
+# On a CPU budget it also sets ceiling_ms, scaled like the budget: a covered
+# row over its ceiling fails, so a regression on a surface whose budget is
+# still owed fails the gate too. A covered row always ends skipped; its
+# message says when it is within budget with the allowance to spare, which
+# is when its owner may delete the skip.
+#
+# Landing rule. A row is left without a skip only when its worst CPU p95
+# over five local suite runs, times the allowance, is within budget ×
+# calibration; a ceiling is the worst CPU p95 a skip's rows reached over
+# those runs, times the allowance. Either way a row has the allowance's
+# margin before its verdict changes. The measured levels in the reasons are
+# CPU p95 at calibration 1.0, the worst of five runs on the reference
+# machine.
+
+allowance: 1.25
+runs: 20
+warmups: 2
+
+# The calibration of the machine the budgets hold on. A suite measures the
+# CPU p50 of `python3 -c pass` and of the empty Go program testdata/noop on
+# the machine running it; their sum over the sum below is the calibration
+# factor that scales every cpu_p95_ms budget. Neither program is qsdev, so a
+# qsdev start-up regression cannot raise the factor and hide itself.
+#
+# These are the conditions the budget numbers were set under: the plan's
+# baseline (crosscut/dx-performance.md, B2) measured `python3 -c pass` at
+# 16.5 ms CPU p50 on the quiet reference machine. testdata/noop is not in
+# that baseline; across 75 calibrations under load, with python3 between 12
+# and 25 ms, it took 0.077 to 0.095 (mean 0.085) of python3's CPU, so its
+# reference is 16.5 × 0.085. A reference measured under load would scale
+# every budget down by that load, some below the interpreter's own start-up.
+reference:
+  machine: Framework Laptop 16, AMD Ryzen 9 7940HS (16 threads), NixOS, Python 3.13, quiet
+  python_cpu_p50_ms: 16.5
+  noop_cpu_p50_ms: 1.4
+
+budgets:
+  # In-binary hooks (qsdev selfprotect, enforce).
+  - id: hook-inbinary-small
+    surface: In-binary hook, payload of 2 KiB or less
+    cpu_p95_ms: 25
+    skips:
+      - workstream: XD-WS3
+        reason: process start-up (package init, linked-in MCP and update code) alone is about 30 ms; 33 to 45 ms per payload
+        ceiling_ms: 57
+  - id: hook-inbinary-large
+    surface: In-binary hook, payload over 2 KiB (up to the 64 KiB command cap)
+    cpu_p95_ms: 60
+    skips:
+      - workstream: U18-WS2
+        payloads: [bash_800seg, bash_heredoc_62k]
+        reason: parsing costs about 0.12 ms per segment; 800 segments and the 62 KiB heredoc reach 97 and 99 ms
+        ceiling_ms: 125
+      - workstream: U18-WS2
+        payloads: [bash_200seg]
+        reason: start-up plus parsing 200 segments, 50 ms, within 1.25x of the limit
+        ceiling_ms: 62
+
+  # Hook scripts (Python or shell).
+  - id: hook-script-miss
+    surface: Hook script on a payload that is not its business (no decision to make)
+    cpu_p95_ms: 30
+    skips:
+      - workstream: U17-WS8
+        subjects: [package-guard]
+        payloads: [bash_200seg, bash_800seg, bash_heredoc_62k]
+        reason: about 120 ms of fixed cost on every call (source compile, eager urllib, module-level regexes) plus scanning the long command; up to 253 ms
+        ceiling_ms: 317
+      - workstream: U17-WS8
+        subjects: [package-guard]
+        reason: about 120 ms of fixed cost on every call (source compile, eager urllib, module-level regexes); 150 to 192 ms
+        ceiling_ms: 241
+      - workstream: XD-WS2
+        subjects: [block-destructive]
+        payloads: [bash_200seg, bash_800seg, bash_heredoc_62k]
+        reason: compiling its source on every call plus scanning the long command; 106 to 170 ms
+        ceiling_ms: 213
+      - workstream: XD-WS2
+        subjects: [block-destructive]
+        reason: compiling its 1,281-line source on every call (no cached bytecode); 76 to 95 ms
+        ceiling_ms: 119
+      - workstream: XD-WS2
+        subjects: [tool-gates, file-boundary, scan-secrets]
+        reason: interpreter start-up plus compiling the hook source on every call (no cached bytecode); 48 to 69 ms
+        ceiling_ms: 87
+      - workstream: XD-WS2
+        subjects: [soc2-audit-log]
+        reason: interpreter start-up plus compiling the hook source on every call (no cached bytecode); 42 ms
+        ceiling_ms: 53
+  - id: hook-script-hit
+    surface: Hook script on a payload it decides offline (deny or allow without a registry lookup)
+    cpu_p95_ms: 60
+    skips:
+      - workstream: XD-WS2
+        subjects: [block-destructive]
+        reason: compiling its 1,281-line source on every call puts a deny at 77 ms
+        ceiling_ms: 97
+  - id: package-guard-network-verdict
+    surface: package-guard verdict that needs a registry lookup
+    wall_max_ms: 3000
+    skips:
+      - workstream: U17-WS1
+        reason: package-guard has no registry-URL seam to point at a stub registry, so the verdict cannot be measured offline
+
+  # One tool call: every matching hook starts in parallel. The critical path
+  # is the largest CPU p95 among the matching hooks; the total is their sum.
+  - id: toolcall-critical-bash-standard
+    surface: Bash call, standard tier, critical path
+    cpu_p95_ms: 45
+    skips:
+      - workstream: XD-WS2
+        reason: set by package-guard's fixed cost, 142 ms
+        ceiling_ms: 178
+  - id: toolcall-critical-bash-full
+    surface: Bash call, all presets, critical path
+    cpu_p95_ms: 60
+    skips:
+      - workstream: XD-WS2
+        reason: set by package-guard's fixed cost, 152 ms
+        ceiling_ms: 190
+  - id: toolcall-critical-edit-full
+    surface: Edit call, all presets, critical path
+    cpu_p95_ms: 45
+    skips:
+      - workstream: XD-WS2
+        reason: set by the start-up of scan-secrets, file-boundary and tool-gates, 55 ms
+        ceiling_ms: 70
+  - id: toolcall-critical-read-full
+    surface: Read call, all presets, critical path
+    cpu_p95_ms: 40
+    skips:
+      - workstream: XD-WS2
+        reason: set by the start-up of file-boundary and tool-gates, 51 ms
+        ceiling_ms: 65
+  - id: toolcall-total-bash-full
+    surface: Bash call, all presets, CPU summed over the matching hooks
+    cpu_p95_ms: 120
+    skips:
+      - workstream: XD-WS2
+        reason: 318 ms, most of it package-guard and block-destructive start-up
+        ceiling_ms: 398
+
+  # Sandbox wrapping (qsdev sandbox exec).
+  - id: sandbox-wrap
+    surface: Overhead of qsdev sandbox exec around one hook
+    cpu_p95_ms: 25
+    skips:
+      - workstream: XD-WS4
+        reason: owner-only; measuring it needs bubblewrap, and each wrap costs about 65 ms
+        ceiling_ms: 82
+
+  # CLI commands.
+  - id: cli-startup
+    surface: qsdev version, --help and completion scripts
+    cpu_p95_ms: 30
+    skips:
+      - workstream: XD-WS3
+        reason: process start-up (package init, linked-in MCP and update code) leaves these 29 to 34 ms, within 1.25x of the limit
+        ceiling_ms: 43
+  - id: cli-readonly
+    surface: Read-only project commands (status, check, list, info, devenv doctor, --dry-run)
+    cpu_p95_ms: 150
+    skips:
+      # Re-derived on the hermetic PATH (see the header): five CLI suite runs
+      # on the reference machine, each row's CPU p95 over its calibration.
+      - workstream: XD-WS9
+        subjects: [qsdev check]
+        reason: its own work, with probe tools stubbed, is 144 to 151 ms
+        ceiling_ms: 189
+      - workstream: XD-WS9
+        subjects: [qsdev devenv doctor]
+        reason: its own work plus a stub start-up per tool it probes is 124 to 131 ms, within 1.25x of the limit
+        ceiling_ms: 164
+  - id: cli-mcp-status
+    surface: qsdev mcp status / mcp health with default flags
+    cpu_p95_ms: 300
+  - id: cli-init
+    surface: qsdev init --yes / join, generation only (Nix excluded)
+    cpu_p95_ms: 1000
+
+  # Owner-only budgets.
+  - id: zero-to-shell
+    surface: Zero to a working devenv shell, warm Nix cache (plan.md:408)
+    wall_max_ms: 60000
+    skips:
+      - workstream: XD-WS7
+        reason: owner-only; measured by the XD-WS7 end-to-end job
+  - id: enter-shell
+    surface: enterShell script, Nix evaluation excluded, no network
+    wall_max_ms: 150
+    skips:
+      - workstream: XD-WS10
+        reason: owner-only; enterShell runs gh auth status (a network call) on every entry
+  - id: state-footprint
+    surface: Generated state files of a single-ecosystem project
+    max_bytes: 32768
+    skips:
+      - workstream: XD-WS11
+        reason: owner-only; BaseContent serialises one YAML integer per byte (about 262 KB)

@@ -1,6 +1,7 @@
 package devenv
 
 import (
+	"context"
 	"testing"
 
 	"github.com/Quantum-Serendipity/qsdev/internal/selfprotect/cmdscan"
@@ -17,8 +18,8 @@ func testNixRunPolicy(t *testing.T, root string, deny []string) NixRunPolicy {
 	return NixRunPolicy{
 		DenyRules: deny,
 		AskRules:  embeddedCatalog(t).AllPermissionAskRules(),
-		Judge: func(line string) (string, string, bool) {
-			d, denied := judge.Evaluate(&rules.EvalContext{ToolName: "Bash", Command: line, CWD: root, SensitiveCommands: sensitive})
+		Judge: func(ctx context.Context, line string) (string, string, bool) {
+			d, denied := judge.Evaluate(&rules.EvalContext{ToolName: "Bash", Command: line, CWD: root, SensitiveCommands: sensitive, Ctx: ctx})
 			return d.RuleID, d.Reason, denied
 		},
 	}

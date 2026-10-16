@@ -166,7 +166,7 @@ module's default), and every answer is stored under the key the module reads:
 
 | Language | Wizard settings (stored as) |
 |---|---|
-| Go | Go version (`version`) |
+| Go | Go version (`version`), Go source (`extras: go_source=go-overlay\|nixpkgs`) |
 | JavaScript/TypeScript | Node.js version (`version`), package manager (`package_manager`), TypeScript (`extras: typescript`) |
 | Python | Python version (`version`), package manager (`package_manager`: `pip`, `uv`, `poetry`) |
 | Rust | channel (`extras: channel=stable\|beta\|nightly`) |
@@ -188,6 +188,68 @@ explicit `package_manager` takes precedence over the `package_manager` extra
 that older configurations and detection record; likewise for Java, where
 `package_manager` (also set by `--java-build-tool` and project-type profiles)
 takes precedence over the `build_tool` extra.
+
+#### Committed settings
+
+`.qsdev.yaml` does not record the extras detection and the wizard produce
+(detection re-derives them on every run). A few settings are instead
+committed: a `languages:` entry records them as `extras`, and for them the
+committed file is the single source of truth:
+
+```yaml
+languages:
+  - name: go
+    version: 1.26.9
+    extras:
+      - go_source=nixpkgs
+```
+
+Only a setting the language's module marks committable can be recorded, to
+a value that setting accepts. A setting that decides which checks run, or
+that relaxes an allowlist, is never committable. `qsdev check` rejects any
+other key, including the extras detection records (`directory`,
+`manifests`, `toolchain`, ...), the other wizard settings and a misspelled
+key, and any other value; `qsdev init` warns about each one and ignores it.
+
+- Creating a project records a committable setting chosen in the wizard or
+  an answers file when it differs from the default.
+- `qsdev init` (create over an existing file, join and `--update`) sets each
+  committable setting from `.qsdev.yaml`; one the file does not record goes
+  back to its default. Edit `.qsdev.yaml` and run `qsdev init --update` to
+  change one; the saved answers never override it.
+- Day-2 commands (`enable`, `devenv add-*`, re-creating the project) keep the
+  committed extras as they are.
+- `.qsdev.local.yaml` cannot set extras: they are ignored there with a
+  warning.
+
+The committable settings are:
+
+<!-- committable-settings:begin -->
+| Language | Extra | Values |
+|---|---|---|
+| `go` | `go_source` | `go-overlay` (default), `nixpkgs` |
+<!-- committable-settings:end -->
+
+`extras` needs a qsdev release that knows the key: earlier releases reject
+it as an unknown field when they parse `.qsdev.yaml`. The schema `version`
+is unchanged, so raise `qsdev_version` if teammates may run an older qsdev.
+
+`go_source` says where the devenv shell's Go comes from. devenv sets
+`GOTOOLCHAIN=local`, so the shell's Go must be at least the release go.mod
+requires (the newer of its `go` and `toolchain` lines, or `version`):
+
+- `go-overlay` keeps nixpkgs' `pkgs.go` when it is new enough and otherwise
+  selects that exact release from the `github:purpleclay/go-overlay` flake
+  input, which devenv.yaml then declares (`languages.go.version`).
+- `nixpkgs` declares that the project's nixpkgs, with its registered
+  `overlays`, supplies a new enough Go, for example an overlay that raises
+  `go_1_26`. devenv.yaml gets no go-overlay input, and devenv.nix sets
+  `languages.go.package` to `pkgs.go` guarded by the required release: if
+  `pkgs.go` is older, evaluating the shell fails with
+  `qsdev: .qsdev.yaml declares go_source=nixpkgs, but pkgs.go is <version>, older than the required Go <release>; ...`
+  rather than giving a Go that cannot build the module. The line has
+  priority 999 (`lib.mkOverride 999`), so a `languages.go.package` set in
+  `devenv.local.nix` still takes precedence.
 
 ### Git settings
 
@@ -569,6 +631,15 @@ hooks:
   tool_gates:
     allowed: [Read, Grep, Glob, Edit, Write, Bash, "mcp__context7__*"]
     denied: [WebFetch, WebSearch, "mcp__github__delete_*"]
+  package_guard:
+    denylist: ["npm:event-stream", "pypi:colourama"]
+    allowlist: [left-pad, "pypi:requests", "go:golang.org/x/net"]
+    min_age_days: 7
+    new_dep_gate: ask
+  credential_scan:
+    extra_patterns:
+      - "corp_[a-z0-9]{20,40}"
+      - "(?i)acme[_-]?token\\s*[=:]\\s*(?P<secret>[A-Za-z0-9]{24,})"
 ```
 
 - **`file_boundary.extra_read_paths`** widens what the `file-boundary` hook
@@ -583,14 +654,25 @@ hooks:
   still denied there. Each entry must be an absolute path or start with
   `~/`. The filesystem root, the home directory or a directory containing
   it, a path that is, contains or lies inside a credential store (`~/.ssh`,
-  `~/.aws`, `~/.config` with its `gcloud` and `helm` stores, `/etc` with
+  `~/.aws`, `~/.config` with its `gcloud`, `gh` and `helm` stores,
+  `~/.npmrc` and the other registry token files, `/etc` with
   `/etc/shadow`, and the rest of the sandbox deny list), `..` segments,
   commas and control characters are rejected by `qsdev check` and stop
-  init with an error. The hook itself also ignores an entry that resolves,
+  init with an error. When a store joins the credential catalog, an
+  existing entry that names it or a directory containing it starts failing
+  `qsdev check`: name a sub-directory outside the store instead, such as
+  `~/.m2/repository` rather than `~/.m2`. The hook itself also ignores an entry that resolves,
   through symlinks, to the root, the home directory or an ancestor of it.
   The paths reach the hook through the
   `FILE_BOUNDARY_EXTRA_READ_PATHS` variable in the `env` block of
-  `.claude/settings.json`. `FILE_BOUNDARY_STRICT_MODE=true` revokes every
+  `.claude/settings.json`, and beside them qsdev generates
+  `FILE_BOUNDARY_DENY_PATHS`, the home credential stores from the
+  credential catalog. The hook re-checks each entry against that list and
+  drops one that is, contains or lies inside a store, comparing without
+  regard to case on every OS, so a hand-edited `settings.json` cannot
+  reopen `~/.config/gh`. When `FILE_BOUNDARY_DENY_PATHS` is missing or
+  empty the hook grants no extra read path at all; regenerate with
+  `qsdev init --update`. `FILE_BOUNDARY_STRICT_MODE=true` revokes every
   out-of-project allowance, including these paths.
 - **`tool_gates.allowed`** and **`tool_gates.denied`** are the policy the
   `tool-gates` hook enforces on every tool call. Entries are Claude Code
@@ -609,6 +691,83 @@ hooks:
   tool. `qsdev claude hooks list` then shows it as `yes (no policy)`, the
   init preview as `tool-gates (no policy)`, and `qsdev check` reports a
   `claude_hook_no_policy` warning.
+- **`package_guard`** is the team policy the package guard
+  (`package-guard.py`) applies to every package install it checks. Without
+  it the guard runs with its defaults.
+  - **`denylist`**: packages that are always blocked, before any registry
+    lookup.
+  - **`allowlist`**: when non-empty, the only packages that may be
+    installed; every other package is blocked as "not on the team-approved
+    list". A team-allowed package is **not** exempt from the checks: it is
+    still resolved, checked against OSV.dev and held to the release-age
+    window, so a hijacked release published today is blocked even under a
+    committed allowlist. It does satisfy the new-dependency gate.
+  - **`min_age_days`**: the minimum release age in days, at least 1. It
+    only raises the compliance level's window (3, 7 or 14 days, see
+    [Release-age window](#release-age-window)); a smaller value leaves the
+    level's window in place.
+  - **`new_dep_gate`**: `allow`, `ask` or `deny`, what the guard does with
+    a package that is in neither the project's lockfiles nor the team
+    allowlist. Unset keeps the guard's default, `allow`.
+
+  List entries are package names, optionally qualified by ecosystem as
+  `<ecosystem>:<name>` (`npm:evil`, `pypi:Flask_Cors`, `jsr:@scope/name`,
+  `go:github.com/a/b`). An unqualified name matches in every ecosystem. The
+  qualifiers are `npm`, `pypi` (or `pip`), `crates` (or `crates.io`,
+  `cargo`), `go` (or `golang`), `rubygems` (or `gem`), `packagist` (or
+  `composer`), `nuget`, `pub` and `jsr`, compared case-insensitively. Names
+  are compared the way each registry does (PyPI per PEP 503, crates.io with
+  `-` equal to `_`, the others case-insensitively). A name may contain only
+  letters, digits, `@`, `.`, `_`, `/` and `-`, so it is comma-free;
+  anything else (an unknown qualifier, a comma, whitespace, an empty name,
+  control or invisible characters), a `min_age_days` below 1 and an unknown
+  `new_dep_gate` are rejected by `qsdev check` and stop init with an error.
+  Merging the configuration layers never loosens the policy: the lists of
+  each layer are unioned, `min_age_days` takes the largest value and
+  `new_dep_gate` the strictest. The guard applies the lists in this order:
+  team denylist, the developer's own `PACKAGE_GUARD_DENYLIST`, team
+  allowlist, the developer's own `PACKAGE_GUARD_ALLOWLIST` (which skips the
+  checks), then the registry checks, so a personal list can only narrow
+  the team policy. The policy reaches the hook through
+  `PACKAGE_GUARD_TEAM_DENYLIST`, `PACKAGE_GUARD_TEAM_ALLOWLIST`,
+  `PACKAGE_GUARD_MIN_AGE_DAYS` and `PACKAGE_GUARD_NEW_DEP_GATE` in the
+  `env` block of `.claude/settings.json`. With the `soc2-audit` hook on,
+  `PACKAGE_GUARD_SOC2_AUDIT=true` also makes the guard record each
+  decision in `$CLAUDE_AUDIT_DIR/dependency-changes-YYYY-MM.jsonl`
+  (default `~/.claude/audit/`), next to the soc2-audit hook's own trail.
+- **`credential_scan.extra_patterns`** adds regexes that the
+  `credential-scan` hook (`scan-secrets.py`) looks for in every file the
+  agent writes or edits, next to its built-in token shapes. A match blocks
+  the write unless it is a placeholder: a pattern without a group is judged
+  on its whole match, and a pattern that marks the credential with one
+  `(?P<secret>...)` group is judged on that value alone, so
+  `(?i)corp_(?P<secret>[a-z0-9_]{20,})` lets `corp_your_token_here_123456`
+  through. Merging the configuration layers unions the lists, so a layer can
+  only add detection. The patterns reach the hook through
+  `CREDENTIAL_SCAN_EXTRA_PATTERNS` in the `env` block of
+  `.claude/settings.json`, deduplicated and one per line (a regex may
+  contain a comma), and are generated only while the `credential-scan` hook
+  is enabled. The hook blocks every write while an entry there does not
+  compile, reporting `invalid CREDENTIAL_SCAN_EXTRA_PATTERNS entry N`.
+
+  An entry must use the regex syntax that Go's RE2 and Python's `re` read
+  alike. `qsdev check` and init accept only this subset and reject
+  anything else:
+
+  | Syntax | Accepted |
+  |---|---|
+  | Literals | Any printable character; no control, format or line-separator characters |
+  | Escapes | `\d` `\D` `\w` `\W` `\s` `\S` `\b` `\B` `\t` `\n` `\r`, and a backslash before ASCII punctuation (`\.`, `\{`, `\\`) |
+  | Operators | `.` `^` `$` `\|` |
+  | Quantifiers | `*` `+` `?` `{n}` `{n,}` `{n,m}`, each optionally lazy (`*?`); a `{` that starts no quantifier must be escaped |
+  | Groups | `(...)`, `(?:...)` and at most one `(?P<secret>...)`; `(?i)` only at the very start |
+  | Classes | `[...]` and `[^...]` holding literals, ranges between two plain characters (`a-z`) and the escapes above except `\b` and `\B`; an unescaped `-` only first or last, and `[` and `]` escaped |
+
+  Rejected among others: lookarounds (`(?=`, `(?!`, `(?<=`), other named
+  groups, backreferences (`\1`), Unicode classes (`\pL`), `\z`, `\Q...\E`,
+  POSIX classes (`[[:alpha:]]`), `a{,3}`, inline flags after the start, an
+  empty entry, an entry with leading or trailing spaces, tabs or carriage
+  returns, and one longer than 1024 bytes.
 
 `qsdev check` also fails (`claude_hook_env_changed`, high severity) when a
 variable qsdev generates from this block is missing from, or holds another
@@ -934,6 +1093,7 @@ Key contents:
 - `require_version: ">=2.1"` -- Minimum devenv version
 - `inputs.nixpkgs.url: "github:NixOS/nixpkgs/nixpkgs-unstable"` -- Nixpkgs input
 - `inputs.git-hooks.url: "github:cachix/git-hooks.nix"` -- Pre-commit hook framework (when hooks are needed)
+- `inputs.go-overlay.url: "github:purpleclay/go-overlay"` -- Exact Go releases, for a Go project whose release is known, unless it commits `go_source=nixpkgs` (see [Committed settings](#committed-settings))
 - `impure: false` -- Prevents impure builds
 - `allow_unfree: false` -- Blocks unfree packages
 - `allow_broken: false` -- Blocks broken packages
@@ -1036,7 +1196,8 @@ Top-level structure:
 ```json
 {
   "env": {
-    "FILE_BOUNDARY_EXTRA_READ_PATHS": "/opt/android-sdk"
+    "FILE_BOUNDARY_EXTRA_READ_PATHS": "/opt/android-sdk",
+    "FILE_BOUNDARY_DENY_PATHS": "~/.ssh,~/.gnupg,~/.aws,..."
   },
   "permissions": {
     "defaultMode": "default",
@@ -1063,19 +1224,28 @@ Top-level structure:
 }
 ```
 
-The permission model uses approximately **90 deny rules** and **60 ask rules**:
+With no language selected, the `standard` preset generates more than **300 deny rules** and about **170 ask rules**; ecosystem modules add their own:
 
 - **Deny rules** block dangerous operations outright: npx, nix-env imperative installs, system package managers, pipe-to-shell, shell wrapping, env/command prefix bypass, sudo-prefixed installs, subprocess escapes, eval/xargs, and destructive operations.
+- **Home credential Read denies** keep the agent's Read tool out of every per-user credential store in the credential catalog (`internal/secrets`), at every preset and whatever the selected languages: `Read(~/.ssh/**)` and the other credential directories with their contents, and `Read(~/.npmrc)`, `Read(~/.pypirc)`, `Read(~/.cargo/credentials.toml)`, `Read(~/.m2/settings.xml)` and the other registry token files by name. A project-local file of the same name (`./.npmrc`) is not denied. With `sandbox` on, the same stores are in `sandbox.filesystem.denyRead`, and Claude Code applies the Read denies to sandboxed Bash too, so `ssh`, `gpg`, `npm`, `mvn` and `gh` run there without their user configuration. The rules match case-sensitively and do not cover shell reads such as `cat ~/.npmrc`.
 - **Ask rules** gate package install operations (npm, pip, cargo, go, gem, composer, dotnet) through the PreToolUse hook, which performs age-gating and vulnerability checks before allowing the install.
 - **MCP tool deny rules** deny, as whole tools, the file tools of MCP servers in the fallback (lowest) trust tier: every tool of the reference `filesystem` server and `mcp__github__create_or_update_file`. A permission rule cannot scope an MCP tool by its path argument, so a path rule such as `Read(./.env)` cannot be carried over to `mcp__filesystem__read_file`; the tool is denied outright instead. Servers are scored from their generated `.mcp.json` definition and the known-server database, and a server qsdev does not configure scores into the fallback tier. Manual overrides in `~/.qsdev/trust.yaml` apply only to the enforce hook, not to the committed `settings.json`. Tools of higher-tier servers stay available; the confused-deputy path check that would cover them runs inside the `qsdev enforce` hook, which no tier or preset enables yet. See [MCP trust scoring](security-architecture.md#layer-13-package-and-mcp-risk-scoring).
 
 The three-way merge during updates preserves any custom allow/deny rules you have added while incorporating new rules from template upgrades.
 
 `env` holds variables qsdev generates to configure its hooks
-(`FILE_BOUNDARY_EXTRA_READ_PATHS`, from `hooks.file_boundary.extra_read_paths`;
+(`FILE_BOUNDARY_EXTRA_READ_PATHS`, from `hooks.file_boundary.extra_read_paths`,
+with `FILE_BOUNDARY_DENY_PATHS`, the home credential stores the hook keeps
+out of those paths, set exactly when they are;
 `TOOL_GATES_ALLOWED` and `TOOL_GATES_DENIED`, from `hooks.tool_gates`;
-`PACKAGE_GUARD_MIN_AGE_DAYS`, the package guard's release-age gate in days
-from the compliance level, when the safety-block hook is on)
+`CREDENTIAL_SCAN_EXTRA_PATTERNS`, one regex per line, from
+`hooks.credential_scan.extra_patterns`;
+and, while the package guard is registered, `PACKAGE_GUARD_MIN_AGE_DAYS`,
+its release-age gate in days from the compliance level raised by
+`hooks.package_guard.min_age_days`; `PACKAGE_GUARD_TEAM_ALLOWLIST`,
+`PACKAGE_GUARD_TEAM_DENYLIST` and `PACKAGE_GUARD_NEW_DEP_GATE`, from
+`hooks.package_guard`; and `PACKAGE_GUARD_SOC2_AUDIT=true` when the
+`soc2-audit` hook is on)
 alongside any you add. A regeneration sets the generated variables to the
 committed policy's values, removes one the policy no longer produces unless
 you changed it, and keeps your own variables.
@@ -1231,14 +1401,33 @@ Three servers are configured by default in `.mcp.json` (context7, github, socket
 
 **Installed binaries.** Servers with an install method (context7, semble, local-docs-devdocs, local-docs-zim, mcp-nixos, postgres) can be installed with `qsdev mcp install <name>`, which installs exactly the pinned release (subject to the same release-age cutoff as project dependencies) and records it in `.claude/.qsdev-claude-state.yaml`. While that record matches the pinned release, `qsdev init --update` writes the installed executable (for example `context7-mcp`) into `.mcp.json` instead of the launcher, so no package is fetched at session start. `qsdev mcp update` moves an installed server to the release the current qsdev pins; `qsdev mcp remove` drops the record, and the next regeneration returns to the pinned launcher. The installed binary must be on the `PATH` Claude Code starts with. The install record lives in the committed project state, so the committed `.mcp.json` runs the binary for every teammate: after cloning or `qsdev init --mode join`, run `qsdev mcp update --all` to install the same pinned releases on your machine (`qsdev mcp health` reports a server whose binary is missing).
 
-Structure:
+**Hardened launchers.** A catalog server that is not installed runs its pinned launcher with the same hardening `qsdev mcp install` applies, at the project's compliance level:
+
+- An `npx` launcher gets `npm_config_ignore_scripts=true` in its `env`, so npm runs no install scripts of the server or its dependencies, and `npm_config_before=<cutoff>`, so npm resolves only releases published before the cutoff. A catalog server that sets `allow_install_scripts: true` (no shipped server does) gets only the cutoff.
+- A `uvx` launcher gets a leading `--exclude-newer=<cutoff>` argument.
+- The cutoff is the release-age gate of the project's security level (`baseline` 3 days, `enhanced` 7 days, `strict` 14 days), never less than the package manager's floor (3 days for npm, 7 days for uv), counted back from midnight UTC of the day the file is generated. It is an absolute RFC 3339 time because npm releases before 11.10 silently ignore the relative `min-release-age` setting.
+- Installed binaries, `qsdev mcp serve` entries, remote servers and servers from the claudecode addon's `mcp_servers` configuration are written as given.
+
+The trade-offs:
+
+- The cutoff stays fixed until the next `qsdev init --update`, so a launcher can keep resolving an older transitive dependency after a fix for it is published.
+- A catalog pin younger than the project's gate fails closed: the launcher cannot resolve it, so the server does not start until the pinned release is older than the gate.
+- Regenerating on a later day rewrites the cutoff, so `.mcp.json` changes by at most one line per launcher per day. Regenerating on the same day writes the same file. The three-way merge applies the new cutoff as a generator update while the entry on disk still matches what qsdev generated last time; an entry you edited keeps your version, including its cutoff.
+
+The MCP probe trust check and the `matches-registry-definition` criterion of `qsdev mcp grade` recognise these entries at any valid cutoff, as well as entries generated before hardening. A cutoff that is not an RFC 3339 time, or that is more recent than the package manager's floor allows, matches neither.
+
+Structure (generated at the `baseline` level on 2026-10-07):
 
 ```json
 {
   "mcpServers": {
     "context7": {
       "command": "npx",
-      "args": ["@upstash/context7-mcp@4.1.1"]
+      "args": ["@upstash/context7-mcp@4.1.1"],
+      "env": {
+        "npm_config_before": "2026-10-04T00:00:00Z",
+        "npm_config_ignore_scripts": "true"
+      }
     },
     "github": {
       "command": "github-mcp-server",
@@ -1251,7 +1440,7 @@ Structure:
     },
     "semble": {
       "command": "uvx",
-      "args": ["--from", "semble[mcp]==0.6.0", "semble"]
+      "args": ["--exclude-newer=2026-09-30T00:00:00Z", "--from", "semble[mcp]==0.6.0", "semble"]
     }
   }
 }
@@ -1820,9 +2009,10 @@ Bundler hardening (`BUNDLE_FROZEN`, `BUNDLE_DISABLE_EXEC_LOAD`) is exported as e
 
 | File | Merge Strategy | Purpose |
 |------|---------------|---------|
-| `.qsdev/composer/config.json` | `overwrite` | Composer global config: `secure-http`, plugin allowlist, `audit.abandoned: fail`, repository pinning to the registry proxy |
+| `.qsdev-composer/config.json` | `overwrite` | Composer global config: `secure-http`, plugin allowlist, `audit.abandoned: fail`, repository pinning to the registry proxy |
+| `.qsdev-composer/.gitignore` | `overwrite` | Commits only `config.json` and itself; ignores everything else in the Composer home |
 
-devenv.nix exports `COMPOSER_HOME=$DEVENV_ROOT/.qsdev/composer`, so every `composer` run in the devenv shell loads the generated `config.json` as its global configuration. Composer reads global settings only from `$COMPOSER_HOME/config.json`. It has no include directive and no environment variable that points at another config file, so the file has to live there. Composer applies the project's `composer.json` on top of this file, which means the generated values fill in every key the project leaves unset and explicit `composer.json` settings still take precedence.
+devenv.nix exports `COMPOSER_HOME=$DEVENV_ROOT/.qsdev-composer`, so every `composer` run in the devenv shell loads the generated `config.json` as its global configuration. Composer reads global settings only from `$COMPOSER_HOME/config.json`. It has no include directive and no environment variable that points at another config file, so the file has to live there. Composer applies the project's `composer.json` on top of this file, which means the generated values fill in every key the project leaves unset and explicit `composer.json` settings still take precedence.
 
 The file sets:
 
@@ -1834,13 +2024,15 @@ With a registry proxy configured (see [Infrastructure settings](#infrastructure-
 
 The file replaces your user-level Composer home (`~/.config/composer` or `~/.composer`) inside the devenv shell, which has three effects:
 
-- **Credentials.** Composer does not read your global `auth.json` in the shell. Put credentials for private repositories in the `COMPOSER_AUTH` environment variable or in an `auth.json` next to `composer.json`. Keep that `auth.json` out of version control.
-- **Cache.** Composer keeps its download cache in `.qsdev/composer/cache` unless you set `COMPOSER_CACHE_DIR`.
-- **Global packages.** `composer global require` installs into `.qsdev/composer/vendor`.
+- **Credentials.** Composer reads `auth.json` only from `COMPOSER_HOME`. So that private repositories keep authenticating, the shell's `enterShell` links your global credentials into the project: when `.qsdev-composer/auth.json` does not exist (not even as a dangling link), it symlinks the first regular file among `${XDG_CONFIG_HOME:-$HOME/.config}/composer/auth.json` and `~/.composer/auth.json`. It never replaces an existing file or link, makes no network calls, and creates nothing when neither global file exists. devenv's clean mode strips `XDG_CONFIG_HOME` unless `devenv.yaml` keeps it, so inside the shell the XDG location is `~/.config/composer/auth.json`; a credentials file under a custom `XDG_CONFIG_HOME` is not found. You can also set the `COMPOSER_AUTH` environment variable or put a regular `.qsdev-composer/auth.json` in place, which the link step then leaves alone. The nested `.gitignore` keeps `auth.json` out of version control, and the generated Claude Code settings deny the agent read access to it (`Read(./.qsdev-composer/auth.json)` in `permissions.deny` and in the sandbox `denyRead`).
+- **Cache.** devenv.nix exports `COMPOSER_CACHE_DIR=$DEVENV_ROOT/.qsdev-composer/cache`, so the download cache stays in the project, is gitignored, and stays writable inside the agent's hook sandbox.
+- **Global packages.** `composer global require` installs into `.qsdev-composer/vendor`, which is also gitignored.
 
-`.qsdev/` is gitignored, so these files never reach the repository. `qsdev init --mode join` writes `config.json` for each teammate. Earlier qsdev versions wrote `.qsdev/composer-security.json`, which Composer never loaded. `qsdev init --update` removes that file when it is unmodified.
+`.qsdev-composer/` is tracked, so the hardening is committed with the project, survives a clone, and applies in CI, where the security-scan workflow runs Composer inside the devenv shell. Its nested `.gitignore` contains `*`, `!.gitignore` and `!config.json`, so only those two files reach the repository, independent of the root `.gitignore`. Both files are self-protected: the agent cannot edit or delete them, by name, through a glob such as `conf*.json`, or by removing, moving or checking out the `.qsdev-composer` directory as a whole, and the hook sandbox mounts them read-only, while the rest of the directory (cache, global packages, the `auth.json` link) stays writable for Composer. `qsdev check` (`security_config_php`) fails when `config.json` differs from what qsdev generates in either direction: a setting removed or weakened, or an entry added, such as a plugin in `allow-plugins`, an extra repository or an `audit.ignore` list. Keys starting with `_` are comments and are not compared. It also fails when the nested `.gitignore` is missing or its patterns differ in content or order.
 
-The generated config cannot block install scripts. Composer has no setting for that, so the CI install step runs `composer install --no-scripts`.
+Earlier qsdev versions wrote the config to `.qsdev/composer/config.json`, which was gitignored and so never reached a clone or CI. `qsdev init --update` writes the new files, points `COMPOSER_HOME` at `.qsdev-composer`, and removes the old `config.json` when it is unmodified. The old `.qsdev/composer/` cache and global packages are not migrated; delete that directory once you have updated. Versions before that wrote `.qsdev/composer-security.json`, which Composer never loaded; `qsdev init --update` removes it too when it is unmodified.
+
+The generated config cannot block install scripts. Composer has no setting for that, so the CI install step runs `composer install --no-dev --no-scripts --no-plugins --no-interaction`. CI also runs `composer validate --no-check-publish --no-check-all --no-plugins` (lock freshness stays checked) and `composer audit --no-plugins`, so no Composer plugin runs in CI.
 
 ### Docker
 
@@ -2005,7 +2197,16 @@ does not record is taken from detection when the workflow is generated, so
 recorded it.
 See [Security Architecture](security-architecture.md#generated-workflows).
 
-Every step is pinned immutably: actions to a full commit SHA, and the Snyk step to a container image digest (`uses: docker://snyk/snyk@sha256:...`, running `snyk test --all-projects` with `SNYK_TOKEN`). The Snyk step does not use `snyk/actions`, because that action runs the `snyk/snyk:node` image by its mutable tag, so a SHA pin on the action would not pin the code that receives the token. The image comes from the `node` variant, which carries Node.js but not the other ecosystems' build tools; Snyk's `--all-projects` needs those tools to resolve some manifests (for example `go.mod`). The language-specific variants are not used because their entrypoint installs the scanned project's dependencies (for example `pip install -r requirements.txt` or `mvn install`) before scanning, which would run the repository's install hooks with `SNYK_TOKEN` in the environment. qsdev bumps these pins in new releases; `qsdev init --update` picks them up.
+The `ecosystem-ci` job installs Nix with no third-party action: it runs the
+generated `.github/scripts/install-nix.sh` on the generated
+`.github/nix-release.env`, which downloads the official Nix release and checks
+it against the pinned SHA-256 before anything from it runs. Both files come
+with the job (merge strategy `overwrite`; the pin file is pinned to LF line
+endings in `.gitattributes`), and `qsdev init --update` moves them to newer
+pins.
+
+Every step is pinned immutably: actions to a full commit SHA, the Nix release
+to its tarball SHA-256, and the Snyk step to a container image digest (`uses: docker://snyk/snyk@sha256:...`, running `snyk test --all-projects` with `SNYK_TOKEN`). The Snyk step does not use `snyk/actions`, because that action runs the `snyk/snyk:node` image by its mutable tag, so a SHA pin on the action would not pin the code that receives the token. The image comes from the `node` variant, which carries Node.js but not the other ecosystems' build tools; Snyk's `--all-projects` needs those tools to resolve some manifests (for example `go.mod`). The language-specific variants are not used because their entrypoint installs the scanned project's dependencies (for example `pip install -r requirements.txt` or `mvn install`) before scanning, which would run the repository's install hooks with `SNYK_TOKEN` in the environment. qsdev bumps these pins in new releases; `qsdev init --update` picks them up.
 
 ---
 

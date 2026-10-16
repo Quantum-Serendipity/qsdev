@@ -130,7 +130,8 @@ func boolName(b bool) string {
 // installs: the catalog gate runs before the human gate, whose sensitivity
 // check may read the catalog (disable's security-tool list does). With a
 // catalog that fails to load, such a command must fail with the wrapped load
-// error rather than reach a catalog lookup that panics.
+// error, naming the fix, rather than reach a catalog lookup first (which
+// would fail closed with the human gate's refusal instead).
 func TestGates_CatalogBeforeSensitivity(t *testing.T) {
 	t.Parallel()
 	loadErr := errors.New("project defaults may only add or tighten")
@@ -138,11 +139,11 @@ func TestGates_CatalogBeforeSensitivity(t *testing.T) {
 	root := &cobra.Command{Use: "qsdev", RunE: run, SilenceUsage: true, SilenceErrors: true}
 	var loaded bool
 	disable := cmdutil.MarkSensitive(&cobra.Command{Use: "disable", Args: cobra.ExactArgs(1), RunE: run},
-		cmdutil.Sensitivity{Args: func() []string {
+		cmdutil.Sensitivity{Args: func() ([]string, error) {
 			if !loaded {
 				panic("sensitivity predicate read the catalog before it loaded")
 			}
-			return []string{"gitleaks"}
+			return []string{"gitleaks"}, nil
 		}})
 	root.AddCommand(disable)
 	installGates(root, func() error { return loadErr })

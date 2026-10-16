@@ -2,6 +2,10 @@ package archtest
 
 import (
 	"go/ast"
+	"go/token"
+	"slices"
+
+	"github.com/Quantum-Serendipity/qsdev/internal/secrets"
 )
 
 // symbolBan forbids references to Pkg.Name outside the Owners directories.
@@ -57,15 +61,70 @@ var panicOwners = []string{"internal/procexec"}
 // the extlog providers. Everywhere else registration is explicit.
 var initOwners = []string{"pkg/ecosystem/modules", "internal/extlog/providers"}
 
+// bashLiteralRuleID bans comparing a tool name with the literal "Bash".
+const bashLiteralRuleID = "tool-name-bash-literal"
+
+// bashToolName is the literal bashLiteralRule looks for.
+const bashToolName = "Bash"
+
+// bashLiteralOwners may compare with "Bash": cmdscan defines ShellTools, the
+// tools that run a shell command, and denyutil compares the tool prefix of a
+// permission-rule pattern (`Bash(npm *)`), not a hook call's tool name.
+var bashLiteralOwners = []string{"internal/selfprotect/cmdscan", "pkg/denyutil"}
+
+// credentialStoreLiteralRuleID bans spelling a whole credential store as a
+// "~/<rel>" string literal outside the canon.
+const credentialStoreLiteralRuleID = "credential-store-literal"
+
+// credentialStoreOwners defines the credential canon.
+var credentialStoreOwners = []string{"internal/secrets"}
+
 func symbolRules() []Rule {
-	rules := make([]Rule, 0, len(symbolTable)+2)
+	rules := make([]Rule, 0, len(symbolTable)+4)
 	for _, b := range symbolTable {
 		rules = append(rules, Rule{ID: b.ID, Check: b.check})
 	}
 	return append(rules,
 		Rule{ID: "panic", Check: checkPanic},
 		Rule{ID: "init-non-module", Check: checkInit},
+		Rule{ID: bashLiteralRuleID, Check: checkBashLiteral},
+		Rule{ID: credentialStoreLiteralRuleID, Check: checkCredentialStoreLiteral},
 	)
+}
+
+// checkCredentialStoreLiteral counts string literals in non-test code
+// outside internal/secrets that mention a whole credential store as
+// "~/<rel>" (secrets.HomeStoreMentions with Whole set): the store itself, a
+// glob over it, or a rule or command naming it, whatever non-name character
+// follows. Narrower sub-paths ("~/.aws/credentials") and longer names
+// ("~/.sshfoo") are not matches. A private copy of a store path drifts when
+// the canon grows; the generated denies, sandbox paths and validators all
+// derive from secrets.CredentialStores instead.
+func checkCredentialStoreLiteral(repo *Repo) []Violation {
+	return countPerPkg(repo, credentialStoreLiteralRuleID, credentialStoreOwners, false, func(_ *File, n ast.Node) bool {
+		s, ok := stringLit(n)
+		return ok && slices.ContainsFunc(secrets.HomeStoreMentions(s), func(m secrets.StoreMention) bool { return m.Whole })
+	})
+}
+
+// checkBashLiteral counts == and != comparisons with the literal "Bash", and
+// case clauses listing it, in non-test code outside bashLiteralOwners. A
+// check that names Bash alone lets PowerShell and Monitor, which run the same
+// tool_input.command, bypass it; cmdscan.IsShellTool covers every shell tool.
+func checkBashLiteral(repo *Repo) []Violation {
+	isBash := func(e ast.Expr) bool {
+		s, ok := stringLit(e)
+		return ok && s == bashToolName
+	}
+	return countPerPkg(repo, bashLiteralRuleID, bashLiteralOwners, false, func(_ *File, n ast.Node) bool {
+		switch n := n.(type) {
+		case *ast.BinaryExpr:
+			return (n.Op == token.EQL || n.Op == token.NEQ) && (isBash(n.X) || isBash(n.Y))
+		case *ast.CaseClause:
+			return slices.ContainsFunc(n.List, isBash)
+		}
+		return false
+	})
 }
 
 func (b symbolBan) check(repo *Repo) []Violation {

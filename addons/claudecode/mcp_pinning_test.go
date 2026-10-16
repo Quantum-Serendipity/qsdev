@@ -1,17 +1,23 @@
 package claudecode
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"maps"
 	"path/filepath"
 	"slices"
+	"strings"
 	"testing"
+	"time"
 
 	"github.com/Quantum-Serendipity/qsdev/internal/catalog"
+	"github.com/Quantum-Serendipity/qsdev/internal/installer"
 	"github.com/Quantum-Serendipity/qsdev/internal/mcphealth"
 	"github.com/Quantum-Serendipity/qsdev/internal/mcpregistry"
 	"github.com/Quantum-Serendipity/qsdev/internal/state"
+	"github.com/Quantum-Serendipity/qsdev/pkg/ecosystem"
 	"github.com/Quantum-Serendipity/qsdev/pkg/types"
 )
 
@@ -145,24 +151,24 @@ func TestGenerateMcpJson_PrefersInstalledBinary(t *testing.T) {
 	if !ok || def.Bin == "" {
 		t.Fatalf("catalog server %s must provide a binary", server)
 	}
-	launcher := catalogDefToEntry(def)
 	binary := MCPServerEntry{Command: def.Bin, Args: def.BinArgs, Env: def.Env}
 
 	tests := []struct {
-		name   string
-		record *types.McpServerState
-		noRoot bool
-		want   MCPServerEntry
+		name     string
+		record   *types.McpServerState
+		noRoot   bool
+		launcher bool // want the hardened launcher rather than binary
 	}{
-		{name: "installed at pin", record: &types.McpServerState{InstallMethod: def.InstallMethod, InstalledVersion: def.Version}, want: binary},
-		{name: "installed at another version", record: &types.McpServerState{InstallMethod: def.InstallMethod, InstalledVersion: "0.0.1"}, want: launcher},
-		{name: "installed by another method", record: &types.McpServerState{InstallMethod: "npm-global", InstalledVersion: def.Version}, want: launcher},
-		{name: "not installed", want: launcher},
-		{name: "no project root", record: &types.McpServerState{InstallMethod: def.InstallMethod, InstalledVersion: def.Version}, noRoot: true, want: launcher},
+		{name: "installed at pin", record: &types.McpServerState{InstallMethod: def.InstallMethod, InstalledVersion: def.Version}},
+		{name: "installed at another version", record: &types.McpServerState{InstallMethod: def.InstallMethod, InstalledVersion: "0.0.1"}, launcher: true},
+		{name: "installed by another method", record: &types.McpServerState{InstallMethod: "npm-global", InstalledVersion: def.Version}, launcher: true},
+		{name: "not installed", launcher: true},
+		{name: "no project root", record: &types.McpServerState{InstallMethod: def.InstallMethod, InstalledVersion: def.Version}, noRoot: true, launcher: true},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
+			start := time.Now()
 			root := t.TempDir()
 			if tt.record != nil {
 				writeInstalledMCPState(t, root, map[string]types.McpServerState{server: *tt.record})
@@ -172,9 +178,6 @@ func TestGenerateMcpJson_PrefersInstalledBinary(t *testing.T) {
 				answers.ProjectRoot = ""
 			}
 			got := generatedEntries(t, answers, Config{})[server]
-			if got.Command != tt.want.Command || !slices.Equal(got.Args, tt.want.Args) {
-				t.Errorf("entry = %s %v, want %s %v", got.Command, got.Args, tt.want.Command, tt.want.Args)
-			}
 
 			// `qsdev enable` writes the same entry into .mcp.json.
 			raw, err := mcpServerContentFunc(server)(answers)
@@ -185,8 +188,15 @@ func TestGenerateMcpJson_PrefersInstalledBinary(t *testing.T) {
 			if err := json.Unmarshal(raw, &enabled); err != nil {
 				t.Fatal(err)
 			}
-			if enabled.Command != tt.want.Command || !slices.Equal(enabled.Args, tt.want.Args) {
-				t.Errorf("enable entry = %s %v, want %s %v", enabled.Command, enabled.Args, tt.want.Command, tt.want.Args)
+
+			wants := []MCPServerEntry{binary}
+			if tt.launcher {
+				wants = hardenedLaunchers(def, 0, start)
+			}
+			for path, e := range map[string]MCPServerEntry{"generate": got, "enable": enabled} {
+				if !slices.ContainsFunc(wants, func(w MCPServerEntry) bool { return sameLaunchEntry(e, w) }) {
+					t.Errorf("%s entry = %s %v, want one of %v", path, e.Command, e.Args, wants)
+				}
 			}
 		})
 	}
@@ -308,4 +318,249 @@ func TestTrustedDefinitions_CoversGeneratedVariants(t *testing.T) {
 			})
 		}
 	}
+}
+
+// complianceLevels are the levels the hardening tests generate for: the
+// lowest gate and one above every launcher floor.
+var complianceLevels = []string{"baseline", "strict"}
+
+// hardenedLaunchers returns the hardened launcher entries generation may have
+// written for def at gate minAge since start: one per UTC day from start to
+// now, which is a single entry unless the test ran past midnight.
+func hardenedLaunchers(def catalog.MCPServerDef, minAge time.Duration, start time.Time) []MCPServerEntry {
+	return []MCPServerEntry{
+		launchSpecEntry(mcpregistry.HardenedLauncherSpec(def, minAge, start)),
+		launchSpecEntry(mcpregistry.HardenedLauncherSpec(def, minAge, time.Now())),
+	}
+}
+
+// sameLaunchEntry reports whether a and b launch the same command line.
+func sameLaunchEntry(a, b MCPServerEntry) bool {
+	return a.Command == b.Command && slices.Equal(a.Args, b.Args) && a.URL == b.URL
+}
+
+// assertCutoff checks that v is an RFC 3339 cutoff at least the effective
+// release age (gate raised to floor) before now, and at most a day older:
+// generation counts back from today's UTC midnight.
+func assertCutoff(t *testing.T, v string, gate, floor time.Duration) {
+	t.Helper()
+	cutoff, err := time.Parse(time.RFC3339, v)
+	if err != nil {
+		t.Fatalf("cutoff %q is not RFC 3339: %v", v, err)
+	}
+	age := ecosystem.EffectiveReleaseAge(gate, floor)
+	now := time.Now()
+	if cutoff.After(now.Add(-age)) {
+		t.Errorf("cutoff %s is later than now - %v", v, age)
+	}
+	if cutoff.Before(now.Add(-age - 25*time.Hour)) {
+		t.Errorf("cutoff %s is more than a day older than now - %v", v, age)
+	}
+}
+
+// assertNpxHardened checks that e is def's npx launcher with npm's install
+// scripts off (unless def allows them) and an age-gated npm_config_before,
+// keeping def's own env.
+func assertNpxHardened(t *testing.T, e MCPServerEntry, def catalog.MCPServerDef, gate time.Duration) {
+	t.Helper()
+	if e.Command != def.Command || !slices.Equal(e.Args, def.Args) {
+		t.Errorf("entry = %s %v, want the launcher %s %v", e.Command, e.Args, def.Command, def.Args)
+	}
+	want := "true"
+	if def.AllowInstallScripts {
+		want = ""
+	}
+	if got := e.Env["npm_config_ignore_scripts"]; got != want {
+		t.Errorf("npm_config_ignore_scripts = %q, want %q", got, want)
+	}
+	assertCutoff(t, e.Env["npm_config_before"], gate, installer.NpmMinReleaseAge)
+	for k, v := range def.Env {
+		if e.Env[k] != v {
+			t.Errorf("env %s = %q, want the catalog's %q", k, e.Env[k], v)
+		}
+	}
+}
+
+// assertUvxHardened checks that e is def's uvx launcher led by an age-gated
+// --exclude-newer= cutoff, followed by def's args and then extra.
+func assertUvxHardened(t *testing.T, e MCPServerEntry, def catalog.MCPServerDef, gate time.Duration, extra ...string) {
+	t.Helper()
+	if e.Command != def.Command || len(e.Args) == 0 {
+		t.Fatalf("entry = %s %v, want the uvx launcher", e.Command, e.Args)
+	}
+	cutoff, ok := strings.CutPrefix(e.Args[0], "--exclude-newer=")
+	if !ok {
+		t.Fatalf("args %v do not start with --exclude-newer=", e.Args)
+	}
+	assertCutoff(t, cutoff, gate, installer.UvMinReleaseAge)
+	if want := slices.Concat(def.Args, extra); !slices.Equal(e.Args[1:], want) {
+		t.Errorf("args after the cutoff = %v, want %v", e.Args[1:], want)
+	}
+}
+
+// TestCatalogServerEntry_NpxHardened covers U22-07 for npx launchers: the
+// generated and the enabled entry both skip install scripts and only resolve
+// releases older than the project's gate.
+func TestCatalogServerEntry_NpxHardened(t *testing.T) {
+	t.Parallel()
+	cat, err := catalog.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range []string{"context7", "local-docs-devdocs", "filesystem"} {
+		for _, level := range complianceLevels {
+			t.Run(name+"/"+level, func(t *testing.T) {
+				t.Parallel()
+				def, ok := cat.MCPServer(name)
+				if !ok || def.Command != "npx" {
+					t.Fatalf("catalog %s is not an npx launcher", name)
+				}
+				gate := catalog.EffectiveAgeGate(level)
+				answers := types.WizardAnswers{MCPServers: []string{name}, ComplianceLevel: level}
+				assertNpxHardened(t, generatedEntries(t, answers, Config{})[name], def, gate)
+
+				raw, err := mcpServerContentFunc(name)(answers)
+				if err != nil {
+					t.Fatalf("enable content: %v", err)
+				}
+				var enabled MCPServerEntry
+				if err := json.Unmarshal(raw, &enabled); err != nil {
+					t.Fatal(err)
+				}
+				assertNpxHardened(t, enabled, def, gate)
+			})
+		}
+	}
+}
+
+// TestCatalogServerEntry_UvxExcludeNewer covers U22-07 for uvx launchers,
+// including semble's text-file flag, which follows the hardened args.
+func TestCatalogServerEntry_UvxExcludeNewer(t *testing.T) {
+	t.Parallel()
+	cat, err := catalog.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range []string{"fetch", sembleServerName, "mcp-nixos", "postgres"} {
+		for _, level := range complianceLevels {
+			t.Run(name+"/"+level, func(t *testing.T) {
+				t.Parallel()
+				def, ok := cat.MCPServer(name)
+				if !ok || def.Command != "uvx" {
+					t.Fatalf("catalog %s is not a uvx launcher", name)
+				}
+				gate := catalog.EffectiveAgeGate(level)
+				answers := types.WizardAnswers{MCPServers: []string{name}, ComplianceLevel: level}
+				assertUvxHardened(t, generatedEntries(t, answers, Config{})[name], def, gate)
+
+				raw, err := mcpServerContentFunc(name)(answers)
+				if err != nil {
+					t.Fatalf("enable content: %v", err)
+				}
+				var enabled MCPServerEntry
+				if err := json.Unmarshal(raw, &enabled); err != nil {
+					t.Fatal(err)
+				}
+				assertUvxHardened(t, enabled, def, gate)
+
+				if name != sembleServerName {
+					return
+				}
+				answers.AgentTools.SembleEnabled = true
+				answers.AgentTools.SembleMode = "mcp"
+				answers.AgentTools.SembleTextFiles = true
+				res, err := generateSembleConfig(answers)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if res.Override == nil {
+					t.Fatal("no semble override for text-file indexing")
+				}
+				o := res.Override
+				assertUvxHardened(t, MCPServerEntry{Command: o.Command, Args: o.Args, Env: o.Env}, def, gate, def.OptionalArgs[0]...)
+			})
+		}
+	}
+}
+
+// TestGeneratedMcpEntries_HardenedProperty covers U22-07 across the whole
+// catalog: at every level, every generated npx entry is script-free and
+// age-gated and every uvx entry leads with --exclude-newer=, while an
+// installed server runs exactly its bare binary, as before hardening.
+func TestGeneratedMcpEntries_HardenedProperty(t *testing.T) {
+	t.Parallel()
+	cat, err := catalog.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, level := range complianceLevels {
+		for _, installed := range []bool{false, true} {
+			t.Run(fmt.Sprintf("%s/installed=%v", level, installed), func(t *testing.T) {
+				t.Parallel()
+				answers := types.WizardAnswers{MCPServers: cat.MCPServerNames(), ComplianceLevel: level, ProjectRoot: t.TempDir()}
+				if installed {
+					writeInstalledMCPState(t, answers.ProjectRoot, installedAtPin(cat))
+				}
+				gate := catalog.EffectiveAgeGate(level)
+				for name, e := range generatedEntries(t, answers, Config{}) {
+					def, ok := cat.MCPServer(name)
+					if !ok {
+						t.Fatalf("generated %s is not a catalog server", name)
+					}
+					if spec, ok := mcpregistry.InstalledSpec(def); ok && installed {
+						if e.Command != spec.Command || !slices.Equal(e.Args, spec.Args) || !maps.Equal(e.Env, spec.Env) {
+							t.Errorf("installed %s = %s %v %v, want the bare %s %v %v", name, e.Command, e.Args, e.Env, spec.Command, spec.Args, spec.Env)
+						}
+						continue
+					}
+					switch def.Command {
+					case "npx":
+						assertNpxHardened(t, e, def, gate)
+					case "uvx":
+						assertUvxHardened(t, e, def, gate)
+					}
+				}
+			})
+		}
+	}
+}
+
+// TestGenerateMcpJson_SameDayDeterministic covers the cutoff's midnight
+// truncation: regenerating .mcp.json within a UTC day is byte-identical, so
+// `init --update` leaves an unchanged project's file alone.
+func TestGenerateMcpJson_SameDayDeterministic(t *testing.T) {
+	t.Parallel()
+	cat, err := catalog.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, level := range complianceLevels {
+		t.Run(level, func(t *testing.T) {
+			t.Parallel()
+			answers := types.WizardAnswers{MCPServers: cat.MCPServerNames(), ComplianceLevel: level}
+			for {
+				start := time.Now()
+				first, err := GenerateMcpJson(answers, Config{})
+				if err != nil {
+					t.Fatal(err)
+				}
+				second, err := GenerateMcpJson(answers, Config{})
+				if err != nil {
+					t.Fatal(err)
+				}
+				if !sameUTCDay(start, time.Now()) {
+					continue // the runs straddled midnight; compare a same-day pair
+				}
+				if !bytes.Equal(first.Content, second.Content) {
+					t.Errorf("same-day regeneration differs:\n%s\n---\n%s", first.Content, second.Content)
+				}
+				return
+			}
+		})
+	}
+}
+
+// sameUTCDay reports whether a and b fall on the same UTC calendar day.
+func sameUTCDay(a, b time.Time) bool {
+	return a.UTC().Truncate(24 * time.Hour).Equal(b.UTC().Truncate(24 * time.Hour))
 }

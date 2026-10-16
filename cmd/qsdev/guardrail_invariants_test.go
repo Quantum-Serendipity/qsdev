@@ -15,7 +15,9 @@ import (
 	"testing"
 
 	"github.com/Quantum-Serendipity/qsdev/internal/answers"
+	"github.com/Quantum-Serendipity/qsdev/internal/selfprotect/canon"
 	"github.com/Quantum-Serendipity/qsdev/internal/toolreg"
+	"github.com/Quantum-Serendipity/qsdev/internal/toolreg/toolregtest"
 	"github.com/Quantum-Serendipity/qsdev/pkg/branding"
 	"github.com/Quantum-Serendipity/qsdev/pkg/types"
 )
@@ -58,6 +60,7 @@ func guardrailEnv(t *testing.T) []string {
 		case name == "HOME", name == "TMPDIR", name == "TMP", name == "TEMP", name == "USERPROFILE",
 			strings.EqualFold(name, "APPDATA"), strings.EqualFold(name, "LOCALAPPDATA"),
 			strings.HasPrefix(name, "XDG_"), strings.HasPrefix(name, "CLAUDE"),
+			slices.Contains(canon.AgentEnvMarkers(), name), // AI_AGENT has no CLAUDE prefix
 			strings.HasPrefix(name, b.EnvPrefix):
 			continue
 		}
@@ -92,10 +95,15 @@ func raceOptions() string {
 // agentEnv returns env as an AI agent's tool call sees it: inside a Claude
 // Code session (CLAUDECODE=1) with no terminal.
 func agentEnv(env []string) []string {
-	out := slices.DeleteFunc(slices.Clone(env), func(kv string) bool {
+	return append(humanlessEnv(env), "CLAUDECODE=1")
+}
+
+// humanlessEnv returns env without the switch that presents stdin to qsdev
+// as a terminal (humanHelperEnv), so the shipped human gate decides.
+func humanlessEnv(env []string) []string {
+	return slices.DeleteFunc(slices.Clone(env), func(kv string) bool {
 		return strings.HasPrefix(kv, humanHelperEnv+"=")
 	})
-	return append(out, "CLAUDECODE=1")
 }
 
 // newGuardrailProject returns a fresh Go project with its own git repository,
@@ -147,7 +155,7 @@ func mustQsdev(t *testing.T, env []string, dir string, args ...string) {
 func safetyBlockTool(t *testing.T) *toolreg.Tool {
 	t.Helper()
 	var found []*toolreg.Tool
-	for _, tool := range toolreg.DefaultRegistry().All() {
+	for _, tool := range toolregtest.Default(t).All() {
 		if slices.ContainsFunc(tool.ExclusiveFiles(), isHookScript) {
 			found = append(found, tool)
 		}
@@ -175,7 +183,7 @@ func packageGuardScript(t *testing.T) string {
 // tool enable and disable can switch freely in any project.
 func toggleTool(t *testing.T) string {
 	t.Helper()
-	tools := toolreg.DefaultRegistry().All()
+	tools := toolregtest.Default(t).All()
 	slices.SortFunc(tools, func(a, b *toolreg.Tool) int { return strings.Compare(a.Name, b.Name) })
 	for _, tool := range tools {
 		if tool.Category != toolreg.CategorySecurity && tool.Default == toolreg.OptIn &&

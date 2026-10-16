@@ -86,6 +86,7 @@ func ensureInit() error {
 		if dirs, err := userDirs(); err == nil {
 			protectedPrefixes = append(protectedPrefixes, userDirEntries(dirs)...)
 		}
+		protectedPrefixes = append(protectedPrefixes, gitGlobalConfigEntries(home, os.Getenv)...)
 		// The CLI reads the overlay below the account's home directory
 		// (catalog.OrgConfigPath); the one below HOME is protected too.
 		protectedHomes = []string{home}
@@ -109,11 +110,19 @@ func ensureInit() error {
 // running session loads its user settings from.
 const ClaudeConfigDirEnv = "CLAUDE_CONFIG_DIR"
 
-// AgentEnvMarkers are the environment variables AI coding agents export to the
-// shells they run commands in (Claude Code sets CLAUDECODE=1). The CLI's human
-// gate refuses a sensitive command while one is set, so a shell session that
-// clears one must not run the CLI.
-var AgentEnvMarkers = []string{"CLAUDECODE"}
+// AgentEnvMarkers returns the environment variables an AI coding agent
+// exports to every command it runs, each verified in a Claude Code Bash
+// environment: CLAUDECODE, CLAUDE_CODE_ENTRYPOINT, CLAUDE_CODE_EXECPATH and
+// AI_AGENT. One set to a non-empty value marks an agent's session. The CLI's
+// human gate (cmdutil.RequireHuman) refuses a sensitive command when any is
+// set in its own environment or in the one an ancestor process started with,
+// so a shell session that clears one must not run the CLI.
+// CLAUDE_CODE_SSE_PORT is not a marker: the IDE integration can set it in a
+// human's own terminal. Each call returns a fresh slice, so no caller can
+// change the set.
+func AgentEnvMarkers() []string {
+	return []string{"CLAUDECODE", "CLAUDE_CODE_ENTRYPOINT", "CLAUDE_CODE_EXECPATH", "AI_AGENT"}
+}
 
 // claudeConfigFiles are the entries of a Claude Code configuration directory
 // that register or steer enforcement, mirroring the .claude entries of
@@ -203,17 +212,21 @@ func orgConfigEnv(cfg branding.Config) string {
 // ShellPathVars returns the shell variables that name a home-anchored
 // protected location, with the values a command the agent runs sees: HOME
 // (the home directory), USERPROFILE (the Windows profile directory, which
-// Git Bash also exports) and <EnvPrefix>ORG_CONFIG when they are set. A
-// command scan renders them (cmdscan.ParseWithVars) so
-// `$HOME/.config/<app>/x`, `cd $HOME/.config` and `"$QSDEV_ORG_CONFIG"` are
-// checked as the paths they expand to.
+// Git Bash also exports), XDG_CONFIG_HOME (which holds the global git
+// config) and <EnvPrefix>ORG_CONFIG when they are set. A command scan renders
+// them (cmdscan.ParseWithVars) so `$HOME/.config/<app>/x`, `cd $HOME/.config`,
+// `$XDG_CONFIG_HOME/git/config` and `"$QSDEV_ORG_CONFIG"` are checked as the
+// paths they expand to.
 func ShellPathVars() map[string]string {
-	vars := make(map[string]string, 3)
+	vars := make(map[string]string, 4)
 	if home, err := userHomeDir(); err == nil {
 		vars["HOME"] = home
 	}
 	if profile := os.Getenv("USERPROFILE"); profile != "" {
 		vars["USERPROFILE"] = profile
+	}
+	if cfg := os.Getenv(xdgConfigHomeEnv); cfg != "" {
+		vars[xdgConfigHomeEnv] = cfg
 	}
 	env := orgConfigEnv(branding.Get())
 	if v := os.Getenv(env); v != "" {
@@ -683,6 +696,12 @@ func isProtected(canonicalPath string, opts pathmatch.Options) (bool, string) {
 		return true, category
 	}
 
+	// Check the git control files inside any .git directory, matched by
+	// structure rather than segment (see isGitControl).
+	if isGitControl(key) {
+		return true, GitControlCategory
+	}
+
 	// Check suffix-based protected paths.
 	for i, entryKey := range suffixKeys.under(opts) {
 		entry := protectedSuffixes[i]
@@ -833,7 +852,7 @@ var staticFileTokens = []string{
 // are added by newPathTables.
 var staticProbeMembers = []string{
 	"config.yaml", "defaults.yaml", "package-guard.py", "audit-log.sh",
-	"agent.md", "audit.jsonl", "events.log",
+	"agent.md", "audit.jsonl", "events.log", "pre-commit",
 }
 
 // pathTables are the location-independent protection tables: the static
@@ -855,6 +874,9 @@ type pathTables struct {
 	// probeMembers are representative contents of a protected directory
 	// (see staticProbeMembers), relative to it.
 	probeMembers []string
+	// policyDirFiles are the protected file segments that live in a policy
+	// directory of their own (see PolicyDirFiles).
+	policyDirFiles []string
 	// exact and folded are the entries the matchers compare against, as
 	// written and lower-cased (see match), built once with the tables
 	// rather than folded again for every path or command checked.
@@ -868,6 +890,16 @@ type matchSet struct {
 	substrings []string
 	// words are the tokens and envVars, matched as complete path segments.
 	words []string
+	// policyDirs are the policy directories (see PolicyDirFiles), each with
+	// the base names of its protected files, matched by mentionsPolicyDir.
+	policyDirs []policyDir
+}
+
+// policyDir is a policy directory, relative and slash-separated, and the base
+// names of the protected files directly inside it.
+type policyDir struct {
+	dir   string
+	files []string
 }
 
 // newMatchSet returns the comparison strings of t, lower-cased when
@@ -886,6 +918,16 @@ func newMatchSet(t *pathTables, foldCase bool) matchSet {
 	}
 	for _, seg := range t.segments {
 		m.segments = append(m.segments, segmentEntry{foldIf(seg.segment, foldCase), seg.category})
+	}
+	for _, f := range fold(t.policyDirFiles) {
+		dir, base := path.Split(f)
+		dir = strings.TrimSuffix(dir, "/")
+		i := slices.IndexFunc(m.policyDirs, func(d policyDir) bool { return d.dir == dir })
+		if i < 0 {
+			m.policyDirs = append(m.policyDirs, policyDir{dir: dir})
+			i = len(m.policyDirs) - 1
+		}
+		m.policyDirs[i].files = append(m.policyDirs[i].files, base)
 	}
 	return m
 }
@@ -914,6 +956,10 @@ var brandedTables = sync.OnceValue(func() *pathTables {
 //     directory;
 //   - .envrc, which direnv runs on every shell entry.
 //
+// The git-control fragments (gitControlSubstrings) are substrings too; the
+// locations they name are matched by isGitControl and the global git config
+// entries rather than by segment.
+//
 // Each segment is covered by a substring or a token, so the raw-command scan
 // sees every location IsProtected guards. The org overlay is home-anchored
 // (orgOverlayEntries), so it has no segment; its raw-command fragments are
@@ -924,17 +970,26 @@ var brandedTables = sync.OnceValue(func() *pathTables {
 func newPathTables(cfg branding.Config, getenv func(string) string) *pathTables {
 	stateDir := strings.Trim(filepath.ToSlash(cfg.StateDir), "/")
 	devenvCopy := path.Base(cfg.DevenvAnswersCopy())
+	composerFiles := composerPolicyFiles(cfg)
 	t := &pathTables{
 		segments: append(slices.Clone(staticSegments),
 			segmentEntry{stateDir + "/", "answers"},
 			segmentEntry{cfg.DevenvAnswersCopy(), "answers"},
 			segmentEntry{".envrc", "config"},
 		),
-		substrings: append(slices.Clone(staticSubstringPatterns), stateDir+"/", ".config/"+cfg.AppName+"/"),
+		substrings: slices.Concat(staticSubstringPatterns, []string{stateDir + "/", ".config/" + cfg.AppName + "/"}, gitControlSubstrings),
 	}
+	for _, f := range composerFiles {
+		t.segments = append(t.segments, segmentEntry{f, "config"})
+	}
+	t.policyDirFiles = composerFiles
 	for _, p := range t.substrings {
 		t.tokens = append(t.tokens, strings.TrimSuffix(p, "/"))
 	}
+	// The Composer policy files are scanned for by their relative path, added
+	// after the tokens: their base names (config.json) are far too common to
+	// match on their own.
+	t.substrings = append(t.substrings, composerFiles...)
 	t.tokens = append(t.tokens, staticFileTokens...)
 	t.tokens = append(t.tokens, devenvCopy, ".envrc")
 	t.envVars = []string{orgConfigEnv(cfg)}
@@ -943,6 +998,47 @@ func newPathTables(cfg branding.Config, getenv func(string) string) *pathTables 
 		"."+cfg.AppName+"-init-answers.yaml", path.Join("bin", cfg.AppName))
 	t.exact, t.folded = newMatchSet(t, false), newMatchSet(t, true)
 	return t
+}
+
+// composerPolicyFiles returns the project-relative, slash-separated policy
+// files of the tracked Composer home (its config.json, which pins the
+// registry and plugin policy, and the nested .gitignore that keeps everything
+// else untracked). Only these files are protected (category "config"): the
+// rest of the directory (cache, vendored plugins, the auth.json link) is
+// composer's own working space and stays writable.
+func composerPolicyFiles(cfg branding.Config) []string {
+	dir := cfg.ComposerHomeDir()
+	return []string{dir + "/config.json", dir + "/.gitignore"}
+}
+
+// PolicyDirFiles returns the protected file segments (relative,
+// slash-separated) that live in a policy directory of their own: a directory,
+// such as the tracked Composer home, whose other contents stay writable but
+// whose removal, move or rollback as a whole takes the protected files with
+// it. Unlike the .devenv answers mirror, these files are named in commands
+// only by their common base names (config.json), so the directory itself is
+// the only handle a whole-tree operation has on them (see IsPolicyDir).
+func PolicyDirFiles() []string {
+	return slices.Clone(brandedTables().policyDirFiles)
+}
+
+// IsPolicyDir reports whether path p, cleaned, ends in a policy directory
+// (the directory of a PolicyDirFiles entry), compared at whole path
+// components and ignoring case where the filesystem does. Entries below it,
+// such as its cache, are not policy directories.
+func IsPolicyDir(p string) bool {
+	return brandedTables().isPolicyDir(p, pathmatch.Platform)
+}
+
+func (t *pathTables) isPolicyDir(p string, opts pathmatch.Options) bool {
+	key := opts.Key(filepath.Clean(p))
+	for _, f := range t.policyDirFiles {
+		dir := opts.Key(path.Dir(f))
+		if key == dir || strings.HasSuffix(key, "/"+dir) {
+			return true
+		}
+	}
+	return false
 }
 
 // commandSpellings returns the slash-separated forms a command may use to name
@@ -1055,6 +1151,28 @@ func HomeEnvVars() []string {
 	return slices.Clone(homeEnvVars)
 }
 
+// commitGateEnvVars are the variables the commit gate's hook managers read to
+// skip hooks (SKIP for pre-commit, PREK_SKIP for prek) or to pass when the
+// repository has no hook configuration (*_ALLOW_NO_CONFIG).
+var commitGateEnvVars = []string{"SKIP", "PREK_SKIP", "PRE_COMMIT_ALLOW_NO_CONFIG", "PREK_ALLOW_NO_CONFIG"}
+
+// CommitGateEnvVars returns the environment variables that skip or disable
+// the commit gate's checks for a git command that runs hooks (see
+// commitGateEnvVars).
+func CommitGateEnvVars() []string {
+	return slices.Clone(commitGateEnvVars)
+}
+
+// commitGateManagers are the programs that install the commit gate into
+// $GIT_DIR/hooks: pre-commit and its drop-in replacement prek.
+var commitGateManagers = []string{"pre-commit", "prek"}
+
+// CommitGateManagers returns the program names of the hook managers that
+// install the commit gate (see commitGateManagers).
+func CommitGateManagers() []string {
+	return slices.Clone(commitGateManagers)
+}
+
 // ProtectedNames returns the single-component names protected wherever they
 // appear (.claude, the state directory, .envrc, ...), for a check that must
 // decide whether a glob segment can expand to one of them.
@@ -1107,6 +1225,9 @@ func FindProbes() (relative, absolute []string) {
 	t := brandedTables()
 	for _, seg := range t.segments {
 		relative = appendProbes(relative, seg.segment, t.probeMembers)
+	}
+	for _, entry := range gitControlEntries {
+		relative = appendProbes(relative, entry, t.probeMembers)
 	}
 	for _, loc := range ProtectedLocations() {
 		absolute = appendProbes(absolute, filepath.ToSlash(loc), t.probeMembers)
@@ -1166,7 +1287,34 @@ func containsProtectedPath(s string, foldCase bool) bool {
 	return brandedTables().containsProtectedPath(s, foldCase)
 }
 
+// ContainsProtectedDirName is ContainsProtectedPath for the name of a
+// directory whose every entry would be protected (.claude, the state
+// directory): it ignores policy directories (PolicyDirFiles), which protect
+// only their own policy files, so naming one does not make its other entries
+// protected.
+func ContainsProtectedDirName(name string) bool {
+	return brandedTables().containsProtectedName(name, pathmatch.Platform.FoldCase)
+}
+
 func (t *pathTables) containsProtectedPath(s string, foldCase bool) bool {
+	if t.containsProtectedName(s, foldCase) {
+		return true
+	}
+	normalized := filepath.ToSlash(s)
+	if foldCase {
+		normalized = strings.ToLower(normalized)
+	}
+	for _, d := range t.match(foldCase).policyDirs {
+		if d.mentionedIn(normalized) {
+			return true
+		}
+	}
+	return false
+}
+
+// containsProtectedName is containsProtectedPath without the policy
+// directories: the substrings and the whole-segment words.
+func (t *pathTables) containsProtectedName(s string, foldCase bool) bool {
 	normalized := filepath.ToSlash(s)
 	if foldCase {
 		normalized = strings.ToLower(normalized)
@@ -1183,6 +1331,65 @@ func (t *pathTables) containsProtectedPath(s string, foldCase bool) bool {
 		}
 	}
 	return false
+}
+
+// mentionedIn reports whether s names the policy directory d itself, or a
+// glob that can select one of its protected files, rather than another entry
+// below it. The directory must be a complete path segment (as for
+// containsSegment) that ends there: at the end of a word or the text
+// (`rm -rf <dir>`, `D=<dir>`, `'<dir>/'+name` in interpreter code), after
+// trailing separators and `.` components, or followed by a glob entry that
+// can match a protected file (`<dir>/*`, `<dir>/conf*`). `<dir>/cache` and
+// `<dir>/auth.json` name composer's working space and do not count; the
+// protected files themselves are substrings of their own.
+func (d policyDir) mentionedIn(s string) bool {
+	for from := 0; ; {
+		i := strings.Index(s[from:], d.dir)
+		if i < 0 {
+			return false
+		}
+		start := from + i
+		end := start + len(d.dir)
+		if isTokenBoundary(s, start-1) && d.endsAt(s[end:]) {
+			return true
+		}
+		from = start + 1
+	}
+}
+
+// endsAt reports whether rest, the text after an occurrence of d's directory,
+// leaves the occurrence naming the directory itself or a glob over its
+// protected files (see mentionedIn).
+func (d policyDir) endsAt(rest string) bool {
+	for {
+		if rest == "" || rest[0] != '/' {
+			return rest == "" || !isPathTokenByte(rest[0])
+		}
+		rest = strings.TrimLeft(rest, "/")
+		if r, ok := strings.CutPrefix(rest, "."); ok && (r == "" || !isPathTokenByte(r[0])) {
+			rest = r // a `.` component: still the directory
+			continue
+		}
+		n := strings.IndexFunc(rest, func(r rune) bool {
+			return r > 0x7f || (!isPathTokenByte(byte(r)) && !strings.ContainsRune("*?[]", r))
+		})
+		if n < 0 {
+			n = len(rest)
+		}
+		entry := rest[:n]
+		if entry == "" {
+			return true // `<dir>/` ends the word
+		}
+		if !strings.ContainsAny(entry, "*?[") {
+			return false // a named entry; the protected ones are substrings
+		}
+		for _, f := range d.files {
+			if ok, err := pathmatch.ShellMatch(entry, f); ok || err != nil {
+				return true // a malformed pattern fails closed
+			}
+		}
+		return false
+	}
 }
 
 // foldIf lower-cases s when foldCase is set, so a branding-derived entry with

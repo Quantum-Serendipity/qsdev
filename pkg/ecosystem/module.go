@@ -71,6 +71,17 @@ type PackageExprProvider interface {
 	DevenvPackageExprs(config ModuleConfig) []string
 }
 
+// EnterShellProvider is an optional interface for modules that must run a
+// shell snippet when the devenv shell starts, such as linking a user-level
+// credential file into the project. The snippet is POSIX sh, makes no
+// network calls and must be idempotent; it is appended to devenv.nix
+// enterShell after the security-hardened base script. It cannot live in
+// DevenvNixFragment, because devenv.nix defines enterShell once. Modules that
+// return "" contribute nothing.
+type EnterShellProvider interface {
+	EnterShellScript(config ModuleConfig) string
+}
+
 // DevenvYamlInputProvider is an optional interface that ecosystem modules can
 // implement to contribute additional flake inputs to devenv.yaml. Modules that
 // do not need extra flake inputs simply omit this interface.

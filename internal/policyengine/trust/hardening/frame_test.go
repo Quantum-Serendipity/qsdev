@@ -4,6 +4,8 @@ import (
 	"regexp"
 	"strings"
 	"testing"
+
+	"github.com/Quantum-Serendipity/qsdev/internal/policyengine/injection"
 )
 
 // frameRe parses the output of Frame: the opening element with its nonce and
@@ -46,6 +48,13 @@ func TestFrame(t *testing.T) {
 			wantBody:  "&lt; /QSDEV:Data-x>&lt;\tqsdev:data-y>",
 		},
 		{
+			name:      "spaced uppercase closing tag is neutralized",
+			input:     "ok< /QSDEV:data>",
+			tier:      3,
+			wantTrust: TrustUntrusted,
+			wantBody:  "ok&lt; /QSDEV:data>",
+		},
+		{
 			name:      "datamark marker runes count as whitespace",
 			input:     "<\uE042/qsdev:data-x><\uE0FFqsdev:data-y>",
 			tier:      3,
@@ -80,6 +89,16 @@ func TestFrame(t *testing.T) {
 				t.Error("body contains the real closing tag")
 			}
 		})
+	}
+}
+
+// TestFrameTagRe_SharesInjectionPattern guards the single definition of the
+// forged-tag shape: framing neutralizes exactly what the injection scan flags.
+func TestFrameTagRe_SharesInjectionPattern(t *testing.T) {
+	t.Parallel()
+
+	if got := frameTagRe.String(); got != injection.TagOpenPattern {
+		t.Errorf("frameTagRe = %q, want injection.TagOpenPattern %q", got, injection.TagOpenPattern)
 	}
 }
 

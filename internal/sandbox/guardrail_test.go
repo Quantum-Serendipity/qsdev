@@ -121,6 +121,27 @@ func TestGuardrailPaths_CoversCanon(t *testing.T) {
 	}
 }
 
+// TestGuardrailPaths_ComposerConfigFilesNotDir pins that the hook sandbox
+// keeps only the Composer home's policy files read-only: composer must still
+// write its cache, vendored plugins and the auth.json link there.
+func TestGuardrailPaths_ComposerConfigFilesNotDir(t *testing.T) {
+	t.Parallel()
+
+	project := filepath.Join(t.TempDir(), "proj")
+	guards := sandbox.GuardrailPaths(project)
+	dir := filepath.Join(project, branding.Get().ComposerHomeDir())
+	for _, f := range []string{"config.json", ".gitignore"} {
+		if p := filepath.Join(dir, f); !slices.Contains(guards, p) {
+			t.Errorf("GuardrailPaths misses %q; got %v", p, guards)
+		}
+	}
+	for _, p := range []string{dir, filepath.Join(dir, "cache"), filepath.Join(dir, "auth.json"), filepath.Join(dir, "vendor")} {
+		if coveredBy(guards, p) {
+			t.Errorf("GuardrailPaths makes %q read-only; composer must write it", p)
+		}
+	}
+}
+
 func TestHookLogDir(t *testing.T) {
 	t.Parallel()
 

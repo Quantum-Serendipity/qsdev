@@ -85,7 +85,17 @@ func detectMarkerIntegrity(projectDir string, enabledTools map[string]bool) Cate
 	}
 
 	// Determine expected markers from enabled tools.
-	expectedMarkers := expectedClaudeMDMarkers(enabledTools)
+	expectedMarkers, err := expectedClaudeMDMarkers(toolreg.Default, enabledTools)
+	if err != nil {
+		cat.Findings = append(cat.Findings, Finding{
+			Category:    categoryMarkerIntegrity,
+			Severity:    Warning,
+			Subject:     "CLAUDE.md",
+			Description: fmt.Sprintf("Unable to determine the expected section markers: %v", err),
+			Remediation: "Run qsdev defaults validate to find the configuration error",
+		})
+		return cat
+	}
 	for _, marker := range expectedMarkers {
 		if !openSet[marker] && !closeSet[marker] {
 			cat.Findings = append(cat.Findings, Finding{
@@ -102,9 +112,13 @@ func detectMarkerIntegrity(projectDir string, enabledTools map[string]bool) Cate
 }
 
 // expectedClaudeMDMarkers returns the set of SectionIDs that should appear
-// in CLAUDE.md based on the enabled tools.
-func expectedClaudeMDMarkers(enabledTools map[string]bool) []string {
-	registry := toolreg.DefaultRegistry()
+// in CLAUDE.md based on the enabled tools. loadRegistry supplies the tool
+// registry (toolreg.Default outside tests); its error is returned.
+func expectedClaudeMDMarkers(loadRegistry func() (*toolreg.Registry, error), enabledTools map[string]bool) ([]string, error) {
+	registry, err := loadRegistry()
+	if err != nil {
+		return nil, fmt.Errorf("loading the tool registry for the expected CLAUDE.md markers: %w", err)
+	}
 	var markers []string
 	seen := make(map[string]bool)
 
@@ -124,5 +138,5 @@ func expectedClaudeMDMarkers(enabledTools map[string]bool) []string {
 		}
 	}
 
-	return markers
+	return markers, nil
 }

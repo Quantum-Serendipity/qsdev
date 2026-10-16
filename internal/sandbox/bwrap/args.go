@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"slices"
 
+	"github.com/Quantum-Serendipity/qsdev/internal/pathmatch"
 	"github.com/Quantum-Serendipity/qsdev/internal/sandbox"
 	"github.com/Quantum-Serendipity/qsdev/internal/sandbox/denylist"
 	"github.com/Quantum-Serendipity/qsdev/internal/sandbox/shim"
@@ -40,8 +41,10 @@ func BuildArgs(cfg *sandbox.SandboxConfig, _ sandbox.DegradationTier) ([]string,
 		if err := ValidateMountPath(m.Target); err != nil {
 			return nil, fmt.Errorf("validating mount target: %w", err)
 		}
-		if d, ok := matchedDenyPath(denylist.CandidatePaths(m.Source), deny); ok {
-			return nil, fmt.Errorf("mount source %q is denied by policy: overlaps %q", m.Source, d)
+		for _, src := range denylist.CandidatePaths(m.Source) {
+			if i := slices.IndexFunc(deny, func(d string) bool { return pathmatch.Within(src, d) }); i >= 0 {
+				return nil, fmt.Errorf("mount source %q is denied by policy: overlaps %q", m.Source, deny[i])
+			}
 		}
 	}
 
@@ -139,7 +142,7 @@ func rejectReservedTargets(cfg *sandbox.SandboxConfig) error {
 		targets = append(targets, m.Target)
 	}
 	for _, t := range targets {
-		if t != "" && denylist.Overlaps(filepath.Clean(t), root) {
+		if t != "" && pathmatch.Within(filepath.Clean(t), root) {
 			return fmt.Errorf("sandbox path %q overlaps %s, which is reserved for qsdev's own mounts", t, root)
 		}
 	}
@@ -210,7 +213,7 @@ func mountImages(p string, mounts []sandbox.MountSpec) []string {
 	for _, m := range mounts {
 		for _, src := range denylist.CandidatePaths(m.Source) {
 			for _, hp := range spellings {
-				if !denylist.IsStrictAncestor(src, hp) {
+				if !pathmatch.StrictlyWithin(hp, src) {
 					continue
 				}
 				if rel, err := filepath.Rel(src, hp); err == nil {
@@ -262,7 +265,7 @@ func guardrailPins(cfg *sandbox.SandboxConfig, guardrails []string) []string {
 		if !ok {
 			continue
 		}
-		for d := filepath.Dir(host); denylist.IsStrictAncestor(cfg.ProjectDir, d); d = filepath.Dir(d) {
+		for d := filepath.Dir(host); pathmatch.StrictlyWithin(d, cfg.ProjectDir); d = filepath.Dir(d) {
 			dirs = append(dirs, d)
 		}
 	}
@@ -338,7 +341,7 @@ func writableDir(projectDir, dir string, guardrails []string) (string, bool) {
 		return "", false
 	}
 	for _, g := range guardrails {
-		if loc, ok := projectLocation(projectDir, g); ok && denylist.Overlaps(loc, host) {
+		if loc, ok := projectLocation(projectDir, g); ok && pathmatch.Within(loc, host) {
 			return "", false
 		}
 	}

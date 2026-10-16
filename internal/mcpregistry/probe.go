@@ -49,13 +49,17 @@ type ProbeOptions struct {
 // input slice is not modified.
 func PlanProbes(servers []mcphealth.ServerConfig, trusted map[string][]LaunchSpec, allowUntrusted bool) (probe []mcphealth.ServerConfig, skipped []Skip) {
 	for _, cfg := range servers {
-		cfg.ExpandEnv = MatchesTrusted(cfg, trusted[cfg.Name])
+		mismatch := TrustMismatch(cfg, trusted[cfg.Name])
+		cfg.ExpandEnv = mismatch == ""
 		if reason := unsafeProbeReason(cfg); reason != "" {
+			if mismatch != "" {
+				reason += "; also untrusted: " + mismatch
+			}
 			skipped = append(skipped, Skip{Name: cfg.Name, Reason: reason})
 			continue
 		}
-		if !cfg.ExpandEnv && !allowUntrusted {
-			skipped = append(skipped, Skip{Name: cfg.Name, Reason: untrustedReason(cfg), Overridable: true})
+		if mismatch != "" && !allowUntrusted {
+			skipped = append(skipped, Skip{Name: cfg.Name, Reason: untrustedReason(cfg, mismatch), Overridable: true})
 			continue
 		}
 		probe = append(probe, cfg)
@@ -102,14 +106,15 @@ func unsafeProbeReason(cfg mcphealth.ServerConfig) string {
 }
 
 // untrustedReason explains why an entry matching no trusted definition is not
-// probed, and how to vouch for it lastingly.
-func untrustedReason(cfg mcphealth.ServerConfig) string {
+// probed, naming the mismatch TrustMismatch found, and how to vouch for it
+// lastingly.
+func untrustedReason(cfg mcphealth.ServerConfig, mismatch string) string {
 	reason := "untrusted remote endpoint matches no trusted definition (its env references would be sent to it)"
 	if cfg.URL == "" {
 		cmdline := strings.Join(append([]string{cfg.Command}, cfg.Args...), " ")
 		reason = fmt.Sprintf("command %q matches no trusted definition", cmdline)
 	}
-	return reason + "; " + orgOverlayHint(cfg.Name)
+	return reason + " (" + mismatch + "); " + orgOverlayHint(cfg.Name)
 }
 
 // orgOverlayHint tells the user how to trust a server: define it under

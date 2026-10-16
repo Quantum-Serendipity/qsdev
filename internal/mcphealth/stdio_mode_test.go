@@ -38,6 +38,8 @@ func fakeModeServerConfig(t *testing.T, mode string) ServerConfig {
 //     initialize and tools/list (two tools).
 //   - hang: reads requests but never replies, like a server stuck downloading
 //     or waiting on auth.
+//   - cwd: like healthy, but initialize reports the server's working
+//     directory as serverInfo.name.
 func TestFakeMCPServerProcess(t *testing.T) {
 	mode := os.Getenv(fakeServerModeEnv)
 	if mode == "" {
@@ -64,7 +66,12 @@ func runFakeMCPServer(mode string) {
 		fmt.Println(`{"jsonrpc":"2.0","method":"notifications/message","params":{"level":"info"}}`)
 		switch req.Method {
 		case "initialize":
-			fmt.Printf(`{"jsonrpc":"2.0","id":%d,"result":{"protocolVersion":"2025-03-26","capabilities":{"tools":{}}}}`+"\n", *req.ID)
+			name := "fake"
+			if mode == "cwd" {
+				name, _ = os.Getwd()
+			}
+			info, _ := json.Marshal(map[string]string{"name": name})
+			fmt.Printf(`{"jsonrpc":"2.0","id":%d,"result":{"protocolVersion":"2025-03-26","capabilities":{"tools":{}},"serverInfo":%s}}`+"\n", *req.ID, info)
 		case "tools/list":
 			fmt.Printf(`{"jsonrpc":"2.0","id":%d,"result":{"tools":[{"name":"a"},{"name":"b"}]}}`+"\n", *req.ID)
 		default:

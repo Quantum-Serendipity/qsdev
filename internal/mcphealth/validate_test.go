@@ -1,6 +1,9 @@
 package mcphealth
 
 import (
+	"os"
+	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 )
@@ -240,6 +243,100 @@ func TestProbeableURL(t *testing.T) {
 			}
 			if err == nil || !strings.Contains(err.Error(), tc.wantErr) {
 				t.Fatalf("ProbeableURL(%q) = %v, want error containing %q", tc.raw, err, tc.wantErr)
+			}
+		})
+	}
+}
+
+// writeTestExecutable creates an executable named name (plus .bat on Windows,
+// which LookPath finds through PATHEXT) in dir and returns the command name.
+func writeTestExecutable(t *testing.T, dir, name string) string {
+	t.Helper()
+	file := name
+	if runtime.GOOS == "windows" {
+		file += ".bat"
+	}
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, file), []byte("#!/bin/sh\n"), 0o755); err != nil { //nolint:gosec // test executable
+		t.Fatal(err)
+	}
+	return name
+}
+
+// validateCommandErrs returns ValidateConfig's warnings for a stdio server
+// running command from dir.
+func validateCommandErrs(command, dir string) []ConfigWarning {
+	return ValidateConfig(map[string]ServerConfig{
+		"x": {Name: "x", Command: command, Dir: dir},
+	})
+}
+
+// TestValidateConfig_RelativeCommandResolvedAgainstDir is the U16-10
+// regression: a relative command path in .mcp.json is relative to the project
+// root the server starts in, so it must be checked there, not against qsdev's
+// working directory.
+func TestValidateConfig_RelativeCommandResolvedAgainstDir(t *testing.T) {
+	t.Parallel()
+
+	root := t.TempDir()
+	writeTestExecutable(t, filepath.Join(root, "bin"), "tool")
+
+	tests := []struct {
+		name    string
+		command string
+		dir     string
+		wantErr bool
+	}{
+		{name: "relative to dir", command: "./bin/tool", dir: root},
+		{name: "relative without dot", command: filepath.Join("bin", "tool"), dir: root},
+		{name: "no dir falls back to cwd", command: "./bin/tool", dir: "", wantErr: true},
+		{name: "missing under dir", command: "./bin/absent", dir: root, wantErr: true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			warnings := validateCommandErrs(tt.command, tt.dir)
+			if gotErr := len(warnings) > 0; gotErr != tt.wantErr {
+				t.Errorf("warnings = %+v, want error %v", warnings, tt.wantErr)
+			}
+		})
+	}
+}
+
+// TestValidateConfig_BareAndAbsoluteCommandUnchanged pins the base behaviour
+// Dir must not change: a bare name is looked up on PATH only (never in Dir),
+// and an absolute command is checked as is.
+func TestValidateConfig_BareAndAbsoluteCommandUnchanged(t *testing.T) {
+	pathDir := t.TempDir()
+	onPath := writeTestExecutable(t, pathDir, "qsdev-test-on-path")
+	t.Setenv("PATH", pathDir)
+
+	root := t.TempDir()
+	inRoot := writeTestExecutable(t, root, "qsdev-test-in-root")
+	abs := filepath.Join(pathDir, onPath)
+	if runtime.GOOS == "windows" {
+		abs += ".bat"
+	}
+
+	tests := []struct {
+		name    string
+		command string
+		dir     string
+		wantErr bool
+	}{
+		{name: "bare name on PATH, no dir", command: onPath},
+		{name: "bare name on PATH, dir set", command: onPath, dir: root},
+		{name: "bare name only in dir is not found", command: inRoot, dir: root, wantErr: true},
+		{name: "absolute, no dir", command: abs},
+		{name: "absolute, unrelated dir", command: abs, dir: root},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			warnings := validateCommandErrs(tt.command, tt.dir)
+			if gotErr := len(warnings) > 0; gotErr != tt.wantErr {
+				t.Errorf("warnings = %+v, want error %v", warnings, tt.wantErr)
 			}
 		})
 	}

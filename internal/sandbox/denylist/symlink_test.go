@@ -77,3 +77,47 @@ func TestExpandedDenyPaths_IncludesResolvedForms(t *testing.T) {
 		seen[p] = true
 	}
 }
+
+// TestCovering_Symlinks pins that Covering and Conflict compare a path's
+// symlink-resolved form: a harmless-looking link to ~/.ssh is covered, so is
+// an absent entry named through the resolved location of a symlinked home,
+// and the resolved home itself re-exposes ~/.ssh. Not parallel: it sets the
+// home directory.
+func TestCovering_Symlinks(t *testing.T) {
+	realHome := t.TempDir()
+	homeLink := filepath.Join(t.TempDir(), "home")
+	if err := os.Symlink(realHome, homeLink); err != nil {
+		t.Fatalf("creating home symlink: %v", err)
+	}
+	setHome(t, homeLink)
+	ssh := filepath.Join(realHome, ".ssh")
+	if err := os.Mkdir(ssh, 0o700); err != nil {
+		t.Fatalf("creating fake ~/.ssh: %v", err)
+	}
+	link := filepath.Join(t.TempDir(), "link")
+	if err := os.Symlink(ssh, link); err != nil {
+		t.Fatalf("creating symlink: %v", err)
+	}
+	safe := filepath.Join(t.TempDir(), "safe")
+	if err := os.Symlink(t.TempDir(), safe); err != nil {
+		t.Fatalf("creating symlink: %v", err)
+	}
+
+	for _, p := range []string{link, ssh, filepath.Join(realHome, ".aws")} {
+		if _, ok := Covering(p); !ok {
+			t.Errorf("Covering(%q) with HOME=%q = false, want true", p, homeLink)
+		}
+		if _, exposes, ok := Conflict(p); !ok || exposes {
+			t.Errorf("Conflict(%q) with HOME=%q = exposes=%v ok=%v, want covered", p, homeLink, exposes, ok)
+		}
+	}
+	if deny, ok := Covering(safe); ok {
+		t.Errorf("Covering(%q) = %q, want not covered", safe, deny)
+	}
+	if deny, _, ok := Conflict(safe); ok {
+		t.Errorf("Conflict(%q) = %q, want no conflict", safe, deny)
+	}
+	if _, exposes, _ := Conflict(realHome); !exposes {
+		t.Errorf("Conflict(%q) with HOME=%q exposes = false, want true (resolved home re-exposes ~/.ssh)", realHome, homeLink)
+	}
+}

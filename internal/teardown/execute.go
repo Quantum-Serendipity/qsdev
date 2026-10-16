@@ -34,16 +34,16 @@ func Execute(plan *TeardownPlan, opts TeardownOptions, registry *toolreg.Registr
 
 	// Remove exclusive files.
 	for _, fa := range plan.Remove {
-		absPath, err := resolveTrackedPath(opts.ProjectRoot, fa.Path)
-		if err != nil {
-			result.Errors = append(result.Errors, fmt.Errorf("refusing to remove %s: %w", fa.Path, err))
-			continue
-		}
-		if err := os.Remove(absPath); err != nil {
-			if os.IsNotExist(err) {
+		if err := fileutil.RemoveInRoot(opts.ProjectRoot, filepath.FromSlash(fa.Path)); err != nil {
+			switch {
+			case errors.Is(err, fs.ErrNotExist):
 				continue
+			case errors.Is(err, fileutil.ErrOutsideRoot):
+				err = fmt.Errorf("refusing to remove %s: %w", fa.Path, err)
+			default:
+				err = fmt.Errorf("removing %s: %w", fa.Path, err)
 			}
-			result.Errors = append(result.Errors, fmt.Errorf("removing %s: %w", fa.Path, err))
+			result.Errors = append(result.Errors, err)
 			continue
 		}
 		result.Removed = append(result.Removed, fa)
@@ -95,8 +95,7 @@ func Execute(plan *TeardownPlan, opts TeardownOptions, registry *toolreg.Registr
 		".cosign",
 	}
 	for _, dir := range emptyCheckDirs {
-		absPath := filepath.Join(opts.ProjectRoot, dir)
-		removeIfEmpty(absPath)
+		removeIfEmpty(opts.ProjectRoot, dir)
 	}
 
 	return result, nil
@@ -115,20 +114,18 @@ const (
 // what changed. A symlinked shared file (e.g. CLAUDE.md pointing at AGENTS.md)
 // is rewritten at its target, which must stay inside the project; the write is
 // atomic and keeps the target's permissions. A Markdown file left with only
-// qsdev's scaffold held no user content and is deleted.
+// qsdev's scaffold held no user content and is deleted. A missing file, or a
+// dangling link, has nothing to clean and is left unchanged.
 func cleanSharedFile(projectRoot string, fa FileAction, registry *toolreg.Registry) (cleanOutcome, error) {
-	absPath, err := resolveTrackedPath(projectRoot, fa.Path)
-	if err != nil {
+	if err := checkTrackedPath(fa.Path); err != nil {
 		return cleanUnchanged, err
 	}
-	target, err := filepath.EvalSymlinks(absPath)
-	if err != nil {
-		if errors.Is(err, fs.ErrNotExist) {
-			return cleanUnchanged, nil
-		}
-		return cleanUnchanged, fmt.Errorf("resolving %s: %w", fa.Path, err)
+	rel := filepath.FromSlash(fa.Path)
+	if _, err := os.Stat(filepath.Join(projectRoot, rel)); errors.Is(err, fs.ErrNotExist) {
+		return cleanUnchanged, nil
 	}
-	if err := checkWithinRoot(projectRoot, target); err != nil {
+	target, err := fileutil.ResolveInRoot(projectRoot, rel)
+	if err != nil {
 		return cleanUnchanged, err
 	}
 
@@ -150,7 +147,7 @@ func cleanSharedFile(projectRoot string, fa FileAction, registry *toolreg.Regist
 	}
 
 	if isMarkdown(fa.Path) && onlyScaffold(fa.Path, updated) {
-		if err := os.Remove(target); err != nil {
+		if err := removeResolved(projectRoot, target); err != nil {
 			return cleanUnchanged, fmt.Errorf("removing %s: %w", fa.Path, err)
 		}
 		return cleanRemoved, nil
@@ -231,26 +228,39 @@ func applySurgeryRemove(relPath string, content []byte, sectionID string) ([]byt
 	}
 }
 
+// removeResolved removes target, an absolute path ResolveInRoot returned for
+// projectRoot, through the same containment rule. target is relative to the
+// resolved root, so the root is resolved the same way.
+func removeResolved(projectRoot, target string) error {
+	resolvedRoot, err := fileutil.ResolveInRoot(projectRoot, ".")
+	if err != nil {
+		return err
+	}
+	rel, err := filepath.Rel(resolvedRoot, target)
+	if err != nil {
+		return fmt.Errorf("relating %s to %s: %w", target, resolvedRoot, err)
+	}
+	return fileutil.RemoveInRoot(resolvedRoot, rel)
+}
+
 // removeEmptyParents removes the directories above the removed file relPath
-// that it leaves empty (e.g. .claude/skills/<skill>/), stopping at the
-// project root.
+// (slash-separated, relative to projectRoot) that it leaves empty (e.g.
+// .claude/skills/<skill>/), stopping at the project root.
 func removeEmptyParents(projectRoot, relPath string) {
 	for dir := path.Dir(relPath); dir != "." && dir != "/"; dir = path.Dir(dir) {
-		entries, err := os.ReadDir(filepath.Join(projectRoot, filepath.FromSlash(dir)))
-		if err != nil || len(entries) > 0 {
+		if !removeIfEmpty(projectRoot, dir) {
 			return
 		}
-		removeIfEmpty(filepath.Join(projectRoot, filepath.FromSlash(dir)))
 	}
 }
 
-// removeIfEmpty removes a directory if it exists and is empty.
-func removeIfEmpty(absPath string) {
-	entries, err := os.ReadDir(absPath)
-	if err != nil {
-		return
+// removeIfEmpty removes relDir (slash-separated, relative to projectRoot) if
+// it exists and is empty, and reports whether it did.
+func removeIfEmpty(projectRoot, relDir string) bool {
+	rel := filepath.FromSlash(relDir)
+	entries, err := os.ReadDir(filepath.Join(projectRoot, rel))
+	if err != nil || len(entries) > 0 {
+		return false
 	}
-	if len(entries) == 0 {
-		_ = os.Remove(absPath)
-	}
+	return fileutil.RemoveInRoot(projectRoot, rel) == nil
 }

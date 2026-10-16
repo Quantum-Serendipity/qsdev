@@ -39,6 +39,10 @@ func TestScanHeuristicPatterns_PositiveNegative(t *testing.T) {
 		{"AWS session token", "aws-assignment", "aws_session_token: ABCDEFGHIJKLMNOPQRSTzzzz", true},
 		{"AWS secret key UPPERCASE", "aws-assignment", "AWS_SECRET_ACCESS_KEY = wJalrXUtnFEMI/K7MDENG/bPxRfiCYzzzzzz", true},
 		{"AWS session token UPPERCASE", "aws-assignment", "AWS_SESSION_TOKEN: ABCDEFGHIJKLMNOPQRSTzzzz", true},
+		{"AWS secret key quoted value", "aws-assignment", `aws_secret_access_key = "wJalrXUtnFEMI/K7MDENG/bPxRfiCYzzzzzz"`, true},
+		{"AWS secret key JSON", "aws-assignment", `{"aws_secret_access_key": "wJalrXUtnFEMI/K7MDENG/bPxRfiCYzzzzzz"}`, true},
+		{"AWS session token single-quoted key", "aws-assignment", `'AWS_SESSION_TOKEN': 'ABCDEFGHIJKLMNOPQRSTzzzz'`, true},
+		{"AWS secret key env reference", "aws-assignment", "AWS_SECRET_ACCESS_KEY=${AWS_SECRET_ACCESS_KEY}", false},
 		{"AWS region is not a secret", "aws-assignment", "aws_region = us-east-1", false},
 		{"AWS secret key short value", "aws-assignment", "aws_secret_access_key = short", false},
 		{"API key double-quoted", "api-key-assignment", `API_KEY = "abcdefghijklmnopqrstuvwx"`, true},
@@ -67,6 +71,36 @@ func TestScanHeuristicPatterns_PositiveNegative(t *testing.T) {
 				t.Errorf("heuristic %q on %q = %v, want %v", tt.heuristic, tt.input, got, tt.want)
 			}
 		})
+	}
+}
+
+// TestSecretPatterns_SecretGroup pins the one named group the scan-secrets
+// hook understands: a pattern that matches more than the credential (a key, a
+// connection string's user and host) marks the credential with a single
+// (?P<secret>...) group, which the hook's placeholder test then judges alone.
+func TestSecretPatterns_SecretGroup(t *testing.T) {
+	t.Parallel()
+	all := append(append([]string{}, claudecode.ExportDefaultSecretPatterns...), claudecode.ExportConfigSecretPatterns...)
+	grouped := 0
+	for _, pattern := range all {
+		re := regexp.MustCompile(pattern)
+		secretGroups := 0
+		for _, name := range re.SubexpNames()[1:] {
+			switch name {
+			case "":
+			case "secret":
+				secretGroups++
+			default:
+				t.Errorf("pattern %q has named group %q; only \"secret\" is understood", pattern, name)
+			}
+		}
+		if secretGroups > 1 {
+			t.Errorf("pattern %q has %d secret groups, want at most 1", pattern, secretGroups)
+		}
+		grouped += secretGroups
+	}
+	if grouped == 0 {
+		t.Error("no pattern has a secret group; assignment heuristics must mark their value")
 	}
 }
 

@@ -41,6 +41,31 @@ func TestLanguageChoiceSetting(t *testing.T) {
 	}
 }
 
+func TestLanguageChoiceWithoutSetting(t *testing.T) {
+	t.Parallel()
+	base := LanguageChoice{Name: "x", Extras: []string{"a=1", "flag", "b=2", "flag=false"}}
+	tests := []struct {
+		key  string
+		want []string
+	}{
+		{"flag", []string{"a=1", "b=2"}},
+		{"a", []string{"flag", "b=2", "flag=false"}},
+		{"missing", []string{"a=1", "flag", "b=2", "flag=false"}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.key, func(t *testing.T) {
+			t.Parallel()
+			got := base.WithoutSetting(tt.key)
+			if !slices.Equal(got.Extras, tt.want) {
+				t.Errorf("WithoutSetting(%q).Extras = %v, want %v", tt.key, got.Extras, tt.want)
+			}
+			if !slices.Equal(base.Extras, []string{"a=1", "flag", "b=2", "flag=false"}) {
+				t.Errorf("WithoutSetting modified the receiver's Extras: %v", base.Extras)
+			}
+		})
+	}
+}
+
 func TestLanguageChoiceWithSetting(t *testing.T) {
 	t.Parallel()
 	base := LanguageChoice{Name: "x", Extras: []string{"a=1", "flag", "b=2", "flag=false"}}

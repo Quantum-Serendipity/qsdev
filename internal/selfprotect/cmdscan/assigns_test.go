@@ -114,3 +114,42 @@ func TestParse_NoSpuriousAssigns(t *testing.T) {
 		})
 	}
 }
+
+// TestCommand_PrefixAssignsOnly pins which statements set variables only as
+// prefix assignments of the command they name, which reach that command's
+// environment alone: not a bare assignment, a declaration builtin, or a
+// command that also sets a variable another way.
+func TestCommand_PrefixAssignsOnly(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		command string
+		want    bool
+	}{
+		{"LC_ALL=C git log", true},
+		{"LC_ALL=C TZ=UTC git log", true},
+		{"GIT_DIR=../o/.git /usr/bin/git status", true},
+		{"git log", false},
+		{"LC_ALL=C", false},
+		{"export LC_ALL=C", false},
+		{"builtin export LC_ALL=C", false},
+		{"LC_ALL=C export X=1", false},
+		{"LC_ALL=C read X", false},
+		{"LC_ALL=C echo ${X:=v}", false},
+		{"LC_ALL=C printf -v X y", false},
+		{"LC_ALL=C read \"$V\"", false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.command, func(t *testing.T) {
+			t.Parallel()
+			cmds, err := Parse(tt.command)
+			if err != nil || len(cmds) != 1 {
+				t.Fatalf("Parse(%q) = %d commands, %v; want one", tt.command, len(cmds), err)
+			}
+			if got := cmds[0].PrefixAssignsOnly(); got != tt.want {
+				t.Errorf("PrefixAssignsOnly(%q) = %v, want %v (assigns %q, texts %q)",
+					tt.command, got, tt.want, cmds[0].Assigns, cmds[0].AssignTexts)
+			}
+		})
+	}
+}

@@ -10,9 +10,6 @@ import (
 // psEvalVerbs run a string as PowerShell code.
 var psEvalVerbs = map[string]bool{"iex": true, "invoke-expression": true}
 
-// psAliasVerbs define an alias, which can give an eval verb another name.
-var psAliasVerbs = map[string]bool{"set-alias": true, "sal": true, "new-alias": true, "nal": true}
-
 // psHosts are the PowerShell programs that take an -EncodedCommand.
 var psHosts = map[string]bool{"pwsh": true, "powershell": true}
 
@@ -89,7 +86,7 @@ func checkPowerShellCommand(c cmdscan.PSCommand) (bool, string) {
 // psAliasesEval reports whether c defines an alias whose value is an eval
 // verb (`sal x iex`, `Set-Alias -Value:Invoke-Expression`).
 func psAliasesEval(c cmdscan.PSCommand) bool {
-	return psAliasVerbs[c.Name] && slices.ContainsFunc(c.Args, func(a string) bool {
+	return cmdscan.IsPSAliasVerb(c.Name) && slices.ContainsFunc(c.Args, func(a string) bool {
 		if _, value, ok := strings.Cut(a, ":"); ok && strings.HasPrefix(a, "-") {
 			a = value
 		}

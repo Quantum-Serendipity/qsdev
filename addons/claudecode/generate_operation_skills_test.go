@@ -8,6 +8,7 @@ import (
 
 	"github.com/Quantum-Serendipity/qsdev/addons/claudecode"
 	"github.com/Quantum-Serendipity/qsdev/internal/toolreg"
+	"github.com/Quantum-Serendipity/qsdev/internal/toolreg/toolregtest"
 	"github.com/Quantum-Serendipity/qsdev/pkg/types"
 )
 
@@ -243,7 +244,7 @@ func TestAvailableQsdevOpsSkillNames(t *testing.T) {
 // silently skips the skill (qsdev-add-dep was missing this way).
 func TestQsdevOpsManifest_EveryEntryRegisteredAlwaysOn(t *testing.T) {
 	t.Parallel()
-	reg := toolreg.DefaultRegistry()
+	reg := toolregtest.Default(t)
 	for _, name := range claudecode.AvailableQsdevOpsSkillNames() {
 		tool, ok := reg.ByName(name)
 		if !ok {

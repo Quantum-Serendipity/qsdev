@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/Quantum-Serendipity/qsdev/internal/selfprotect/hookio"
+	"github.com/Quantum-Serendipity/qsdev/internal/testutil"
 )
 
 // adversarialPayloads are the U18-04 shapes that ran for seconds to minutes
@@ -19,8 +20,8 @@ import (
 // hookio.MaxCommandBytes and MaxSimpleCommands. maxRatio bounds how much
 // doubling n may multiply the evaluation's CPU time, zero meaning
 // linearRatio; cpuBudget bounds the best CPU time at n, zero meaning
-// defaultCPUBudget (scaled by raceScale). tool is the shell tool that runs
-// the payload, zero meaning Bash.
+// defaultCPUBudget (scaled by testutil.RaceScale). tool is the shell tool
+// that runs the payload, zero meaning Bash.
 var adversarialPayloads = []struct {
 	name      string
 	build     func(n int) string
@@ -53,6 +54,20 @@ var adversarialPayloads = []struct {
 	// about 6.
 	{name: "long cd chain then protected write", build: repeatAfter("", "cd a && ", "rm .claude/settings.json"), n: 1999, maxRatio: quadraticRatio, want: Deny, cd: true},
 	{name: "long cd chain", build: repeatAfter("", "cd a && ", "true"), n: 1999, maxRatio: quadraticRatio, want: Allow, cd: true},
+	// SP-009 compiles each pattern operand of a kill verb once, judges the
+	// line's text for a guard once however many kills take a computed
+	// operand, and reads each pipeline stage's text once however many
+	// shells it feeds.
+	{name: "many kill patterns", build: repeatAfter("pkill -f ", "'n.d[e]' ", ""), n: 4000, want: Allow},
+	{name: "many computed kills", build: repeatAfter("", "kill $p; ", "true"), n: 1999, want: Allow},
+	{name: "long pipeline into shells", build: repeatAfter("echo x", " | sh", ""), n: 1999, want: Allow},
+	{name: "long kill text into a shell", build: repeatAfter("echo '", "kill x; ", "' | sh"), n: 6000, want: Allow},
+	// A program SP-009 does not model gets the text check over its own
+	// words; the line's assignments and whole text are read once however
+	// many computed programs and code runners it holds.
+	{name: "many opaque runners", build: repeatAfter("", "watch kill x; ", "true"), n: 1999, want: Allow},
+	{name: "many computed programs", build: repeatAfter("K=pkill; ", "$K x; ", "true"), n: 1999, want: Allow},
+	{name: "many process substitutions", build: repeatAfter("", "sh < <(kill x); ", "true"), n: 1999, want: Allow},
 	// PowerShell lines go through the PowerShell tokenizer (and the POSIX
 	// parse the rules that only add denies still use): many quoted words,
 	// many commands, and runs of here-string openers and of here-string
@@ -155,8 +170,8 @@ func doublingRatio(half, full time.Duration) float64 {
 }
 
 // runAdversarial evaluates the payloads of tool whose cd field equals cd at
-// n and at 2n. The best wall time at n must be inside hookio.EvalDeadline (scaled by
-// raceScale), the absolute property the hook relies on; the best CPU time at
+// n and at 2n. The best wall time at n must be inside hookio.EvalDeadline
+// (scaled by testutil.RaceScale), the absolute property the hook relies on; the best CPU time at
 // n must be inside the payload's cpuBudget; and the CPU doubling ratio must
 // stay under the payload's maxRatio, which pins the complexity. Neither CPU
 // bound depends on how loaded the machine is. The ratio doubles n rather than
@@ -166,7 +181,7 @@ func doublingRatio(half, full time.Duration) float64 {
 // so sibling tests do not add to the process CPU time.
 func runAdversarial(t *testing.T, tool string, cd bool) {
 	t.Helper()
-	deadline := hookio.EvalDeadline * raceScale
+	deadline := hookio.EvalDeadline * testutil.RaceScale
 	for _, p := range adversarialPayloads {
 		if p.cd != cd || cmp.Or(p.tool, "Bash") != tool {
 			continue
@@ -180,7 +195,7 @@ func runAdversarial(t *testing.T, tool string, cd bool) {
 			if atN.wall > deadline {
 				t.Errorf("EvaluateAll took %v at best, want under the %v hook deadline", atN.wall, deadline)
 			}
-			if budget := cmp.Or(p.cpuBudget, defaultCPUBudget) * raceScale; atN.cpu > budget {
+			if budget := cmp.Or(p.cpuBudget, defaultCPUBudget) * testutil.RaceScale; atN.cpu > budget {
 				t.Errorf("EvaluateAll took %v of CPU at best, want under %v", atN.cpu, budget)
 			}
 			if ratio := doublingRatio(atN.cpu, doubled.cpu); ratio >= limit {

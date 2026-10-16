@@ -1,3 +1,8 @@
+---
+name: agent-postmortem
+description: Verification skill requiring agents to validate changes against build/test/lint after implementation
+---
+
 # Agent Postmortem Skill
 
 ## Mission

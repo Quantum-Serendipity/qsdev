@@ -9,6 +9,7 @@ import (
 	"slices"
 
 	"github.com/Quantum-Serendipity/qsdev/pkg/branding"
+	"github.com/Quantum-Serendipity/qsdev/pkg/ecosystem"
 	"github.com/Quantum-Serendipity/qsdev/pkg/types"
 )
 
@@ -98,8 +99,14 @@ func ResolveProjectPolicy(project *types.QsdevConfig, local *LocalConfig) (*Proj
 // unset permission level from the client compliance level, and installs the
 // client MCP policy, the git branch naming pattern, the hook settings (the
 // `hooks` block) and the java and cloud blocks, which replace any earlier
-// ones because .qsdev.yaml is authoritative for them.
-func (p *ProjectPolicy) Apply(a *types.WizardAnswers) {
+// ones because .qsdev.yaml is authoritative for them. It is likewise the
+// single source of truth for each language's committable settings
+// (settings): a committed extra with an accepted value sets the answer, and
+// an absent one clears it, so the module's default applies. Any other
+// committed extra is ignored (ExtrasWarnings reports it), so a committed
+// entry can never set a detected key such as directory or manifests.
+func (p *ProjectPolicy) Apply(a *types.WizardAnswers, settings ecosystem.CommittableSettings) {
+	applyCommittedExtras(a.Languages, p.Committed.Languages, settings)
 	level := EffectiveSecurityLevel(p.Effective.Config)
 	if CompareComplianceLevels(level, a.ComplianceLevel) > 0 {
 		a.ComplianceLevel = level
@@ -133,6 +140,39 @@ func (p *ProjectPolicy) Apply(a *types.WizardAnswers) {
 	// its only source, so a hand edit reaches the next update.
 	a.Java = cloneJava(p.Committed.Java)
 	a.Cloud = p.Committed.Cloud
+}
+
+// applyCommittedExtras gives each of langs the committable settings that
+// committed records for it, clearing every one it does not record (see
+// ProjectPolicy.Apply).
+func applyCommittedExtras(langs []types.LanguageChoice, committed []types.LanguageConfig, settings ecosystem.CommittableSettings) {
+	for i := range langs {
+		var extras []string
+		if j := slices.IndexFunc(committed, func(c types.LanguageConfig) bool { return c.Name == langs[i].Name }); j >= 0 {
+			extras = committed[j].Extras
+		}
+		values := settings.Committed(langs[i].Name, extras)
+		for _, f := range settings[langs[i].Name] {
+			if v, ok := values[f.Key]; ok {
+				langs[i] = langs[i].WithSetting(f.Key, v)
+			} else {
+				langs[i] = langs[i].WithoutSetting(f.Key)
+			}
+		}
+	}
+}
+
+// ExtrasWarnings describes each committed languages[].extras entry that Apply
+// ignores because it is not a committable setting of its language or has a
+// value the setting does not accept.
+func (p *ProjectPolicy) ExtrasWarnings(settings ecosystem.CommittableSettings) []string {
+	var warnings []string
+	for i, lang := range p.Committed.Languages {
+		for _, err := range settings.CheckExtras(lang.Name, lang.Extras) {
+			warnings = append(warnings, fmt.Sprintf("languages[%d].extras: %v; ignored", i, err))
+		}
+	}
+	return warnings
 }
 
 // ApplyLocal adds the developer's .qsdev.local.yaml, as ResolveConfig applied

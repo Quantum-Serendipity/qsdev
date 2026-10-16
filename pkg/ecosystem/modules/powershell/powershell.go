@@ -126,10 +126,14 @@ func (m *Module) DenyRules(_ ecosystem.ModuleConfig) []string {
 	// (`PowerShellGet\Install-Module`). Whole word means a longer local-only
 	// cmdlet that starts with an installer's name (Update-ModuleManifest,
 	// Update-ScriptFileInfo) stays allowed. The aliases are denied the same
-	// way (see psWordRules). These rules are the only layer for the
-	// PowerShell tool; the package-guard hook inspects only scripts passed to
-	// pwsh/powershell. A command that merely names a cmdlet (`Get-Help
-	// Install-Module`) is over-blocked; run it yourself in a terminal.
+	// way (see psWordRules). The package-guard hook is a second layer: it
+	// reads PowerShell tool commands (and pwsh/powershell scripts) in
+	// PowerShell's dialect and denies an installer cmdlet run as a command,
+	// and scans Invoke-Expression strings and Start-Process command lines.
+	// These rules still catch what it cannot see, such as an installer
+	// cmdlet named only inside a dynamic string. A command that merely names
+	// a cmdlet (`Get-Help Install-Module`) is over-blocked by these rules;
+	// run it yourself in a terminal.
 	//
 	// In the Bash tool the cmdlet is denied bare or inside any
 	// pwsh/powershell invocation, including behind an env prefix (-c,
@@ -145,6 +149,13 @@ func (m *Module) DenyRules(_ ecosystem.ModuleConfig) []string {
 	// carry the documented and the all-lowercase spelling, and any other
 	// casing under pwsh (INSTALL-MODULE) is left to the package-guard hook,
 	// which matches case-insensitively.
+	//
+	// The PowerShell(...) rules match a word followed only by an ASCII space
+	// or one of psWordAfter's separators. Any other whitespace PowerShell
+	// separates words on (a tab, NBSP, NEL or a Unicode space separator:
+	// `Install-Module<NBSP>Evil`) is left to the package-guard hook, as
+	// non-canonical casing is: it maps every such character to a space before
+	// reading the line.
 	rules := psWordRules(psInstallCmdlets, []string{"*"})
 	for _, cmdlet := range psInstallCmdlets {
 		for _, spelling := range []string{cmdlet, strings.ToLower(cmdlet)} {
@@ -158,9 +169,12 @@ func (m *Module) DenyRules(_ ecosystem.ModuleConfig) []string {
 	return append(rules, psWordRules(psInstallAliases, psAliasBefore)...)
 }
 
-// psInstallAliases are PSResourceGet's aliases for Install-PSResource and
-// Update-PSResource.
-var psInstallAliases = []string{"isres", "udres"}
+// psInstallAliases are the aliases the installer modules export:
+// PowerShellGet's for Install-Module and Update-Module (Windows PowerShell
+// 5.1's inbox module and the 2.x bundled with pwsh 7), and PSResourceGet's
+// for Install-PSResource and Update-PSResource. The package-guard hook's
+// _PS_INSTALLER_CMDLETS lists the same names (TestInstallersMatchPackageGuard).
+var psInstallAliases = []string{"inmo", "upmo", "isres", "udres"}
 
 // psAliasBefore is what may precede an alias in a PowerShell tool call: the
 // start of the command, or a space, `;`, `|`, newline, `{`, `(` or `&`
@@ -168,9 +182,10 @@ var psInstallAliases = []string{"isres", "udres"}
 // not matched at the end of another word (`thisresult.txt`).
 var psAliasBefore = []string{"", "* ", "*;", "*|", "*\n", "*{", "*(", "*&"}
 
-// psWordAfter is what may follow a denied word: arguments, the end of the
-// command, a statement or pipeline separator, the end of a scriptblock,
-// subexpression or string, or a newline.
+// psWordAfter is what may follow a denied word: arguments after an ASCII
+// space, the end of the command, a statement or pipeline separator, the end
+// of a scriptblock, subexpression or string, or a newline. Other whitespace
+// is left to the package-guard hook (see DenyRules).
 var psWordAfter = []string{" *", "", ";*", "|*", "}*", ")*", "'*", `"*`, "\n*"}
 
 // psWordRules returns PowerShell tool deny rules that match each of words as
@@ -194,12 +209,12 @@ func psWordRules(words, before []string) []string {
 // psInstallCmdlets install or update modules or scripts from PSGallery or
 // NuGet: PowerShellGet's Install-/Save-/Update-Module and Install-/
 // Update-Script, PSResourceGet's Install-/Save-/Update-PSResource (bundled
-// since PowerShell 7.4) and PackageManagement's Install-Package.
+// since PowerShell 7.4) and PackageManagement's Install-/Save-Package.
 var psInstallCmdlets = []string{
 	"Install-Module", "Save-Module", "Update-Module",
 	"Install-Script", "Update-Script",
 	"Install-PSResource", "Save-PSResource", "Update-PSResource",
-	"Install-Package",
+	"Install-Package", "Save-Package",
 }
 
 // psScriptAnalyzerVersion is the PSScriptAnalyzer release the CI job installs

@@ -55,3 +55,88 @@ func TestPolicyEntryError_UnwrapsToolNamePattern(t *testing.T) {
 		t.Errorf("Error() = %q, want %q", errs[0].Error(), want)
 	}
 }
+
+// TestCheckHookPolicy_PackageGuard covers hooks.package_guard: list entries
+// are package names, optionally qualified by an ecosystem package-guard.py
+// knows; min_age_days is at least one day; new_dep_gate is an enumerated
+// value. Scalar errors carry Index -1.
+func TestCheckHookPolicy_PackageGuard(t *testing.T) {
+	t.Parallel()
+	zero, seven := 0, 7
+	tests := []struct {
+		name  string
+		guard types.PackageGuardConfig
+		want  []string // "field[index]" of each error, in order
+	}{
+		{name: "empty"},
+		{name: "valid entries", guard: types.PackageGuardConfig{
+			Allowlist:  []string{"@scope/pkg", "pypi:Flask_Cors", "github.com/a/b", "jsr:@s/n", "NPM:left-pad", "lodash.merge"},
+			Denylist:   []string{"npm:evil", "golang:github.com/x/y", "crates.io:serde_json"},
+			MinAgeDays: &seven,
+			NewDepGate: types.NewDepGateAsk,
+		}},
+		{name: "min_age_days 0", guard: types.PackageGuardConfig{MinAgeDays: &zero}, want: []string{"hooks.package_guard.min_age_days[-1]"}},
+		{name: "new_dep_gate maybe", guard: types.PackageGuardConfig{NewDepGate: "maybe"}, want: []string{"hooks.package_guard.new_dep_gate[-1]"}},
+		{name: "comma", guard: types.PackageGuardConfig{Denylist: []string{"ok", "a,b"}}, want: []string{"hooks.package_guard.denylist[1]"}},
+		{name: "unknown qualifier", guard: types.PackageGuardConfig{Allowlist: []string{"npmm:x"}}, want: []string{"hooks.package_guard.allowlist[0]"}},
+		{name: "whitespace", guard: types.PackageGuardConfig{Allowlist: []string{"left pad", "tab\tname", " lead"}}, want: []string{
+			"hooks.package_guard.allowlist[0]", "hooks.package_guard.allowlist[1]", "hooks.package_guard.allowlist[2]",
+		}},
+		{name: "empty, empty name and control", guard: types.PackageGuardConfig{Denylist: []string{"", "npm:", "a" + string(rune(0x200b)) + "b", "x\x00"}}, want: []string{
+			"hooks.package_guard.denylist[0]", "hooks.package_guard.denylist[1]", "hooks.package_guard.denylist[2]", "hooks.package_guard.denylist[3]",
+		}},
+		{name: "all fields in order", guard: types.PackageGuardConfig{
+			Allowlist: []string{"a b"}, Denylist: []string{"a,b"}, MinAgeDays: &zero, NewDepGate: "maybe",
+		}, want: []string{
+			"hooks.package_guard.allowlist[0]", "hooks.package_guard.denylist[0]",
+			"hooks.package_guard.min_age_days[-1]", "hooks.package_guard.new_dep_gate[-1]",
+		}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			errs := CheckHookPolicy(types.HooksConfig{PackageGuard: tt.guard})
+			if len(errs) != len(tt.want) {
+				t.Fatalf("CheckHookPolicy = %v, want %d errors %v", errs, len(tt.want), tt.want)
+			}
+			for i, e := range errs {
+				if got := fmt.Sprintf("%s[%d]", e.Field, e.Index); got != tt.want[i] {
+					t.Errorf("error %d at %s, want %s", i, got, tt.want[i])
+				}
+			}
+		})
+	}
+}
+
+// TestCheckHookPolicy_BadRegex checks that hooks.credential_scan entries are
+// validated with CheckSecretPattern and reported under their list index.
+func TestCheckHookPolicy_BadRegex(t *testing.T) {
+	t.Parallel()
+	errs := CheckHookPolicy(types.HooksConfig{CredentialScan: types.CredentialScanConfig{
+		ExtraPatterns: []string{`corp_[a-z0-9]{20,40}`, "corp_[", `[\d-x]{20}`},
+	}})
+	want := []string{"hooks.credential_scan.extra_patterns[1]", "hooks.credential_scan.extra_patterns[2]"}
+	if len(errs) != len(want) {
+		t.Fatalf("CheckHookPolicy = %v, want %d errors %v", errs, len(want), want)
+	}
+	for i, e := range errs {
+		if got := fmt.Sprintf("%s[%d]", e.Field, e.Index); got != want[i] {
+			t.Errorf("error %d at %s, want %s", i, got, want[i])
+		}
+		if !errors.Is(e, ErrSecretPattern) {
+			t.Errorf("error %d = %v, want it to wrap ErrSecretPattern", i, e)
+		}
+	}
+}
+
+func TestPolicyEntryError_ScalarRendersWithoutEntry(t *testing.T) {
+	t.Parallel()
+	zero := 0
+	errs := CheckHookPolicy(types.HooksConfig{PackageGuard: types.PackageGuardConfig{MinAgeDays: &zero}})
+	if len(errs) != 1 || !errors.Is(errs[0], ErrPackageGuardMinAgeDays) {
+		t.Fatalf("CheckHookPolicy = %v, want one ErrPackageGuardMinAgeDays", errs)
+	}
+	if want := `hooks.package_guard.min_age_days "0": ` + ErrPackageGuardMinAgeDays.Error(); errs[0].Error() != want {
+		t.Errorf("Error() = %q, want %q", errs[0].Error(), want)
+	}
+}

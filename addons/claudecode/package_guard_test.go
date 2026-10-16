@@ -3,6 +3,7 @@ package claudecode_test
 import (
 	"encoding/base64"
 	"encoding/json"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -12,6 +13,7 @@ import (
 	"testing"
 
 	"github.com/Quantum-Serendipity/qsdev/internal/posture"
+	"github.com/Quantum-Serendipity/qsdev/internal/selfprotect/cmdscan"
 )
 
 // pgDriver imports the package-guard hook template as a module and prints, as
@@ -221,6 +223,16 @@ func TestPackageGuard_ExtractsOnlyRealInstalls(t *testing.T) {
 		{"pwsh unquoted -Command npm install", `pwsh -NoProfile -Command npm install evil`, true, []string{"evil"}},
 		{"perl exec of trailing argv", `perl -e 'exec @ARGV' npm install evil`, true, []string{"evil"}},
 		{"control: pwsh -c echo install text", `pwsh -c "Write-Host 'npm install docs'"`, false, nil},
+		// U17-03: a `--` before the verb ends the global options; the next
+		// token is the verb, for every manager.
+		{"npm -- install", `npm -- install evil`, true, []string{"evil"}},
+		{"npm -- i", `npm -- i evil`, true, []string{"evil"}},
+		{"pnpm -- add", `pnpm -- add evil`, true, []string{"evil"}},
+		{"yarn -- add", `yarn -- add evil`, true, []string{"evil"}},
+		{"bun -- add", `bun -- add evil`, true, []string{"evil"}},
+		{"npm --global -- install", `npm --global -- install evil`, true, []string{"evil"}},
+		{"uv -- pip install", `uv -- pip install evil`, true, []string{"evil"}},
+		{"npm install -- evil", `npm install -- evil`, true, []string{"evil"}},
 	}
 
 	for _, tc := range cases {
@@ -371,6 +383,155 @@ func TestPackageGuard_DeniesUnvalidatedInstallers(t *testing.T) {
 				t.Errorf("decision = %q, want %q (command: %s)", got, tc.want, tc.command)
 			}
 		})
+	}
+}
+
+// pgDialectDriver prints, for PG_CMD read in PowerShell's dialect when PG_PS
+// is 1 (else POSIX), each detection's manager and package specifiers.
+const pgDialectDriver = `
+import importlib.util, json, os
+spec = importlib.util.spec_from_file_location('pg', os.environ['PG_PATH'])
+m = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(m)
+dets = m.detect_install_commands(os.environ['PG_CMD'], powershell=os.environ['PG_PS'] == '1')
+print(json.dumps([d.manager + ':' + ','.join(d.packages) for d in dets]))
+`
+
+// TestPackageGuard_PowerShellDialect checks detection in each dialect: a
+// PowerShell literal array is an argument, not a command, and the POSIX
+// dialect (Bash, Monitor) reads PowerShell-looking text exactly as before
+// the PowerShell dialect existed, so nothing leaks between them.
+func TestPackageGuard_PowerShellDialect(t *testing.T) {
+	t.Parallel()
+	python, err := exec.LookPath("python3")
+	if err != nil {
+		t.Skip("python3 not available; skipping package-guard hook test")
+	}
+	template, err := filepath.Abs(filepath.Join("templates", "hooks", "package-guard.py"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	cases := []struct {
+		command    string
+		powershell bool
+		want       []string
+	}{
+		{`('install','evil')`, true, []string{}},
+		{`@('install', 'evil')`, true, []string{}},
+		{`npm install lodash; Install-Module Evil`, true, []string{"npm:lodash", "unvalidated:install-module:"}},
+		{`Get-Help Install-Module -Full`, true, []string{}},
+		{`Write-Host "('install','evil')"`, true, []string{}},
+		{`Invoke-Command { Install-Module Evil }`, true, []string{"unvalidated:install-module:"}},
+		{`<# x #> npm install lodash`, true, []string{"npm:lodash"}},
+		{"npm in`stall lodash", true, []string{"npm:lodash"}},
+		{`$null = npm install lodash`, true, []string{"__unverified__:", "npm:lodash"}},
+		{`Get-ChildItem | Where-Object { $_.Name -like '*.ps1' }`, true, []string{}},
+		{`$env:FOO = 'bar'; Get-ChildItem ${env:FOO}`, true, []string{}},
+
+		// POSIX dialect: the same text detects what it did before.
+		{`npm install lodash; Install-Module Evil`, false, []string{"npm:lodash"}},
+		{`Install-Module Evil`, false, []string{}},
+		{`isres Evil`, false, []string{}},
+		{`iex "npm install evil"`, false, []string{}},
+		{`iex $cmd`, false, []string{}},
+		{`Invoke-Expression -Command:'npm install evil'`, false, []string{}},
+		{`Start-Process npm -ArgumentList "install","evil"`, false, []string{}},
+		{`Start-Process npm @('install','evil')`, false, []string{}},
+		{`start -FilePath npm -ArgumentList 'install evil'`, false, []string{}},
+		{`Start-Process npm install left-pad`, false, []string{"npm:left-pad"}},
+	}
+	for _, tc := range cases {
+		ps, dialect := "0", "posix/"
+		if tc.powershell {
+			ps, dialect = "1", "powershell/"
+		}
+		t.Run(dialect+tc.command, func(t *testing.T) {
+			t.Parallel()
+			cmd := exec.Command(python, "-c", pgDialectDriver)
+			cmd.Env = hookEnv(t, "PG_PATH="+template, "PG_CMD="+tc.command, "PG_PS="+ps)
+			out, err := cmd.CombinedOutput()
+			if err != nil {
+				t.Fatalf("driver failed: %v\n%s", err, out)
+			}
+			var got []string
+			if err := json.Unmarshal(out, &got); err != nil {
+				t.Fatalf("bad driver output %q: %v", out, err)
+			}
+			if !slices.Equal(got, tc.want) {
+				t.Errorf("detections = %q, want %q", got, tc.want)
+			}
+		})
+	}
+
+	// PowerShell separates words on NEL, NBSP and every Unicode space
+	// separator, so each of them gets the verdict of an ASCII space
+	// (W1bN-16), quoted or not.
+	verdicts := []struct{ command, want string }{
+		{"Install-Module Evil", "deny"},
+		{"Install-Module -Name Evil", "deny"},
+		{"inmo Evil", "deny"},
+		{`iex "npm install evil"`, "deny"},
+		{"npm install evil", "deny"},
+		{"Start-Process npm -ArgumentList 'install evil'", "deny"},
+		{"npm install lodash", "ask"},
+		{"Write-Output 'a b'", "allow"},
+	}
+	seps := []rune{' ', 0x85, 0xa0, 0x1680, 0x2003, 0x2009, 0x2028, 0x2029, 0x202f, 0x3000}
+	for _, tc := range verdicts {
+		for _, sep := range seps {
+			command := strings.ReplaceAll(tc.command, " ", string(sep))
+			t.Run(fmt.Sprintf("verdict/%U/%s", sep, tc.command), func(t *testing.T) {
+				t.Parallel()
+				res := runPackageGuard(t, "PowerShell", map[string]any{"command": command}, "PG_VULN=evil")
+				if got := res.decision(); got != tc.want {
+					t.Errorf("%q: decision = %q, want %q as with an ASCII space (result %+v)", command, got, tc.want, res)
+				}
+			})
+		}
+	}
+}
+
+// pgPSSpacesDriver prints the code points of package-guard's _PS_SPACES.
+const pgPSSpacesDriver = `
+import importlib.util, json, os
+spec = importlib.util.spec_from_file_location('pg', os.environ['PG_PATH'])
+m = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(m)
+print(json.dumps(sorted(map(ord, m._PS_SPACES))))
+`
+
+// TestPSSpacesMatchCmdscan keeps the two definitions of PowerShell
+// whitespace in step: package-guard's _PS_SPACES, which its PowerShell
+// prepass maps to a space, holds exactly the runes cmdscan.IsPowerShellSpace
+// accepts, over the Basic Multilingual Plane.
+func TestPSSpacesMatchCmdscan(t *testing.T) {
+	t.Parallel()
+	python, err := exec.LookPath("python3")
+	if err != nil {
+		t.Skip("python3 not available; skipping package-guard hook test")
+	}
+	template, err := filepath.Abs(filepath.Join("templates", "hooks", "package-guard.py"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	cmd := exec.Command(python, "-c", pgPSSpacesDriver)
+	cmd.Env = hookEnv(t, "PG_PATH="+template)
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("driver failed: %v\n%s", err, out)
+	}
+	var got []rune
+	if err := json.Unmarshal(out, &got); err != nil {
+		t.Fatalf("bad driver output %q: %v", out, err)
+	}
+	var want []rune
+	for r := rune(0); r <= 0xffff; r++ {
+		if cmdscan.IsPowerShellSpace(r) {
+			want = append(want, r)
+		}
+	}
+	if !slices.Equal(got, want) {
+		t.Errorf("_PS_SPACES = %U, want cmdscan.IsPowerShellSpace's %U", got, want)
 	}
 }
 

@@ -287,6 +287,89 @@ func TestBuildDevenvNixData_ModulePackageExprsCollected(t *testing.T) {
 	}
 }
 
+// enterShellBlock returns the body of the enterShell attribute in a rendered
+// devenv.nix.
+func enterShellBlock(t *testing.T, src string) string {
+	t.Helper()
+	_, rest, ok := strings.Cut(src, "  enterShell = ''\n")
+	if !ok {
+		t.Fatalf("devenv.nix has no enterShell:\n%s", src)
+	}
+	body, _, ok := strings.Cut(rest, "\n  '';\n")
+	if !ok {
+		t.Fatalf("enterShell is not terminated:\n%s", src)
+	}
+	return body
+}
+
+// TestEnterShellProvider_AppendedOnce renders devenv.nix for php through the
+// attribute normalizer and checks the Composer auth-link snippet is in
+// enterShell exactly once, after the base script.
+func TestEnterShellProvider_AppendedOnce(t *testing.T) {
+	t.Parallel()
+	answers := types.WizardAnswers{ProjectName: "php-shell", Languages: []types.LanguageChoice{{Name: "php"}}}
+	file, err := GenerateDevenvNix(answers, ecosystem.DefaultRegistry())
+	if err != nil {
+		t.Fatalf("GenerateDevenvNix: %v", err)
+	}
+	src := string(file.Content)
+	const marker = `mkdir -p "$COMPOSER_HOME"`
+	if got := strings.Count(src, marker); got != 1 {
+		t.Fatalf("devenv.nix contains %q %d times, want 1:\n%s", marker, got, src)
+	}
+	body := enterShellBlock(t, src)
+	snippet := strings.Index(body, marker)
+	if snippet < 0 {
+		t.Fatalf("the auth-link snippet is outside enterShell:\n%s", body)
+	}
+	if base := strings.Index(body, "qsdev completion bash"); base < 0 || base > snippet {
+		t.Errorf("the auth-link snippet is not after the base script (base at %d, snippet at %d):\n%s", base, snippet, body)
+	}
+	if !strings.Contains(body, `"''${XDG_CONFIG_HOME:-$HOME/.config}/composer/auth.json"`) {
+		t.Errorf("the snippet's shell expansion is not Nix-escaped:\n%s", body)
+	}
+}
+
+// TestEnterShellProvider_LanguageOrderDeduped checks module snippets follow
+// the language order and a snippet two modules share is appended once.
+func TestEnterShellProvider_LanguageOrderDeduped(t *testing.T) {
+	t.Parallel()
+	reg := ecosystem.NewRegistry()
+	for _, m := range []*ecosystem.MockModule{
+		{NameVal: "b", DisplayNameVal: "B", TierVal: 1, EnterShellScriptVal: "echo second\n"},
+		{NameVal: "a", DisplayNameVal: "A", TierVal: 1, EnterShellScriptVal: "echo first"},
+		{NameVal: "c", DisplayNameVal: "C", TierVal: 1, EnterShellScriptVal: "echo first"},
+		{NameVal: "d", DisplayNameVal: "D", TierVal: 1},
+	} {
+		if err := reg.Register(m); err != nil {
+			t.Fatal(err)
+		}
+	}
+	answers := types.WizardAnswers{ProjectName: "order", Languages: []types.LanguageChoice{{Name: "a"}, {Name: "b"}, {Name: "c"}, {Name: "d"}}}
+	data, err := BuildDevenvNixData(answers, reg)
+	if err != nil {
+		t.Fatalf("BuildDevenvNixData: %v", err)
+	}
+	want := buildEnterShellScript(data.UnsetEnvVars) + "\n\necho first\n\necho second"
+	if data.EnterShell != want {
+		t.Errorf("EnterShell tail = %q, want %q", strings.TrimPrefix(data.EnterShell, buildEnterShellScript(data.UnsetEnvVars)), "\n\necho first\n\necho second")
+	}
+}
+
+// TestEnterShell_NoProviderUnchanged checks a project whose modules add no
+// enterShell snippet keeps the base script byte for byte.
+func TestEnterShell_NoProviderUnchanged(t *testing.T) {
+	t.Parallel()
+	answers := types.WizardAnswers{ProjectName: "go-shell", Languages: []types.LanguageChoice{{Name: "go"}}}
+	data, err := BuildDevenvNixData(answers, ecosystem.DefaultRegistry())
+	if err != nil {
+		t.Fatalf("BuildDevenvNixData: %v", err)
+	}
+	if want := buildEnterShellScript(data.UnsetEnvVars); data.EnterShell != want {
+		t.Errorf("EnterShell changed with no provider:\ngot:\n%s\nwant:\n%s", data.EnterShell, want)
+	}
+}
+
 func TestBuildEnterShellScript_ContainsGdevVars(t *testing.T) {
 	script := buildEnterShellScript(catalog.MustDefault().UnsetVars())
 
@@ -624,9 +707,6 @@ func TestBuildDevenvNixData_HostileOrgHooksStillEmitRipsecrets(t *testing.T) {
 		t.Fatalf("GenerateDevenvNix: %v", err)
 	}
 	src := string(file.Content)
-	if !strings.Contains(src, "ripsecrets.enable = true;") {
-		t.Errorf("devenv.nix at tier full does not emit ripsecrets.enable = true:\n%s", src)
-	}
 	declared, err := DeclaredSecurity(src)
 	if err != nil {
 		t.Fatalf("DeclaredSecurity: %v", err)

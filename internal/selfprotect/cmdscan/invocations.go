@@ -23,6 +23,11 @@ type simpleCommand struct {
 	// texts holds each word with its quotes and backslashes removed, as the
 	// shell's escapes read it (q\sdev is qsdev).
 	texts []string
+	// joined[i] is set when word i continues the word before it, which may
+	// end the previous command, inside one quoted string: the break between
+	// them was quoted or escaped (`x="qsdev session"` and `x=qsdev\ session`
+	// are the words x=qsdev and session, one value).
+	joined []bool
 	// invs are the places the command may run the program.
 	invs []invocation
 }
@@ -41,6 +46,11 @@ type invocation struct {
 	// the program's name to a variable (`Q=qsdev; $Q $S`), which the word may
 	// expand: a computed path word after it then matches too.
 	anchored bool
+	// spread is set when the program word is computed and the text assigns
+	// a variable a value spread over several words that names the program or
+	// expands a variable holding it (see programRefs.spread): which words the
+	// expansion splits into is not known, so it may be any invocation.
+	spread bool
 	// mention is set when the word is not in command position: an argument
 	// of another program, which may run it (`find -exec`, `devenv shell`) or
 	// only name it (`grep qsdev`), a word of a quoted string, which another
@@ -74,11 +84,20 @@ func splitCommands(text string) []*simpleCommand {
 	var b strings.Builder
 	// quote is the quote character of the open string, or 0.
 	var quote byte
-	endWord := func() {
+	// joined is set while the breaks since the last word were all quoted
+	// (see simpleCommand.joined).
+	joined := false
+	// endWord ends the word being built at a break; quoted is set when the
+	// break is quoted or escaped, so it does not end the shell word.
+	endWord := func(quoted bool) {
 		if b.Len() > 0 {
 			cur.paths = append(cur.paths, b.String())
 			cur.texts = append(cur.texts, strings.ReplaceAll(b.String(), `\`, ""))
+			cur.joined = append(cur.joined, joined)
 		}
+		// A quoted break joins the next word to this one only when the
+		// string was open before it: right after a word, or a joined break.
+		joined = quoted && (b.Len() > 0 || joined)
 		b.Reset()
 	}
 	for i := 0; i < len(text); i++ {
@@ -92,20 +111,35 @@ func splitCommands(text string) []*simpleCommand {
 			}
 			continue
 		}
+		if r == '\\' && quote != '\'' && i+1 < len(text) {
+			switch text[i+1] {
+			case '\\':
+				// An escaped backslash escapes nothing after it.
+				b.WriteString(`\\`)
+				i++
+				continue
+			case ' ', '\t':
+				// An escaped blank (`x=qsdev\ session`) breaks the words as
+				// a quoted one does, joining them into one value.
+				endWord(true)
+				i++
+				continue
+			}
+		}
 		switch {
 		case strings.IndexByte(commandBreaks, r) >= 0:
-			endWord()
+			endWord(quote != 0)
 			if len(cur.paths) > 0 {
 				cmds = append(cmds, cur)
 				cur = &simpleCommand{}
 			}
 		case strings.IndexByte(wordBreaks, r) >= 0:
-			endWord()
+			endWord(quote != 0)
 		default:
 			b.WriteByte(r)
 		}
 	}
-	endWord()
+	endWord(false)
 	if len(cur.paths) > 0 {
 		cmds = append(cmds, cur)
 	}
@@ -123,10 +157,18 @@ var commandPrefixWords = map[string]bool{
 // program app, each with its invocations, judged in the text as written, in
 // the text with every expansion made opaque (opaqueExpansions), which keeps a
 // substitution's output from splitting into words of its own, and in the
-// text with its quoted escapes printed (printedEscapes).
+// text with its quoted escapes printed (printedEscapes). Line continuations
+// are joined first (joinContinuations), so a name or command split across
+// lines reads whole; when there are any, the text as written is judged too,
+// as a backslash that ends a line may be a Windows path's (`cd C:\dir\`).
 func commandsInvoking(command, app string) []*simpleCommand {
 	var out []*simpleCommand
-	for _, text := range []string{command, opaqueExpansions(command), printedEscapes(command)} {
+	joined := joinContinuations(command)
+	texts := []string{joined, opaqueExpansions(joined), printedEscapes(joined)}
+	if joined != command {
+		texts = append(texts, command)
+	}
+	for _, text := range texts {
 		cmds := splitCommands(text)
 		refs := newProgramRefs(app, cmds)
 		for _, c := range cmds {
@@ -171,6 +213,71 @@ func printedEscapes(command string) string {
 	return b.String()
 }
 
+// joinContinuations returns command with every line continuation outside
+// single quotes removed: a backslash before a newline (or a CR-LF), which the
+// shell drops along with the newline, so `qs\<newline>dev` is qsdev and
+// `qsdev \<newline>teardown` one command. Quotes are tracked as
+// printedEscapes tracks them, except that outside single quotes a backslash
+// and the byte after it are one escape pair, as the shell reads them: an
+// escaped quote (`\"`, `\'`) never opens or closes a quoted string, and an
+// escaped backslash (`\\`) is kept whole, so the newline after it still ends
+// the command. A comment (a word that begins with # outside quotes) runs to
+// the end of its line untouched: its quotes are not quotes and a backslash
+// that ends it is not a continuation, as the shell discards it unread.
+func joinContinuations(command string) string {
+	if !strings.Contains(command, "\\\n") && !strings.Contains(command, "\\\r\n") {
+		return command
+	}
+	var b strings.Builder
+	b.Grow(len(command))
+	var quote byte
+	// wordStart is set when the next byte begins a shell word: at the start
+	// and after an unquoted, unescaped blank or operator byte.
+	wordStart := true
+	for i := 0; i < len(command); i++ {
+		c := command[i]
+		switch {
+		case c == '#' && quote == 0 && wordStart:
+			end := strings.IndexByte(command[i:], '\n')
+			if end < 0 {
+				end = len(command) - i
+			}
+			b.WriteString(command[i : i+end])
+			i += end - 1
+			continue
+		case c == '\'' || c == '"':
+			switch quote {
+			case 0:
+				quote = c
+			case c:
+				quote = 0
+			}
+		case c == '\\' && quote != '\'' && i+1 < len(command):
+			rest := command[i+1:]
+			switch {
+			case rest[0] == '\n':
+				i++
+			case strings.HasPrefix(rest, "\r\n"):
+				i += 2
+			default:
+				b.WriteByte(c)
+				b.WriteByte(rest[0])
+				i++
+				wordStart = false
+			}
+			continue
+		}
+		wordStart = quote == 0 && strings.IndexByte(commentStarts, c) >= 0
+		b.WriteByte(c)
+	}
+	return b.String()
+}
+
+// commentStarts are the bytes after which, unquoted, a # begins a comment:
+// the word and command breaks other than braces, which (`{#`) do not end a
+// word.
+const commentStarts = wordBreaks + ";|&()`\n\r"
+
 // printedEscape maps the escapes printedEscapes reads to what they print.
 var printedEscape = map[byte]byte{'n': '\n', 'r': '\r', 't': '\t'}
 
@@ -183,6 +290,13 @@ type programRefs struct {
 	// assigned is set when the text assigns app's name to a variable
 	// (`Q=qsdev`, `export Q=/usr/bin/qsdev`).
 	assigned bool
+	// spread is set when the text assigns a variable a value that is not
+	// app's name alone but spreads over several words (see valueWords) and
+	// names app in one of them (`x="qsdev session"`, `X=qsdev,defaults,pin`
+	// under IFS=,) or expands a variable while the text assigns app's name
+	// (`x=qsdev; y="$x session"`): a computed program word may then expand to
+	// app and any subcommand.
+	spread bool
 }
 
 // newProgramRefs finds how cmds refer to app.
@@ -195,7 +309,68 @@ func newProgramRefs(app string, cmds []*simpleCommand) programRefs {
 			return isAssignment(w) && strings.EqualFold(ProgramName(value), app)
 		})
 	}
+	names, dynamic := false, false
+	for _, value := range assignedValues(cmds) {
+		words := valueWords(value)
+		if len(words) < 2 || strings.EqualFold(ProgramName(value), app) {
+			continue
+		}
+		names = names || slices.ContainsFunc(words, func(w string) bool { return strings.EqualFold(ProgramName(w), app) })
+		dynamic = dynamic || slices.ContainsFunc(words, IsDynamicWord)
+	}
+	r.spread = names || dynamic && r.assigned
 	return r
+}
+
+// assignedValues returns the value of each assignment word of cmds (`x=v`,
+// also after export or env), rebuilt across the words a quoted break split
+// it into (see simpleCommand.joined), joined by blanks: `x="qsdev session"`
+// is "qsdev session". It runs in time linear in the words.
+func assignedValues(cmds []*simpleCommand) []string {
+	var values []string
+	var cur *strings.Builder
+	end := func() {
+		if cur != nil {
+			values = append(values, cur.String())
+			cur = nil
+		}
+	}
+	for _, c := range cmds {
+		for i, w := range c.texts {
+			switch {
+			case cur != nil && i < len(c.joined) && c.joined[i]:
+				cur.WriteByte(' ')
+				cur.WriteString(w)
+			case isAssignment(w):
+				end()
+				_, value, _ := strings.Cut(w, "=")
+				cur = &strings.Builder{}
+				cur.WriteString(value)
+			default:
+				end()
+			}
+		}
+	}
+	end()
+	return values
+}
+
+// AssignedValues returns the value of each assignment word of the raw text
+// (`x=v`, also after export or env), rebuilt across quoted and escaped
+// breaks and line continuations, as InvokedSpecs reads them: what a computed
+// program word on the line may expand to (`K=pkill; $K ...`).
+func AssignedValues(text string) []string {
+	return assignedValues(splitCommands(joinContinuations(text)))
+}
+
+// valueWords splits an assignment's value into the words its expansion may
+// become: at every byte other than a letter, digit, '_', '.', '$' or '-', so
+// blanks, any IFS separator (`,`, ':') and path separators all split it.
+func valueWords(value string) []string {
+	return strings.FieldsFunc(value, func(r rune) bool {
+		return r != '_' && r != '.' && r != '$' && r != '-' &&
+			(r > unicode.MaxASCII || !unicode.IsLetter(r) && !unicode.IsDigit(r))
+	})
 }
 
 // names reports whether a word, as written (path) and as the shell reads it
@@ -238,6 +413,7 @@ func (c *simpleCommand) findPrograms(refs programRefs) {
 			c.invs = append(c.invs, inv)
 		case IsDynamicWord(name):
 			inv.anchored = refs.assigned
+			inv.spread = refs.spread
 			c.invs = append(c.invs, inv)
 		case viaXargs:
 			// xargs may replace this word with the program (-I, -J).
@@ -254,8 +430,9 @@ func (c *simpleCommand) findPrograms(refs programRefs) {
 }
 
 // findMentions records, as mentions, the words of c that name the program
-// refs refers to, or that end in its name after a character other than a
-// letter, digit or underscore (`x=qsdev`, `--grep=qsdev`, `!qsdev`): an
+// refs refers to, or that end in its name, also as a program name (with a
+// directory or .exe), after a character other than a letter, digit or
+// underscore (`x=qsdev`, `x=qsdev.exe`, `--grep=qsdev`, `!qsdev`): an
 // argument a program may run (`find -exec`, `devenv shell`), a word of a
 // quoted string a program may run as code (`trap`, `git rebase -x`, `ssh`,
 // `echo ... | sh`), or an assignment's value a later word expands (`x="...";
@@ -269,7 +446,8 @@ func (c *simpleCommand) findMentions(refs programRefs) {
 		programs[inv.at] = true
 	}
 	for i, text := range c.texts {
-		if !programs[i] && (refs.names(c.paths[i], text) || endsWithName(text, refs.app)) {
+		if !programs[i] && (refs.names(c.paths[i], text) || endsWithName(text, refs.app) ||
+			endsWithName(ProgramName(text), refs.app)) {
 			c.invs = append(c.invs, invocation{at: i, literalProgram: true, mention: true})
 		}
 	}
@@ -302,16 +480,30 @@ func (c *simpleCommand) setWord(i int, text string) {
 // appAliases returns the names words define as aliases for app: each
 // name=value word after an alias word whose value names app or is computed.
 func appAliases(words []string, app string) []string {
+	var names []string
+	for _, d := range aliasDefinitions(words) {
+		if strings.EqualFold(ProgramName(d.value), app) || IsDynamicWord(d.value) {
+			names = append(names, d.name)
+		}
+	}
+	return names
+}
+
+// aliasDefinition is one name=value word of an alias command.
+type aliasDefinition struct{ name, value string }
+
+// aliasDefinitions returns the aliases words define: each name=value word
+// after an alias word.
+func aliasDefinitions(words []string) []aliasDefinition {
 	at := slices.Index(words, "alias")
 	if at < 0 {
 		return nil
 	}
-	var names []string
+	var defs []aliasDefinition
 	for _, w := range words[at+1:] {
-		name, value, ok := strings.Cut(w, "=")
-		if ok && name != "" && (strings.EqualFold(ProgramName(value), app) || IsDynamicWord(value)) {
-			names = append(names, name)
+		if name, value, ok := strings.Cut(w, "="); ok && name != "" {
+			defs = append(defs, aliasDefinition{name, value})
 		}
 	}
-	return names
+	return defs
 }

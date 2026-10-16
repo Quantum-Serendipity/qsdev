@@ -4,6 +4,8 @@ import (
 	"crypto/rand"
 	"fmt"
 	"regexp"
+
+	"github.com/Quantum-Serendipity/qsdev/internal/policyengine/injection"
 )
 
 type TrustLevel string
@@ -21,8 +23,10 @@ const frameTagPrefix = "qsdev:data-"
 // content, tolerating case changes and whitespace an attacker might use to
 // slip a forged tag past an exact-match check ("< /QSDEV:data"). Private Use
 // Area runes count as whitespace: datamarking, which runs before framing,
-// replaces the whitespace of such a tag with a PUA marker rune.
-var frameTagRe = regexp.MustCompile(`(?i)<([\s\p{Co}]*/?[\s\p{Co}]*qsdev:)`)
+// replaces the whitespace of such a tag with a PUA marker rune. The pattern is
+// shared with the injection scan, so framing neutralizes exactly the forged
+// tags the scan reports.
+var frameTagRe = regexp.MustCompile(injection.TagOpenPattern)
 
 // Frame wraps MCP tool output in a provenance element for the model. The
 // element name carries a per-call random nonce the content cannot predict, and

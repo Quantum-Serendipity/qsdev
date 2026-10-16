@@ -158,7 +158,10 @@ func RegisterInitFlags(cmd *cobra.Command, opts *InitOptions) {
 	cmd.Flags().BoolVar(&opts.AgentPostmortem, "agent-postmortem", true, "Agent-postmortem verification skill; always on, so false is rejected (opt out with 'qsdev disable agent-postmortem --force')")
 	cmd.Flags().BoolVar(&opts.AgentVersionSentinel, "agent-version-sentinel", true, "Enable Version-Sentinel dependency guardrails")
 	cmd.Flags().BoolVar(&opts.AgentSemble, "agent-semble", false, "Enable semble semantic search MCP server")
-	cmd.Flags().StringVar(&opts.AgentSembleMode, "agent-semble-mode", "mcp", "Semble mode: mcp, subagent, both")
+	// No flag default: .qsdev.yaml does not record the mode, so every path
+	// (create, join, enable, update) resolves an empty one to the same
+	// catalog default, which FillDefaults applies.
+	cmd.Flags().StringVar(&opts.AgentSembleMode, "agent-semble-mode", "", "Semble mode: mcp, subagent, both (default: the catalog's default mode)")
 	cmd.Flags().BoolVar(&opts.AgentSembleTextFiles, "agent-semble-text-files", false, "Include text files in semble search index")
 
 	// Mode override flag.

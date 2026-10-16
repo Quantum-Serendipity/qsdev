@@ -67,7 +67,7 @@ func TestCloudConfig_IsolateCLIConfig(t *testing.T) {
 				t.Fatal(err)
 			}
 			a := types.WizardAnswers{Cloud: types.CloudConfig{IsolateCLIConfig: !tt.want}}
-			policy.Apply(&a)
+			policy.Apply(&a, nil)
 			if a.Cloud.IsolateCLIConfig != tt.want {
 				t.Errorf("%s: applied isolate_cli_config = %v, want %v", tt.name, a.Cloud.IsolateCLIConfig, tt.want)
 			}

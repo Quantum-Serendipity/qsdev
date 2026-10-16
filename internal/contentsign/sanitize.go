@@ -389,6 +389,16 @@ func stripRunes(s string, opts SanitizeOptions, report *SanitizeReport) string {
 	return b.String()
 }
 
+// IsInvisibleRune reports whether r is a rune SanitizeText removes when both
+// StripInvisible and StripControl are set: a zero-width, format, BiDi, tag,
+// variation-selector, line/paragraph-separator or C0/C1 control rune (tab,
+// newline and carriage return excepted). It exposes the one invisible-rune
+// table to callers that normalize text without sanitizing it.
+func IsInvisibleRune(r rune) bool {
+	_, ok := classifyStrip(r, SanitizeOptions{StripInvisible: true, StripControl: true})
+	return ok
+}
+
 // classifyStrip reports whether r should be stripped and, if so, its category.
 //
 // The explicit invisibleRanges are checked first: they assign precise report

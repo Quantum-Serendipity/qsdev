@@ -118,7 +118,10 @@ func (g *ClaudeCodeGenerator) Generate(answers types.WizardAnswers) ([]types.Gen
 	// this generator: every other tool's files (gitleaks, semgrep, changelog,
 	// ...) are project files that devinit's tool-files producer generates
 	// whether or not Claude Code is configured.
-	reg := toolreg.DefaultRegistry()
+	reg, err := toolreg.Default()
+	if err != nil {
+		return nil, fmt.Errorf("loading the tool registry for always-on agent tools: %w", err)
+	}
 	for _, tool := range reg.All() {
 		if tool.Default != toolreg.AlwaysOn || !tool.IsAgentTool() {
 			continue

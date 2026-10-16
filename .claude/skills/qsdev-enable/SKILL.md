@@ -11,9 +11,9 @@ arguments:
 
 ## Current Environment
 
-!`qsdev status --json 2>/dev/null || echo '{"tools": {}}'`
+!`qsdev status --json 2>/dev/null || echo "ERROR: 'qsdev status --json' exited with status $?. Any output above may be partial; do not treat missing data as empty."`
 
-!`qsdev list --json 2>/dev/null || echo '{"available": []}'`
+!`qsdev list 2>/dev/null || echo "ERROR: 'qsdev list' exited with status $?. Any output above may be partial; do not treat missing data as empty."`
 
 ## Instructions
 

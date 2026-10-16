@@ -76,5 +76,5 @@ Install qsdev: see project README for installation instructions.
 Run `direnv allow` in the project root, then `devenv shell`.
 
 ### Permission denied on tool operations
-Check `.claude/settings.json` deny rules. Use `qsdev check --deny-rules` to validate.
+Check `.claude/settings.json` deny rules. Run `qsdev check` to validate the configuration.
 

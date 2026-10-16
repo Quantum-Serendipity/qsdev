@@ -329,6 +329,11 @@ var sp007 = Rule{
 			return Allow, ""
 		}
 		if copyIsDangerous(ctx) {
+			if scs, err := ctx.scannedCommands(); err == nil && !isPowerShell(ctx) {
+				if reason := pinnedGitWriteReason(scs); reason != "" {
+					return Deny, reason
+				}
+			}
 			return Deny, "command modifies or exfiltrates a protected config path"
 		}
 		// git rewriting tracked files names none of them (U18-02c).

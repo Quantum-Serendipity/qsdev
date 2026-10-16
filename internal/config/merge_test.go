@@ -1,6 +1,7 @@
 package config
 
 import (
+	"slices"
 	"testing"
 
 	"github.com/Quantum-Serendipity/qsdev/pkg/types"
@@ -137,6 +138,22 @@ func TestMergeMapStringAny_OverrideKey(t *testing.T) {
 	result := mergeMapStringAny(base, overlay)
 	if result["tool"]["key"] != "overlay-value" {
 		t.Errorf("expected overlay-value, got %v", result["tool"]["key"])
+	}
+}
+
+// TestDeepMerge_CredentialScanUnion checks that layers union
+// hooks.credential_scan.extra_patterns, so a layer can only add detection.
+func TestDeepMerge_CredentialScanUnion(t *testing.T) {
+	t.Parallel()
+	base := &types.QsdevConfig{Hooks: types.HooksConfig{CredentialScan: types.CredentialScanConfig{ExtraPatterns: []string{"a_[0-9]+", "b_[0-9]+"}}}}
+	overlay := &types.QsdevConfig{Hooks: types.HooksConfig{CredentialScan: types.CredentialScanConfig{ExtraPatterns: []string{"b_[0-9]+", "c_[0-9]+"}}}}
+	got := deepMerge(base, overlay).Hooks.CredentialScan.ExtraPatterns
+	if want := []string{"a_[0-9]+", "b_[0-9]+", "c_[0-9]+"}; !slices.Equal(got, want) {
+		t.Errorf("extra_patterns = %v, want %v", got, want)
+	}
+	got[0] = "changed"
+	if base.Hooks.CredentialScan.ExtraPatterns[0] != "a_[0-9]+" {
+		t.Error("merged extra_patterns aliases the base layer")
 	}
 }
 

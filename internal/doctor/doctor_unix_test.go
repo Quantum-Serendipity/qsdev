@@ -31,6 +31,42 @@ func TestRunSingleCheck_LookupOnlyNeverExecutes(t *testing.T) {
 	}
 }
 
+// TestRunChecks_CloudCLIsLookupOnly: the cloud CLIs, whose version gates
+// nothing and whose version probes each start a Python runtime, are reported
+// installed, with no version and nothing to fix, without being run.
+func TestRunChecks_CloudCLIsLookupOnly(t *testing.T) {
+	bin := t.TempDir()
+	marker := filepath.Join(t.TempDir(), "ran")
+	cloud := map[string]string{"aws-cli": "aws", "gcloud": "gcloud", "az": "az"}
+	for _, binary := range cloud {
+		writeExe(t, bin, binary, ": > '"+marker+"'\necho 9.9.9\n")
+	}
+	t.Setenv("PATH", bin)
+
+	statuses := RunChecks(context.Background(), &sysinfo.OSInfo{}, DefaultChecks())
+	report := BuildReport(&sysinfo.OSInfo{}, statuses, "test")
+	seen := 0
+	for _, entry := range append(report.RequiredTools, report.OptionalTools...) {
+		binary, ok := cloud[entry.Name]
+		if !ok {
+			continue
+		}
+		seen++
+		if !entry.Found || entry.Path != filepath.Join(bin, binary) || entry.Version != "" || !entry.VersionOK {
+			t.Errorf("%s = %+v, want found at %s with no version and nothing to meet", entry.Name, entry, bin)
+		}
+		if msg, bad := entry.problem(); bad {
+			t.Errorf("%s reports a problem: %s", entry.Name, msg)
+		}
+	}
+	if seen != len(cloud) {
+		t.Errorf("report lists %d of the %d cloud CLIs", seen, len(cloud))
+	}
+	if _, err := os.Stat(marker); err == nil {
+		t.Error("doctor ran a cloud CLI to read its version")
+	}
+}
+
 // writeExe writes an executable shell script named name into dir.
 func writeExe(t *testing.T, dir, name, script string) string {
 	t.Helper()

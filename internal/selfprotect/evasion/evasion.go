@@ -115,7 +115,10 @@ func checkObfuscation(command string, cmds []cmdscan.Command, parseErr error) (b
 // text then never appears on the line, so no other check can judge it. A
 // literal program on stdin (`echo hi | sh`, `sh <<< 'echo hi'`, `cat x.sh |
 // bash`) stays visible to the rules and is allowed (see
-// cmdscan.Command.StdinComputed). It judges the POSIX dialect only: the
+// cmdscan.Command.StdinComputed). A script operand that is a process
+// substitution running such a program is the same text by another path
+// (`bash <(curl …)`, `. <(curl …)`, cmdscan.Command.ScriptComputed), so it
+// counts too, while `. <(cat ./env.sh)` stays allowed. It judges the POSIX dialect only: the
 // PowerShell dialect has its own layer (checkPowerShellObfuscation). An
 // unparseable command yields no cmds; the regex checks cover it.
 //
@@ -137,7 +140,7 @@ const maxScriptDepth = 8
 // depth levels deep.
 func computedStdinIn(cmds []cmdscan.Command, depth int) bool {
 	for _, c := range cmds {
-		if c.StdinComputed && cmdscan.ProgramFromInput(c) {
+		if c.ScriptComputed || c.StdinComputed && cmdscan.ProgramFromInput(c) {
 			return true
 		}
 		script, ok := cmdscan.ShellScript(append([]string{c.Name}, c.Args...))

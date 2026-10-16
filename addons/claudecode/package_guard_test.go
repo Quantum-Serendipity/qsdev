@@ -3,6 +3,7 @@ package claudecode_test
 import (
 	"encoding/base64"
 	"encoding/json"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -12,6 +13,7 @@ import (
 	"testing"
 
 	"github.com/Quantum-Serendipity/qsdev/internal/posture"
+	"github.com/Quantum-Serendipity/qsdev/internal/selfprotect/cmdscan"
 )
 
 // pgDriver imports the package-guard hook template as a module and prints, as
@@ -459,6 +461,77 @@ func TestPackageGuard_PowerShellDialect(t *testing.T) {
 				t.Errorf("detections = %q, want %q", got, tc.want)
 			}
 		})
+	}
+
+	// PowerShell separates words on NEL, NBSP and every Unicode space
+	// separator, so each of them gets the verdict of an ASCII space
+	// (W1bN-16), quoted or not.
+	verdicts := []struct{ command, want string }{
+		{"Install-Module Evil", "deny"},
+		{"Install-Module -Name Evil", "deny"},
+		{"inmo Evil", "deny"},
+		{`iex "npm install evil"`, "deny"},
+		{"npm install evil", "deny"},
+		{"Start-Process npm -ArgumentList 'install evil'", "deny"},
+		{"npm install lodash", "ask"},
+		{"Write-Output 'a b'", "allow"},
+	}
+	seps := []rune{' ', 0x85, 0xa0, 0x1680, 0x2003, 0x2009, 0x2028, 0x2029, 0x202f, 0x3000}
+	for _, tc := range verdicts {
+		for _, sep := range seps {
+			command := strings.ReplaceAll(tc.command, " ", string(sep))
+			t.Run(fmt.Sprintf("verdict/%U/%s", sep, tc.command), func(t *testing.T) {
+				t.Parallel()
+				res := runPackageGuard(t, "PowerShell", map[string]any{"command": command}, "PG_VULN=evil")
+				if got := res.decision(); got != tc.want {
+					t.Errorf("%q: decision = %q, want %q as with an ASCII space (result %+v)", command, got, tc.want, res)
+				}
+			})
+		}
+	}
+}
+
+// pgPSSpacesDriver prints the code points of package-guard's _PS_SPACES.
+const pgPSSpacesDriver = `
+import importlib.util, json, os
+spec = importlib.util.spec_from_file_location('pg', os.environ['PG_PATH'])
+m = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(m)
+print(json.dumps(sorted(map(ord, m._PS_SPACES))))
+`
+
+// TestPSSpacesMatchCmdscan keeps the two definitions of PowerShell
+// whitespace in step: package-guard's _PS_SPACES, which its PowerShell
+// prepass maps to a space, holds exactly the runes cmdscan.IsPowerShellSpace
+// accepts, over the Basic Multilingual Plane.
+func TestPSSpacesMatchCmdscan(t *testing.T) {
+	t.Parallel()
+	python, err := exec.LookPath("python3")
+	if err != nil {
+		t.Skip("python3 not available; skipping package-guard hook test")
+	}
+	template, err := filepath.Abs(filepath.Join("templates", "hooks", "package-guard.py"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	cmd := exec.Command(python, "-c", pgPSSpacesDriver)
+	cmd.Env = hookEnv(t, "PG_PATH="+template)
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("driver failed: %v\n%s", err, out)
+	}
+	var got []rune
+	if err := json.Unmarshal(out, &got); err != nil {
+		t.Fatalf("bad driver output %q: %v", out, err)
+	}
+	var want []rune
+	for r := rune(0); r <= 0xffff; r++ {
+		if cmdscan.IsPowerShellSpace(r) {
+			want = append(want, r)
+		}
+	}
+	if !slices.Equal(got, want) {
+		t.Errorf("_PS_SPACES = %U, want cmdscan.IsPowerShellSpace's %U", got, want)
 	}
 }
 

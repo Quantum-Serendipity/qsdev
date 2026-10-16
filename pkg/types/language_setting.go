@@ -75,3 +75,14 @@ func (lc LanguageChoice) WithSetting(key, value string) LanguageChoice {
 	lc.Extras = slices.Clip(extras)
 	return lc
 }
+
+// WithoutSetting returns lc without any extra (bare or "key=value") for key,
+// so the module's default applies. lc's Extras slice is never modified in
+// place, and an lc without such an extra is returned unchanged.
+func (lc LanguageChoice) WithoutSetting(key string) LanguageChoice {
+	if !slices.ContainsFunc(lc.Extras, func(e string) bool { return extraKey(e) == key }) {
+		return lc
+	}
+	lc.Extras = slices.DeleteFunc(slices.Clone(lc.Extras), func(e string) bool { return extraKey(e) == key })
+	return lc
+}

@@ -79,6 +79,7 @@ func mainShellDirs(ctx *EvalContext, scs []scannedCommand) []scannedCommand {
 	out := slices.Clone(scs)
 	for i := range out {
 		if out[i].Subshell {
+			st.noteOldPWD(out[i], st.workDir) // it still breaks a chain to a `cd -`
 			continue
 		}
 		st.place(&out[i])
@@ -90,10 +91,14 @@ func mainShellDirs(ctx *EvalContext, scs []scannedCommand) []scannedCommand {
 // newDirState returns the directory state at the start of ctx's line.
 func newDirState(ctx *EvalContext) dirState {
 	return dirState{
-		cwd:         ctx.CWD,
-		inProtected: ctx.CWD != "" && isProtectedDir(ctx.CWD),
-		cdpath:      strings.Contains(looseText(ctx.Command), "CDPATH"),
+		workDir: startDir(ctx),
+		cdpath:  strings.Contains(looseText(ctx.Command), "CDPATH"),
 	}
+}
+
+// startDir is the working directory ctx's line starts in.
+func startDir(ctx *EvalContext) workDir {
+	return workDir{cwd: ctx.CWD, inProtected: ctx.CWD != "" && isProtectedDir(ctx.CWD)}
 }
 
 // place records the directory state as the working directory sc runs in.
@@ -103,19 +108,55 @@ func (st *dirState) place(sc *scannedCommand) {
 
 // dirState tracks the working directory across the commands of one line.
 type dirState struct {
+	workDir
+	// cdpath reports that the line sets CDPATH, which makes cd search other
+	// directories for a bare relative target (`CDPATH=.claude cd hooks`).
+	cdpath bool
+	// prev is the directory the last directory change left, which `cd -`
+	// returns to (OLDPWD). prevSure reports that a `cd -` reached now
+	// surely runs after that change succeeded (see noteOldPWD); otherwise
+	// OLDPWD may still be what the line started with, which is not known.
+	prev     workDir
+	prevSure bool
+}
+
+// workDir is what dirState knows of one working directory.
+type workDir struct {
 	cwd         string
 	inProtected bool
 	unknown     bool
 	hint        string // see scannedCommand.cwdHint
-	// cdpath reports that the line sets CDPATH, which makes cd search other
-	// directories for a bare relative target (`CDPATH=.claude cd hooks`).
-	cdpath bool
+}
+
+// noteOldPWD records what sc, just applied after leaving the directory
+// left, does to OLDPWD and to whether a later `cd -` surely follows the
+// directory change that set it. A cd, pushd or popd sets OLDPWD to the
+// directory it leaves, and a `cd -` reached through && lists only (each
+// command after the change runs only when the one before it succeeded, see
+// cmdscan.GuardedByAnd) runs after that change succeeded. A change in a
+// subshell (`(cd src) && cd -`) leaves the line's shell alone, and a
+// change that may be skipped (`a || cd src && cd -`), a command after `;`
+// or `||`, or an assignment that may set OLDPWD breaks the chain.
+func (st *dirState) noteOldPWD(sc scannedCommand, left workDir) {
+	switch {
+	case slices.Contains(sc.Assigns, "OLDPWD") || sc.AssignsDynamic:
+		st.prevSure = false
+	case isLocationChange(sc.Name):
+		st.prev = left
+		st.prevSure = !sc.Subshell && sc.Guard != cmdscan.Guarded
+	case sc.Guard != cmdscan.GuardedByAnd:
+		st.prevSure = false
+	}
 }
 
 // apply updates the directory state for a cd/pushd/popd command. A subshell's
 // cd is treated as persisting, which errs toward treating later relative paths
-// as protected (fail closed).
+// as protected (fail closed). A `cd -` returns to the directory the line's
+// last directory change left when it surely ran (noteOldPWD); otherwise its
+// destination is not known.
 func (st *dirState) apply(sc scannedCommand) {
+	left := st.workDir
+	defer st.noteOldPWD(sc, left)
 	switch sc.Name {
 	case "cd", "pushd":
 	case "popd":
@@ -126,10 +167,16 @@ func (st *dirState) apply(sc scannedCommand) {
 	default:
 		return
 	}
-	operands := nonFlagArgs(sc.Args)
+	// `-` is an operand here, the previous directory, not an option.
+	operands := slices.DeleteFunc(slices.Clone(sc.Args), func(a string) bool { return isFlag(a) && a != "-" })
 	target := "~"
 	if len(operands) > 0 {
 		target = operands[0]
+	}
+	if target == "-" && sc.Name == "cd" && len(operands) == 1 && st.prevSure && sc.Guard == cmdscan.GuardedByAnd &&
+		len(sc.Assigns) == 0 && !sc.AssignsDynamic {
+		st.workDir = st.prev // OLDPWD, which the line set
+		return
 	}
 	if sc.HasExpansion || target == "-" || hasGlobMeta(target) || unresolvedTilde(target) ||
 		(sc.Name == "pushd" && (len(operands) == 0 || strings.HasPrefix(target, "+"))) ||
@@ -242,13 +289,14 @@ func hasGlobMeta(s string) bool { return strings.ContainsAny(s, "*?[") }
 
 // shellSegMatch matches one path segment against a glob segment with the
 // shell's default rules: a leading '.' in name must be matched by a literal
-// leading '.' in the pattern. A malformed pattern counts as a match (fail
-// closed).
+// leading '.' in the pattern, and a bracket expression is read as the shell
+// reads it (`[!x]`, `[[:alpha:]]`; pathmatch.ShellMatch). A malformed pattern
+// counts as a match (fail closed).
 func shellSegMatch(pattern, name string) bool {
 	if strings.HasPrefix(name, ".") && !strings.HasPrefix(pattern, ".") {
 		return false
 	}
-	ok, err := path.Match(pattern, name)
+	ok, err := pathmatch.ShellMatch(pattern, name)
 	return ok || err != nil
 }
 
@@ -584,17 +632,26 @@ func posixMentionsProtected(ctx *EvalContext) bool {
 	// names through a variable (`d=.git; rm $d/hooks/pre-commit`). PowerShell
 	// judges any write on a mentioning line, so there the name only counts on
 	// a line that expands a variable; otherwise its commands' operands decide
-	// (`Remove-Item .git\index.lock` stays allowed).
-	if (!isPowerShell(ctx) || strings.Contains(ctx.Command, "$")) &&
-		(canon.MentionsGitDir(ctx.Command) || canon.MentionsGitDir(looseText(ctx.Command))) {
+	// (`Remove-Item .git\index.lock` stays allowed). The name may also be the
+	// rendered output of a substitution the line assigns
+	// (`d=$(git rev-parse --git-dir)`) or reads into a variable (`read d
+	// <<< "$(git rev-parse --git-dir)"`), or the output of a git directory
+	// query that another command consumes (gitDirConsumed). The commands of
+	// a script the line runs (`sh -c 'rm "$(git rev-parse
+	// --git-dir)/hooks/pre-commit"'`) are scanned as the line's own, as its
+	// raw text holds only their unrendered words.
+	gitDirCounts := !isPowerShell(ctx) || strings.Contains(ctx.Command, "$")
+	if gitDirCounts && (canon.MentionsGitDir(ctx.Command) || canon.MentionsGitDir(looseText(ctx.Command))) {
 		return true
 	}
 	scs, err := ctx.scannedCommands()
 	if err != nil {
 		return false
 	}
-	for _, sc := range scs {
-		if sc.inProtectedDir ||
+	for _, sc := range ctx.withScriptCommands(scs, 0) {
+		if (gitDirCounts && (slices.ContainsFunc(sc.AssignTexts, canon.MentionsGitDir) || gitDirConsumed(sc) ||
+			len(sc.Assigns) > 0 && slices.ContainsFunc(sc.ReadRedirects, canon.MentionsGitDir))) ||
+			sc.inProtectedDir ||
 			anyArgRefersProtected(sc, sc.Args) ||
 			anyGitControlHolder(sc, sc.Args) ||
 			anyRefersProtected(sc, sc.WriteRedirects) ||
@@ -606,6 +663,38 @@ func posixMentionsProtected(ctx *EvalContext) bool {
 		}
 	}
 	return false
+}
+
+// gitDirConsumed reports whether sc prints a git directory path (printsGitDir)
+// that another command of the line consumes in a form the scan cannot
+// render: in a command or process substitution, or a pipeline stage, whose
+// output is not rendered into the word holding it (Command.OutputRendered).
+// `"$(git rev-parse --git-dir | cat)/hooks/pre-commit"`, `d=$(cd . && git
+// rev-parse --git-dir)` and `read d < <(git rev-parse --git-dir)` may build a
+// git-control path from it, as a line naming .git through a variable may.
+// A rendered query (`rm -f "$(git rev-parse --git-dir)/index.lock"`) is
+// judged by the path its word renders.
+func gitDirConsumed(sc scannedCommand) bool {
+	return sc.Subshell && !sc.OutputRendered && printsGitDir(append([]string{sc.Name}, sc.Args...))
+}
+
+// gitDirQueryOptions are the git rev-parse options that print a path in the
+// git directory.
+var gitDirQueryOptions = []string{"--git-dir", "--absolute-git-dir", "--git-common-dir", "--git-path"}
+
+// printsGitDir reports whether the command words run git rev-parse with an
+// option that prints a path in the git directory, directly or through a
+// wrapper.
+func printsGitDir(words []string) bool {
+	args, ok := gitInvocation(words)
+	if !ok {
+		return false
+	}
+	target := splitGitArgs(args)
+	return target.sub == "rev-parse" && slices.ContainsFunc(target.rest, func(a string) bool {
+		name, _, _ := strings.Cut(a, "=")
+		return slices.Contains(gitDirQueryOptions, name)
+	})
 }
 
 // shellMutatesProtected is the shared protected-mutation predicate behind the
@@ -628,14 +717,41 @@ func shellMutatesProtected(ctx *EvalContext) bool {
 	case err != nil:
 		ctx.mutates = lineMentionsProtected(ctx) || anchoredMutation(ctx, scs, err)
 	default:
-		ctx.mutates = (lineMentionsProtected(ctx) && protectedMutation(scs)) || anchoredMutation(ctx, scs, err)
+		ctx.mutates = (lineMentionsProtected(ctx) && ctx.scriptsMutateProtected(scs, 0)) || anchoredMutation(ctx, scs, err)
 	}
 	return ctx.mutates
 }
 
+// scriptsMutateProtected is protectedMutation over scs and the commands of
+// each script a shell, eval or wrapper of scs runs (`sh -c 'd=.git; rm
+// $d/hooks/pre-commit'`), from the directory that shell starts in, to
+// maxScriptDepth: on a line that mentions a protected path, a script's
+// commands are judged as they would be written on the line itself.
+func (ctx *EvalContext) scriptsMutateProtected(scs []scannedCommand, depth int) bool {
+	if protectedMutation(scs) {
+		return true
+	}
+	if depth >= maxScriptDepth {
+		return false
+	}
+	for _, sc := range scs {
+		run, ok := cmdscan.Script(append([]string{sc.Name}, sc.Args...))
+		if !ok {
+			continue
+		}
+		sub := ctx.scriptContext(sc, run)
+		if inner, err := sub.scannedCommands(); err != nil || sub.scriptsMutateProtected(inner, depth+1) {
+			return true
+		}
+	}
+	return false
+}
+
 // anchoredMutation is the part of the POSIX mutation analysis that needs no
 // named protected path: a command replacing a protected location's ancestor
-// or relocating one through the environment, or, for a line that cannot be
+// or clearing its owner permission bits (modeClearsProtectedAncestor),
+// through wrappers and nested shell scripts too (ancestorCommands), or
+// relocating one through the environment, or, for a line that cannot be
 // parsed, the CLI run with a home variable. For PowerShell it can only add
 // denies to the dialect's own analysis, which also runs the ancestor check
 // over its own delete, move and rename cmdlets (psScanned), since the POSIX
@@ -644,7 +760,8 @@ func anchoredMutation(ctx *EvalContext, scs []scannedCommand, err error) bool {
 	if err != nil {
 		return unparsedRelocatesHome(ctx.Command)
 	}
-	return replacesProtectedAncestor(scs) || relocatesProtected(ctx.Command, scs)
+	programs := ctx.ancestorCommands(scs)
+	return replacesProtectedAncestor(programs) || modeClearsProtectedAncestor(programs) || relocatesProtected(ctx.Command, scs)
 }
 
 // hasVerb reports whether the command invokes one of verbs, judged from the
@@ -669,10 +786,11 @@ var dirChangeVerbs = map[string]bool{"cd": true, "pushd": true, "popd": true}
 
 // isMutating reports whether command sc may change files through its
 // arguments: anything but a proven read-only command (cmdscan.IsSafeReadCommand,
-// which models git/sort/rg by their arguments), a directory change, or a
+// which models git/sort/rg by their arguments), a directory change, a
+// read-only git in a repository a variable pins (repoPinnedRead), or a
 // nameless (redirect-only) command.
 func isMutating(sc scannedCommand) bool {
-	return sc.Name != "" && !cmdscan.IsSafeReadCommand(sc.Command) && !dirChangeVerbs[sc.Name]
+	return sc.Name != "" && !cmdscan.IsSafeReadCommand(sc.Command) && !dirChangeVerbs[sc.Name] && !repoPinnedRead(sc)
 }
 
 // patternOptions are tar's and rsync's options whose value is a file-name
@@ -698,11 +816,17 @@ func isPatternOption(verb, opt string) bool {
 }
 
 // operandArgs returns sc's arguments without pattern options and their values,
-// so `--exclude=.claude` is not mistaken for an operand.
+// so `--exclude=.claude` is not mistaken for an operand. Besides tar's and
+// rsync's (isPatternOption), these are the -e/--exclude patterns of a git
+// clean (cleanPatternArgs).
 func operandArgs(sc scannedCommand) []string {
 	out := make([]string, 0, len(sc.Args))
+	cleanPatterns := cleanPatternArgs(sc)
 	for i := 0; i < len(sc.Args); i++ {
 		a := sc.Args[i]
+		if slices.Contains(cleanPatterns, i) {
+			continue
+		}
 		if eq := strings.IndexByte(a, '='); eq > 0 && strings.HasPrefix(a, "--") && isPatternOption(sc.Name, a[:eq]) {
 			continue
 		}
@@ -881,7 +1005,11 @@ func relativeWriteTarget(sc scannedCommand) bool {
 //   - it is a find whose actions can delete or rewrite protected files;
 //   - it sets variables (a prefix or bare assignment): PATH, LD_PRELOAD or
 //     GIT_EXTERNAL_DIFF can make a read-only command word run arbitrary code,
-//     and the assigned value is not analysed.
+//     and the assigned value is not analysed. A read-only git whose prefix
+//     assignments only pin the repository (`GIT_DIR=<dir> git log`,
+//     repoPinnedRead) is judged as `git --git-dir=<dir> log` is, and any
+//     other git with prefix assignments only (`LC_ALL=C git log`,
+//     prefixedGitJudged) as `env LC_ALL=C git log` is: by its operands.
 //
 // Non-destructive copies (cp, rsync) and the other copy-family verbs are
 // exempt from the input rule: their exfiltration semantics are modelled by
@@ -889,7 +1017,7 @@ func relativeWriteTarget(sc scannedCommand) bool {
 func protectedMutation(scs []scannedCommand) bool {
 	upstreamProtected := make(map[int]bool)
 	for _, sc := range scs {
-		if len(sc.Assigns) > 0 {
+		if len(sc.Assigns) > 0 && !repoPinnedRead(sc) && !prefixedGitJudged(sc) {
 			return true
 		}
 		if anyArgRefersProtected(sc, mutationTargets(sc)) || anyRefersProtected(sc, sc.WriteRedirects) {

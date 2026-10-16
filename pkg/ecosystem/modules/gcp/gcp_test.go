@@ -169,8 +169,10 @@ func TestDetect_NoGCPIndicators(t *testing.T) {
 func TestDenyRules_AllPresent(t *testing.T) {
 	t.Parallel()
 	rules := newModule().DenyRules(ecosystem.ModuleConfig{})
-	if len(rules) != 19 {
-		t.Fatalf("expected 19 deny rules, got %d: %v", len(rules), rules)
+	// cat ~/.config/gcloud/... is denied at every preset by the canon's
+	// shell-read tripwire (addons/claudecode), not here.
+	if len(rules) != 18 {
+		t.Fatalf("expected 18 deny rules, got %d: %v", len(rules), rules)
 	}
 
 	// Verify each rule contains "gcloud" or "Bash(".

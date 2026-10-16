@@ -98,11 +98,17 @@ type EvalContext struct {
 // evasion checks call this, so the command is parsed exactly once per tool call
 // regardless of how many rules inspect it. A non-nil error means the command
 // was unparseable; callers must fall back to their conservative substring test
-// (fail closed), never fail open.
+// (fail closed), never fail open. A PowerShell line is read with its
+// PowerShell whitespace as ASCII spaces (cmdscan.PowerShellSpaced), so its
+// words split where PowerShell splits them.
 func (ctx *EvalContext) ParsedCommands() ([]cmdscan.Command, error) {
 	if !ctx.commandsParsed {
 		if ctx.Command != "" {
-			ctx.commands, ctx.parseErr = cmdscan.ParseWithVars(ctx.Command, canon.ShellPathVars())
+			text := ctx.Command
+			if isPowerShell(ctx) {
+				text = cmdscan.PowerShellSpaced(text)
+			}
+			ctx.commands, ctx.parseErr = cmdscan.ParseWithVars(text, canon.ShellPathVars())
 		}
 		ctx.commandsParsed = true
 	}

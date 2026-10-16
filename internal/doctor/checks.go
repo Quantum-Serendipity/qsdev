@@ -1,7 +1,6 @@
 package doctor
 
 import (
-	"encoding/json"
 	"os"
 	"os/exec"
 	"regexp"
@@ -319,55 +318,24 @@ func DefaultChecks() []ToolCheck {
 			},
 			AutoInstall: alwaysInstallable,
 		},
+		// The cloud CLIs are lookup-only: no floor gates them, and each
+		// version probe starts a Python runtime (`az version`, `gcloud
+		// version`, `aws --version`), hundreds of milliseconds of CPU
+		// apiece, on every doctor run. Doctor reports them installed or
+		// missing, without a version.
 		{
 			Name:        "aws-cli",
 			Binary:      "aws",
-			VersionFlag: "--version",
-			Required:    false,
-			ParseVersion: func(raw string) string {
-				// "aws-cli/2.15.0 Python/3.11.6 ..." → "2.15.0"
-				for _, part := range strings.Fields(toolcheck.FirstLine(raw)) {
-					if v, ok := strings.CutPrefix(part, "aws-cli/"); ok {
-						return v
-					}
-				}
-				return ""
-			},
 			AutoInstall: alwaysInstallable,
 		},
 		{
 			Name:        "gcloud",
 			Binary:      "gcloud",
-			VersionFlag: "version",
-			Required:    false,
-			ParseVersion: func(raw string) string {
-				// "Google Cloud SDK 462.0.1\n..." → "462.0.1"
-				for line := range strings.SplitSeq(raw, "\n") {
-					if val, ok := strings.CutPrefix(strings.TrimSpace(line), "Google Cloud SDK "); ok {
-						return strings.TrimSpace(val)
-					}
-				}
-				return ""
-			},
 			AutoInstall: alwaysInstallable,
 		},
 		{
 			Name:        "az",
 			Binary:      "az",
-			VersionFlag: "version",
-			Required:    false,
-			ParseVersion: func(raw string) string {
-				// `az version` prints JSON: {"azure-cli": "2.58.0", ...}.
-				var out map[string]any
-				if err := json.Unmarshal([]byte(raw), &out); err == nil {
-					if v, ok := out["azure-cli"].(string); ok {
-						return v
-					}
-					return ""
-				}
-				// Older CLIs print "azure-cli   2.58.0 *" lines.
-				return labeledField(raw, "azure-cli")
-			},
 			AutoInstall: alwaysInstallable,
 		},
 	}

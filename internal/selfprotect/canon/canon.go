@@ -1384,7 +1384,7 @@ func (d policyDir) endsAt(rest string) bool {
 			return false // a named entry; the protected ones are substrings
 		}
 		for _, f := range d.files {
-			if ok, err := path.Match(entry, f); ok || err != nil {
+			if ok, err := pathmatch.ShellMatch(entry, f); ok || err != nil {
 				return true // a malformed pattern fails closed
 			}
 		}

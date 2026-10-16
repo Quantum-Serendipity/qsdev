@@ -14,9 +14,10 @@ import (
 // GitCodeExecutionRuleID identifies the denials of GitCodeExecution.
 const GitCodeExecutionRuleID = "GIT-001"
 
-// maxGitScriptDepth bounds how deep GitCodeExecution follows shell scripts
-// nested in `sh -c` or eval.
-const maxGitScriptDepth = 3
+// maxScriptDepth bounds how deep a check follows shell scripts nested in
+// `sh -c` or eval (GitCodeExecution, the worktree rewrite, the ancestor
+// checks).
+const maxScriptDepth = 3
 
 // reGitWord finds git in a command that cannot be parsed (fail closed).
 var reGitWord = regexp.MustCompile(`(^|[^A-Za-z0-9_.-])git([^A-Za-z0-9_.-]|$)`)
@@ -110,7 +111,7 @@ func gitCodeExecution(cmds []cmdscan.Command, depth int, env gitLineEnv) (string
 	for _, c := range cmds {
 		words := append([]string{c.Name}, c.Args...)
 		if script, ok := cmdscan.ShellScript(words); ok {
-			if depth >= maxGitScriptDepth {
+			if depth >= maxScriptDepth {
 				if reGitWord.MatchString(script) {
 					return "git runs inside too many nested shell scripts to be checked", true
 				}
@@ -156,6 +157,22 @@ func gitCodeExecution(cmds []cmdscan.Command, depth int, env gitLineEnv) (string
 func isGitEnvVar(name string) bool {
 	return strings.HasPrefix(name, "GIT_CONFIG") || name == "GIT_EXEC_PATH" || name == "GIT_EXTERNAL_DIFF" ||
 		name == "GIT_TEMPLATE_DIR"
+}
+
+// commandLineEnvVars are the variables whose value git or another program
+// runs as a command line: the editors git starts for a commit message or a
+// rebase todo list, the pagers, the ssh and askpass programs git starts for a
+// remote, and the input preprocessors of less.
+var commandLineEnvVars = map[string]bool{
+	"GIT_EDITOR": true, "GIT_SEQUENCE_EDITOR": true, "EDITOR": true, "VISUAL": true,
+	"GIT_PAGER": true, "PAGER": true, "MANPAGER": true, "LESSOPEN": true, "LESSCLOSE": true,
+	"GIT_SSH": true, "GIT_SSH_COMMAND": true, "GIT_ASKPASS": true, "SSH_ASKPASS": true, "GIT_PROXY_COMMAND": true,
+}
+
+// runsProgramVar reports whether a program runs the variable's value as a
+// command line, or can be made to run any program through it (isGitEnvVar).
+func runsProgramVar(name string) bool {
+	return commandLineEnvVars[name] || isGitEnvVar(name)
 }
 
 // commitGateEnvVars are canon.CommitGateEnvVars.
@@ -287,7 +304,13 @@ func envAssignment(c cmdscan.Command, match func(string) bool) string {
 
 // gitInvocation returns the arguments of the git program the words run.
 func gitInvocation(words []string) ([]string, bool) {
-	return programInvocation(words, func(name string) bool { return path.Base(name) == "git" })
+	return programInvocation(words, programNamed("git"))
+}
+
+// programNamed returns a predicate that accepts a command word running one
+// of names (by base name, so /usr/bin/find counts).
+func programNamed(names ...string) func(word string) bool {
+	return func(word string) bool { return slices.Contains(names, path.Base(word)) }
 }
 
 // programInvocation returns the arguments of the program the words run when

@@ -149,6 +149,13 @@ func (m *Module) DenyRules(_ ecosystem.ModuleConfig) []string {
 	// carry the documented and the all-lowercase spelling, and any other
 	// casing under pwsh (INSTALL-MODULE) is left to the package-guard hook,
 	// which matches case-insensitively.
+	//
+	// The PowerShell(...) rules match a word followed only by an ASCII space
+	// or one of psWordAfter's separators. Any other whitespace PowerShell
+	// separates words on (a tab, NBSP, NEL or a Unicode space separator:
+	// `Install-Module<NBSP>Evil`) is left to the package-guard hook, as
+	// non-canonical casing is: it maps every such character to a space before
+	// reading the line.
 	rules := psWordRules(psInstallCmdlets, []string{"*"})
 	for _, cmdlet := range psInstallCmdlets {
 		for _, spelling := range []string{cmdlet, strings.ToLower(cmdlet)} {
@@ -175,9 +182,10 @@ var psInstallAliases = []string{"inmo", "upmo", "isres", "udres"}
 // not matched at the end of another word (`thisresult.txt`).
 var psAliasBefore = []string{"", "* ", "*;", "*|", "*\n", "*{", "*(", "*&"}
 
-// psWordAfter is what may follow a denied word: arguments, the end of the
-// command, a statement or pipeline separator, the end of a scriptblock,
-// subexpression or string, or a newline.
+// psWordAfter is what may follow a denied word: arguments after an ASCII
+// space, the end of the command, a statement or pipeline separator, the end
+// of a scriptblock, subexpression or string, or a newline. Other whitespace
+// is left to the package-guard hook (see DenyRules).
 var psWordAfter = []string{" *", "", ";*", "|*", "}*", ")*", "'*", `"*`, "\n*"}
 
 // psWordRules returns PowerShell tool deny rules that match each of words as

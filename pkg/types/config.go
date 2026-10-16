@@ -53,6 +53,13 @@ type LanguageConfig struct {
 	Name           string `yaml:"name"`
 	Version        string `yaml:"version,omitempty"`
 	PackageManager string `yaml:"package_manager,omitempty"`
+	// Extras are the language's committed settings ("key=value"), such as
+	// go_source=nixpkgs. Only a setting the language's module opts in as
+	// committable (ecosystem.CommittableFields) may be set; for those keys
+	// this list is the single source of truth, recorded from a non-default
+	// answer when the project is created. Detected extras, which detection
+	// re-derives on every run, are never recorded here.
+	Extras []string `yaml:"extras,omitempty"`
 }
 
 // ServiceConfig specifies a development service (database, cache, etc.) in .qsdev.yaml.
@@ -196,6 +203,18 @@ type HooksConfig struct {
 	FileBoundary FileBoundaryConfig `yaml:"file_boundary,omitempty"`
 	ToolGates    ToolGatesConfig    `yaml:"tool_gates,omitempty"`
 	PackageGuard PackageGuardConfig `yaml:"package_guard,omitempty"`
+	// CredentialScan configures the scan-secrets hook.
+	CredentialScan CredentialScanConfig `yaml:"credential_scan,omitempty"`
+}
+
+// CredentialScanConfig is hooks.credential_scan: detection the scan-secrets
+// hook adds to its built-in credential patterns.
+type CredentialScanConfig struct {
+	// ExtraPatterns are regular expressions in the subset RE2 and Python re
+	// share (see validation.CheckSecretPattern). A match in written content
+	// is denied unless it is a placeholder; an optional (?P<secret>...)
+	// group names the part judged as the credential value.
+	ExtraPatterns []string `yaml:"extra_patterns,omitempty"`
 }
 
 // Values of hooks.package_guard.new_dep_gate: what package-guard.py does with
@@ -263,6 +282,7 @@ func (c HooksConfig) Clone() HooksConfig {
 	out.ToolGates.Denied = slices.Clone(c.ToolGates.Denied)
 	out.PackageGuard.Allowlist = slices.Clone(c.PackageGuard.Allowlist)
 	out.PackageGuard.Denylist = slices.Clone(c.PackageGuard.Denylist)
+	out.CredentialScan.ExtraPatterns = slices.Clone(c.CredentialScan.ExtraPatterns)
 	if c.PackageGuard.MinAgeDays != nil {
 		days := *c.PackageGuard.MinAgeDays
 		out.PackageGuard.MinAgeDays = &days

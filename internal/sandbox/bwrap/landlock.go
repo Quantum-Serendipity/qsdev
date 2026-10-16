@@ -4,8 +4,8 @@ import (
 	"path"
 	"path/filepath"
 
+	"github.com/Quantum-Serendipity/qsdev/internal/pathmatch"
 	"github.com/Quantum-Serendipity/qsdev/internal/sandbox"
-	"github.com/Quantum-Serendipity/qsdev/internal/sandbox/denylist"
 	"github.com/Quantum-Serendipity/qsdev/internal/sandbox/shim"
 )
 
@@ -104,7 +104,7 @@ func touchesDenyPath(m sandbox.MountSpec, deny []string) bool {
 	}
 	for _, d := range deny {
 		for _, p := range []string{m.Source, m.Target} {
-			if denylist.Overlaps(filepath.Clean(p), filepath.Clean(d)) {
+			if pathmatch.Within(filepath.Clean(p), filepath.Clean(d)) {
 				return true
 			}
 		}

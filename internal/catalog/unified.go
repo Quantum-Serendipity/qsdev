@@ -57,11 +57,12 @@ type UnifiedDefaults struct {
 	MCPServe *MCPServeOptIns `yaml:"mcp_serve,omitempty"`
 
 	// Security
-	SecurityHooks []string        `yaml:"security_hooks,omitempty"`
-	BasePackages  []string        `yaml:"base_packages,omitempty"`
-	UnsetVars     []string        `yaml:"unset_vars,omitempty"`
-	KeepVars      []string        `yaml:"keep_vars,omitempty"`
-	CustomHooks   []CustomHookDef `yaml:"custom_hooks,omitempty"`
+	SecurityHooks        []string            `yaml:"security_hooks,omitempty"`
+	SecurityHookExcludes map[string][]string `yaml:"security_hook_excludes,omitempty"`
+	BasePackages         []string            `yaml:"base_packages,omitempty"`
+	UnsetVars            []string            `yaml:"unset_vars,omitempty"`
+	KeepVars             []string            `yaml:"keep_vars,omitempty"`
+	CustomHooks          []CustomHookDef     `yaml:"custom_hooks,omitempty"`
 
 	// Hook Tiers
 	HookTierOrder []string            `yaml:"hook_tier_order,omitempty"`
@@ -125,6 +126,7 @@ func (u *UnifiedDefaults) ToCatalog() *Catalog {
 
 	// Security
 	cat.security.Hooks.Default = u.SecurityHooks
+	cat.security.Hooks.Excludes = u.SecurityHookExcludes
 	cat.security.BasePackages = u.BasePackages
 	cat.security.CleanEnvironment.UnsetVars = u.UnsetVars
 	cat.security.CleanEnvironment.KeepVars = u.KeepVars
@@ -199,6 +201,7 @@ func (c *Catalog) ToUnified() *UnifiedDefaults {
 
 	// Security
 	u.SecurityHooks = c.security.Hooks.Default
+	u.SecurityHookExcludes = c.security.Hooks.Excludes
 	u.BasePackages = c.security.BasePackages
 	u.UnsetVars = c.security.CleanEnvironment.UnsetVars
 	u.KeepVars = c.security.CleanEnvironment.KeepVars
@@ -247,7 +250,7 @@ func (c *Catalog) ToUnified() *UnifiedDefaults {
 func SectionNames() []string {
 	return []string{
 		"tiers", "compliance", "project_profiles",
-		"tools", "mcp_servers", "bootstrap_tools", "mcp_serve", "security_hooks", "base_packages", "unset_vars", "keep_vars",
+		"tools", "mcp_servers", "bootstrap_tools", "mcp_serve", "security_hooks", "security_hook_excludes", "base_packages", "unset_vars", "keep_vars",
 		"custom_hooks", "hook_tier_order", "hook_tiers", "default_tier", "tier_to_compliance",
 		"tier_to_enabled_tools", "default_mcp_servers", "default_agent_tools",
 		"languages", "services", "permission_presets", "hook_presets",

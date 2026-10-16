@@ -11,7 +11,7 @@ import (
 )
 
 // TestIsolatedEnv: a measured command sees its own HOME, temp and XDG
-// directories under root, the binary directory first on PATH, system git
+// directories under root, exactly the PATH it is given, system git
 // configuration off, and none of the caller's Claude Code, qsdev or git
 // session variables. It sets the caller's environment, so it is serial.
 func TestIsolatedEnv(t *testing.T) {
@@ -21,9 +21,9 @@ func TestIsolatedEnv(t *testing.T) {
 	t.Setenv("GIT_DIR", "/caller/.git")
 	t.Setenv("PERFBUDGET_KEPT", "kept")
 	root := t.TempDir()
-	binDir := filepath.Join(root, "bin")
+	path := strings.Join([]string{filepath.Join(root, "bin"), filepath.Join(root, "stubs")}, string(os.PathListSeparator))
 
-	env, err := IsolatedEnv(root, binDir)
+	env, err := IsolatedEnv(root, path)
 	if err != nil {
 		t.Fatalf("IsolatedEnv: %v", err)
 	}
@@ -50,14 +50,148 @@ func TestIsolatedEnv(t *testing.T) {
 			t.Errorf("%s = %q leaked from the caller", k, vs)
 		}
 	}
-	if p := vars["PATH"]; len(p) != 1 || !strings.HasPrefix(p[0], binDir+string(os.PathListSeparator)) {
-		t.Errorf("PATH = %q, want one entry starting with %s", p, binDir)
+	if p := vars["PATH"]; !slices.Equal(p, []string{path}) {
+		t.Errorf("PATH = %q, want exactly %q", p, path)
 	}
 	if v := vars["GIT_CONFIG_NOSYSTEM"]; !slices.Equal(v, []string{"1"}) {
 		t.Errorf("GIT_CONFIG_NOSYSTEM = %q, want 1", v)
 	}
 	if v := vars["PERFBUDGET_KEPT"]; !slices.Equal(v, []string{"kept"}) {
 		t.Errorf("PERFBUDGET_KEPT = %q, want the caller's other variables kept", v)
+	}
+}
+
+// TestHostPath: a measured host program finds the binary under test first,
+// then the caller's PATH.
+func TestHostPath(t *testing.T) {
+	t.Setenv("PATH", strings.Join([]string{"/caller/a", "/caller/b"}, string(os.PathListSeparator)))
+	want := strings.Join([]string{"/bin-dir", "/caller/a", "/caller/b"}, string(os.PathListSeparator))
+	if got := HostPath("/bin-dir"); got != want {
+		t.Errorf("HostPath = %q, want %q", got, want)
+	}
+}
+
+// requireSymlinks skips t where this host cannot create symbolic links
+// (Windows without the privilege), which HermeticPath links tools with.
+func requireSymlinks(t *testing.T) {
+	t.Helper()
+	dir := t.TempDir()
+	if err := os.Symlink(filepath.Join(dir, "target"), filepath.Join(dir, "link")); err != nil {
+		t.Skipf("cannot create symbolic links here: %v", err)
+	}
+}
+
+// TestHermeticPath: the PATH holds the binary directory, the host tools the
+// fixture needs, linked to the host's, and a stub for every other probed
+// tool, and nothing else: none of the caller's PATH directories and no
+// other name.
+func TestHermeticPath(t *testing.T) {
+	t.Parallel()
+	requireSymlinks(t)
+	hostDir := t.TempDir()
+	lookPath := func(name string) (string, error) {
+		if name == "missing" {
+			return "", errors.New("not found")
+		}
+		return filepath.Join(hostDir, name), nil
+	}
+	callerPath := filepath.SplitList(os.Getenv("PATH"))
+	binDir := filepath.Join(hostDir, "bin")
+	if err := os.MkdirAll(binDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(executable(binDir, "qsdev"), nil, 0o755); err != nil { //nolint:gosec // stands in for the binary under test
+		t.Fatal(err)
+	}
+
+	tests := []struct {
+		name      string
+		host      []string
+		probed    []string
+		wantHost  []string
+		wantStubs []string
+		wantErr   string
+	}{
+		{
+			name:      "stubs every probed tool but the host ones, once",
+			host:      []string{"git"},
+			probed:    []string{"nix", "git", "docker", "nix", "ps"},
+			wantHost:  []string{"git"},
+			wantStubs: []string{"docker", "nix", "ps"},
+		},
+		{
+			name:      "the binary under test probing itself is not stubbed",
+			probed:    []string{"qsdev", "nix"},
+			wantStubs: []string{"nix"},
+		},
+		{name: "nothing probed", host: []string{"git"}, wantHost: []string{"git"}},
+		{name: "host tool named twice", host: []string{"git", "git"}, probed: []string{"git"}, wantHost: []string{"git"}},
+		{name: "host tool missing", host: []string{"missing"}, wantErr: `host tool "missing"`},
+		{name: "probed name with a separator", probed: []string{"../escape"}, wantErr: "not a bare program name"},
+		{name: "probed name with a backslash", probed: []string{`a\b`}, wantErr: "not a bare program name"},
+		{name: "drive-relative name", probed: []string{"C:x"}, wantErr: "not a bare program name"},
+		{name: "name holding a PATH separator", host: []string{"a;b"}, wantErr: "not a bare program name"},
+		{name: "dot", probed: []string{"."}, wantErr: "not a bare program name"},
+		{name: "dot dot", probed: []string{".."}, wantErr: "not a bare program name"},
+		{name: "empty probed name", probed: []string{""}, wantErr: "not a bare program name"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			dir := filepath.Join(t.TempDir(), "path")
+			tools := HermeticTools{Bin: binDir, Host: tt.host, Probed: tt.probed, Stub: filepath.Join(hostDir, "noop")}
+			path, err := hermeticPath(dir, tools, lookPath)
+			if tt.wantErr != "" {
+				if err == nil || !strings.Contains(err.Error(), tt.wantErr) {
+					t.Fatalf("hermeticPath = %q, %v; want an error containing %q", path, err, tt.wantErr)
+				}
+				if _, statErr := os.Stat(dir); statErr == nil && strings.Contains(tt.wantErr, "bare program name") {
+					t.Errorf("hermeticPath created %s before rejecting a name", dir)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("hermeticPath: %v", err)
+			}
+			host, stubs := filepath.Join(dir, hostToolsDir), filepath.Join(dir, stubToolsDir)
+			entries := filepath.SplitList(path)
+			if want := []string{tools.Bin, host, stubs}; !slices.Equal(entries, want) {
+				t.Errorf("PATH = %q, want %q", entries, want)
+			}
+			for _, e := range entries {
+				if slices.Contains(callerPath, e) {
+					t.Errorf("PATH holds the caller's PATH directory %s", e)
+				}
+			}
+			checkLinks(t, host, tt.wantHost, func(name string) string { return filepath.Join(hostDir, name) })
+			checkLinks(t, stubs, tt.wantStubs, func(string) string { return tools.Stub })
+			if again, err := hermeticPath(dir, tools, lookPath); err == nil {
+				t.Errorf("a second hermeticPath into %s = %q, want an error: it is single use", dir, again)
+			}
+		})
+	}
+}
+
+// checkLinks fails t unless dir holds exactly the tools names, each a link
+// to target(name).
+func checkLinks(t *testing.T, dir string, names []string, target func(string) string) {
+	t.Helper()
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := make([]string, 0, len(entries))
+	for _, e := range entries {
+		got = append(got, strings.TrimSuffix(e.Name(), ".exe"))
+	}
+	if !slices.Equal(got, names) {
+		t.Errorf("%s holds %q, want exactly %q", filepath.Base(dir), got, names)
+	}
+	for _, name := range names {
+		link := executable(dir, name)
+		if dest, err := os.Readlink(link); err != nil || dest != target(name) {
+			t.Errorf("%s links to %q (%v), want %q", link, dest, err, target(name))
+		}
 	}
 }
 

@@ -64,6 +64,7 @@ type FragmentEntry struct {
 	Mode        os.FileMode        // File permission mode (0 = default 0o644).
 	Owner       string             // Tool owner for teardown tracking.
 	HeldWith    string             // Partner file of the resolved file; see GeneratedFile.HeldWith.
+	PinLF       bool               // Pin the resolved file to LF; see GeneratedFile.PinLF.
 	Provenance  FragmentProvenance // Metadata for the provenance ledger.
 }
 

@@ -14,7 +14,8 @@ import (
 // ErrOverlayLoosens reports an org defaults file that would lower the
 // built-in security floor: keep a credential the catalog strips, weaken a
 // built-in compliance level, map a tier to a weaker compliance level, or
-// tier an always-on hook out of a security level. The always-on hooks and
+// tier an always-on hook out of a security level, or exempt paths from an
+// always-on hook (security_hook_excludes). The always-on hooks and
 // stripped variables cannot be lowered at all, because MergeCatalogs only
 // adds to them.
 var ErrOverlayLoosens = errors.New("defaults file loosens the built-in security floor")
@@ -30,7 +31,8 @@ var ErrOverlayLoosens = errors.New("defaults file loosens the built-in security 
 //     order, nor to another level weaker than its built-in one;
 //   - the built-in hook tiers stay first in hook_tier_order, in order, and
 //     no always-on hook (security_hooks, custom_hooks) moves to a higher
-//     hook tier, where lower security levels would drop it.
+//     hook tier, where lower security levels would drop it;
+//   - no always-on hook skips a path the floor does not exempt.
 func securityFloorViolations(floor, merged *Catalog, file string) []CatalogError {
 	var errs []CatalogError
 	add := func(field, format string, args ...any) {
@@ -74,6 +76,13 @@ func securityFloorViolations(floor, merged *Catalog, file string) []CatalogError
 	}
 
 	hookTierFloorViolations(floor, merged, add)
+	for _, id := range slices.Sorted(maps.Keys(merged.security.Hooks.Excludes)) {
+		for _, re := range merged.security.Hooks.Excludes[id] {
+			if !slices.Contains(floor.security.Hooks.Excludes[id], re) {
+				add("security_hook_excludes."+id, "cannot exempt %q from always-on hook %q", re, id)
+			}
+		}
+	}
 	return errs
 }
 

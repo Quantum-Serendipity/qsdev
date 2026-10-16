@@ -75,7 +75,12 @@ type sample struct {
 	stderr    string
 }
 
-// runOnce runs spec to completion.
+// runOnce runs spec to completion. A bare spec.Argv[0] resolves on the test
+// process's PATH, as exec.Command resolves it before spec.Env applies, not
+// on the PATH in spec.Env: calibration's python3 is the host's interpreter
+// even in a hermetic environment whose PATH would find a stub, and must
+// stay so, or calibration would time a stub. A command a measured process
+// starts by name resolves on spec.Env's PATH.
 func runOnce(spec Spec) (sample, error) {
 	cmd := procexec.Command(spec.Argv[0], spec.Argv[1:]...)
 	cmd.Stdin = bytes.NewReader(spec.Stdin)

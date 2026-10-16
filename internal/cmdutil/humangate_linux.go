@@ -3,6 +3,7 @@ package cmdutil
 import (
 	"fmt"
 	"os"
+	"strings"
 )
 
 // parentPID returns pid's parent from /proc/<pid>/stat.
@@ -34,4 +35,10 @@ func processProgram(pid int) (string, []string, error) {
 		return "", nil, fmt.Errorf("reading the program of process %d: %w", pid, err)
 	}
 	return exe, splitNUL(data), nil
+}
+
+// splitNUL splits a NUL-separated /proc/<pid>/environ or cmdline, dropping
+// empty entries.
+func splitNUL(data []byte) []string {
+	return strings.FieldsFunc(string(data), func(r rune) bool { return r == 0 })
 }

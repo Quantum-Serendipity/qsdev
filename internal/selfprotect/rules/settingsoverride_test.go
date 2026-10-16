@@ -1,9 +1,12 @@
 package rules
 
 import (
+	"fmt"
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/Quantum-Serendipity/qsdev/internal/selfprotect/cmdscan"
 )
 
 // TestSP008_SettingsOverride covers F150: SP-008 guards the surfaces that do
@@ -190,6 +193,42 @@ func TestSP008_PowerShellLaunchDir(t *testing.T) {
 				t.Errorf("sp008(PowerShell, %q) = %v (%s), want %v", tt.command, v, reason, tt.want)
 			}
 		})
+	}
+}
+
+// TestSP008_PowerShellSpaces pins W1bN-16 for SP-008: PowerShell passes a
+// launch flag after any rune it reads as whitespace (cmdscan.IsPowerShellSpace)
+// to claude as an argument of its own, so every such rune before the flag is
+// judged as an ASCII space is. It walks the Basic Multilingual Plane, so the
+// rule cannot drift from the tokenizer's definition.
+func TestSP008_PowerShellSpaces(t *testing.T) {
+	t.Parallel()
+	cwd := filepath.Join(homeDir(t), "project")
+	launches := []string{
+		"claude%s--dangerously-skip-permissions",
+		"claude --permission-mode%sbypassPermissions",
+		"claude -p hi%s--add-dir /",
+		"claude -p hi%s--bare",
+		"claude%simport",
+		"claude -p hi%s--settings x.json",
+		"npx @anthropic-ai/claude-code%s--dangerously-skip-permissions",
+	}
+	for r := rune(0); r <= 0xffff; r++ {
+		if !cmdscan.IsPowerShellSpace(r) {
+			continue
+		}
+		for _, launch := range launches {
+			command := fmt.Sprintf(launch, string(r))
+			ctx := EvalContext{ToolName: "PowerShell", Command: command, CWD: cwd}
+			if v, _ := sp008.Evaluate(&ctx); v != Deny {
+				t.Errorf("sp008(PowerShell, %q) with U+%04X = %v, want Deny", launch, r, v)
+			}
+		}
+	}
+	// Inside a quoted prompt the rune is text, as an ASCII space is.
+	ctx := EvalContext{ToolName: "PowerShell", Command: "claude -p 'explain --dangerously-skip-permissions'", CWD: cwd}
+	if v, reason := sp008.Evaluate(&ctx); v != Allow {
+		t.Errorf("sp008 of a quoted prompt holding NBSP = %v (%s), want Allow", v, reason)
 	}
 }
 

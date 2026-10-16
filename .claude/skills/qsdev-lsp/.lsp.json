@@ -1,0 +1,25 @@
+{
+  "go": {
+    "command": "gopls",
+    "args": [
+      "serve"
+    ],
+    "extensionToLanguage": {
+      ".go": "go"
+    },
+    "settings": {
+      "analyses": {
+        "nilness": true,
+        "shadow": true,
+        "unusedwrite": true
+      },
+      "vulncheck": "Imports"
+    }
+  },
+  "nix": {
+    "command": "nixd",
+    "extensionToLanguage": {
+      ".nix": "nix"
+    }
+  }
+}

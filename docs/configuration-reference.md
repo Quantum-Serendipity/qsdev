@@ -166,7 +166,7 @@ module's default), and every answer is stored under the key the module reads:
 
 | Language | Wizard settings (stored as) |
 |---|---|
-| Go | Go version (`version`) |
+| Go | Go version (`version`), Go source (`extras: go_source=go-overlay\|nixpkgs`) |
 | JavaScript/TypeScript | Node.js version (`version`), package manager (`package_manager`), TypeScript (`extras: typescript`) |
 | Python | Python version (`version`), package manager (`package_manager`: `pip`, `uv`, `poetry`) |
 | Rust | channel (`extras: channel=stable\|beta\|nightly`) |
@@ -188,6 +188,68 @@ explicit `package_manager` takes precedence over the `package_manager` extra
 that older configurations and detection record; likewise for Java, where
 `package_manager` (also set by `--java-build-tool` and project-type profiles)
 takes precedence over the `build_tool` extra.
+
+#### Committed settings
+
+`.qsdev.yaml` does not record the extras detection and the wizard produce
+(detection re-derives them on every run). A few settings are instead
+committed: a `languages:` entry records them as `extras`, and for them the
+committed file is the single source of truth:
+
+```yaml
+languages:
+  - name: go
+    version: 1.26.9
+    extras:
+      - go_source=nixpkgs
+```
+
+Only a setting the language's module marks committable can be recorded, to
+a value that setting accepts. A setting that decides which checks run, or
+that relaxes an allowlist, is never committable. `qsdev check` rejects any
+other key, including the extras detection records (`directory`,
+`manifests`, `toolchain`, ...), the other wizard settings and a misspelled
+key, and any other value; `qsdev init` warns about each one and ignores it.
+
+- Creating a project records a committable setting chosen in the wizard or
+  an answers file when it differs from the default.
+- `qsdev init` (create over an existing file, join and `--update`) sets each
+  committable setting from `.qsdev.yaml`; one the file does not record goes
+  back to its default. Edit `.qsdev.yaml` and run `qsdev init --update` to
+  change one; the saved answers never override it.
+- Day-2 commands (`enable`, `devenv add-*`, re-creating the project) keep the
+  committed extras as they are.
+- `.qsdev.local.yaml` cannot set extras: they are ignored there with a
+  warning.
+
+The committable settings are:
+
+<!-- committable-settings:begin -->
+| Language | Extra | Values |
+|---|---|---|
+| `go` | `go_source` | `go-overlay` (default), `nixpkgs` |
+<!-- committable-settings:end -->
+
+`extras` needs a qsdev release that knows the key: earlier releases reject
+it as an unknown field when they parse `.qsdev.yaml`. The schema `version`
+is unchanged, so raise `qsdev_version` if teammates may run an older qsdev.
+
+`go_source` says where the devenv shell's Go comes from. devenv sets
+`GOTOOLCHAIN=local`, so the shell's Go must be at least the release go.mod
+requires (the newer of its `go` and `toolchain` lines, or `version`):
+
+- `go-overlay` keeps nixpkgs' `pkgs.go` when it is new enough and otherwise
+  selects that exact release from the `github:purpleclay/go-overlay` flake
+  input, which devenv.yaml then declares (`languages.go.version`).
+- `nixpkgs` declares that the project's nixpkgs, with its registered
+  `overlays`, supplies a new enough Go, for example an overlay that raises
+  `go_1_26`. devenv.yaml gets no go-overlay input, and devenv.nix sets
+  `languages.go.package` to `pkgs.go` guarded by the required release: if
+  `pkgs.go` is older, evaluating the shell fails with
+  `qsdev: .qsdev.yaml declares go_source=nixpkgs, but pkgs.go is <version>, older than the required Go <release>; ...`
+  rather than giving a Go that cannot build the module. The line has
+  priority 999 (`lib.mkOverride 999`), so a `languages.go.package` set in
+  `devenv.local.nix` still takes precedence.
 
 ### Git settings
 
@@ -574,6 +636,10 @@ hooks:
     allowlist: [left-pad, "pypi:requests", "go:golang.org/x/net"]
     min_age_days: 7
     new_dep_gate: ask
+  credential_scan:
+    extra_patterns:
+      - "corp_[a-z0-9]{20,40}"
+      - "(?i)acme[_-]?token\\s*[=:]\\s*(?P<secret>[A-Za-z0-9]{24,})"
 ```
 
 - **`file_boundary.extra_read_paths`** widens what the `file-boundary` hook
@@ -588,14 +654,25 @@ hooks:
   still denied there. Each entry must be an absolute path or start with
   `~/`. The filesystem root, the home directory or a directory containing
   it, a path that is, contains or lies inside a credential store (`~/.ssh`,
-  `~/.aws`, `~/.config` with its `gcloud` and `helm` stores, `/etc` with
+  `~/.aws`, `~/.config` with its `gcloud`, `gh` and `helm` stores,
+  `~/.npmrc` and the other registry token files, `/etc` with
   `/etc/shadow`, and the rest of the sandbox deny list), `..` segments,
   commas and control characters are rejected by `qsdev check` and stop
-  init with an error. The hook itself also ignores an entry that resolves,
+  init with an error. When a store joins the credential catalog, an
+  existing entry that names it or a directory containing it starts failing
+  `qsdev check`: name a sub-directory outside the store instead, such as
+  `~/.m2/repository` rather than `~/.m2`. The hook itself also ignores an entry that resolves,
   through symlinks, to the root, the home directory or an ancestor of it.
   The paths reach the hook through the
   `FILE_BOUNDARY_EXTRA_READ_PATHS` variable in the `env` block of
-  `.claude/settings.json`. `FILE_BOUNDARY_STRICT_MODE=true` revokes every
+  `.claude/settings.json`, and beside them qsdev generates
+  `FILE_BOUNDARY_DENY_PATHS`, the home credential stores from the
+  credential catalog. The hook re-checks each entry against that list and
+  drops one that is, contains or lies inside a store, comparing without
+  regard to case on every OS, so a hand-edited `settings.json` cannot
+  reopen `~/.config/gh`. When `FILE_BOUNDARY_DENY_PATHS` is missing or
+  empty the hook grants no extra read path at all; regenerate with
+  `qsdev init --update`. `FILE_BOUNDARY_STRICT_MODE=true` revokes every
   out-of-project allowance, including these paths.
 - **`tool_gates.allowed`** and **`tool_gates.denied`** are the policy the
   `tool-gates` hook enforces on every tool call. Entries are Claude Code
@@ -658,6 +735,39 @@ hooks:
   `PACKAGE_GUARD_SOC2_AUDIT=true` also makes the guard record each
   decision in `$CLAUDE_AUDIT_DIR/dependency-changes-YYYY-MM.jsonl`
   (default `~/.claude/audit/`), next to the soc2-audit hook's own trail.
+- **`credential_scan.extra_patterns`** adds regexes that the
+  `credential-scan` hook (`scan-secrets.py`) looks for in every file the
+  agent writes or edits, next to its built-in token shapes. A match blocks
+  the write unless it is a placeholder: a pattern without a group is judged
+  on its whole match, and a pattern that marks the credential with one
+  `(?P<secret>...)` group is judged on that value alone, so
+  `(?i)corp_(?P<secret>[a-z0-9_]{20,})` lets `corp_your_token_here_123456`
+  through. Merging the configuration layers unions the lists, so a layer can
+  only add detection. The patterns reach the hook through
+  `CREDENTIAL_SCAN_EXTRA_PATTERNS` in the `env` block of
+  `.claude/settings.json`, deduplicated and one per line (a regex may
+  contain a comma), and are generated only while the `credential-scan` hook
+  is enabled. The hook blocks every write while an entry there does not
+  compile, reporting `invalid CREDENTIAL_SCAN_EXTRA_PATTERNS entry N`.
+
+  An entry must use the regex syntax that Go's RE2 and Python's `re` read
+  alike. `qsdev check` and init accept only this subset and reject
+  anything else:
+
+  | Syntax | Accepted |
+  |---|---|
+  | Literals | Any printable character; no control, format or line-separator characters |
+  | Escapes | `\d` `\D` `\w` `\W` `\s` `\S` `\b` `\B` `\t` `\n` `\r`, and a backslash before ASCII punctuation (`\.`, `\{`, `\\`) |
+  | Operators | `.` `^` `$` `\|` |
+  | Quantifiers | `*` `+` `?` `{n}` `{n,}` `{n,m}`, each optionally lazy (`*?`); a `{` that starts no quantifier must be escaped |
+  | Groups | `(...)`, `(?:...)` and at most one `(?P<secret>...)`; `(?i)` only at the very start |
+  | Classes | `[...]` and `[^...]` holding literals, ranges between two plain characters (`a-z`) and the escapes above except `\b` and `\B`; an unescaped `-` only first or last, and `[` and `]` escaped |
+
+  Rejected among others: lookarounds (`(?=`, `(?!`, `(?<=`), other named
+  groups, backreferences (`\1`), Unicode classes (`\pL`), `\z`, `\Q...\E`,
+  POSIX classes (`[[:alpha:]]`), `a{,3}`, inline flags after the start, an
+  empty entry, an entry with leading or trailing spaces, tabs or carriage
+  returns, and one longer than 1024 bytes.
 
 `qsdev check` also fails (`claude_hook_env_changed`, high severity) when a
 variable qsdev generates from this block is missing from, or holds another
@@ -983,6 +1093,7 @@ Key contents:
 - `require_version: ">=2.1"` -- Minimum devenv version
 - `inputs.nixpkgs.url: "github:NixOS/nixpkgs/nixpkgs-unstable"` -- Nixpkgs input
 - `inputs.git-hooks.url: "github:cachix/git-hooks.nix"` -- Pre-commit hook framework (when hooks are needed)
+- `inputs.go-overlay.url: "github:purpleclay/go-overlay"` -- Exact Go releases, for a Go project whose release is known, unless it commits `go_source=nixpkgs` (see [Committed settings](#committed-settings))
 - `impure: false` -- Prevents impure builds
 - `allow_unfree: false` -- Blocks unfree packages
 - `allow_broken: false` -- Blocks broken packages
@@ -1085,7 +1196,8 @@ Top-level structure:
 ```json
 {
   "env": {
-    "FILE_BOUNDARY_EXTRA_READ_PATHS": "/opt/android-sdk"
+    "FILE_BOUNDARY_EXTRA_READ_PATHS": "/opt/android-sdk",
+    "FILE_BOUNDARY_DENY_PATHS": "~/.ssh,~/.gnupg,~/.aws,..."
   },
   "permissions": {
     "defaultMode": "default",
@@ -1112,17 +1224,22 @@ Top-level structure:
 }
 ```
 
-The permission model uses approximately **90 deny rules** and **60 ask rules**:
+With no language selected, the `standard` preset generates more than **300 deny rules** and about **170 ask rules**; ecosystem modules add their own:
 
 - **Deny rules** block dangerous operations outright: npx, nix-env imperative installs, system package managers, pipe-to-shell, shell wrapping, env/command prefix bypass, sudo-prefixed installs, subprocess escapes, eval/xargs, and destructive operations.
+- **Home credential Read denies** keep the agent's Read tool out of every per-user credential store in the credential catalog (`internal/secrets`), at every preset and whatever the selected languages: `Read(~/.ssh/**)` and the other credential directories with their contents, and `Read(~/.npmrc)`, `Read(~/.pypirc)`, `Read(~/.cargo/credentials.toml)`, `Read(~/.m2/settings.xml)` and the other registry token files by name. A project-local file of the same name (`./.npmrc`) is not denied. With `sandbox` on, the same stores are in `sandbox.filesystem.denyRead`, and Claude Code applies the Read denies to sandboxed Bash too, so `ssh`, `gpg`, `npm`, `mvn` and `gh` run there without their user configuration. The rules match case-sensitively and do not cover shell reads such as `cat ~/.npmrc`.
 - **Ask rules** gate package install operations (npm, pip, cargo, go, gem, composer, dotnet) through the PreToolUse hook, which performs age-gating and vulnerability checks before allowing the install.
 - **MCP tool deny rules** deny, as whole tools, the file tools of MCP servers in the fallback (lowest) trust tier: every tool of the reference `filesystem` server and `mcp__github__create_or_update_file`. A permission rule cannot scope an MCP tool by its path argument, so a path rule such as `Read(./.env)` cannot be carried over to `mcp__filesystem__read_file`; the tool is denied outright instead. Servers are scored from their generated `.mcp.json` definition and the known-server database, and a server qsdev does not configure scores into the fallback tier. Manual overrides in `~/.qsdev/trust.yaml` apply only to the enforce hook, not to the committed `settings.json`. Tools of higher-tier servers stay available; the confused-deputy path check that would cover them runs inside the `qsdev enforce` hook, which no tier or preset enables yet. See [MCP trust scoring](security-architecture.md#layer-13-package-and-mcp-risk-scoring).
 
 The three-way merge during updates preserves any custom allow/deny rules you have added while incorporating new rules from template upgrades.
 
 `env` holds variables qsdev generates to configure its hooks
-(`FILE_BOUNDARY_EXTRA_READ_PATHS`, from `hooks.file_boundary.extra_read_paths`;
+(`FILE_BOUNDARY_EXTRA_READ_PATHS`, from `hooks.file_boundary.extra_read_paths`,
+with `FILE_BOUNDARY_DENY_PATHS`, the home credential stores the hook keeps
+out of those paths, set exactly when they are;
 `TOOL_GATES_ALLOWED` and `TOOL_GATES_DENIED`, from `hooks.tool_gates`;
+`CREDENTIAL_SCAN_EXTRA_PATTERNS`, one regex per line, from
+`hooks.credential_scan.extra_patterns`;
 and, while the package guard is registered, `PACKAGE_GUARD_MIN_AGE_DAYS`,
 its release-age gate in days from the compliance level raised by
 `hooks.package_guard.min_age_days`; `PACKAGE_GUARD_TEAM_ALLOWLIST`,
@@ -2080,7 +2197,16 @@ does not record is taken from detection when the workflow is generated, so
 recorded it.
 See [Security Architecture](security-architecture.md#generated-workflows).
 
-Every step is pinned immutably: actions to a full commit SHA, and the Snyk step to a container image digest (`uses: docker://snyk/snyk@sha256:...`, running `snyk test --all-projects` with `SNYK_TOKEN`). The Snyk step does not use `snyk/actions`, because that action runs the `snyk/snyk:node` image by its mutable tag, so a SHA pin on the action would not pin the code that receives the token. The image comes from the `node` variant, which carries Node.js but not the other ecosystems' build tools; Snyk's `--all-projects` needs those tools to resolve some manifests (for example `go.mod`). The language-specific variants are not used because their entrypoint installs the scanned project's dependencies (for example `pip install -r requirements.txt` or `mvn install`) before scanning, which would run the repository's install hooks with `SNYK_TOKEN` in the environment. qsdev bumps these pins in new releases; `qsdev init --update` picks them up.
+The `ecosystem-ci` job installs Nix with no third-party action: it runs the
+generated `.github/scripts/install-nix.sh` on the generated
+`.github/nix-release.env`, which downloads the official Nix release and checks
+it against the pinned SHA-256 before anything from it runs. Both files come
+with the job (merge strategy `overwrite`; the pin file is pinned to LF line
+endings in `.gitattributes`), and `qsdev init --update` moves them to newer
+pins.
+
+Every step is pinned immutably: actions to a full commit SHA, the Nix release
+to its tarball SHA-256, and the Snyk step to a container image digest (`uses: docker://snyk/snyk@sha256:...`, running `snyk test --all-projects` with `SNYK_TOKEN`). The Snyk step does not use `snyk/actions`, because that action runs the `snyk/snyk:node` image by its mutable tag, so a SHA pin on the action would not pin the code that receives the token. The image comes from the `node` variant, which carries Node.js but not the other ecosystems' build tools; Snyk's `--all-projects` needs those tools to resolve some manifests (for example `go.mod`). The language-specific variants are not used because their entrypoint installs the scanned project's dependencies (for example `pip install -r requirements.txt` or `mvn install`) before scanning, which would run the repository's install hooks with `SNYK_TOKEN` in the environment. qsdev bumps these pins in new releases; `qsdev init --update` picks them up.
 
 ---
 

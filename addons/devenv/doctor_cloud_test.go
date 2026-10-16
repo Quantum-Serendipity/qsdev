@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/Quantum-Serendipity/qsdev/pkg/denyutil"
 	"github.com/Quantum-Serendipity/qsdev/pkg/ecosystem/modules/cloudcommon"
 )
 
@@ -23,10 +24,13 @@ func TestCloudIsolationSection(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	settingsWith := func(t *testing.T, provider cloudcommon.CloudProvider) string {
+	// settingsWith returns settings carrying provider's generated deny rules:
+	// its Bash rules and the canon's shell-read tripwire over homeStore.
+	settingsWith := func(t *testing.T, provider cloudcommon.CloudProvider, homeStore string) string {
 		t.Helper()
+		deny := append(cloudcommon.BashDenyRules(provider), denyutil.HomeShellReadRules(homeStore, true)...)
 		doc := map[string]any{
-			"permissions": map[string]any{"deny": cloudcommon.BashDenyRules(provider)},
+			"permissions": map[string]any{"deny": deny},
 			"sandbox":     map[string]any{"filesystem": map[string]any{"denyRead": cloudcommon.ReadDenyPaths(provider)}},
 		}
 		data, err := json.Marshal(doc)
@@ -55,7 +59,7 @@ func TestCloudIsolationSection(t *testing.T) {
 			name: "isolated",
 			files: map[string]string{
 				".qsdev.yaml":           awsConfig,
-				".claude/settings.json": settingsWith(t, cloudcommon.AWS),
+				".claude/settings.json": settingsWith(t, cloudcommon.AWS, ".aws"),
 				"devenv.nix":            "{ pkgs, ... }:\n{\n  env = {\n    AWS_PROFILE = \"proj\";\n  };\n}\n",
 			},
 			wantStatus:   "isolated",
@@ -65,7 +69,7 @@ func TestCloudIsolationSection(t *testing.T) {
 			name: "placeholder and unparsable local module",
 			files: map[string]string{
 				".qsdev.yaml":           awsConfig,
-				".claude/settings.json": settingsWith(t, cloudcommon.AWS),
+				".claude/settings.json": settingsWith(t, cloudcommon.AWS, ".aws"),
 				"devenv.nix":            "{ pkgs, ... }:\n{\n  env.AWS_PROFILE = \"PLACEHOLDER\";\n}\n",
 				"devenv.local.nix":      "not nix",
 			},

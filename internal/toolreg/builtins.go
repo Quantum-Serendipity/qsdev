@@ -3,6 +3,7 @@ package toolreg
 import (
 	"maps"
 
+	"github.com/Quantum-Serendipity/qsdev/internal/catalog"
 	"github.com/Quantum-Serendipity/qsdev/internal/sectools"
 	"github.com/Quantum-Serendipity/qsdev/internal/sliceutil"
 	"github.com/Quantum-Serendipity/qsdev/internal/vsentinel"
@@ -14,15 +15,18 @@ import (
 // catalog tools when the default registry is built (see Default). Tools
 // whose only lifecycle effect is recording themselves in EnabledTools need
 // no Enable/DisableFunc: the enable and disable commands already do that.
-func builtinBehaviors() map[string]ToolBehavior {
-	m := coreBehaviors()
+// cat is the catalog the registry was built from; behaviors take their
+// defaults from it rather than keeping copies.
+func builtinBehaviors(cat *catalog.Catalog) map[string]ToolBehavior {
+	m := coreBehaviors(cat)
 	maps.Copy(m, gitWorkflowBehaviors())
 	maps.Copy(m, shellBehaviors())
 	maps.Copy(m, consultingWorkflowBehaviors())
 	return m
 }
 
-func coreBehaviors() map[string]ToolBehavior {
+func coreBehaviors(cat *catalog.Catalog) map[string]ToolBehavior {
+	sembleMode := cat.DefaultSembleMode()
 	return map[string]ToolBehavior{
 		ToolVersionSentinel: {
 			EnableFunc: func(a *types.WizardAnswers) {
@@ -48,8 +52,10 @@ func coreBehaviors() map[string]ToolBehavior {
 		ToolSemble: {
 			EnableFunc: func(a *types.WizardAnswers) {
 				a.AgentTools.SembleEnabled = true
+				// .qsdev.yaml does not record the mode: resolve an empty
+				// one to the catalog default, as FillDefaults does.
 				if a.AgentTools.SembleMode == "" {
-					a.AgentTools.SembleMode = "mcp"
+					a.AgentTools.SembleMode = sembleMode
 				}
 			},
 			DisableFunc: func(a *types.WizardAnswers) {

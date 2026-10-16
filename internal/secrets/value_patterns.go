@@ -25,7 +25,10 @@ const PrivateKeyHeaderPattern = `-----BEGIN [A-Z0-9 ]*PRIVATE KEY(?: BLOCK)?----
 //
 // Every Regex must work unchanged in both Go RE2 and Python re, because the
 // same strings are mirrored into the scan-secrets.py hook: no lookarounds, no
-// \z, no mid-pattern inline flags. Every entry needs at least one sample in
+// \z, no mid-pattern inline flags. An entry that matches more than the
+// credential itself marks the credential with one (?P<secret>...) group
+// (Python syntax, which RE2 accepts too): scan-secrets judges a placeholder by
+// that value alone. Every entry needs at least one sample in
 // secretstest.ValuePatternSamples.
 var ValuePatterns = []ValuePattern{
 	// AWS access key IDs: long-term (AKIA) and temporary STS (ASIA).
@@ -54,8 +57,9 @@ var ValuePatterns = []ValuePattern{
 	{Name: "azure-storage", Regex: `AccountKey=[A-Za-z0-9+/=]{44,}`},
 	// Google API keys.
 	{Name: "google-api", Regex: `AIza[0-9A-Za-z_-]{35}`},
-	// Database connection strings with userinfo credentials.
-	{Name: "db-url", Regex: `(mongodb(\+srv)?|postgres(ql)?|mysql|redis)://[^\s"':]+:[^\s"'@]+@[^\s"']{5,}`},
+	// Database connection strings with userinfo credentials; the password is
+	// the secret group.
+	{Name: "db-url", Regex: `(mongodb(\+srv)?|postgres(ql)?|mysql|redis)://[^\s"':]+:(?P<secret>[^\s"'@]+)@[^\s"']{5,}`},
 	// HashiCorp Vault service, batch and recovery tokens.
 	{Name: "vault", Regex: `hv[sbr]\.[A-Za-z0-9_-]{24,}`},
 	// Slack API tokens.

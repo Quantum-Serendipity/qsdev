@@ -6,6 +6,20 @@
 # time is about wall time for these processes, so the plan's numbers carry
 # over without re-basing.
 #
+# What a CLI row measures. The CLI suite runs every command on a hermetic
+# PATH (perfbudget.HermeticPath): the qsdev under test, git (the fixture is
+# a repository qsdev reads through it), and an empty stub program for each
+# tool qsdev probes only for a version or for syntax, as its registries list
+# them (doctor's tool checks, procexec's local probes). A tool qsdev queries
+# for an answer it parses (podman, docker, ps, getent, ...) is absent, as is
+# every other host tool. So a row holds qsdev's own work plus one stub
+# start-up per probe it launches, about a noop's CPU each, and never the
+# probed tools' own CPU, which depends on what the machine has installed
+# (a cloud CLI's version probe alone can cost more than a budget). A
+# command that starts more probes costs more; one that runs a host tool
+# outside the registries finds it absent. The hook suite runs hook scripts
+# on the host PATH, because their interpreter is their cost.
+#
 # A cpu_p95_ms budget gates the p95 over `runs` timed runs after `warmups`
 # untimed ones, multiplied by the calibration factor of the machine running
 # the suite and by `allowance`, which absorbs run-to-run noise. It is the
@@ -183,10 +197,16 @@ budgets:
     surface: Read-only project commands (status, check, list, info, devenv doctor, --dry-run)
     cpu_p95_ms: 150
     skips:
+      # Re-derived on the hermetic PATH (see the header): five CLI suite runs
+      # on the reference machine, each row's CPU p95 over its calibration.
       - workstream: XD-WS9
-        subjects: [qsdev check, qsdev devenv doctor]
-        reason: the local tool probes it waits for dominate its CPU; 151 to 169 ms
-        ceiling_ms: 212
+        subjects: [qsdev check]
+        reason: its own work, with probe tools stubbed, is 144 to 151 ms
+        ceiling_ms: 189
+      - workstream: XD-WS9
+        subjects: [qsdev devenv doctor]
+        reason: its own work plus a stub start-up per tool it probes is 124 to 131 ms, within 1.25x of the limit
+        ceiling_ms: 164
   - id: cli-mcp-status
     surface: qsdev mcp status / mcp health with default flags
     cpu_p95_ms: 300

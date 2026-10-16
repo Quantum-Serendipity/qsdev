@@ -6,7 +6,6 @@ import (
 	"errors"
 	"fmt"
 	"strconv"
-	"strings"
 )
 
 // The process-table parsers have no build constraint, so their tests run on
@@ -72,10 +71,4 @@ func parseProcArgs2(data []byte) (procArgs, error) {
 		p.env = append(p.env, string(rest[:end]))
 		rest = rest[end+1:]
 	}
-}
-
-// splitNUL splits a NUL-separated list, such as a Linux /proc/<pid>/environ
-// or cmdline, dropping empty entries.
-func splitNUL(data []byte) []string {
-	return strings.FieldsFunc(string(data), func(r rune) bool { return r == 0 })
 }

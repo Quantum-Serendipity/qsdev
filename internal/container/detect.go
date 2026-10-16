@@ -25,8 +25,7 @@ func Detect(ctx context.Context, prober Prober) (*RuntimeInfo, error) {
 	if path, err := prober.LookPath("docker"); err == nil {
 		// Determine if docker is a Podman compatibility alias.
 		if out, err := prober.Output(ctx, "docker", "--version"); err == nil {
-			output := strings.ToLower(string(out))
-			if strings.Contains(output, "podman") {
+			if isPodmanAlias(out) {
 				info.HasDockerCompat = true
 			} else {
 				info.Available = append(info.Available, RuntimeDocker)
@@ -67,7 +66,7 @@ func Detect(ctx context.Context, prober Prober) (*RuntimeInfo, error) {
 // the mode is unknown and Podman cannot run containers, so it is neither
 // claimed rootless nor selected, and the failure is kept as a warning.
 func detectPodman(ctx context.Context, prober Prober, info *RuntimeInfo, path string) {
-	out, err := prober.Output(ctx, "podman", "info", "--format", "{{.Host.Security.Rootless}}")
+	mode, err := podmanMode(ctx, prober)
 	if err != nil {
 		info.Warnings = append(info.Warnings, fmt.Sprintf(
 			"podman found at %s but `podman info` failed (%v); it is unusable until fixed "+
@@ -80,17 +79,60 @@ func detectPodman(ctx context.Context, prober Prober, info *RuntimeInfo, path st
 		info.Version = strings.TrimSpace(string(ver))
 	}
 
-	info.Rootless = strings.TrimSpace(string(out)) == "true"
+	info.Active = mode
+	info.Rootless = mode == RuntimePodmanRootless
 	if info.Rootless {
-		info.Active = RuntimePodmanRootless
 		if xdg := prober.Getenv("XDG_RUNTIME_DIR"); xdg != "" {
 			info.SocketPath = xdg + "/podman/podman.sock"
 		}
 	} else {
-		info.Active = RuntimePodmanRootful
 		info.SocketPath = "/run/podman/podman.sock"
 	}
 	info.Available = append(info.Available, info.Active)
+}
+
+// podmanMode asks `podman info` whether Podman runs rootless, the probe that
+// decides whether it is usable and in which mode.
+func podmanMode(ctx context.Context, prober Prober) (Runtime, error) {
+	out, err := prober.Output(ctx, "podman", "info", "--format", "{{.Host.Security.Rootless}}")
+	if err != nil {
+		return RuntimeNone, err
+	}
+	if strings.TrimSpace(string(out)) == "true" {
+		return RuntimePodmanRootless, nil
+	}
+	return RuntimePodmanRootful, nil
+}
+
+// isPodmanAlias reports whether `docker --version` printed out is Podman's
+// Docker compatibility alias rather than Docker.
+func isPodmanAlias(out []byte) bool {
+	return strings.Contains(strings.ToLower(string(out)), "podman")
+}
+
+// ActiveRuntime returns the runtime Detect makes active, running only the
+// probes that decide it, in Detect's order of preference: Podman's mode,
+// then whether docker is Docker or a Podman alias, then whether
+// systemd-nspawn is installed, stopping at the first usable one. It skips
+// the version, compose and availability probes Detect also runs (`podman
+// version`, `docker compose version`, ...), so a caller that needs only the
+// active runtime, such as project detection on every status, does not pay
+// for them.
+func ActiveRuntime(ctx context.Context, prober Prober) Runtime {
+	if _, err := prober.LookPath("podman"); err == nil {
+		if mode, err := podmanMode(ctx, prober); err == nil {
+			return mode
+		}
+	}
+	if _, err := prober.LookPath("docker"); err == nil {
+		if out, err := prober.Output(ctx, "docker", "--version"); err == nil && !isPodmanAlias(out) {
+			return RuntimeDocker
+		}
+	}
+	if _, err := prober.LookPath("systemd-nspawn"); err == nil {
+		return RuntimeNspawn
+	}
+	return RuntimeNone
 }
 
 // DetectDefault runs Detect with the default ExecProber.

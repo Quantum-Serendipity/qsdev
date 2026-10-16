@@ -1,21 +1,21 @@
 #!/usr/bin/env bash
 # install-nix.sh: install the pinned official Nix release on a GitHub Actions
-# runner, with no third-party action. The repository's Actions allowlist does
-# not admit cachix/install-nix-action (TestWorkflowActionsAllowlisted).
+# runner, with no third-party action, so it runs under any Actions allowlist.
+# qsdev generates this file and .github/nix-release.env from its CI pin
+# catalog; `qsdev update` refreshes both.
 #
 # Usage: .github/scripts/install-nix.sh [ENV_FILE]
 #
 # NIX_VERSION and the per-system NIX_SHA256_* digests come from ENV_FILE
-# (default .github/tool-versions.env, the single source of tool pins, kept
-# current by tool-pins.yml). The file is parsed, never sourced.
+# (default .github/nix-release.env). The file is parsed, never sourced.
 #
 # The script downloads nix-<version>-<system>.tar.xz from releases.nixos.org
 # and checks it against the pinned SHA-256 before anything is extracted or run.
 # It then runs the tarball's bundled installer: multi-user (--daemon) on macOS,
 # the only mode Nix supports there, and single-user (--no-daemon) on Linux. It
-# enables nix-command and flakes, which the workflows' nix build, eval, flake,
-# shell and registry commands need, and puts nix on PATH for later steps
-# through $GITHUB_PATH and $GITHUB_ENV.
+# enables nix-command and flakes, which nix build, eval, flake, shell and
+# registry commands need, and puts nix on PATH for later steps through
+# $GITHUB_PATH and $GITHUB_ENV.
 #
 # When GITHUB_TOKEN is set, it is written to the runner user's nix.conf (mode
 # 0600) as a github.com access token, so flake fetches from GitHub are not
@@ -24,7 +24,7 @@ set -euo pipefail
 
 readonly RELEASES_URL="https://releases.nixos.org/nix"
 
-env_file="${1:-.github/tool-versions.env}"
+env_file="${1:-.github/nix-release.env}"
 
 die() {
   echo "install-nix: $*" >&2
@@ -82,8 +82,8 @@ tar -xJf "$work/$tarball" -C "$work"
 installer="$work/nix-${version}-${system}/install"
 [ -x "$installer" ] || die "$tarball has no installer at nix-${version}-${system}/install"
 
-# Settings every nix invocation in the workflows needs. The token, a secret,
-# goes only into the user's own mode-0600 nix.conf below.
+# Settings every later nix invocation needs. The token, a secret, goes only
+# into the user's own mode-0600 nix.conf below.
 conf="$work/nix.conf"
 cat >"$conf" <<'EOF'
 experimental-features = nix-command flakes

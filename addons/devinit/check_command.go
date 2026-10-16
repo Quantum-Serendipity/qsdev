@@ -261,6 +261,7 @@ func catalogFreeCheckContext(cmd *cobra.Command, projectRoot string) check.Check
 		ClaudeUserDir:   claudeUserDir(),
 		OrgConfigDrift:  catalog.ProjectOrgConfigDrift(projectRoot),
 		OrgConfigSource: catalog.ProjectOrgConfigSource(projectRoot),
+		Settings:        committableSettings(),
 	}
 	// Parse config if present. The error travels in the context so the report
 	// (including machine-readable formats) distinguishes "not found" from a
@@ -351,7 +352,12 @@ func isMachineReadableFormat(f check.OutputFormat) bool {
 // requiredDenyRules returns the base deny rules the generator emits for the
 // project's permission preset; each must be present in .claude/settings.json.
 // The rules come from the catalog's deny sets for that preset, so a preset
-// that omits a set (e.g. supply-chain-only) is not required to carry it.
+// that omits a set (e.g. supply-chain-only) is not required to carry it, plus
+// the nested secrets rules the generator adds when the preset denies the
+// top-level secrets/ directory (claudecode.WithNestedSecretFileRules), plus
+// the home credential denies of the credential canon (the Read denies and the
+// shell-read tripwire, claudecode.HomeCredentialDenyRules), which every
+// preset carries.
 func requiredDenyRules(answers types.WizardAnswers, cfg *types.QsdevConfig) ([]string, error) {
 	cat, err := catalog.Default()
 	if err != nil {
@@ -368,7 +374,7 @@ func requiredDenyRules(answers types.WizardAnswers, cfg *types.QsdevConfig) ([]s
 	for _, setName := range def.DenySets {
 		rules = append(rules, cat.PermissionDenyRules(setName)...)
 	}
-	return rules, nil
+	return append(claudecode.WithNestedSecretFileRules(rules), claudecode.HomeCredentialDenyRules()...), nil
 }
 
 // effectivePermissionPreset resolves the permission preset the same way

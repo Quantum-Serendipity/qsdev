@@ -3,7 +3,11 @@
 package main
 
 import (
+	"io/fs"
+	"maps"
+	"os"
 	"path/filepath"
+	"regexp"
 	"slices"
 	"strings"
 	"testing"
@@ -25,7 +29,10 @@ type cliRow struct {
 // read-only (cmdutil.MarkReadOnly, so a new read-only command is measured
 // without touching this test), and init creating and joining a project, in
 // a hermetic generated project, and holds each to its budget in
-// budgets.yaml. Each runs without network access and with procexec's
+// budgets.yaml. Each runs on a hermetic PATH, where every host tool qsdev
+// probes is an empty stub (see hermeticPath), so a row measures qsdev's own
+// CPU and not that of whatever tools the machine has installed. Each runs
+// without network access and with procexec's
 // forbid-exec guard on: it must not trip the guard or panic, and it must
 // exit as it does with the network reachable, so no command depends on the
 // network.
@@ -53,6 +60,13 @@ func TestCLIPerf(t *testing.T) {
 	}
 }
 
+// hostTools are the host tools the measured commands genuinely need, which
+// run as themselves: the project is a git repository and qsdev reads it
+// through git (status and repair resolve its hooks path), which a stub
+// would answer for no repository at all. Every other tool they probe is a
+// stub (see probedTools).
+var hostTools = []string{"git"}
+
 // cliPerfSuite is the fixture TestCLIPerf measures in: the budgets, the
 // qsdev binary under test, the calibration program, the network namespace
 // prefix and a committed, initialized project with clean sources for init
@@ -67,6 +81,9 @@ type cliPerfSuite struct {
 	project string   // initialized and committed; read-only commands run here
 	create  string   // a Go project with no qsdev configuration
 	join    string   // a clean clone of project
+	// copyTools are the absolute sh, mktemp and cp initInCopy runs: the
+	// measured PATH holds none of them.
+	copyTools []string
 }
 
 func newCLIPerfSuite(t *testing.T) *cliPerfSuite {
@@ -84,24 +101,20 @@ func newCLIPerfSuite(t *testing.T) *cliPerfSuite {
 	if err != nil {
 		t.Fatal(err)
 	}
-	binDir := filepath.Dir(bin)
-	calEnv, err := perfbudget.IsolatedEnv(filepath.Join(root, "calibration"), binDir)
-	if err != nil {
-		t.Fatal(err)
-	}
-	userEnv, err := perfbudget.IsolatedEnv(filepath.Join(root, "user"), binDir)
-	if err != nil {
-		t.Fatal(err)
-	}
 	s := &cliPerfSuite{
-		budgets: b, bin: bin, noop: noop, netns: perfbudget.NetNS(t), calEnv: calEnv,
-		project: filepath.Join(root, "project"),
-		create:  filepath.Join(root, "create-source"),
-		join:    filepath.Join(root, "join-source"),
+		budgets: b, bin: bin, noop: noop, netns: perfbudget.NetNS(t),
+		project:   filepath.Join(root, "project"),
+		create:    filepath.Join(root, "create-source"),
+		join:      filepath.Join(root, "join-source"),
+		copyTools: lookPaths(t, "sh", "mktemp", "cp"),
 	}
-	// Setup and the update check stay off in every run, so neither the
-	// fixture nor a run with network reaches out.
-	env := append(slices.Clone(userEnv), "QSDEV_SKIP_SETUP=1", branding.Get().EnvNoUpdate+"=1")
+	// The fixture runs on a hermetic PATH too, so the project it creates
+	// does not depend on what the host has installed. Before the project
+	// exists, its stubs are the tools doctor's registry lists.
+	setupPath := s.hermeticPath(t, filepath.Join(root, "path-setup"), probedIn(t, ""))
+	s.checkStubsInert(t, filepath.Join(root, "inert-setup"), setupPath)
+	s.calEnv = s.isolatedEnv(t, filepath.Join(root, "calibration"), setupPath)
+	env := s.isolatedEnv(t, filepath.Join(root, "user"), setupPath)
 
 	s.goRepo(t, s.project, env)
 	perfbudget.RunIn(t, s.project, env, append(slices.Clone(s.netns), bin, "init", "--yes")...)
@@ -111,8 +124,150 @@ func newCLIPerfSuite(t *testing.T) *cliPerfSuite {
 	perfbudget.RunIn(t, root, env, "git", "clone", "-q", s.project, s.join)
 	s.goRepo(t, s.create, env)
 
-	s.env = append(env, procexec.ForbidExecEnv+"=1")
+	// The measured commands also find a stub for every program the
+	// project's hooks run, which doctor probes there.
+	measuredPath := s.hermeticPath(t, filepath.Join(root, "path"), probedIn(t, s.project))
+	// The create and join rows run init on this PATH, so its extra stubs
+	// must be inert too.
+	s.checkStubsInert(t, filepath.Join(root, "inert-measured"), measuredPath)
+	s.env = append(s.isolatedEnv(t, filepath.Join(root, "user"), measuredPath), procexec.ForbidExecEnv+"=1")
 	return s
+}
+
+// isolatedEnv returns the hermetic environment under root with PATH path,
+// setup and the update check off, so neither the fixture nor a run with
+// network reaches out.
+func (s *cliPerfSuite) isolatedEnv(t *testing.T, root, path string) []string {
+	t.Helper()
+	env, err := perfbudget.IsolatedEnv(root, path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return append(env, "QSDEV_SKIP_SETUP=1", branding.Get().EnvNoUpdate+"=1")
+}
+
+// probedIn returns probedTools(project), failing t on an error.
+func probedIn(t *testing.T, project string) []string {
+	t.Helper()
+	probed, err := probedTools(project)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return probed
+}
+
+// hermeticPath creates dir holding a hermetic PATH: the qsdev under test,
+// hostTools, and a stub for each of probed (see probedTools).
+func (s *cliPerfSuite) hermeticPath(t *testing.T, dir string, probed []string) string {
+	t.Helper()
+	path, err := perfbudget.HermeticPath(dir, perfbudget.HermeticTools{
+		Bin: filepath.Dir(s.bin), Host: hostTools, Probed: probed, Stub: s.noop,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return path
+}
+
+// checkStubsInert fails t when the stubs on stubbedPath change what init
+// generates: creating a project with them and with no stub at all, every
+// probed tool absent, must write the same tree. So the fixture is a project
+// a real host could get, not one shaped by a stub's empty answer (an empty
+// `podman info` would read as rootful Podman and add its guide). root is a
+// directory of its own for each call.
+func (s *cliPerfSuite) checkStubsInert(t *testing.T, root, stubbedPath string) {
+	t.Helper()
+	if err := os.MkdirAll(root, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	barePath := s.hermeticPath(t, filepath.Join(root, "path-bare"), nil)
+	// Both run at the same path, which init records, and each moves aside
+	// after, so the trees differ only by what the stubs change and the run
+	// timestamps readTree masks.
+	dir := filepath.Join(root, "inert", "project")
+	trees := map[string]map[string]string{}
+	for name, path := range map[string]string{"stubbed": stubbedPath, "bare": barePath} {
+		env := s.isolatedEnv(t, filepath.Join(root, "inert-"+name, "user"), path)
+		s.goRepo(t, dir, env)
+		perfbudget.RunIn(t, dir, env, append(slices.Clone(s.netns), s.bin, "init", "--yes")...)
+		trees[name] = readTree(t, dir)
+		if err := os.Rename(dir, filepath.Join(root, "inert-"+name, "project")); err != nil {
+			t.Fatal(err)
+		}
+	}
+	stubbed, bare := trees["stubbed"], trees["bare"]
+	for _, rel := range slices.Sorted(maps.Keys(stubbed)) {
+		if want, ok := bare[rel]; !ok {
+			t.Errorf("init on the stubs writes %s, which it does not write with no tools", rel)
+		} else if got, wantLine, differ := firstLineDiff(stubbed[rel], want); differ {
+			t.Errorf("init on the stubs writes %s differently from init with no tools: %q, not %q", rel, got, wantLine)
+		}
+	}
+	for rel := range bare {
+		if _, ok := stubbed[rel]; !ok {
+			t.Errorf("init with no tools writes %s, which it does not write on the stubs", rel)
+		}
+	}
+}
+
+// firstLineDiff returns the first line where a and b differ, and whether
+// they do.
+func firstLineDiff(a, b string) (aLine, bLine string, differ bool) {
+	al, bl := strings.Split(a, "\n"), strings.Split(b, "\n")
+	for i := range max(len(al), len(bl)) {
+		aLine, bLine = "", ""
+		if i < len(al) {
+			aLine = al[i]
+		}
+		if i < len(bl) {
+			bLine = bl[i]
+		}
+		if aLine != bLine || i >= len(al) || i >= len(bl) {
+			return aLine, bLine, true
+		}
+	}
+	return "", "", false
+}
+
+// timestampRe matches an RFC 3339 timestamp, which readTree masks.
+var timestampRe = regexp.MustCompile(`\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d(\.\d+)?(Z|[+-]\d\d:\d\d)`)
+
+// readTree returns the content of every file under dir outside .git, by
+// slash-separated relative path, with every timestamp masked.
+func readTree(t *testing.T, dir string) map[string]string {
+	t.Helper()
+	tree := map[string]string{}
+	err := fs.WalkDir(os.DirFS(dir), ".", func(rel string, d fs.DirEntry, err error) error {
+		switch {
+		case err != nil:
+			return err
+		case d.IsDir() && d.Name() == ".git":
+			return fs.SkipDir
+		case d.IsDir():
+			return nil
+		}
+		data, err := os.ReadFile(filepath.Join(dir, filepath.FromSlash(rel)))
+		tree[rel] = timestampRe.ReplaceAllString(string(data), "<time>")
+		return err
+	})
+	if err != nil {
+		t.Fatalf("reading %s: %v", dir, err)
+	}
+	return tree
+}
+
+// lookPaths resolves each name on the test's PATH.
+func lookPaths(t *testing.T, names ...string) []string {
+	t.Helper()
+	paths := make([]string, 0, len(names))
+	for _, name := range names {
+		p, err := procexec.LookPath(name)
+		if err != nil {
+			t.Fatal(err)
+		}
+		paths = append(paths, p)
+	}
+	return paths
 }
 
 // goRepo writes the perfbudget Go project into dir as a fresh git
@@ -154,10 +309,12 @@ func readOnlyBudget(inv string) string {
 // initInCopy runs `qsdev init --yes` in a fresh copy of source, so every
 // timed run starts from the same tree. The shell execs qsdev, so the run's
 // CPU is qsdev's plus the mktemp and cp it waited for, a few milliseconds
-// against the init budget.
+// against the init budget. The shell, mktemp and cp are absolute (see
+// copyTools).
 func (s *cliPerfSuite) initInCopy(source string) []string {
-	const script = `d=$(mktemp -d) && cp -R "$1"/. "$d" && cd "$d" && exec "$2" init --yes`
-	return []string{"sh", "-c", script, "sh", source, s.bin}
+	const script = `d=$("$3" -d) && "$4" -R "$1"/. "$d" && cd "$d" && exec "$2" init --yes`
+	sh, mktemp, cp := s.copyTools[0], s.copyTools[1], s.copyTools[2]
+	return []string{sh, "-c", script, "sh", source, s.bin, mktemp, cp}
 }
 
 // checkCLIRun fails t when a run tripped procexec's forbid-exec guard or

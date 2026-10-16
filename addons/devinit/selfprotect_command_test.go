@@ -601,6 +601,11 @@ func TestSelfprotectHook_ShellToolParity(t *testing.T) {
 		{"git add .qsdev.yaml", 0, ""},
 		{"head .npmrc", 0, ""},
 		{"git commit -m x", 0, ""},
+		// A find without a writing action writes none of its operands
+		// (W1D-RESIDUAL); with one it still rewrites what it matches.
+		{"find . -name .npmrc", 0, ""},
+		{"find . -name '.[n]*'", 0, ""},
+		{"find . -name .npmrc -delete", 2, "GD-004"},
 		// Known limitations, deferred to U18-WS8: readers and index-only git
 		// forms the write analysis does not model fail closed when the line
 		// names a guarded file. For .npmrc under Bash this is as on base;
@@ -610,7 +615,6 @@ func TestSelfprotectHook_ShellToolParity(t *testing.T) {
 		{"sha256sum .npmrc", 2, "GD-004"},                   // U18-WS8
 		{"less .npmrc", 2, "GD-004"},                        // U18-WS8
 		{"bat .npmrc", 2, "GD-004"},                         // U18-WS8
-		{"find . -name .npmrc", 2, "GD-004"},                // U18-WS8
 		{"awk '{print}' .npmrc", 2, "GD-004"},               // U18-WS8
 		{"python3 scripts/check.py --config .npmrc", 2, ""}, // U18-WS8
 		{"git restore --staged .qsdev.yaml", 2, "GD-001"},   // U18-WS8

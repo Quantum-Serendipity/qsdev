@@ -85,7 +85,7 @@ func TestJavaConfig_CommittedIsAuthoritative(t *testing.T) {
 			t.Fatal(err)
 		}
 		a := types.WizardAnswers{Java: types.JavaConfig{RepositoryAllowlist: []string{"stale"}}}
-		policy.Apply(&a)
+		policy.Apply(&a, nil)
 		if !slices.Equal(a.Java.RepositoryAllowlist, []string{"confluent"}) {
 			t.Errorf("applied allowlist = %q, want [confluent]", a.Java.RepositoryAllowlist)
 		}

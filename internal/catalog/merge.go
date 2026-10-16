@@ -51,6 +51,9 @@ func MergeCatalogs(base, overlay *Catalog) *Catalog {
 	// The always-on hooks and the stripped variables are part of the security
 	// floor: every layer may only add to them.
 	result.security.Hooks.Default = unionStrings(base.security.Hooks.Default, overlay.security.Hooks.Default)
+	// An overlay exclude exempts paths from an always-on hook, which lowers
+	// the floor; securityFloorViolations rejects it.
+	result.security.Hooks.Excludes = unionStringSliceMap(base.security.Hooks.Excludes, overlay.security.Hooks.Excludes)
 	result.security.BasePackages = mergeStringSlice(base.security.BasePackages, overlay.security.BasePackages)
 	result.security.CleanEnvironment.UnsetVars = unionStrings(
 		base.security.CleanEnvironment.UnsetVars, overlay.security.CleanEnvironment.UnsetVars,

@@ -9,7 +9,6 @@ import (
 	"github.com/Quantum-Serendipity/qsdev/addons/devenv"
 	"github.com/Quantum-Serendipity/qsdev/internal/profile"
 	"github.com/Quantum-Serendipity/qsdev/internal/toolreg"
-	"github.com/Quantum-Serendipity/qsdev/pkg/ecosystem"
 	"github.com/Quantum-Serendipity/qsdev/pkg/generate"
 	"github.com/Quantum-Serendipity/qsdev/pkg/types"
 )
@@ -58,7 +57,7 @@ func applyScopeFlags(opts InitOptions, answers *types.WizardAnswers) {
 }
 
 func runAccumulator(answers types.WizardAnswers, scope generationScope) (accumulatorResult, error) {
-	registry := ecosystem.DefaultRegistry()
+	registry := ecosystems()
 	acc := generate.NewFragmentAccumulator()
 
 	if !scope.ClaudeOnly {
@@ -127,7 +126,7 @@ func warnEcosystemSetup(w io.Writer, projectRoot string, answers types.WizardAns
 	if scope.ClaudeOnly {
 		return
 	}
-	for _, msg := range ecosystem.DefaultRegistry().SetupWarnings(projectRoot, answers) {
+	for _, msg := range ecosystems().SetupWarnings(projectRoot, answers) {
 		_, _ = fmt.Fprintln(w, "Warning: "+msg)
 	}
 }

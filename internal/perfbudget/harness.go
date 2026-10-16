@@ -31,7 +31,7 @@ const (
 
 // Build puts the qsdev binary to measure in dir, under the name generated
 // hooks invoke it by, and returns its path: a copy of the one BinEnv names,
-// or a fresh build of cmd/qsdev. Put dir first on PATH (see IsolatedEnv) so
+// or a fresh build of cmd/qsdev. Put dir first on PATH (see HermeticPath, HostPath) so
 // hooks run that binary. The build inherits the caller's Go environment
 // (GOFLAGS, GOWORK).
 func Build(dir string) (string, error) {
@@ -46,7 +46,7 @@ func Build(dir string) (string, error) {
 }
 
 // BuildNoop builds the empty Go program Calibrate times into dir and
-// returns its path.
+// returns its path. HermeticPath's stubs run it too.
 func BuildNoop(dir string) (string, error) {
 	bin := executable(dir, "perfbudget-noop")
 	return bin, goBuild(noopPackage, bin)
@@ -112,7 +112,9 @@ func WriteGoProject(dir string) error {
 }
 
 // RunIn runs argv in dir with env, as a fixture step rather than a
-// measurement, and fails t with its output when it fails.
+// measurement, and fails t with its output when it fails. A bare argv[0]
+// (git) resolves on the test process's PATH, not on env's, so a fixture
+// step runs the host's tool even when env's PATH is hermetic.
 func RunIn(t testing.TB, dir string, env []string, argv ...string) {
 	t.Helper()
 	if len(argv) == 0 {
@@ -144,11 +146,12 @@ var isolatedDirs = []isolatedDir{
 
 // IsolatedEnv returns the environment for a hermetic measured command: the
 // caller's environment with its home, temp and XDG directories replaced by
-// fresh ones under root, binDir first on PATH, GIT_CONFIG_NOSYSTEM set, and
-// every Claude Code, qsdev and git session variable removed, so neither the
-// caller's configuration nor its project leaks into the measurement. It
-// creates the directories. A caller measuring init adds QSDEV_SKIP_SETUP=1.
-func IsolatedEnv(root, binDir string) ([]string, error) {
+// fresh ones under root, PATH set to path (see HermeticPath and HostPath),
+// GIT_CONFIG_NOSYSTEM set, and every Claude Code, qsdev and git session
+// variable removed, so neither the caller's configuration nor its project
+// leaks into the measurement. It creates the directories. A caller
+// measuring init adds QSDEV_SKIP_SETUP=1.
+func IsolatedEnv(root, path string) ([]string, error) {
 	env := slices.DeleteFunc(os.Environ(), func(kv string) bool {
 		k, _, _ := strings.Cut(kv, "=")
 		k = strings.ToUpper(k)
@@ -157,15 +160,122 @@ func IsolatedEnv(root, binDir string) ([]string, error) {
 			slices.ContainsFunc(isolatedDirs, func(d isolatedDir) bool { return slices.Contains(d.vars, k) })
 	})
 	for _, d := range isolatedDirs {
-		path := filepath.Join(root, d.dir)
-		if err := os.MkdirAll(path, 0o755); err != nil {
+		dir := filepath.Join(root, d.dir)
+		if err := os.MkdirAll(dir, 0o755); err != nil {
 			return nil, fmt.Errorf("creating the isolated %s directory: %w", d.dir, err)
 		}
 		for _, v := range d.vars {
-			env = append(env, v+"="+path)
+			env = append(env, v+"="+dir)
 		}
 	}
-	return append(env, "PATH="+binDir+string(os.PathListSeparator)+os.Getenv("PATH"), "GIT_CONFIG_NOSYSTEM=1"), nil
+	return append(env, "PATH="+path, "GIT_CONFIG_NOSYSTEM=1"), nil
+}
+
+// HostPath returns binDir followed by the caller's PATH: the PATH for a
+// measured command that is itself host software, such as a hook script,
+// whose interpreter and the tools it runs are part of what it costs.
+func HostPath(binDir string) string {
+	return binDir + string(os.PathListSeparator) + os.Getenv("PATH")
+}
+
+// HermeticTools is what HermeticPath puts on a measured command's PATH.
+type HermeticTools struct {
+	// Bin is the directory of the binary under test (see Build); it comes
+	// first.
+	Bin string
+	// Host names the host tools the fixture genuinely needs, which run as
+	// themselves: each is resolved on the caller's PATH.
+	Host []string
+	// Probed names the host tools the measured commands may probe, as
+	// qsdev's own registries list them. Each that is neither in Host nor
+	// in Bin (the binary under test probing itself) is a stub.
+	Probed []string
+	// Stub is the program every stub runs: an empty one (see BuildNoop),
+	// so a probe costs a process start-up and none of the host tool's
+	// work.
+	Stub string
+}
+
+// Directories of HermeticPath's dir, in PATH order after Bin.
+const (
+	hostToolsDir = "host"
+	stubToolsDir = "stubs"
+)
+
+// HermeticPath creates dir, which must not exist yet, holding a directory
+// that links each of tools.Host to the host's binary and one that links
+// each other name in tools.Probed to tools.Stub, and returns the PATH of
+// tools.Bin, then those two directories. No host PATH directory is on it,
+// so what a measured command costs does not depend on what the machine
+// running it has installed: a probe finds a stub, whose CPU is a process
+// start-up, and any other name is not found. The probe logic still runs, so
+// its cost is measured; only the external tools' is not. A name that is not
+// a bare program name (empty, ".", "..", or with a path separator, a volume
+// or a PATH list separator), a host tool the caller's PATH lacks, or an
+// existing dir is an error.
+func HermeticPath(dir string, tools HermeticTools) (string, error) {
+	return hermeticPath(dir, tools, procexec.LookPath)
+}
+
+func hermeticPath(dir string, tools HermeticTools, lookPath func(string) (string, error)) (string, error) {
+	for _, name := range slices.Concat(tools.Host, tools.Probed) {
+		if !isProgramName(name) {
+			return "", fmt.Errorf("tool name %q is not a bare program name", name)
+		}
+	}
+	if err := os.MkdirAll(filepath.Dir(dir), 0o755); err != nil {
+		return "", fmt.Errorf("creating %s: %w", filepath.Dir(dir), err)
+	}
+	if err := os.Mkdir(dir, 0o755); err != nil {
+		return "", fmt.Errorf("creating the hermetic PATH directory: %w", err)
+	}
+	host, stubs := filepath.Join(dir, hostToolsDir), filepath.Join(dir, stubToolsDir)
+	for _, d := range []string{host, stubs} {
+		if err := os.Mkdir(d, 0o755); err != nil {
+			return "", fmt.Errorf("creating %s: %w", d, err)
+		}
+	}
+	hostNames := slices.Compact(slices.Sorted(slices.Values(tools.Host)))
+	for _, name := range hostNames {
+		target, err := lookPath(name)
+		if err != nil {
+			return "", fmt.Errorf("finding host tool %q: %w", name, err)
+		}
+		if err := linkTool(host, name, target); err != nil {
+			return "", err
+		}
+	}
+	for _, name := range slices.Compact(slices.Sorted(slices.Values(tools.Probed))) {
+		if slices.Contains(hostNames, name) || inDir(tools.Bin, name) {
+			continue
+		}
+		if err := linkTool(stubs, name, tools.Stub); err != nil {
+			return "", err
+		}
+	}
+	return strings.Join([]string{tools.Bin, host, stubs}, string(os.PathListSeparator)), nil
+}
+
+// isProgramName reports whether name is a bare program name PATH lookup
+// resolves in one directory: local, a single element, and free of the
+// characters that would make it a path, a volume (C:x) or several PATH
+// entries on any OS.
+func isProgramName(name string) bool {
+	return name != "" && name != "." && filepath.IsLocal(name) && !strings.ContainsAny(name, `/\:;`)
+}
+
+// inDir reports whether dir holds the program name, as PATH lookup finds it.
+func inDir(dir, name string) bool {
+	_, err := os.Stat(executable(dir, name))
+	return err == nil
+}
+
+// linkTool links name in dir, as PATH lookup finds it, to target.
+func linkTool(dir, name, target string) error {
+	if err := os.Symlink(target, executable(dir, name)); err != nil {
+		return fmt.Errorf("linking tool %s: %w", name, err)
+	}
+	return nil
 }
 
 // netNSArgs run a command in a fresh, empty network namespace as the

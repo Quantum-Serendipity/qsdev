@@ -117,8 +117,10 @@ func TestMapFormToAnswers_RecordsModuleFieldAnswers(t *testing.T) {
 		if lc := languageChoice(t, answers.Languages, "dart"); len(lc.Extras) != 0 {
 			t.Errorf("dart extras = %v, want none for an unanswered confirm", lc.Extras)
 		}
-		if lc := languageChoice(t, answers.Languages, "go"); len(lc.Extras) != 0 {
-			t.Errorf("go extras = %v, want none", lc.Extras)
+		// The go_source select records the default the form showed, as
+		// cpp's build_system does; nothing else is added.
+		if lc := languageChoice(t, answers.Languages, "go"); !slices.Equal(lc.Extras, []string{"go_source=go-overlay"}) {
+			t.Errorf("go extras = %v, want only the shown go_source=go-overlay", lc.Extras)
 		}
 	})
 

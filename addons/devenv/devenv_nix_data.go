@@ -119,12 +119,24 @@ type CustomHookData struct {
 	PackageExpr string
 }
 
+// SecurityHookScope returns the scoping of always-on hook id, or nil when the
+// hook keeps git-hooks.nix's defaults. The template renders a scoped hook as
+// one attribute set where it is enabled.
+func (d DevenvNixTemplateData) SecurityHookScope(id string) *HookOverrideData {
+	i := slices.IndexFunc(d.HookOverrides, func(o HookOverrideData) bool { return o.ID == id })
+	if i < 0 {
+		return nil
+	}
+	return &d.HookOverrides[i]
+}
+
 // HookOverrideData scopes an enabled git-hooks.nix built-in hook: the listed
 // fields replace upstream's (mkDefault) values.
 type HookOverrideData struct {
 	ID           string
 	TypesOr      []string
 	ExcludeTypes []string
+	Excludes     []string // Path regexes the hook skips (git-hooks.nix excludes).
 }
 
 // languageHookResult holds the collected fragments and hooks from ecosystem modules.
@@ -291,13 +303,16 @@ func (c *genContext) buildDevenvNixData() (*DevenvNixTemplateData, error) {
 	// override of the always-on entry; the registry supplies the rest.
 	overridden := make(map[string]bool, len(data.SecurityHooks))
 	for _, h := range data.BuiltInHooks {
-		if !securityHookIDs[h.ID] || (len(h.TypesOr) == 0 && len(h.ExcludeTypes) == 0) {
+		if !securityHookIDs[h.ID] {
 			continue
 		}
-		overridden[h.ID] = true
-		data.HookOverrides = append(data.HookOverrides, HookOverrideData{ID: h.ID, TypesOr: h.TypesOr, ExcludeTypes: h.ExcludeTypes})
+		if override, ok := newHookOverride(h.ID, h.TypesOr, h.ExcludeTypes, h.Excludes); ok {
+			overridden[h.ID] = true
+			data.HookOverrides = append(data.HookOverrides, override)
+		}
 	}
 	data.HookOverrides = append(data.HookOverrides, securityHookOverrides(c.modules, data.SecurityHooks, overridden)...)
+	data.HookOverrides = withCatalogHookExcludes(data.HookOverrides, data.SecurityHooks, cat.SecurityHookExcludes)
 	data.BuiltInHooks = slices.DeleteFunc(data.BuiltInHooks, func(h BuiltInHookData) bool { return securityHookIDs[h.ID] })
 
 	// Specialized security custom hooks, deduped against ecosystem hooks.
@@ -520,12 +535,18 @@ func scriptHookEntry(hook ecosystem.HookConfig) string {
 	return b.String()
 }
 
-// hookOverride returns the file-type scoping a built-in hook declares, if any.
+// hookOverride returns the file scoping a built-in hook declares, if any.
 func hookOverride(hook ecosystem.HookConfig) (HookOverrideData, bool) {
-	if len(hook.TypesOr) == 0 && len(hook.ExcludeTypes) == 0 {
+	return newHookOverride(hook.ID, hook.TypesOr, hook.ExcludeTypes, hook.Excludes)
+}
+
+// newHookOverride builds the override for a hook's file-type and path
+// scoping; ok is false when the hook declares none.
+func newHookOverride(id string, typesOr, excludeTypes, excludes []string) (HookOverrideData, bool) {
+	if len(typesOr) == 0 && len(excludeTypes) == 0 && len(excludes) == 0 {
 		return HookOverrideData{}, false
 	}
-	return HookOverrideData{ID: hook.ID, TypesOr: hook.TypesOr, ExcludeTypes: hook.ExcludeTypes}, true
+	return HookOverrideData{ID: id, TypesOr: typesOr, ExcludeTypes: excludeTypes, Excludes: excludes}, true
 }
 
 // securityHookOverrides returns the scoping for always-on security hooks that
@@ -556,6 +577,27 @@ func securityHookOverrides(registry *ecosystem.Registry, securityIDs []string, h
 		}
 	}
 	return out
+}
+
+// withCatalogHookExcludes adds the catalog's path excludes for each always-on
+// hook in ids to that hook's override, creating the override when no module
+// scoped the hook.
+func withCatalogHookExcludes(overrides []HookOverrideData, ids []string, excludes func(id string) []string) []HookOverrideData {
+	for _, id := range ids {
+		add := excludes(id)
+		if len(add) == 0 {
+			continue
+		}
+		i := slices.IndexFunc(overrides, func(o HookOverrideData) bool { return o.ID == id })
+		if i < 0 {
+			overrides = append(overrides, HookOverrideData{ID: id, Excludes: add})
+			continue
+		}
+		have := overrides[i].Excludes
+		add = slices.DeleteFunc(add, func(re string) bool { return slices.Contains(have, re) })
+		overrides[i].Excludes = slices.Concat(have, add)
+	}
+	return overrides
 }
 
 // lspDisplayName is the human-readable label for the synthetic LSP language

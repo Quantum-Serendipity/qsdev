@@ -199,12 +199,10 @@ func TestGenerateDevenvNix_SecurityDefaultsAlwaysPresent(t *testing.T) {
 
 	// Git hooks with security hooks (baseline).
 	requireContains(t, content, `git-hooks.hooks`)
-	requireContains(t, content, `ripsecrets.enable = true`)
-	requireContains(t, content, `check-added-large-files.enable = true`)
-	requireContains(t, content, `no-commit-to-branch.enable = true`)
-	requireContains(t, content, `check-merge-conflicts.enable = true`)
-	requireContains(t, content, `shellcheck.enable = true`)
-	requireContains(t, content, `statix.enable = true`)
+	requireHooksEnabled(t, content, "ripsecrets", "check-added-large-files", "no-commit-to-branch",
+		"check-merge-conflicts", "shellcheck", "statix")
+	// ripsecrets skips vendored trees (catalog security_hook_excludes).
+	requireContains(t, content, "    ripsecrets = {\n      enable = true;\n      excludes = [ \"(^|/)vendor/\" ];\n    };")
 
 	// Prek hook runner comment.
 	requireContains(t, content, `prek`)
@@ -237,8 +235,7 @@ func TestGenerateDevenvNix_HookComposition(t *testing.T) {
 	content := string(got.Content)
 
 	// Security hooks (always present).
-	requireContains(t, content, "ripsecrets.enable = true")
-	requireContains(t, content, "shellcheck.enable = true")
+	requireHooksEnabled(t, content, "ripsecrets", "shellcheck")
 
 	// Built-in hooks from Go module.
 	requireContains(t, content, "gofmt.enable = true")
@@ -521,6 +518,22 @@ func requireContains(t *testing.T, s, sub string) {
 	t.Helper()
 	if !strings.Contains(s, sub) {
 		t.Errorf("output does not contain %q\n\nFull output:\n%s", sub, s)
+	}
+}
+
+// requireHooksEnabled fails unless the devenv.nix source enables each hook,
+// as qsdev check reads it: `<id>.enable = true;` or an attribute set with
+// enable = true (the form a scoped hook renders as).
+func requireHooksEnabled(t *testing.T, src string, ids ...string) {
+	t.Helper()
+	declared, err := devenv.DeclaredSecurity(src)
+	if err != nil {
+		t.Fatalf("DeclaredSecurity: %v", err)
+	}
+	for _, id := range ids {
+		if !slices.Contains(declared.Hooks, id) {
+			t.Errorf("devenv.nix does not enable hook %q (enabled: %v)\n\n%s", id, declared.Hooks, src)
+		}
 	}
 }
 

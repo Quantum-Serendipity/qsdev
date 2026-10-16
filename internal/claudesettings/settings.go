@@ -77,6 +77,11 @@ const (
 	EnvPackageGuardSOC2Audit     = "PACKAGE_GUARD_SOC2_AUDIT"
 )
 
+// EnvCredentialScanExtraPatterns is the env variable through which the
+// scan-secrets hook receives the committed
+// hooks.credential_scan.extra_patterns, one regex per line.
+const EnvCredentialScanExtraPatterns = "CREDENTIAL_SCAN_EXTRA_PATTERNS"
+
 // launchEnvNames and launchEnvPrefixes name the env variables that decide
 // which program a hook command runs or what code it loads before the hook's
 // own: the shell's command search and startup files, the shell Claude Code

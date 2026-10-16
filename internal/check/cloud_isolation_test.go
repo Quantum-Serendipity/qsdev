@@ -5,9 +5,11 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
+	"github.com/Quantum-Serendipity/qsdev/pkg/denyutil"
 	"github.com/Quantum-Serendipity/qsdev/pkg/ecosystem/modules/cloudcommon"
 	"github.com/Quantum-Serendipity/qsdev/pkg/types"
 )
@@ -30,9 +32,11 @@ func writeCloudSettings(t *testing.T, root string, deny []string) {
 }
 
 // generatedCloudDeny returns the deny rules the settings generator emits for
-// provider: its Bash rules plus a Read rule per credential path.
-func generatedCloudDeny(provider cloudcommon.CloudProvider) []string {
-	rules := cloudcommon.BashDenyRules(provider)
+// provider: its Bash rules, the canon's shell-read tripwire over homeStore
+// (the provider's credential directory, relative to ~) and a Read rule per
+// credential path.
+func generatedCloudDeny(provider cloudcommon.CloudProvider, homeStore string) []string {
+	rules := append(cloudcommon.BashDenyRules(provider), denyutil.HomeShellReadRules(homeStore, true)...)
 	for _, p := range cloudcommon.ReadDenyPaths(provider) {
 		if base, ok := strings.CutSuffix(p, "/*"); ok {
 			p = base + "/**"
@@ -51,7 +55,7 @@ func TestCheckCloudIsolation(t *testing.T) {
 		Languages:  awsConfig.Languages,
 		ClaudeCode: types.ClaudeCodeConfig{Enabled: &claudeEnabled},
 	}
-	fullDeny := generatedCloudDeny(cloudcommon.AWS)
+	fullDeny := generatedCloudDeny(cloudcommon.AWS, ".aws")
 
 	type want struct {
 		status   CheckStatus
@@ -116,6 +120,17 @@ func TestCheckCloudIsolation(t *testing.T) {
 			want: map[string]want{
 				"cloud_isolation_aws_environment_separation":  {StatusPass, SeverityInfo},
 				"cloud_isolation_aws_credential_file_masking": {StatusFail, SeverityHigh},
+				"cloud_isolation_aws_agent_deny_rules":        {StatusFail, SeverityHigh},
+			},
+		},
+		{
+			name: "stripped shell-read tripwire fails high",
+			cfg:  awsConfig,
+			deny: slices.DeleteFunc(slices.Clone(fullDeny), func(r string) bool { return r == "Bash(cat *~/.aws/*)" }),
+			env:  map[string]string{"AWS_PROFILE": "dev-project"},
+			want: map[string]want{
+				"cloud_isolation_aws_environment_separation":  {StatusPass, SeverityInfo},
+				"cloud_isolation_aws_credential_file_masking": {StatusPass, SeverityInfo},
 				"cloud_isolation_aws_agent_deny_rules":        {StatusFail, SeverityHigh},
 			},
 		},

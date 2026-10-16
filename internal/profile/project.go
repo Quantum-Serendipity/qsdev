@@ -33,6 +33,24 @@ type ProjectInputs struct {
 	// level (catalog age_gating_threshold_hours). Update tools delay PRs by
 	// at least this long; zero means unknown and keeps the profile's delay.
 	MinReleaseAge time.Duration
+	// ProjectUpdateTools are the dependency-update bots the project
+	// configures itself (types.DetectedProject.ProjectUpdateBots). The
+	// profile does not generate a different bot's config next to one of
+	// them (one bot per repository).
+	ProjectUpdateTools []UpdateToolType
+}
+
+// projectManagedUpdateTool returns the dependency-update bot the project
+// configures itself in place of profileTool, the profile's own bot, or ""
+// when the project configures none or only profileTool. qsdev then
+// generates no update-bot config and describes none of the bot's settings.
+func (in ProjectInputs) projectManagedUpdateTool(profileTool UpdateToolType) UpdateToolType {
+	for _, t := range in.ProjectUpdateTools {
+		if t != profileTool {
+			return t
+		}
+	}
+	return ""
 }
 
 // updateAgeDays returns the update-PR delay in days for a profile (or
@@ -77,11 +95,17 @@ func ProjectInputsFromAnswers(answers types.WizardAnswers) ProjectInputs {
 		}
 	}
 
+	var bots []UpdateToolType
+	for _, b := range d.ProjectUpdateBots {
+		bots = append(bots, UpdateToolType(b))
+	}
+
 	slices.Sort(ecos)
 	return ProjectInputs{
-		Ecosystems:     slices.Compact(ecos),
-		Infrastructure: answers.Infrastructure,
-		MinReleaseAge:  catalog.EffectiveAgeGate(answers.ComplianceLevel),
+		Ecosystems:         slices.Compact(ecos),
+		Infrastructure:     answers.Infrastructure,
+		MinReleaseAge:      catalog.EffectiveAgeGate(answers.ComplianceLevel),
+		ProjectUpdateTools: bots,
 	}
 }
 

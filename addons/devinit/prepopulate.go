@@ -6,7 +6,6 @@ import (
 	"slices"
 	"strings"
 
-	"github.com/Quantum-Serendipity/qsdev/pkg/ecosystem"
 	"github.com/Quantum-Serendipity/qsdev/pkg/types"
 )
 
@@ -43,7 +42,7 @@ func MapDetectionToDefaults(detected types.DetectedProject, projectRoot string) 
 // ecosystem module, in order. Deriving the check from the registry means a new
 // module needs no change here.
 func registeredLanguages(langs []types.LanguageChoice) []types.LanguageChoice {
-	registry := ecosystem.DefaultRegistry()
+	registry := ecosystems()
 	return slices.DeleteFunc(langs, func(l types.LanguageChoice) bool {
 		_, ok := registry.ByName(l.Name)
 		return !ok

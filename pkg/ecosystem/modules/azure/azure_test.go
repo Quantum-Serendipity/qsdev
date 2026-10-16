@@ -153,14 +153,15 @@ func TestDenyRules_AllPresent(t *testing.T) {
 	m := newModule()
 	rules := m.DenyRules(ecosystem.ModuleConfig{})
 
-	if len(rules) != 33 {
-		t.Fatalf("expected 33 deny rules, got %d: %v", len(rules), rules)
+	// cat ~/.azure/... is denied at every preset by the canon's shell-read
+	// tripwire (addons/claudecode), not here.
+	if len(rules) != 32 {
+		t.Fatalf("expected 32 deny rules, got %d: %v", len(rules), rules)
 	}
 
 	denied := []string{
 		"az account get-access-token",
 		"az ad sp credential reset --id x",
-		"cat ~/.azure/msal_token_cache.json",
 		"cat .qsdev/cloud/azure/msal_token_cache.json",
 		"cat ./.qsdev/cloud/azure/msal_token_cache.json",
 		"az login --service-principal -u id -p x --tenant t",

@@ -8,6 +8,7 @@
 package cmdscan
 
 import (
+	"path"
 	"slices"
 	"strings"
 
@@ -35,7 +36,8 @@ func IsShellTool(toolName string) bool {
 // a compound command (e.g. `{ echo x; } > f` or `( echo x ) > f`) is reported
 // as a nameless Command (Name == "") whose WriteRedirects holds the target,
 // alongside the inner commands. WriteRedirects lists targets that a command can
-// create or clobber (`>`, `>>`, `<>`, `>|`, `&>`, ...); ReadRedirects lists
+// create or clobber (`>`, `>>`, `<>`, `>|`, `&>`, ...), leaving out those that
+// write no file (writesNoFile: `2>/dev/null`, `2>&1`); ReadRedirects lists
 // input sources (`<`, `<&`, here-docs) which are reads, not mutations.
 type Command struct {
 	Name           string
@@ -53,6 +55,19 @@ type Command struct {
 	// expansion, as rendered in Args: an expansion of unknown value renders
 	// as nothing, so `"$(echo ~)/.config"` is "/.config" here.
 	ExpandedArgs []string
+	// ExpandedArgIndexes holds the index in Args of each word in
+	// ExpandedArgs, in the same order.
+	ExpandedArgIndexes []int
+	// ExpandedArgPrefixes holds the literal text of each word in
+	// ExpandedArgs before its first expansion, in the same order: `-m"$MSG"`
+	// is "-m", `"$MSG"` is "". It may be empty for a command not parsed from
+	// a shell word (a PowerShell command).
+	ExpandedArgPrefixes []string
+	// SplitArgs holds the indexes in Args of the expanded words the shell
+	// may turn into several words or none (see maySplit: `$X`, `"$@"`), so
+	// the rendered argument may stand for any number of arguments. A
+	// double-quoted `"$X"` or `"$(cmd)"` stays one word.
+	SplitArgs []int
 	// TildeWords holds the indexes of the command's words (0 is Name, i is
 	// Args[i-1]) that start with an unquoted, unescaped ~, which the shell
 	// expands to a home directory. A quoted or escaped ~ stays literal.
@@ -74,6 +89,19 @@ type Command struct {
 	// whose name comes from an expansion (`export $X=v`, `read "$V"`,
 	// `(( $X = 1 ))`), which Assigns cannot name: it may be any variable.
 	AssignsDynamic bool
+	// AssignTexts holds the assignments of the statement as rendered
+	// (`NAME=value`, see wordText): the prefix or bare assignments of a
+	// simple command and the operands of a declaration builtin, so a value
+	// whose text a later `$NAME` carries can be judged:
+	// `d=$(git rev-parse --git-dir)` and `export d=$(git rev-parse
+	// --git-dir)` are "d=.git".
+	AssignTexts []string
+	// OutputRendered is set when the statement is the whole of a command
+	// substitution whose output the scan renders into the word holding it
+	// (see substOutput): `git rev-parse --git-dir` in
+	// `rm "$(git rev-parse --git-dir)/x"`, whose word reads ".git/x". A
+	// rule keying on what a command prints can read it there instead.
+	OutputRendered bool
 	// Pipeline groups commands joined by `|`/`|&`: all stages of one pipeline
 	// share the same non-zero id, in left-to-right order. Standalone commands
 	// have Pipeline == 0. Rules use this to reason about dataflow across a pipe
@@ -114,6 +142,15 @@ type Command struct {
 	// its own inherits that of its enclosing one, so `... | { sh; }`
 	// counts. ReadsProgramFromStdin says whether the command runs that text.
 	StdinComputed bool
+	// ScriptComputed is set when the command runs a shell, an interpreter
+	// or `.`/`source`, directly or through wrappers, whose script operand
+	// is a process substitution `<(...)` running anything but a single
+	// literal producer (see StdinComputed): `bash <(curl …)`, `. <(curl
+	// …)`, `source -- <(curl …)`, or a script shell's startup file given
+	// so (`bash --init-file <(curl …) -i`). The program is then computed
+	// at run time, as on a computed standard input; `. <(cat ./env.sh)`
+	// stays literal.
+	ScriptComputed bool
 	// Defines names the shell function the statement defines
 	// (`f() { ...; }`), emitted as a nameless Command before its body. A
 	// later call of that name runs the function, not a program.
@@ -150,7 +187,7 @@ const (
 var safeReadVerbs = map[string]bool{
 	"cat": true, "grep": true, "egrep": true, "fgrep": true,
 	"ls": true, "head": true, "tail": true, "wc": true, "echo": true,
-	"printf": true, "test": true, "[": true, "true": true, "false": true,
+	"printf": true, "test": true, "[": true, "true": true, "false": true, ":": true,
 	"pwd": true, "stat": true, "file": true, "diff": true, "cmp": true,
 	"cut": true, "jq": true, "tac": true, "nl": true, "printenv": true,
 	"du": true,
@@ -194,41 +231,201 @@ func IsSafeReadCommand(c Command) bool {
 	return false
 }
 
-// gitReadOnlySubcommands are git subcommands that only inspect the repository.
-// Everything else (rm, mv, checkout, restore, reset, clean, apply, am, stash,
-// worktree, filter-branch, config, ...) can mutate the working tree.
+// gitReadOnlySubcommands are git subcommands that only inspect the repository,
+// whatever their arguments (GitReadOnly still vetoes an option that writes a
+// file or runs a program). branch, tag, remote, stash, reflog, worktree,
+// notes and symbolic-ref read only in some forms (gitListForms, GitReadOnly);
+// everything else (rm, mv, checkout, restore, reset, clean, apply, am,
+// filter-branch, config, ...) can mutate the repository or the working tree.
+// ls-remote and `remote show` are left out: they contact a remote, which may
+// run a transport program (--upload-pack, an ext:: URL).
 var gitReadOnlySubcommands = map[string]bool{
 	"status": true, "diff": true, "log": true, "show": true, "grep": true,
-	"ls-files": true, "blame": true, "rev-parse": true,
+	"ls-files": true, "blame": true, "rev-parse": true, "ls-tree": true,
+	"cat-file": true, "describe": true, "shortlog": true, "rev-list": true,
+	"for-each-ref": true, "merge-base": true, "name-rev": true, "show-ref": true,
+	"count-objects": true, "var": true, "check-ignore": true, "whatchanged": true,
+	"range-diff": true,
+}
+
+// gitReadSubcommands are, for a git subcommand that dispatches to
+// subcommands of its own, those that only read. reflog and notes run their
+// listing subcommand when given no argument at all (`git reflog`, `git
+// notes`); any other first word (an option, a revision, a writing
+// subcommand such as `reflog expire` or `worktree add`) is not proven a read.
+var gitReadSubcommands = map[string]map[string]bool{
+	"reflog":   {"show": true, "list": true, "exists": true},
+	"worktree": {"list": true},
+	"notes":    {"list": true, "show": true},
+}
+
+// gitListForm describes the list form of a git subcommand that otherwise
+// creates, deletes or changes refs (branch, tag): the arguments it accepts
+// while it only lists.
+type gitListForm struct {
+	// flags are the listing options that take no value, written whole.
+	flags map[string]bool
+	// shortFlags are the letters of the value-less short listing options a
+	// cluster (-av) may combine.
+	shortFlags string
+	// valued are the listing options that take a value, attached with '=' or
+	// as the next word.
+	valued map[string]bool
+	// lines reports that -n<num> (tag: print annotation lines) is accepted.
+	lines bool
+}
+
+// gitListOptions are the filter and format options branch and tag share in
+// their list form; each takes a value.
+var gitListOptions = map[string]bool{
+	"--sort": true, "--format": true, "--contains": true, "--no-contains": true,
+	"--merged": true, "--no-merged": true, "--points-at": true,
+}
+
+// gitListForms are the list forms of branch and tag. -v is a listing option
+// of branch but tag's --verify, which runs gpg, so tag does not accept it.
+var gitListForms = map[string]gitListForm{
+	"branch": {
+		flags: map[string]bool{
+			"--all": true, "--remotes": true, "--list": true, "--verbose": true,
+			"--show-current": true, "--column": true, "--no-column": true,
+			"--color": true, "--no-color": true, "--abbrev": true, "--ignore-case": true,
+		},
+		shortFlags: "arlvi",
+		valued:     gitListOptions,
+	},
+	"tag": {
+		flags:      map[string]bool{"--list": true, "--column": true, "--no-column": true, "--ignore-case": true},
+		shortFlags: "li",
+		valued:     gitListOptions,
+		lines:      true,
+	},
+}
+
+// GitReadOnly reports whether `git <sub> <args>` only reads the repository,
+// judged by subcommand and form: an always-read-only subcommand
+// (gitReadOnlySubcommands), branch or tag in their list form
+// (gitListForm.readOnly), remote listing or printing a URL (`remote`,
+// `remote -v`, `remote get-url o`), `stash list|show`, a read subcommand of
+// reflog, worktree or notes (gitReadSubcommands), or symbolic-ref printing
+// one ref (symbolicRefReads). Whatever the form,
+// an option that writes a file (--output) or runs a program (grep -O,
+// --open-files-in-pager) makes it a write (gitWritingOption). Anything not
+// proven read-only, including an unknown option, is a write.
+func GitReadOnly(sub string, args []string) bool {
+	if slices.ContainsFunc(argsBeforeDashDash(args), gitWritingOption) {
+		return false
+	}
+	if form, ok := gitListForms[sub]; ok {
+		return form.readOnly(args)
+	}
+	switch sub {
+	case "remote":
+		if len(args) == 0 {
+			return true
+		}
+		return args[0] == "get-url" || len(args) == 1 && (args[0] == "-v" || args[0] == "--verbose")
+	case "stash":
+		return len(args) > 0 && (args[0] == "list" || args[0] == "show")
+	case "symbolic-ref":
+		return symbolicRefReads(args)
+	}
+	if reads, ok := gitReadSubcommands[sub]; ok {
+		if len(args) == 0 {
+			return sub != "worktree"
+		}
+		return reads[args[0]]
+	}
+	return gitReadOnlySubcommands[sub]
+}
+
+// symbolicRefReads reports whether `git symbolic-ref <args>` only prints
+// what a symbolic ref points to: one ref name and only the printing options
+// (-q, --short, --[no-]recurse). A second operand sets the ref, and -d
+// deletes it.
+func symbolicRefReads(args []string) bool {
+	operands := 0
+	for _, a := range args {
+		switch a {
+		case "-q", "--quiet", "--short", "--recurse", "--no-recurse":
+		default:
+			if strings.HasPrefix(a, "-") {
+				return false
+			}
+			operands++
+		}
+	}
+	return operands == 1
+}
+
+// readOnly reports whether args keep the subcommand in its list form: every
+// argument is a listing option of form (or the value of one), and a
+// positional (a pattern) appears only when -l/--list selects the list mode.
+// A positional without it names a ref to create, and `--` ends the options,
+// so whatever follows it is a positional.
+func (form gitListForm) readOnly(args []string) bool {
+	list, positional := false, false
+	for i := 0; i < len(args); i++ {
+		a := args[i]
+		switch {
+		case a == "--":
+			positional = positional || i+1 < len(args)
+			i = len(args)
+		case a == "-l" || a == "--list":
+			list = true
+		case !strings.HasPrefix(a, "-") || a == "-":
+			positional = true
+		case form.valued[a]:
+			i++ // the value is the next word, if any (--contains defaults to HEAD)
+		case strings.HasPrefix(a, "--"):
+			name, _, _ := strings.Cut(a, "=")
+			if !form.flags[name] && !form.valued[name] {
+				return false
+			}
+		case form.lines && strings.HasPrefix(a, "-n") && strings.Trim(a[2:], "0123456789") == "":
+		default:
+			cluster := a[1:]
+			if strings.Trim(cluster, form.shortFlags) != "" {
+				return false
+			}
+			list = list || strings.ContainsRune(cluster, 'l')
+		}
+	}
+	return list || !positional
+}
+
+// argsBeforeDashDash returns the arguments before a `--`, which are the only
+// ones git reads as options.
+func argsBeforeDashDash(args []string) []string {
+	if i := slices.Index(args, "--"); i >= 0 {
+		return args[:i]
+	}
+	return args
+}
+
+// gitWritingOption reports whether a git argument writes a file or runs a
+// program: --output writes the diff/log to a file, and grep's
+// -O/--open-files-in-pager runs a program. Long options match any
+// abbreviation git accepts, and a short-option cluster containing 'O' (-nO)
+// is treated as -O.
+func gitWritingOption(a string) bool {
+	if name, ok := strings.CutPrefix(a, "--"); ok {
+		name, _, _ = strings.Cut(name, "=")
+		return isLongOptionPrefix(name, "output") || isLongOptionPrefix(name, "open-files-in-pager")
+	}
+	return len(a) > 1 && a[0] == '-' && strings.ContainsRune(a[1:], 'O')
 }
 
 // gitArgsReadOnly reports whether a git invocation is a read-only subcommand
-// with no option that writes a file or runs a program. The subcommand must be
-// the first argument: a global option before it (`-c alias.x=!sh`, `-C dir`,
-// `--exec-path`) could redefine what runs, so it fails closed.
+// form (GitReadOnly). The subcommand must be the first argument, after any
+// --no-pager or -P, which only stop git paging its output: any other global
+// option before it (`-c alias.x=!sh`, `-C dir`, `--exec-path`) could redefine
+// what runs, so it fails closed.
 func gitArgsReadOnly(args []string) bool {
-	if len(args) == 0 || !gitReadOnlySubcommands[args[0]] {
-		return false
+	for len(args) > 0 && (args[0] == "--no-pager" || args[0] == "-P") {
+		args = args[1:]
 	}
-	for _, a := range args[1:] {
-		// --output writes the diff/log to a file; grep -O/--open-files-in-pager
-		// runs a program. Long options match any abbreviation git accepts, and
-		// a short-option cluster containing 'O' (-nO) is treated as -O.
-		if a == "--" {
-			break
-		}
-		if name, ok := strings.CutPrefix(a, "--"); ok {
-			name, _, _ = strings.Cut(name, "=")
-			if isLongOptionPrefix(name, "output") || isLongOptionPrefix(name, "open-files-in-pager") {
-				return false
-			}
-			continue
-		}
-		if len(a) > 1 && a[0] == '-' && strings.ContainsRune(a[1:], 'O') {
-			return false
-		}
-	}
-	return true
+	return len(args) > 0 && GitReadOnly(args[0], args[1:])
 }
 
 // sortArgsReadOnly reports whether a sort invocation writes only to stdout:
@@ -294,6 +491,24 @@ func isLongOptionPrefix(name, option string) bool {
 	return name != "" && strings.HasPrefix(option, name)
 }
 
+// writesNoFile reports whether the output redirect r writes no file: its
+// target is the literal word /dev/null (`2>/dev/null`, `&>/dev/null`), or it
+// duplicates or closes a file descriptor (`2>&1`, `>&-`), whose file an
+// earlier redirect named. An expansion in the target may name any file.
+func writesNoFile(r *syntax.Redirect) bool {
+	if !isWriteOp(r.Op) || len(r.Word.Parts) != 1 {
+		return false
+	}
+	lit, ok := r.Word.Parts[0].(*syntax.Lit)
+	if !ok {
+		return false
+	}
+	if lit.Value == "/dev/null" {
+		return true
+	}
+	return r.Op == syntax.DplOut && (lit.Value == "-" || strings.Trim(lit.Value, "0123456789") == "" && lit.Value != "")
+}
+
 // isWriteOp reports whether a redirect operator creates or clobbers its target
 // (an output/mutation), as opposed to reading from it. Callers treat only write
 // targets as mutation candidates; read redirects (`<`, `<&`, here-docs) are not.
@@ -345,6 +560,7 @@ func parse(command string, vars map[string]string, stdinComputed bool) ([]Comman
 	guards := assignGuards(file, vars)
 	subshells := assignSubshells(file, pipelineIDs)
 	handled := assignFailureHandled(file)
+	rendered := renderedStmts(file)
 
 	var cmds []Command
 	syntax.Walk(file, func(node syntax.Node) bool {
@@ -363,15 +579,19 @@ func parse(command string, vars map[string]string, stdinComputed bool) ([]Comman
 		case *syntax.CallExpr:
 			c = callCommand(cmd, vars)
 			hasWord = len(cmd.Args) > 0
+			c.ScriptComputed = hasWord && stdin.scriptComputed(cmd, append([]string{c.Name}, c.Args...))
 		case *syntax.DeclClause:
 			// export/declare/local/readonly/typeset/nameref: a builtin that
 			// sets (and may export) variables for later commands.
 			hasWord = true
 			c.Name = cmd.Variant.Value
 			for _, a := range cmd.Args {
-				_, text, exp := assignText(a, vars)
+				name, text, exp := assignText(a, vars)
 				c.Args = append(c.Args, text)
 				c.HasExpansion = c.HasExpansion || exp
+				if name != "" {
+					c.AssignTexts = append(c.AssignTexts, text)
+				}
 			}
 		case *syntax.FuncDecl:
 			hasWord = true
@@ -383,6 +603,7 @@ func parse(command string, vars map[string]string, stdinComputed bool) ([]Comman
 		c.Subshell = subshells[stmt]
 		c.FailureHandled = handled[stmt]
 		c.StdinComputed = stdin.computed(stmt)
+		c.OutputRendered = rendered[stmt]
 
 		other := stmtAssigns(stmt, vars)
 		c.Assigns = append(c.Assigns, other.names...)
@@ -394,9 +615,11 @@ func parse(command string, vars map[string]string, stdinComputed bool) ([]Comman
 			}
 			t, e := wordText(r.Word, vars)
 			c.HasExpansion = c.HasExpansion || e
-			if isWriteOp(r.Op) {
+			switch {
+			case writesNoFile(r):
+			case isWriteOp(r.Op):
 				c.WriteRedirects = append(c.WriteRedirects, t)
-			} else {
+			default:
 				c.ReadRedirects = append(c.ReadRedirects, t)
 			}
 			if r.Hdoc != nil {
@@ -417,13 +640,69 @@ func parse(command string, vars map[string]string, stdinComputed bool) ([]Comman
 	return cmds, nil
 }
 
+// renderedStmts returns the statements whose output a Command field holds:
+// the single statement of each command substitution substOutput knows the
+// output of that wordText writes into a word Parse renders, a command word
+// or argument, an assignment value or a redirect word (see
+// Command.OutputRendered). A substitution anywhere else, in the operand of
+// a parameter expansion (`${D:-$(…)}`), a for-loop word list or an array
+// element, reaches no rendered word, so its output stays unrendered.
+func renderedStmts(root syntax.Node) map[*syntax.Stmt]bool {
+	rendered := make(map[*syntax.Stmt]bool)
+	mark := func(w *syntax.Word) {
+		if w == nil {
+			return
+		}
+		for _, part := range w.Parts {
+			parts := []syntax.WordPart{part}
+			if dq, ok := part.(*syntax.DblQuoted); ok {
+				parts = dq.Parts
+			}
+			for _, p := range parts {
+				if cs, ok := p.(*syntax.CmdSubst); ok && substOutput(cs) != "" {
+					rendered[cs.Stmts[0]] = true
+				}
+			}
+		}
+	}
+	markAssigns := func(assigns []*syntax.Assign) {
+		for _, a := range assigns {
+			if a.Index == nil && a.Array == nil {
+				mark(a.Value)
+			}
+		}
+	}
+	syntax.Walk(root, func(n syntax.Node) bool {
+		stmt, ok := n.(*syntax.Stmt)
+		if !ok {
+			return true
+		}
+		switch cmd := stmt.Cmd.(type) {
+		case *syntax.CallExpr:
+			markAssigns(cmd.Assigns)
+			for _, w := range cmd.Args {
+				mark(w)
+			}
+		case *syntax.DeclClause:
+			markAssigns(cmd.Args)
+		}
+		for _, r := range stmt.Redirs {
+			mark(r.Word)
+			mark(r.Hdoc)
+		}
+		return true
+	})
+	return rendered
+}
+
 // callCommand renders the simple command call: its prefix assignments,
 // command word and arguments (see Command).
 func callCommand(call *syntax.CallExpr, vars map[string]string) Command {
 	var c Command
 	for _, a := range call.Assigns {
-		name, _, exp := assignText(a, vars)
+		name, text, exp := assignText(a, vars)
 		c.Assigns = append(c.Assigns, name)
+		c.AssignTexts = append(c.AssignTexts, text)
 		c.HasExpansion = c.HasExpansion || exp
 	}
 	if len(call.Args) == 0 {
@@ -438,15 +717,44 @@ func callCommand(call *syntax.CallExpr, vars map[string]string) Command {
 			c.TildeWords = append(c.TildeWords, i)
 		}
 	}
-	for _, w := range call.Args[1:] {
-		t, e := wordText(w, vars)
+	for i, w := range call.Args[1:] {
+		t, prefix, e := renderWord(w, vars)
 		c.Args = append(c.Args, t)
 		c.HasExpansion = c.HasExpansion || e
 		if e {
 			c.ExpandedArgs = append(c.ExpandedArgs, t)
+			c.ExpandedArgIndexes = append(c.ExpandedArgIndexes, i)
+			c.ExpandedArgPrefixes = append(c.ExpandedArgPrefixes, prefix)
+		}
+		if e && maySplit(w) {
+			c.SplitArgs = append(c.SplitArgs, i)
 		}
 	}
 	return c
+}
+
+// maySplit reports whether the shell may turn the word w into several words
+// or none: it holds an expansion outside double quotes, whose value bash
+// splits on IFS and globs, or one inside them that yields a word per element
+// (`"$@"`, `"${a[@]}"`, `"${!pre@}"`, or another expansion nested in a
+// parameter operator). A single-quoted string, `$'...'` included, never
+// splits.
+func maySplit(w *syntax.Word) bool {
+	for _, part := range w.Parts {
+		switch p := part.(type) {
+		case *syntax.Lit, *syntax.SglQuoted:
+		case *syntax.DblQuoted:
+			for _, dp := range p.Parts {
+				if pe, ok := dp.(*syntax.ParamExp); ok && (pe.Param == nil || pe.Param.Value == "@" ||
+					pe.Index != nil || pe.Names != 0 || pe.Exp != nil || pe.Repl != nil || pe.NestedParam != nil) {
+					return true
+				}
+			}
+		default:
+			return true
+		}
+	}
+	return false
 }
 
 // assignPipelines maps each simple-command statement that is a stage of a pipe
@@ -641,11 +949,24 @@ func assignText(a *syntax.Assign, vars map[string]string) (name, text string, ha
 // text for callers to interpret. A plain parameter named in vars renders as
 // its value (see ParseWithVars).
 func wordText(w *syntax.Word, vars map[string]string) (string, bool) {
+	text, _, hasExpansion := renderWord(w, vars)
+	return text, hasExpansion
+}
+
+// renderWord is wordText that also returns the literal text of w before its
+// first expansion: `-m"$MSG"` is "-m", `"--message=$MSG"` is "--message=".
+// It is the whole text when w holds no expansion.
+func renderWord(w *syntax.Word, vars map[string]string) (text, prefix string, hasExpansion bool) {
 	if w == nil {
-		return "", false
+		return "", "", false
 	}
 	var b strings.Builder
-	hasExpansion := false
+	prefixLen := -1
+	expand := func() {
+		if prefixLen < 0 {
+			prefixLen = b.Len()
+		}
+	}
 	for _, part := range w.Parts {
 		switch p := part.(type) {
 		case *syntax.Lit:
@@ -653,8 +974,10 @@ func wordText(w *syntax.Word, vars map[string]string) (string, bool) {
 		case *syntax.SglQuoted:
 			if p.Dollar {
 				text, ok := decodeANSIC(p.Value)
+				if !ok {
+					expand()
+				}
 				b.WriteString(text)
-				hasExpansion = hasExpansion || !ok
 			} else {
 				b.WriteString(p.Value)
 			}
@@ -664,28 +987,30 @@ func wordText(w *syntax.Word, vars map[string]string) (string, bool) {
 				case *syntax.Lit:
 					b.WriteString(unescapeDoubleQuoted(dp.Value))
 				case *syntax.ParamExp:
+					expand()
 					b.WriteString(knownParam(dp, vars))
-					hasExpansion = true
 				case *syntax.CmdSubst:
-					b.WriteString(echoOutput(dp))
-					hasExpansion = true
+					expand()
+					b.WriteString(substOutput(dp))
 				default:
-					hasExpansion = true
+					expand()
 				}
 			}
 		case *syntax.ParamExp:
+			expand()
 			b.WriteString(knownParam(p, vars))
-			hasExpansion = true
 		case *syntax.CmdSubst:
-			b.WriteString(echoOutput(p))
-			hasExpansion = true
-		case *syntax.ArithmExp:
-			hasExpansion = true
+			expand()
+			b.WriteString(substOutput(p))
 		default:
-			hasExpansion = true
+			expand()
 		}
 	}
-	return b.String(), hasExpansion
+	text = b.String()
+	if prefixLen < 0 {
+		return text, text, false
+	}
+	return text, text[:prefixLen], true
 }
 
 // leadingTilde reports whether w starts with an unquoted, unescaped ~, which
@@ -698,13 +1023,13 @@ func leadingTilde(w *syntax.Word) bool {
 	return ok && strings.HasPrefix(lit.Value, "~")
 }
 
-// echoOutput returns what the command substitution cs prints when it is a
-// plain echo of unquoted literal words (`$(echo ~/.config)`), with the words
-// as written: a leading ~ is left for the caller to expand, as the shell
-// would have. It returns "" for any other substitution, whose output is
-// unknown.
-func echoOutput(cs *syntax.CmdSubst) string {
-	if len(cs.Stmts) != 1 || len(cs.Stmts[0].Redirs) > 0 {
+// substOutput returns what the command substitution cs prints when its
+// output is fixed by its words, all unquoted literals in a single statement
+// with no assignment and no redirect but one discarding another stream than
+// the output (`2>/dev/null`), see knownOutput. It returns "" for any other
+// substitution, whose output is unknown.
+func substOutput(cs *syntax.CmdSubst) string {
+	if len(cs.Stmts) != 1 || slices.ContainsFunc(cs.Stmts[0].Redirs, func(r *syntax.Redirect) bool { return !discardsOtherStream(r) }) {
 		return ""
 	}
 	call, ok := cs.Stmts[0].Cmd.(*syntax.CallExpr)
@@ -722,10 +1047,96 @@ func echoOutput(cs *syntax.CmdSubst) string {
 		}
 		words = append(words, unescapeUnquoted(lit.Value))
 	}
-	if words[0] != "echo" || len(words) == 1 || strings.HasPrefix(words[1], "-") {
-		return "" // not echo, or an option that changes its output
+	return knownOutput(words)
+}
+
+// discardsOtherStream reports whether the redirect r sends a numbered stream
+// other than standard output to /dev/null (`2>/dev/null`), which leaves what
+// the command prints unchanged.
+func discardsOtherStream(r *syntax.Redirect) bool {
+	if r.N == nil || r.N.Value == "1" || r.Word == nil || len(r.Word.Parts) != 1 {
+		return false
 	}
-	return strings.Join(words[1:], " ")
+	if r.Op != syntax.RdrOut && r.Op != syntax.AppOut && r.Op != syntax.RdrClob {
+		return false
+	}
+	lit, ok := r.Word.Parts[0].(*syntax.Lit)
+	return ok && lit.Value == "/dev/null"
+}
+
+// knownOutput returns what the command words print when that is fixed by
+// the words alone, with any path as written (a leading ~ is left for the
+// caller to expand, as the shell would have):
+//
+//   - echo of words without an option prints them;
+//   - `git [-C dir]... rev-parse` with exactly one of --git-dir,
+//     --absolute-git-dir or --git-common-dir prints the git directory,
+//     rendered [dir/].git, and with `--git-path X` prints [dir/].git/X;
+//     -q, --quiet and --path-format= change neither which path it prints
+//     nor, for these checks, how (a relative path is resolved where the
+//     command runs);
+//   - `command -v NAME`, `which NAME` and `type -P|-p NAME`, with or without
+//     a "--" before NAME, print the program NAME runs, rendered NAME.
+//
+// It returns "" for anything else.
+func knownOutput(words []string) string {
+	switch words[0] {
+	case "echo":
+		if len(words) == 1 || strings.HasPrefix(words[1], "-") {
+			return "" // an option changes the output
+		}
+		return strings.Join(words[1:], " ")
+	case "git":
+		return gitDirOutput(words[1:])
+	}
+	return lookupOutput(words)
+}
+
+// lookupOutput renders the program `command -v`, `which` or `type -P|-p`
+// prints for NAME (see knownOutput), or "".
+func lookupOutput(words []string) string {
+	if len(words) < 2 {
+		return ""
+	}
+	name := words[len(words)-1]
+	opts := words[1 : len(words)-1]
+	if n := len(opts); n > 0 && opts[n-1] == "--" {
+		opts = opts[:n-1]
+	} else if strings.HasPrefix(name, "-") {
+		return ""
+	}
+	switch {
+	case words[0] == "command" && slices.Equal(opts, []string{"-v"}),
+		words[0] == "which" && len(opts) == 0,
+		words[0] == "type" && (slices.Equal(opts, []string{"-P"}) || slices.Equal(opts, []string{"-p"})):
+		return name
+	}
+	return ""
+}
+
+// gitDirOutput renders the git directory `git <args>` prints (see
+// knownOutput), or "" when args are anything else.
+func gitDirOutput(args []string) string {
+	dir := ""
+	for len(args) >= 2 && args[0] == "-C" {
+		if path.IsAbs(args[1]) {
+			dir = args[1]
+		} else {
+			dir = path.Join(dir, args[1])
+		}
+		args = args[2:]
+	}
+	args = slices.DeleteFunc(slices.Clone(args), func(a string) bool {
+		return a == "-q" || a == "--quiet" || strings.HasPrefix(a, "--path-format=")
+	})
+	switch {
+	case len(args) == 2 && args[0] == "rev-parse" &&
+		(args[1] == "--git-dir" || args[1] == "--absolute-git-dir" || args[1] == "--git-common-dir"):
+		return path.Join(dir, ".git")
+	case len(args) == 3 && args[0] == "rev-parse" && args[1] == "--git-path" && !strings.HasPrefix(args[2], "-"):
+		return path.Join(dir, ".git", args[2])
+	}
+	return ""
 }
 
 // knownParam returns the value vars gives a plain parameter expansion ($NAME or
@@ -790,10 +1201,19 @@ var ansiCSimple = map[byte]string{
 // decodeANSIC decodes the body of a bash `$'...'` string. It reports ok=false
 // when it meets an escape it does not model (such as `\cX`), so the caller can
 // treat the word as opaque (fail closed) instead of trusting a wrong rendering.
+// A NUL (raw, `\0`, `\x00`, `\u0000`, `\U00000000`, or an octal escape that
+// wraps to 0 such as `\400`) also reports ok=false, with the text before it:
+// shells disagree on what follows it. Bash drops the rest of the `$'...'`
+// string and goes on with the word (`.claude$'\x00'x` is `.claudex`), while
+// zsh keeps the NUL and the word handed to the command ends there
+// (`.claude`).
 func decodeANSIC(s string) (string, bool) {
 	var b strings.Builder
 	ok := true
 	for i := 0; i < len(s); i++ {
+		if s[i] == 0 {
+			return b.String(), false
+		}
 		if s[i] != '\\' || i+1 >= len(s) {
 			b.WriteByte(s[i])
 			continue
@@ -807,6 +1227,9 @@ func decodeANSIC(s string) (string, bool) {
 		switch {
 		case c >= '0' && c <= '7':
 			n, width := parseDigits(s[i:], 8, 3)
+			if byte(n) == 0 {
+				return b.String(), false
+			}
 			b.WriteByte(byte(n))
 			i += width - 1
 		case c == 'x' || c == 'u' || c == 'U':
@@ -816,6 +1239,9 @@ func decodeANSIC(s string) (string, bool) {
 				b.WriteByte('\\')
 				b.WriteByte(c)
 				continue
+			}
+			if n == 0 {
+				return b.String(), false
 			}
 			if c == 'x' {
 				b.WriteByte(byte(n))

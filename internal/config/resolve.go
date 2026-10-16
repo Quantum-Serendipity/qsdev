@@ -157,6 +157,9 @@ func deepMerge(base, overlay *types.QsdevConfig) *types.QsdevConfig {
 	// Hooks.PackageGuard: no layer loosens a gate.
 	result.Hooks.PackageGuard = mergePackageGuard(base.Hooks.PackageGuard, overlay.Hooks.PackageGuard)
 
+	// Hooks.CredentialScan.ExtraPatterns: union, so a layer only adds detection.
+	result.Hooks.CredentialScan.ExtraPatterns = mergeUnionStrings(base.Hooks.CredentialScan.ExtraPatterns, overlay.Hooks.CredentialScan.ExtraPatterns)
+
 	// Infrastructure: last-wins scalars, map merge for overrides.
 	if overlay.Infrastructure.RegistryProxy != "" {
 		result.Infrastructure.RegistryProxy = overlay.Infrastructure.RegistryProxy

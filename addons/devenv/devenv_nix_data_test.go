@@ -707,9 +707,6 @@ func TestBuildDevenvNixData_HostileOrgHooksStillEmitRipsecrets(t *testing.T) {
 		t.Fatalf("GenerateDevenvNix: %v", err)
 	}
 	src := string(file.Content)
-	if !strings.Contains(src, "ripsecrets.enable = true;") {
-		t.Errorf("devenv.nix at tier full does not emit ripsecrets.enable = true:\n%s", src)
-	}
 	declared, err := DeclaredSecurity(src)
 	if err != nil {
 		t.Fatalf("DeclaredSecurity: %v", err)

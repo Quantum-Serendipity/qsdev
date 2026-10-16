@@ -92,6 +92,11 @@ func (m *Module) SecurityConfigs(_ ecosystem.ModuleConfig) []types.GeneratedFile
 // or dotfiles (ShellCheck only supports sh/bash/dash/ksh).
 var unsupportedShellTypes = []string{"zsh"}
 
+// vendoredDirs matches committed third-party trees (Go, Composer and Bundler
+// vendor directories). Their scripts are not the project's to lint, and an
+// all-files hook run (prek run -a, devenv test) would otherwise fail on them.
+var vendoredDirs = []string{`(^|/)vendor/`}
+
 // PreCommitHooks returns pre-commit hook definitions for the Shell ecosystem.
 func (m *Module) PreCommitHooks(_ ecosystem.ModuleConfig) []ecosystem.HookConfig {
 	return []ecosystem.HookConfig{
@@ -103,6 +108,7 @@ func (m *Module) PreCommitHooks(_ ecosystem.ModuleConfig) []ecosystem.HookConfig
 			Language:      "system",
 			Types:         []string{"shell"},
 			ExcludeTypes:  unsupportedShellTypes,
+			Excludes:      vendoredDirs,
 			Stages:        []string{"pre-commit"},
 			PassFilenames: true,
 			BuiltIn:       true,
@@ -115,6 +121,7 @@ func (m *Module) PreCommitHooks(_ ecosystem.ModuleConfig) []ecosystem.HookConfig
 			Language:      "system",
 			Types:         []string{"shell"},
 			ExcludeTypes:  unsupportedShellTypes,
+			Excludes:      vendoredDirs,
 			Stages:        []string{"pre-commit"},
 			PassFilenames: true,
 			BuiltIn:       true,

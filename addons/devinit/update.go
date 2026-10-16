@@ -89,6 +89,9 @@ type FileUpdatePlan struct {
 	Reason     string
 	// HeldWith is the generated file's partner; see types.GeneratedFile.
 	HeldWith string
+	// PinLF pins the written file to LF line endings; see
+	// types.GeneratedFile.PinLF.
+	PinLF bool
 }
 
 // UpdatePlan holds the complete update plan for all files.
@@ -203,6 +206,13 @@ func runUpdateWith(cmd *cobra.Command, opts UpdateOptions, edit answersEdit) err
 	if opts.DryRun {
 		gateway.printHints(cmd.OutOrStdout())
 		return nil
+	}
+
+	// 6b. Ignore the local-state paths before anything is written, so a
+	// project whose .gitignore predates an entry (the hook audit log) gains
+	// it. Only these entries: the language entries are create-only.
+	if err := ensureLocalStateGitignore(projectRoot); err != nil {
+		return fmt.Errorf("updating .gitignore: %w", err)
 	}
 
 	// 7. Execute plan.
@@ -418,6 +428,7 @@ func buildUpdatePlan(
 			NewContent: f.Content,
 			NewMode:    f.Mode,
 			HeldWith:   f.HeldWith,
+			PinLF:      f.PinLF,
 		}
 
 		fs, inState := modStatus[f.Path]
@@ -806,7 +817,7 @@ func executeUpdatePlan(
 // per-file failure (the file keeps its previous content and state); stop is
 // true only for a write error, which ends execution.
 func (o *updateOutcome) writeValidated(projectRoot string, fp FileUpdatePlan, content []byte, mode os.FileMode) (stop bool, err error) {
-	err = generate.WriteGeneratedFile(projectRoot, types.GeneratedFile{Path: fp.Path, Content: content, Mode: mode})
+	err = generate.WriteGeneratedFile(projectRoot, types.GeneratedFile{Path: fp.Path, Content: content, Mode: mode, PinLF: fp.PinLF})
 	switch {
 	case errors.Is(err, generate.ErrInvalidContent):
 		o.failures = append(o.failures, fileFailure{Path: fp.Path, Err: err})
@@ -834,11 +845,13 @@ func (o *updateOutcome) writeHeldSidecar(projectRoot string, fp FileUpdatePlan, 
 	return nil
 }
 
-// dropStaleSidecar removes the sidecar an earlier update left for a held file
-// now written in place. A failure is only reported: the file itself is
-// current.
+// dropStaleSidecar removes the sidecar an earlier update left for a file now
+// written in place: a held file, or a manual-merge file (devenv.nix) that was
+// force-overwritten or set to the generated content. Only those two kinds
+// ever get a sidecar, so a <file>.new beside any other file is the user's and
+// stays. A failure is only reported: the file itself is current.
 func (o *updateOutcome) dropStaleSidecar(fp FileUpdatePlan, projectRoot string, dryRun bool) {
-	if fp.HeldWith == "" || dryRun {
+	if (fp.HeldWith == "" && fp.Strategy != types.ManualMerge) || dryRun {
 		return
 	}
 	if err := update.CleanupSidecar(projectRoot, filepath.FromSlash(fp.Path+generate.SidecarSuffix)); err != nil {

@@ -23,9 +23,84 @@ All notable changes to qsdev are recorded in this file. The format is based on
   `~/.claude/audit/`). `PACKAGE_GUARD_MIN_AGE_DAYS` is now written whenever
   the package guard is registered, not only when the safety-block choice is
   recorded. Run `qsdev init --update` to pick it up.
+- Team credential-scan patterns, committed in `.qsdev.yaml` as
+  `hooks.credential_scan.extra_patterns` (U17-09). Each entry is a regex
+  the credential-scan hook adds to its built-in token shapes; an optional
+  `(?P<secret>...)` group marks the credential so only that value is
+  judged as a placeholder. Merged layers union the lists. `qsdev check` and
+  init accept only the regex subset RE2 and Python share (see the
+  configuration reference) and reject anything else, naming the entry.
+  With the `credential-scan` hook on, init writes the deduplicated list one
+  per line to `CREDENTIAL_SCAN_EXTRA_PATTERNS` in `.claude/settings.json`.
+  Run `qsdev init --update` to pick it up.
 
 ### Changed
 
+- The generated `.claude/settings.json` now read-denies every per-user
+  credential store of the credential catalog at every preset, whatever the
+  selected languages (U09-WS2): `Read(~/.ssh/**)`, `Read(~/.aws/**)` and the
+  other credential directories with their contents, and the registry token
+  files by name, including `~/.npmrc`, `~/.yarnrc.yml`, `~/.pypirc`,
+  `~/.config/pip/pip.conf`, `~/.gem/credentials`, `~/.bundle/config`,
+  `~/.config/composer/auth.json`, `~/.local/share/pypoetry/auth.toml`,
+  `~/.cargo/credentials.toml`, `~/.m2/settings.xml`,
+  `~/.gradle/gradle.properties`, `~/.config/gh`, `~/.git-credentials`,
+  `~/.pgpass`, `~/.vault-token` and `~/.claude/.credentials.json`. Before,
+  only the modules of the selected languages added some of them. With the
+  opt-in `sandbox`, `sandbox.filesystem.denyRead` carries the same stores,
+  and Claude Code applies the Read denies to sandboxed Bash too, so `ssh`,
+  `gpg`, `npm`, `mvn` and `gh` run there without their user configuration.
+  The Rust, .NET, Helm and container modules no longer declare their own
+  copies, and Terraform keeps only its state and variable-file globs. The
+  framework adapter's credential exclusions come from the same catalog, so
+  the cloud stores are excluded whatever the credential scope names. A
+  `hooks.file_boundary.extra_read_paths` entry that names a newly catalogued
+  store or a directory containing it (`~/.m2`, `~/.config/gh`) now fails
+  `qsdev check`; name a sub-directory such as `~/.m2/repository` instead.
+  Run `qsdev init --update` to pick it up.
+- The generated `.claude/settings.json` now carries a shell-read tripwire
+  over the same credential stores at every preset, whatever the selected
+  languages (XS-WS5): a Bash deny for `cat`, `less`, `head`, `tail`, `cp`,
+  `base64` and `xxd`, plain and behind `env` (`env FOO=1 cat ...`), naming
+  each store, with or without options before the path
+  (`Bash(cat *~/.npmrc*)`). A directory store is denied both inside it
+  (`Bash(cat *~/.ssh/*)`) and by its bare path (`Bash(cp *~/.ssh)`,
+  `Bash(cp *~/.ssh *)`), so `cp -r ~/.ssh /tmp/x` is denied too, and a store
+  whose path holds a space is denied in its backslash-escaped and
+  double-quoted spellings. Before, only the AWS, GCP, Azure, Helm and
+  container modules denied `cat` over their own stores; those private copies
+  are gone, and the same reads are now denied with no module selected. It is
+  a tripwire, not a boundary: `$HOME/` and absolute spellings, other readers,
+  input redirection (`wc < ~/.npmrc`), stdin fed from elsewhere, quoting
+  other than the generated forms, globs (`~/.np?rc`), `~//` and `~/./`
+  spellings, absolute reader paths (`/bin/cat`) and PowerShell are not
+  matched, and the native sandbox's `denyRead` remains the real control.
+  Run `qsdev init --update` to pick it up.
+- `qsdev check` now requires the home credential denies at every preset,
+  `supply-chain-only` included (XS-WS5): deleting any canon `Read(...)` deny
+  or any shell-read tripwire rule from `.claude/settings.json` fails
+  `deny_rules_present`. The cloud credential isolation check likewise
+  requires, besides each cloud CLI operation rule, a shell-read tripwire
+  covering every home credential path of the provider (`~/.aws/credentials`
+  and the rest), so its agent deny rules layer fails when one is removed.
+  Settings generated before this change fail both checks until you run
+  `qsdev init --update`.
+- The credential-scan hook now looks for a placeholder word in an
+  assignment's value only as a word, not glued into camel case (U17-08).
+  `password = "MyExamplePassword"` and, in a config file,
+  `password: SampleCorpProd2024` are now denied: they have the same shape
+  as a real password that contains such a word. Use a separated word
+  (`my_example_password`), a template (`${DB_PASSWORD}`) or an environment
+  variable instead.
+- `CREDENTIAL_SCAN_EXTRA_PATTERNS` now holds one regex per line instead of a
+  comma-separated list (U17-09, W1N-47), so a quantifier such as `{20,40}`
+  stays in its pattern. Each line is stripped of spaces, tabs and CRs and
+  blank lines are ignored. A hand-set comma list is now read as a single
+  regex; put each pattern on its own line. A pattern may mark the credential
+  with a `(?P<secret>...)` group so that only that value is tested for a
+  placeholder. An entry that does not compile now blocks the call (exit 2)
+  with `invalid CREDENTIAL_SCAN_EXTRA_PATTERNS entry N: <error>` and an
+  `invalid_extra_pattern` audit entry, instead of being skipped silently.
 - Self-protection now applies the shell gate-dodge check (GD-003, GD-004),
   the git code-execution check (GIT-001) and the shell-write half of SP-015
   to every tool that runs a shell command, not only Bash: under Monitor and
@@ -370,6 +445,35 @@ All notable changes to qsdev are recorded in this file. The format is based on
 
 ### Fixed
 
+- Generated Claude Code settings no longer read-deny the data files of a
+  source package named `secrets` (U26-WS1). The nested secrets rules now
+  deny the data formats (`*.json`, `*.yaml`, `*.yml`, `*.toml`, `*.txt`)
+  only as direct children of a directory named `secrets`
+  (`Read(/**/secrets/*.json)`), so `internal/secrets/testdata/cases.json`
+  is readable while `infra/secrets/sa.json` stays denied. This narrows the
+  coverage: a data file in a subdirectory of a nested `secrets` directory,
+  such as `infra/secrets/prod/sa.json` or `k8s/secrets/staging/db.yaml`, is
+  no longer read-denied. Keep such files directly inside the `secrets`
+  directory or under the top-level `secrets/`. Secret material
+  (dotenv files, keys, certificates, keystores, `*.gpg`, `*.age`) is still
+  denied at any depth below a `secrets` directory, and the top-level
+  `secrets/` is still denied as a whole. `qsdev check` now also requires
+  the nested secrets rules, so `deny_rules_present` fails when one is
+  deleted. Run `qsdev init --update` to pick up the new rules.
+- The credential-scan hook judges an assignment or connection string by its
+  credential value, not by the whole match (U17-08). A placeholder word in a
+  key or host no longer hides a real secret, so
+  `postgres://app:<real>@todo-db.prod.internal/todo` and
+  `password = "SampleCorpProd2024!"` are now denied, and a placeholder
+  connection string no longer hides a real one later in the same list. A
+  value that is entirely a template (`${DB_PASSWORD}`, `<your-password>`,
+  `{{db_pw}}`, `%(db_pw)s`) or names a placeholder as a word
+  (`your-password`, `replace_with_your_password`) is now allowed. A value
+  that is itself a token shape (`api_key = "sk_live_EXAMPLE..."`) is judged
+  by that token's own pattern, as before. Quoted and JSON AWS secret keys
+  (`aws_secret_access_key = "..."`, `{"aws_secret_access_key": "..."}`) are
+  now detected, and a pattern that matches the empty string no longer
+  denies every write.
 - `qsdev mcp grade`'s `matches-registry-definition` criterion now uses the
   same trust check as `qsdev mcp status` and is reported for every configured
   server (U16-01, U16-13). An entry passes only when it is exactly a
@@ -417,6 +521,64 @@ All notable changes to qsdev are recorded in this file. The format is based on
   or release-age window when the catalog cannot be loaded (U12-09).
 
 ### Security
+
+- SP-007 judges more of the commands before a same-line rewrite, so these
+  chains are allowed again in a repository that tracks `.claude/`, as on
+  w1-s5, unless the rewrite writes a protected path: a redirect to
+  `/dev/null` or `2>&1` writes no file (`git commit -am x 2>/dev/null &&
+  git switch topic`, `cat main.go > /dev/null && git switch topic`); a
+  commit message from a double-quoted variable (`git commit -am "$MSG" &&
+  git switch topic`); a branch created at HEAD (`git switch -c feat &&
+  git commit -am wip && git switch main`), unless a later revision names it
+  or the previous branch; `git add --chmod=+x main.go && git switch topic`,
+  judged with the paths the chmod names; PowerShell `Write-Output` and the
+  read cmdlets (`Write-Output start; git checkout -- main.go`); and `cd -`
+  after a `cd` joined by `&&` (`cd .. && cd - && git switch topic`), which
+  returns to the directory that `cd` left. Elsewhere `cd -` still lands in
+  an unknown directory. `git checkout -f -b <name>` (and `-B`, `--orphan`)
+  with no start point, which resets the working tree to HEAD as `git
+  checkout -f` does, is now judged as `git checkout -f` is; it was not
+  checked at all.
+
+- SP-007 no longer denies every working-tree rewrite that follows another
+  command on its line in a repository that tracks `.claude/`. Each earlier
+  command is now judged by what it can change for the rewrite: an inert
+  command (`echo`, `true`, `:`, `test`, `cat`, a read-only git, a
+  directory change) changes nothing, a commit adds the paths it records,
+  an add counts only when it may track an untracked protected file, a
+  stash push leaves `stash@{0}` to its own check, and a fetch, pull,
+  checkout or other rewrite keeps the stash. So `echo start; git checkout
+  -- main.go`, `true && git restore main.go`, `git stash && git stash pop`,
+  `git stash && git pull --rebase && git stash pop`, `git commit -am x &&
+  git switch main`, `git add -A && git commit -m x && git checkout main`
+  and `git checkout -b topic && git stash pop` are allowed again, as on
+  w1-s5, unless the rewrite writes a protected path. Still denied in such
+  a repository, with a reason to run the rewrite in its own call: a
+  rewrite after an unknown program or script (`go test ./... && git
+  checkout main`), a rewrite from a revision after a fetch, pull or other
+  rewrite (`git fetch && git rebase origin/main`, `git checkout main &&
+  git merge topic`), a restore after `git restore --staged`, and a stash
+  pop after a drop or pop. docs/security-architecture.md lists them.
+
+- SP-007 now judges `git rm` as a working-tree rewrite. A recursive
+  `git rm` that does not name `.claude` (`git rm -r .`,
+  `git rm -r -q -- .`) deleted every tracked protected file and was
+  allowed; it is now denied when the tracked paths its pathspec matches
+  (`git ls-files -- <pathspec>`) include a protected one, and a pathspec
+  read from a file is judged as the whole index. `git rm --cached` and
+  `git rm -n` stay allowed, as does a `git rm` of other paths.
+
+- SP-015 and the gate-dodge rules now judge the values of the git
+  variables that write a file or run a program, as SP-007 does for
+  protected paths. `GIT_INDEX_FILE=devenv.yaml git read-tree HEAD` replaced
+  `devenv.yaml` with a git index, and `GIT_INDEX_FILE=.qsdev.yaml git
+  status`, `env GIT_INDEX_FILE=devenv.yaml git status` and
+  `GIT_EDITOR='cp /dev/null devenv.yaml #' git commit --amend` were
+  allowed; a `GIT_INDEX_FILE` or `GIT_OBJECT_DIRECTORY` value naming a
+  guarded file, or a guarded file named inside an editor, pager, ssh or
+  askpass variable, is now a shell write of that file. A value naming no
+  guarded file (`GIT_INDEX_FILE=/tmp/idx git read-tree HEAD`) stays
+  allowed.
 
 - Self-protection now denies, as `EVASION-obfuscation`, a shell or
   interpreter that reads its program from standard input computed at run

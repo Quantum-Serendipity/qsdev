@@ -886,15 +886,14 @@ func TestDenyRules(t *testing.T) {
 	}
 }
 
-// TestReadDenyRules verifies the user-level NuGet configs, which hold feed
-// credentials and API keys, are read-denied to the agent.
-func TestReadDenyRules(t *testing.T) {
+// TestNotReadDenyRuleProvider verifies the module keeps no private copy of
+// the user-level NuGet configs: the credential canon (internal/secrets) owns
+// them, and the generated settings read-deny them at every preset whatever
+// the languages.
+func TestNotReadDenyRuleProvider(t *testing.T) {
 	t.Parallel()
-	got := newModule().ReadDenyRules(ecosystem.ModuleConfig{})
-	for _, want := range []string{"~/.nuget/NuGet/NuGet.Config", "~/.config/NuGet/NuGet.Config"} {
-		if !slices.Contains(got, want) {
-			t.Errorf("ReadDenyRules() = %v, missing %q", got, want)
-		}
+	if _, ok := any(newModule()).(ecosystem.ReadDenyRuleProvider); ok {
+		t.Error("dotnet module implements ReadDenyRuleProvider; its credential stores belong to the canon")
 	}
 }
 

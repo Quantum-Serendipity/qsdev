@@ -2,10 +2,12 @@ package claudecode_test
 
 import (
 	"encoding/json"
+	"slices"
 	"strings"
 	"testing"
 
 	"github.com/Quantum-Serendipity/qsdev/addons/claudecode"
+	"github.com/Quantum-Serendipity/qsdev/internal/catalog"
 	"github.com/Quantum-Serendipity/qsdev/pkg/types"
 )
 
@@ -173,4 +175,41 @@ func TestSemble_TextFilesFlag(t *testing.T) {
 		}
 	}
 	t.Error("expected .mcp.json")
+}
+
+// TestSemble_EmptyModeUsesCatalogDefault pins that an empty semble mode
+// generates the catalog default mode's file set, the semble-search sub-agent
+// included, rather than a default kept in the generator.
+func TestSemble_EmptyModeUsesCatalogDefault(t *testing.T) {
+	t.Parallel()
+	cat, err := catalog.Default()
+	if err != nil {
+		t.Fatal(err)
+	}
+	paths := func(mode string) []string {
+		t.Helper()
+		answers := types.WizardAnswers{
+			Tier:       "full",
+			Languages:  []types.LanguageChoice{{Name: "go"}},
+			MCPServers: []string{"semble"},
+			AgentTools: types.AgentToolsAnswers{SembleEnabled: true, SembleMode: mode},
+		}
+		files, err := claudecode.NewClaudeCodeGenerator(newTestRegistry(t, goMock()), claudecode.Config{}).Generate(answers)
+		if err != nil {
+			t.Fatal(err)
+		}
+		out := make([]string, 0, len(files))
+		for _, f := range files {
+			out = append(out, f.Path)
+		}
+		slices.Sort(out)
+		return out
+	}
+	got, want := paths(""), paths(cat.DefaultSembleMode())
+	if !slices.Equal(got, want) {
+		t.Errorf("empty mode files = %v, want the catalog default %q's %v", got, cat.DefaultSembleMode(), want)
+	}
+	if !slices.Contains(got, ".claude/agents/semble-search.md") {
+		t.Errorf("empty mode (catalog default %q) generated no semble-search sub-agent: %v", cat.DefaultSembleMode(), got)
+	}
 }

@@ -112,24 +112,19 @@ func ReadDenyPaths(provider CloudProvider) []string {
 // behind an `env` prefix, which Claude Code does not strip before matching
 // (see denyutil.InterspersedOptionRules). Bash rules match command text, so
 // the list blocks the invocations Claude usually writes; it is not an
-// exhaustive boundary around the CLIs.
+// exhaustive boundary around the CLIs. GCP and Azure also deny cat over the
+// per-project CLI configuration directory (ProjectCLIConfigDir). Printing the
+// CLIs' home credential stores (cat ~/.aws/credentials) is denied at every
+// preset by the generated settings' shell-read tripwire over the credential
+// canon (internal/secrets), so it is not repeated here.
 func BashDenyRules(provider CloudProvider) []string {
 	switch provider {
 	case AWS:
-		return append(denyutil.InterspersedOptionRules("aws", awsDeniedOps...),
-			"Bash(cat ~/.aws/credentials*)",
-			"Bash(cat ~/.aws/config*)",
-		)
+		return denyutil.InterspersedOptionRules("aws", awsDeniedOps...)
 	case GCP:
-		rules := append(denyutil.InterspersedOptionRules("gcloud", gcpDeniedOps...),
-			"Bash(cat ~/.config/gcloud/*)",
-		)
-		return append(rules, projectCLIConfigBashDeny(GCP)...)
+		return append(denyutil.InterspersedOptionRules("gcloud", gcpDeniedOps...), projectCLIConfigBashDeny(GCP)...)
 	case Azure:
-		rules := append(denyutil.InterspersedOptionRules("az", azureDeniedOps...),
-			"Bash(cat ~/.azure/*)",
-		)
-		return append(rules, projectCLIConfigBashDeny(Azure)...)
+		return append(denyutil.InterspersedOptionRules("az", azureDeniedOps...), projectCLIConfigBashDeny(Azure)...)
 	default:
 		return nil
 	}

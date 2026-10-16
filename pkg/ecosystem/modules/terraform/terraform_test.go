@@ -515,14 +515,21 @@ func TestDenyRules(t *testing.T) {
 	}
 }
 
-// TestReadDenyRules covers W132: state, variable files and the registry
-// token are read-denied.
+// TestReadDenyRules covers W132: state and variable files are read-denied.
+// The registry token (~/.terraform.d/credentials.tfrc.json) is owned by the
+// credential canon (internal/secrets) and read-denied at every preset, so
+// the module names no home path of its own.
 func TestReadDenyRules(t *testing.T) {
 	t.Parallel()
 	rules := newModule().ReadDenyRules(ecosystem.ModuleConfig{})
-	for _, want := range []string{"**/*.tfstate*", "**/*.tfvars", "**/*.tfvars.json", "~/.terraform.d/credentials.tfrc.json"} {
+	for _, want := range []string{"**/*.tfstate*", "**/*.tfvars", "**/*.tfvars.json"} {
 		if !slices.Contains(rules, want) {
 			t.Errorf("ReadDenyRules missing %q: %v", want, rules)
+		}
+	}
+	for _, r := range rules {
+		if strings.HasPrefix(r, "~/") {
+			t.Errorf("ReadDenyRules has home path %q; home credential stores belong to the canon", r)
 		}
 	}
 }

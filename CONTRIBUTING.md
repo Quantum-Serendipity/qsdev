@@ -46,6 +46,81 @@ To add a development tool (for example `cosign`), run
 `qsdev devenv add-package <name>`, which adds it to `devenv.nix`; do not add a
 `devShells` output to `flake.nix`. `TestFlakeHasNoDevShells` enforces this.
 
+## Dogfooding
+
+This repository is a qsdev project, and its generated files (`devenv.nix`,
+`.claude/`, `.mcp.json`, `CLAUDE.md`, the generated workflows and docs) must be
+exactly what the qsdev in this tree generates. The CI `dogfood` job runs
+`make dogfood` (`scripts/dogfood.sh`). The script builds qsdev from source,
+copies the committed tree with `git archive HEAD` into a fresh repository with
+its own `HOME`, `TMPDIR` and `XDG_*`, and runs `qsdev check` and
+`qsdev init --mode join`. It then resets `.claude/settings.json` and
+`.mcp.json` with `qsdev repair --reset --file`, because join keeps entries
+qsdev no longer generates in those files as user content. Any failed check or
+any regenerated file that differs fails the job and prints the diff. Run it
+locally before opening a PR. It checks committed content only, so commit
+first. `DOGFOOD_KEEP=1 make dogfood` keeps the temporary copy for inspection.
+
+Generated files derive from the repository URL (`.cosign/policy.yaml` names the
+image repository and signing identity), so the check gives the copy the
+canonical repository as its origin: `DOGFOOD_ORIGIN` if set, else your
+`upstream` remote, else `origin`. It fails if there is none. Working from a
+fork, add an `upstream` remote for the canonical repository or run
+`DOGFOOD_ORIGIN=https://github.com/Quantum-Serendipity/qsdev.git make dogfood`.
+
+qsdev reads the org overlay (`~/.config/qsdev/defaults.yaml`) from your
+account's home whatever `HOME` is, so the script warns when that file has
+settings: your result can then differ from CI.
+
+**A PR that changes generated output also regenerates the repository.** Use a
+plain source build. `devenv.nix` records the generating version, and the
+dogfood check builds without ldflags or VCS stamping, so its version is `dev`.
+A release binary, `make build` or a stamped build would show as drift.
+
+Put the build first on `PATH` (the generated hooks run `qsdev`), then, from
+the repository root:
+
+```bash
+GOWORK=off go build -mod=vendor -buildvcs=false -o bin/qsdev-dev/qsdev ./cmd/qsdev
+export PATH="$PWD/bin/qsdev-dev:$PATH"
+# 1. .qsdev.yaml names the project: `project_name: qsdev` (once).
+qsdev init --mode join                                  # 2.
+qsdev devenv add-overlay ./nix/go-overlay.nix           # 3. only if not yet recorded
+qsdev enable <tool>                                     # 4. only for a new tool
+qsdev update --configs-only --overwrite-modified        # 5.
+qsdev repair --reset --file .claude/settings.json       # 6.
+qsdev repair --reset --file .mcp.json                   # 7.
+```
+
+Change the configuration only through qsdev commands (`qsdev enable`,
+`qsdev devenv add-package`, `qsdev devenv add-overlay`, ...), which record it in
+`.qsdev.yaml`. `devenv.local.nix` is per-developer and never committed.
+`update --overwrite-modified` regenerates hand-modified generated files in
+place instead of leaving a `<file>.new` sidecar; check that none is left
+(`git status` shows no `*.new`). It still keeps hand edits to
+`.claude/settings.json` and `.mcp.json` as user content, because they are
+three-way merged; `qsdev repair --reset --file <file>` regenerates the file
+from scratch, which is why the last two steps reset both. Commit the result,
+then run `make dogfood`.
+
+The `.mcp.json` release cutoffs are not drift. qsdev age-gates the `npx` and
+`uvx` MCP launchers with a cutoff relative to the day it runs (the env
+`npm_config_before` and the `--exclude-newer=` argument), so a regeneration on
+a later day rewrites them. `qsdev check` validates the committed cutoffs, and
+the dogfood script then compares `.mcp.json` with the committed one with every
+cutoff replaced by a placeholder: when only the cutoffs differ it restores the
+committed file, and any other change still fails the job. There is no need to
+commit a cutoff-only change.
+
+**Run the MCP servers from this tree.** `.mcp.json` starts the
+`agent-postmortem` and `version-sentinel` servers with
+`qsdev mcp serve --module`, which the installed qsdev may not support yet. Run
+`make dev-install` inside the devenv shell. It installs a source build into
+devenv's `$GOPATH/bin`, which comes before the system qsdev on `PATH`. Re-run
+it after pulling changes to the MCP server. The `github` server takes its token
+from the gh CLI, so run `gh auth login` once. Inside the devenv shell,
+`claude mcp list` should then show every server connected.
+
 ### Bumping OpenGrep
 
 The prebuilt OpenGrep CLI is packaged in `nix/opengrep/default.nix` (qsdev
@@ -116,19 +191,28 @@ Each job that uses one loads that file into `$GITHUB_ENV` and references
 `${{ env.KEY }}`, and `TestToolVersionsSingleSource` fails if a workflow
 hard-codes one of these versions.
 
-Nix is pinned there too: `NIX_VERSION` and one `NIX_SHA256_<SYSTEM>` digest
-per runner platform. CI jobs install it with `.github/scripts/install-nix.sh`,
-which reads those pins, checks the official release tarball against its
-digest before extracting it, and runs the bundled installer. The repository's
-Actions allowlist admits no Nix action, and `TestWorkflowActionsAllowlisted`
-fails if a workflow uses an action outside that allowlist.
+Nix is pinned in the CI pin catalog instead, because qsdev generates the same
+installer for every project: `NIX_VERSION` and one `NIX_SHA256_<SYSTEM>`
+digest per runner platform live only in `internal/cigeneration/nix-release.env`.
+The installer script is `internal/cigeneration/install-nix.sh`. This
+repository's `.github/nix-release.env` and `.github/scripts/install-nix.sh`
+are their generated copies, and `TestRepoNixInstallerIsCatalogOutput` fails if
+either differs from the catalog. CI jobs run
+`.github/scripts/install-nix.sh .github/nix-release.env`, which checks the
+official release tarball against its digest before extracting it, and runs the
+bundled installer. The repository's Actions allowlist admits no Nix action,
+and `TestWorkflowActionsAllowlisted` fails if a workflow uses an action outside
+that allowlist.
 
 `.github/workflows/tool-pins.yml` runs `scripts/bump-tool-pins.sh` every
-Monday. The script moves each pin to the newest exact release that is at least
-3 days old, never to an older one, and opens or updates a single PR from the
-`tool-pins/bump` branch. To add a tool, add a `KEY=vX.Y.Z` line with a
-`# source:` line above it (see the file's header). To bump a tool by hand, edit
-the file, still respecting the 3-day age gate.
+Monday on all three pin files at once. The script moves each pin to the newest
+exact release that is at least 3 days old, never to an older one, and opens or
+updates a single PR from the `tool-pins/bump` branch, so the Nix catalog and
+its copy move together. To add a tool, add a `KEY=vX.Y.Z` line with a
+`# source:` line above it to `.github/tool-versions.env` (see the file's
+header). To bump a pin by hand, edit the file, still respecting the 3-day age
+gate; for Nix, edit `internal/cigeneration/nix-release.env` and
+`.github/nix-release.env` identically.
 
 ### Tool pins token
 

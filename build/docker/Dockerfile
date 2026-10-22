@@ -26,7 +26,7 @@
 # stale pin fails there. Pinned by digest for reproducible, supply-chain-
 # resistant builds (the tag is kept for readability; dependabot bumps both).
 # Re-resolve with: docker buildx imagetools inspect golang:<version>-alpine
-FROM --platform=$BUILDPLATFORM golang:1.26.10-alpine@sha256:5cb67f19c5e7994dcb80c074f7cfca8aeeada45bbdca035f73df269cefdcce61 AS builder
+FROM --platform=$BUILDPLATFORM golang:1.27.2-alpine@sha256:f92b6ef800e499660581efdabdf25d9d817a9d124eaf900924f0504e7e27e12d AS builder
 
 WORKDIR /src
 
@@ -66,7 +66,7 @@ RUN go build -trimpath -o /qsdev \
 # digest, not one platform's manifest, so it resolves for amd64 and arm64;
 # re-resolve with (the top-level "Digest:" line):
 #   docker buildx imagetools inspect gcr.io/distroless/static-debian12:nonroot
-FROM gcr.io/distroless/static-debian12:nonroot@sha256:d093aa3e30dbadd3efe1310db061a14da60299baff8450a17fe0ccc514a16639
+FROM gcr.io/distroless/static-debian12:nonroot@sha256:afa5c872c891853ca7fcf1f12c3edb23f7eeef36189728842dd51042ff57f7ab
 
 # Links the GHCR package to the repository that publishes it.
 LABEL org.opencontainers.image.source="https://github.com/Quantum-Serendipity/qsdev"

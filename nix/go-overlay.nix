@@ -5,7 +5,7 @@
 # go >= 1.26.8). go.mod's go line must not exceed the version below.
 final: prev:
 let
-  version = "1.26.9";
+  version = "1.26.10";
 in
 {
   go_1_26 =
@@ -16,7 +16,7 @@ in
         inherit version;
         src = prev.fetchurl {
           url = "https://go.dev/dl/go${version}.src.tar.gz";
-          hash = "sha256-lzXX3Ntls10/pXfwQGRzfAO4nPGitx5uaf4vPG+f1Mo=";
+          hash = "sha256-/WPog7ovK/ypPBZGsx6+9j4rHk0rMXyXidl2po2B828=";
         };
       });
 }

@@ -184,7 +184,7 @@ func schemaJSONFor(tool mcp.Tool) ([]byte, bool) {
 	if len(tool.RawInputSchema) > 0 {
 		return tool.RawInputSchema, true
 	}
-	if tool.InputSchema.Type == "" && len(tool.InputSchema.Properties) == 0 && len(tool.InputSchema.Required) == 0 && tool.InputSchema.AdditionalProperties == nil {
+	if tool.InputSchema.Type == "" && tool.InputSchema.Types == nil && len(tool.InputSchema.Properties) == 0 && len(tool.InputSchema.Required) == 0 && tool.InputSchema.AdditionalProperties == nil {
 		return nil, false
 	}
 	data, err := json.Marshal(tool.InputSchema)
@@ -274,7 +274,7 @@ func formatLeafMessage(verr *jsonschema.ValidationError) string {
 	if location == "" {
 		location = "<root>"
 	}
-	return fmt.Sprintf("%s: %s", location, verr.ErrorKind)
+	return fmt.Sprintf("%s: %+v", location, verr.ErrorKind)
 }
 
 // jsonPointer renders a list of path segments as a RFC 6901 JSON Pointer.
